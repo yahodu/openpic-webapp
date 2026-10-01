@@ -235,11 +235,14 @@ describe("getConfig — secret length policy", () => {
     "MEDIA_SIGNING_SECRET_CURRENT",
   ] as const;
 
-  it.each(REQUIRED_SECRETS)("rejects a %s shorter than 32 characters in production", async (key) => {
-    const { getConfig } = await loadEnvConfig(makeProductionEnv({ [key]: "too-short" }));
+  it.each(REQUIRED_SECRETS)(
+    "rejects a %s shorter than 32 characters in production",
+    async (key) => {
+      const { getConfig } = await loadEnvConfig(makeProductionEnv({ [key]: "too-short" }));
 
-    expect(() => getConfig()).toThrow(new RegExp(key));
-  });
+      expect(() => getConfig()).toThrow(new RegExp(key));
+    }
+  );
 
   it("accepts a short secret in development", async () => {
     const { getConfig } = await loadEnvConfig(makeEnv({ BETTER_AUTH_SECRET: "short" }));
@@ -311,11 +314,14 @@ describe("getConfig — frozen result", () => {
 });
 
 describe("getConfig — APP_ENV validation", () => {
-  it.each(["staging2", "", "PRODUCTION", "prod"])("rejects the unknown APP_ENV %j", async (value) => {
-    const { getConfig } = await loadEnvConfig(makeEnv({ APP_ENV: value }));
+  it.each(["staging2", "", "PRODUCTION", "prod"])(
+    "rejects the unknown APP_ENV %j",
+    async (value) => {
+      const { getConfig } = await loadEnvConfig(makeEnv({ APP_ENV: value }));
 
-    expect(() => getConfig()).toThrow(/APP_ENV/);
-  });
+      expect(() => getConfig()).toThrow(/APP_ENV/);
+    }
+  );
 });
 
 describe("getConfig — parse once", () => {
@@ -328,5 +334,82 @@ describe("getConfig — parse once", () => {
     const second = getConfig();
 
     expect(second).toBe(first);
+  });
+});
+
+describe("getConfig — URL validation", () => {
+  it("rejects an APP_BASE_URL that is not an absolute URL, naming only the key", async () => {
+    const { getConfig } = await loadEnvConfig(makeEnv({ APP_BASE_URL: "not-a-url" }));
+
+    const message = captureError(() => getConfig());
+
+    expect(message).toMatch(/APP_BASE_URL/);
+    expect(message).not.toContain("not-a-url");
+  });
+
+  it("rejects an empty ALLOWED_ORIGINS list", async () => {
+    const { getConfig } = await loadEnvConfig(makeEnv({ ALLOWED_ORIGINS: "" }));
+
+    expect(() => getConfig()).toThrow(/ALLOWED_ORIGINS/);
+  });
+});
+
+describe("getConfig — enum validation", () => {
+  it.each(["dropbox", "local"] as const)(
+    "rejects the unknown STORAGE_PROVIDER %j, naming only the key",
+    async (value) => {
+      const { getConfig } = await loadEnvConfig(makeEnv({ STORAGE_PROVIDER: value }));
+
+      const message = captureError(() => getConfig());
+
+      expect(message).toMatch(/STORAGE_PROVIDER/);
+      expect(message).not.toContain(value);
+    }
+  );
+
+  it("rejects an unknown LOG_LEVEL", async () => {
+    const { getConfig } = await loadEnvConfig(makeEnv({ LOG_LEVEL: "verbose" }));
+
+    const message = captureError(() => getConfig());
+
+    expect(message).toMatch(/LOG_LEVEL/);
+    expect(message).not.toContain("verbose");
+  });
+});
+
+describe("getConfig — multiple failures", () => {
+  it("lists every invalid key rather than only the first", async () => {
+    const env = makeProductionEnv({ BETTER_AUTH_SECRET: "short", CRON_SECRET: "short" });
+    const { getConfig } = await loadEnvConfig(env);
+
+    const message = captureError(() => getConfig());
+
+    expect(message).toMatch(/BETTER_AUTH_SECRET/);
+    expect(message).toMatch(/CRON_SECRET/);
+  });
+});
+
+describe("getConfig — secret length boundary", () => {
+  it("rejects a 31-character secret in production", async () => {
+    const { getConfig } = await loadEnvConfig(
+      makeProductionEnv({ BETTER_AUTH_SECRET: "a".repeat(31) })
+    );
+
+    expect(() => getConfig()).toThrow(/BETTER_AUTH_SECRET/);
+  });
+
+  it("accepts a secret of exactly 32 characters in production", async () => {
+    const boundary = "a".repeat(32);
+    const { getConfig } = await loadEnvConfig(makeProductionEnv({ BETTER_AUTH_SECRET: boundary }));
+
+    expect(getConfig().auth.secret).toBe(boundary);
+  });
+
+  it("rejects a short MEDIA_SIGNING_SECRET_PREVIOUS when set in production", async () => {
+    const { getConfig } = await loadEnvConfig(
+      makeProductionEnv({ MEDIA_SIGNING_SECRET_PREVIOUS: "too-short" })
+    );
+
+    expect(() => getConfig()).toThrow(/MEDIA_SIGNING_SECRET_PREVIOUS/);
   });
 });
