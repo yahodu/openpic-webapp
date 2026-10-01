@@ -8,6 +8,6 @@ export async function register(): Promise<void> {
     return;
   }
 
-  const { startE2eMswServer } = await import("./mocks/e2e-server");
+  const { startE2eMswServer } = await import("./test/mocks/e2e-server");
   await startE2eMswServer();
 }

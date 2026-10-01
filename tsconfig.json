@@ -3,8 +3,9 @@
   "compilerOptions": {
     "lib": ["ES2023"],
     "types": ["node"],
-    "allowJs": true
+    "allowJs": true,
+    "allowImportingTsExtensions": true
   },
-  "include": ["*.ts", "*.mjs", "*.js"],
+  "include": ["*.ts", "*.mjs", "*.js", "scripts/**/*.ts"],
   "exclude": ["node_modules", "apps", "packages"]
 }
