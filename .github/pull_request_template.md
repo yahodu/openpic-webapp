@@ -33,6 +33,19 @@
     - [ ] Input validation checked.
 - [ ] **Performance:** No obvious N+1 queries or memory leaks introduced.
 
+## ✅ Definition of Done
+<!-- Copy-pasteable DoD — the gate between "implemented" and "done".
+     See docs/CONVENTIONS.md §9. Every box must be checked before review. -->
+- [ ] Tests were written first and are green (RED + GREEN output included above).
+- [ ] Coverage is at or above the configured threshold.
+- [ ] Typecheck, lint and dependency audit are clean.
+- [ ] TSDoc is present on every exported symbol and route handler.
+- [ ] Structured logs added via the `Logger` port (required fields only).
+- [ ] Zod schemas and `buildX` fixtures added/updated and `schema.parse` clean.
+- [ ] The relevant API contract section is referenced.
+- [ ] No hard-coded tunables — runtime knobs read from `platformSettings`.
+- [ ] An ADR was added in `docs/adr/` for any new decision.
+
 ## Screenshots (if any)
 
 
