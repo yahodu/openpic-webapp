@@ -1,8 +1,14 @@
 # AGENTS.md — OpenPic Agent Operating Rules
 
-This file is the single source of truth for autonomous agent behavior in the
-OpenPic repository. Every agent — whether spawned via Kanban, running as a CI
-job, or invoked ad-hoc — MUST read this file before taking any action.
+This file is the entry point for autonomous agent behavior in the OpenPic
+repository. Every agent — whether spawned via Kanban, running as a CI job, or
+invoked ad-hoc — MUST read this file before taking any action.
+
+The **authoritative engineering standard** is `docs/CONVENTIONS.md`. This file is
+the entry point that links to it: on any conflict with the conventions below,
+`docs/CONVENTIONS.md` wins (see its §10 authority order). New decisions are
+recorded in `docs/adr/`, and the PR + DoD gate lives in
+`.github/pull_request_template.md`.
 
 ## 1. Task Lifecycle
 
@@ -143,19 +149,17 @@ Before `git commit` or `git push`, run the verification pipeline:
 
 ## 5. Quality Gates (Definition of Done)
 
+The Definition of Done is **normative in `docs/CONVENTIONS.md` §9**, mirrored
+copy-pasteably in `.github/pull_request_template.md`. This file does **not**
+restate it. The checklist previously listed here is **superseded**: it diverged
+from the authoritative DoD (it asserted "min 80% coverage on touched code" rather
+than the configured threshold, and required Swagger/env-var items) while omitting
+the TDD RED+GREEN evidence, TSDoc, Zod/`buildX` fixtures, contract-section
+reference and ADR items.
+
 Before any task is complete:
 
-- [ ] Code follows team style (linting passes)
-- [ ] Unit tests exist and pass (min 80% coverage on touched code)
-- [ ] Integration tests pass (if applicable)
-- [ ] Feature tested locally in a clean environment
-- [ ] Code comments added for complex logic
-- [ ] No secrets/keys committed
-- [ ] Input validation checked
-- [ ] No obvious N+1 queries or memory leaks
-- [ ] Database migrations handled (if applicable)
-- [ ] Environment variables documented in `.env.example` (if changed)
-- [ ] API docs / Swagger updated (if endpoints changed)
+- [ ] Every item of the DoD in `docs/CONVENTIONS.md` §9 is satisfied.
 
 ## 6. Project Context
 
