@@ -1,0 +1,12 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+allowBuilds:
+  mongodb-memory-server: true
+  msw: true
+
+# Force patched transitive versions that upstream still pins to vulnerable
+# ranges (next -> postcss). Remove once upstream ships the fix.
+overrides:
+  postcss@<=8.5.22: "^8.5.23"
