@@ -1,0 +1,316 @@
+import { z } from "zod";
+
+/**
+ * Zod-validated environment configuration, read from `process.env` exactly once
+ * and exposed as a deep-frozen object through `getConfig()`.
+ *
+ * Design notes (OP-70):
+ *   - Importing this module is side-effect free; validation only happens the
+ *     first time `getConfig()` is called.
+ *   - A parse failure throws a `ConfigError` whose message lists the offending
+ *     environment variable KEY NAMES ONLY — never their values.
+ *   - Deploy configuration (this module) is distinct from runtime tunables
+ *     (platformSettings, US-015).
+ */
+
+const APP_ENVS = ["development", "test", "e2e", "staging", "production"] as const;
+export type AppEnv = (typeof APP_ENVS)[number];
+
+const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace"] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+/** The environments in which secrets must be at least `SECRET_MIN_LENGTH`. */
+const STRICT_SECRET_ENVS: readonly string[] = ["staging", "production"];
+const SECRET_MIN_LENGTH = 32;
+
+/** Default provider selection when the variable is absent. */
+const DEFAULT_PROVIDER = "memory";
+
+/** Public shape returned by `getConfig()`. */
+export interface AppConfig {
+  readonly app: {
+    readonly env: AppEnv;
+    readonly baseUrl: string;
+    readonly port: number;
+    readonly allowedOrigins: readonly string[];
+  };
+  readonly mongo: { readonly uri: string };
+  readonly auth: { readonly secret: string };
+  readonly internal: { readonly apiSecret: string };
+  readonly cron: { readonly secret: string };
+  readonly rateLimit: { readonly provider: string };
+  readonly storage: { readonly provider: string };
+  readonly queue: { readonly provider: string };
+  readonly payments: { readonly provider: string };
+  readonly transport: {
+    readonly provider: string;
+    readonly unsubscribeSigningSecret: string;
+  };
+  readonly logging: {
+    readonly level: LogLevel;
+    readonly transports: readonly string[];
+    readonly pretty: boolean;
+  };
+  readonly media: {
+    readonly signingSecretCurrent: string;
+    readonly signingSecretPrevious?: string;
+  };
+}
+
+interface ProviderSpec {
+  readonly key: string;
+  readonly values: readonly string[];
+}
+
+const PROVIDER_SPECS: readonly ProviderSpec[] = [
+  { key: "RATE_LIMIT_PROVIDER", values: ["memory", "redis"] },
+  { key: "STORAGE_PROVIDER", values: ["memory", "s3"] },
+  { key: "QUEUE_PROVIDER", values: ["memory", "mongo"] },
+  { key: "PAYMENT_PROVIDER", values: ["memory", "stripe"] },
+  { key: "MESSAGE_TRANSPORT", values: ["memory", "ses"] },
+];
+
+/** Required secrets subject to the >= 32 character rule in staging/production. */
+const REQUIRED_SECRETS: readonly string[] = [
+  "BETTER_AUTH_SECRET",
+  "INTERNAL_API_SECRET",
+  "CRON_SECRET",
+  "UNSUBSCRIBE_SIGNING_SECRET",
+  "MEDIA_SIGNING_SECRET_CURRENT",
+];
+
+/** The raw (still string) environment as it reaches the process. */
+interface RawEnv {
+  readonly APP_ENV: string | undefined;
+  readonly APP_BASE_URL: string | undefined;
+  readonly PORT: string | undefined;
+  readonly ALLOWED_ORIGINS: string | undefined;
+  readonly MONGODB_URI: string | undefined;
+  readonly BETTER_AUTH_SECRET: string | undefined;
+  readonly INTERNAL_API_SECRET: string | undefined;
+  readonly CRON_SECRET: string | undefined;
+  readonly UNSUBSCRIBE_SIGNING_SECRET: string | undefined;
+  readonly MEDIA_SIGNING_SECRET_CURRENT: string | undefined;
+  readonly MEDIA_SIGNING_SECRET_PREVIOUS: string | undefined;
+  readonly LOG_LEVEL: string | undefined;
+  readonly LOG_TRANSPORTS: string | undefined;
+  readonly LOG_PRETTY: string | undefined;
+  readonly RATE_LIMIT_PROVIDER: string | undefined;
+  readonly STORAGE_PROVIDER: string | undefined;
+  readonly QUEUE_PROVIDER: string | undefined;
+  readonly PAYMENT_PROVIDER: string | undefined;
+  readonly MESSAGE_TRANSPORT: string | undefined;
+}
+
+/** A missing/invalid configuration error naming only the offending keys. */
+export class ConfigError extends Error {
+  readonly keys: readonly string[];
+
+  constructor(keys: readonly string[]) {
+    super(`Invalid application configuration: ${keys.join(", ")}`);
+    this.name = "ConfigError";
+    this.keys = keys;
+  }
+}
+
+const optionalString = z.string().optional();
+
+const rawSchema = z.object({
+  APP_ENV: z.string(),
+  APP_BASE_URL: z.string(),
+  PORT: optionalString,
+  ALLOWED_ORIGINS: z.string(),
+  MONGODB_URI: z.string(),
+  BETTER_AUTH_SECRET: z.string(),
+  INTERNAL_API_SECRET: z.string(),
+  CRON_SECRET: z.string(),
+  UNSUBSCRIBE_SIGNING_SECRET: z.string(),
+  MEDIA_SIGNING_SECRET_CURRENT: z.string(),
+  MEDIA_SIGNING_SECRET_PREVIOUS: optionalString,
+  LOG_LEVEL: optionalString,
+  LOG_TRANSPORTS: optionalString,
+  LOG_PRETTY: optionalString,
+  RATE_LIMIT_PROVIDER: optionalString,
+  STORAGE_PROVIDER: optionalString,
+  QUEUE_PROVIDER: optionalString,
+  PAYMENT_PROVIDER: optionalString,
+  MESSAGE_TRANSPORT: optionalString,
+});
+
+/** True for absolute http(s) URLs, which is what a base URL / origin must be. */
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Split a comma-separated list, trimming whitespace and dropping empties. */
+function splitList(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value === "") {
+    return fallback;
+  }
+  return value === "true";
+}
+
+function isStrictSecretEnv(appEnv: string | undefined): boolean {
+  return appEnv !== undefined && STRICT_SECRET_ENVS.includes(appEnv);
+}
+
+const configSchema = rawSchema
+  .superRefine((raw, ctx) => {
+    const addIssue = (key: string): void => {
+      ctx.addIssue({ code: "custom", message: key, path: [key] });
+    };
+
+    if (!(APP_ENVS as readonly string[]).includes(raw.APP_ENV)) {
+      addIssue("APP_ENV");
+    }
+
+    if (!isAbsoluteHttpUrl(raw.APP_BASE_URL)) {
+      addIssue("APP_BASE_URL");
+    }
+
+    const origins = splitList(raw.ALLOWED_ORIGINS);
+    if (origins.length === 0 || !origins.every(isAbsoluteHttpUrl)) {
+      addIssue("ALLOWED_ORIGINS");
+    }
+
+    if (
+      !raw.MONGODB_URI.startsWith("mongodb://") &&
+      !raw.MONGODB_URI.startsWith("mongodb+srv://")
+    ) {
+      addIssue("MONGODB_URI");
+    }
+
+    if (raw.LOG_LEVEL !== undefined && !(LOG_LEVELS as readonly string[]).includes(raw.LOG_LEVEL)) {
+      addIssue("LOG_LEVEL");
+    }
+
+    if (
+      raw.LOG_PRETTY !== undefined &&
+      raw.LOG_PRETTY !== "" &&
+      raw.LOG_PRETTY !== "true" &&
+      raw.LOG_PRETTY !== "false"
+    ) {
+      addIssue("LOG_PRETTY");
+    }
+
+    if (raw.PORT !== undefined && !/^\d+$/.test(raw.PORT)) {
+      addIssue("PORT");
+    }
+
+    const strict = isStrictSecretEnv(raw.APP_ENV);
+    if (strict) {
+      for (const key of REQUIRED_SECRETS) {
+        const value = raw[key as keyof RawEnv];
+        if (value !== undefined && value.length < SECRET_MIN_LENGTH) {
+          addIssue(key);
+        }
+      }
+      const previous = raw.MEDIA_SIGNING_SECRET_PREVIOUS;
+      if (previous !== undefined && previous.length < SECRET_MIN_LENGTH) {
+        addIssue("MEDIA_SIGNING_SECRET_PREVIOUS");
+      }
+    }
+
+    for (const spec of PROVIDER_SPECS) {
+      const value = raw[spec.key as keyof RawEnv] ?? DEFAULT_PROVIDER;
+      if (!spec.values.includes(value)) {
+        addIssue(spec.key);
+      } else if (value === DEFAULT_PROVIDER && raw.APP_ENV === "production") {
+        addIssue(spec.key);
+      }
+    }
+  })
+  .transform((raw): AppConfig => {
+    const provider = (key: string): string => raw[key as keyof RawEnv] ?? DEFAULT_PROVIDER;
+
+    return deepFreeze({
+      app: {
+        env: raw.APP_ENV as AppEnv,
+        baseUrl: raw.APP_BASE_URL,
+        port: raw.PORT === undefined || raw.PORT === "" ? 3000 : Number(raw.PORT),
+        allowedOrigins: splitList(raw.ALLOWED_ORIGINS),
+      },
+      mongo: { uri: raw.MONGODB_URI },
+      auth: { secret: raw.BETTER_AUTH_SECRET },
+      internal: { apiSecret: raw.INTERNAL_API_SECRET },
+      cron: { secret: raw.CRON_SECRET },
+      rateLimit: { provider: provider("RATE_LIMIT_PROVIDER") },
+      storage: { provider: provider("STORAGE_PROVIDER") },
+      queue: { provider: provider("QUEUE_PROVIDER") },
+      payments: { provider: provider("PAYMENT_PROVIDER") },
+      transport: {
+        provider: provider("MESSAGE_TRANSPORT"),
+        unsubscribeSigningSecret: raw.UNSUBSCRIBE_SIGNING_SECRET,
+      },
+      logging: {
+        level: (raw.LOG_LEVEL ?? "info") as LogLevel,
+        transports: raw.LOG_TRANSPORTS === undefined ? ["stdout"] : splitList(raw.LOG_TRANSPORTS),
+        pretty: parseBoolean(raw.LOG_PRETTY, false),
+      },
+      media: {
+        signingSecretCurrent: raw.MEDIA_SIGNING_SECRET_CURRENT,
+        ...(raw.MEDIA_SIGNING_SECRET_PREVIOUS === undefined
+          ? {}
+          : { signingSecretPrevious: raw.MEDIA_SIGNING_SECRET_PREVIOUS }),
+      },
+    });
+  });
+
+/** Recursively freeze an object graph so callers cannot mutate configuration. */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      deepFreeze(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+let cached: AppConfig | undefined;
+
+/**
+ * Read, validate and cache the application configuration.
+ *
+ * The environment is parsed on the first call only; later calls return the same
+ * deep-frozen reference regardless of subsequent changes to `process.env`.
+ *
+ * @throws {ConfigError} when the environment is missing or invalid. The error
+ *   message lists the offending KEY NAMES only, never their values.
+ */
+export function getConfig(): AppConfig {
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const result = configSchema.safeParse({ ...process.env });
+
+  if (!result.success) {
+    const keys = Array.from(
+      new Set(
+        result.error.issues
+          .map((issue) => (issue.path.length > 0 ? String(issue.path[0]) : undefined))
+          .filter((key): key is string => key !== undefined)
+      )
+    );
+    throw new ConfigError(keys);
+  }
+
+  cached = result.data;
+  return cached;
+}
