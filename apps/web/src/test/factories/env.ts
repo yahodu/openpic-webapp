@@ -69,11 +69,14 @@ export function makeProductionEnv(overrides: EnvInput = {}): EnvInput {
  * Materialise a fixture into the plain `string -> string` record a child
  * process needs, dropping keys whose value is `undefined`.
  *
+ * Returned as `NodeJS.ProcessEnv` because that is the type `spawnSync`'s `env`
+ * option expects (Next augments it with a required `NODE_ENV`).
+ *
  * @param env - Environment fixture.
  * @returns A record safe to pass to `spawnSync`'s `env` option.
  */
-export function toProcessEnv(env: EnvInput): Record<string, string> {
+export function toProcessEnv(env: EnvInput): NodeJS.ProcessEnv {
   return Object.fromEntries(
     Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
-  );
+  ) as unknown as NodeJS.ProcessEnv;
 }

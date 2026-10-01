@@ -71,7 +71,9 @@ async function loadEnvConfig(env: EnvInput): Promise<EnvModule> {
     Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
   );
 
-  process.env = { ...clean };
+  // `ProcessEnv` is augmented by Next with a required `NODE_ENV`, so the plain
+  // `string -> string` fixture needs a cast to be assigned here.
+  process.env = { ...clean } as unknown as NodeJS.ProcessEnv;
 
   return import("./env");
 }
