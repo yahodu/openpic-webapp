@@ -18,13 +18,16 @@
 - [ ] 📄 Documentation update
 - [ ] 🛠️ Other Changes (like development tool-related, linting-related, and so on)
 
-## ✅ Quality Checklist
-<!-- Reviewers will check these items. Do not submit until checked. -->
+## ✅ PR Hygiene Checklist
+<!-- PR-hygiene items only — these are NOT the Definition of Done. The
+     authoritative, normative DoD is docs/CONVENTIONS.md §9, mirrored below
+     under "Definition of Done". -->
 - [ ] **Code Style:** Code follows team style guidelines (linting passed).
-- [ ] **Unit Tests:** New/updated unit tests added (Min coverage: 80%).
+- [ ] **Unit Tests:** New/updated unit tests added, with coverage at or above
+      the configured threshold — see docs/CONVENTIONS.md §9.
 - [ ] **Integration Tests:** API/DB integration tests updated if applicable.
 - [ ] **Manual Testing:** Feature tested locally in a clean environment.
-- [ ] **Documentation:**
+- [ ] **Documentation:** (PR hygiene — update only when relevant to the change)
     - [ ] Code comments added for complex logic.
     - [ ] README updated (if neccessary - like environment variable details updated).
     - [ ] API Swagger/Docs updated (if endpoints changed).
