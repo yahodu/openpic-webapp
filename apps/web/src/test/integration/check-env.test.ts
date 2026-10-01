@@ -19,9 +19,7 @@ import { makeEnv, makeProductionEnv, toProcessEnv } from "../factories/env";
  * TypeScript type stripping runs the `.ts` entry directly; the script must
  * import the config module by its `.ts` path.
  */
-const SCRIPT_PATH = fileURLToPath(
-  new URL("../../../../../scripts/check-env.ts", import.meta.url)
-);
+const SCRIPT_PATH = fileURLToPath(new URL("../../../../../scripts/check-env.ts", import.meta.url));
 
 interface CheckResult {
   status: number | null;
@@ -29,7 +27,7 @@ interface CheckResult {
   stderr: string;
 }
 
-function runCheckEnv(env: Record<string, string>): CheckResult {
+function runCheckEnv(env: NodeJS.ProcessEnv): CheckResult {
   const result = spawnSync(process.execPath, [SCRIPT_PATH], {
     env,
     encoding: "utf8",
