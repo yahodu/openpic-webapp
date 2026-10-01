@@ -1,4 +1,4 @@
-import type { RequestHandler } from 'msw';
+import type { RequestHandler } from "msw";
 
 /**
  * Shared happy-path MSW handlers for integration tests. Per-test error cases

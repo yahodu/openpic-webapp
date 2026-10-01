@@ -1,5 +1,5 @@
-import { MongoClient } from 'mongodb';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { MongoClient } from "mongodb";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 /**
  * I2 — proves the integration harness runs MongoDB as a replica set so
@@ -9,14 +9,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  * its connection string as `MONGO_TEST_URI`; a standalone mongod would reject
  * `withTransaction`, so this test is the regression guard for that wiring.
  */
-describe('MongoDB replica-set harness', () => {
-  let client: MongoClient;
+describe("MongoDB replica-set harness", () => {
+  let client: MongoClient | undefined;
 
   beforeAll(async () => {
     const uri = process.env.MONGO_TEST_URI;
     if (!uri) {
       throw new Error(
-        'MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet',
+        "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
       );
     }
     client = new MongoClient(uri);
@@ -27,23 +27,25 @@ describe('MongoDB replica-set harness', () => {
     await client?.close();
   });
 
-  it('commits a multi-document transaction', async () => {
-    const accounts = client
-      .db('op_test')
-      .collection<{ _id: string; balance: number }>('accounts');
+  it("commits a multi-document transaction", async () => {
+    if (!client) {
+      throw new Error("Mongo client was not initialised");
+    }
+
+    const accounts = client.db("op_test").collection<{ _id: string; balance: number }>("accounts");
     await accounts.deleteMany({});
 
     const session = client.startSession();
     try {
       await session.withTransaction(async () => {
-        await accounts.insertOne({ _id: 'a', balance: 100 }, { session });
-        await accounts.updateOne({ _id: 'a' }, { $inc: { balance: 50 } }, { session });
+        await accounts.insertOne({ _id: "a", balance: 100 }, { session });
+        await accounts.updateOne({ _id: "a" }, { $inc: { balance: 50 } }, { session });
       });
     } finally {
       await session.endSession();
     }
 
-    const saved = await accounts.findOne({ _id: 'a' });
+    const saved = await accounts.findOne({ _id: "a" });
     expect(saved?.balance).toBe(150);
   });
 });

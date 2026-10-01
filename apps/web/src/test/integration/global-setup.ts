@@ -1,4 +1,4 @@
-import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { MongoMemoryReplSet } from "mongodb-memory-server";
 
 /**
  * Integration globalSetup: boots a single-node MongoDB replica set so that

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 
 /**
  * I1 — sentinel proving the integration harness fails closed on unknown
@@ -12,8 +12,8 @@ import { describe, expect, it } from 'vitest';
  * guard: a live network call would either resolve or reject with a transport
  * error, neither of which matches.
  */
-describe('MSW integration harness', () => {
-  it('rejects an outbound request that matches no handler', async () => {
-    await expect(fetch('https://example.com')).rejects.toThrow(/Cannot bypass a request/i);
+describe("MSW integration harness", () => {
+  it("rejects an outbound request that matches no handler", async () => {
+    await expect(fetch("https://example.com")).rejects.toThrow(/Cannot bypass a request/i);
   });
 });

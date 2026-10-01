@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 
-import { GET } from './route';
+import { GET } from "./route";
 
 /**
  * U1 — tracer bullet for the liveness endpoint.
@@ -10,25 +10,25 @@ import { GET } from './route';
  * Contract under test: GET /api/v1/health -> 200 { status: 'ok' },
  * Cache-Control: no-store.
  */
-describe('GET /api/v1/health', () => {
-  const request = (): Request => new Request('http://localhost/api/v1/health');
+describe("GET /api/v1/health", () => {
+  const request = (): Request => new Request("http://localhost/api/v1/health");
 
   it('responds 200 with the body { status: "ok" }', async () => {
     const response = await GET(request());
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: 'ok' });
+    await expect(response.json()).resolves.toEqual({ status: "ok" });
   });
 
-  it('declares a JSON content type', async () => {
+  it("declares a JSON content type", async () => {
     const response = await GET(request());
 
-    expect(response.headers.get('content-type')).toMatch(/application\/json/);
+    expect(response.headers.get("content-type")).toMatch(/application\/json/);
   });
 
-  it('forbids caching with Cache-Control: no-store', async () => {
+  it("forbids caching with Cache-Control: no-store", async () => {
     const response = await GET(request());
 
-    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get("cache-control")).toBe("no-store");
   });
 });
