@@ -145,4 +145,38 @@ describe("POST /api/v1/echo — request validation pipeline", () => {
     expect(response.headers.get("strict-transport-security")).toMatch(/max-age=\d+/);
     expect(response.headers.get("x-request-id")).toBe(REQUEST_ID);
   });
+
+  it("I6: maps an unparseable production body to a non-empty 500 internal_error envelope", async () => {
+    const sink = installMemoryLogger();
+
+    const route = defineRoute({
+      route: "/api/v1/boom",
+      response: z.object({ ok: z.boolean() }),
+      env: "production",
+      handler: () => ({ body: { ok: "not-a-boolean" as unknown as boolean } }),
+    });
+
+    const response = await route(
+      new Request("http://localhost/api/v1/boom", { headers: { "x-request-id": REQUEST_ID } })
+    );
+
+    expect(response.status).toBe(500);
+    expect((await response.clone().arrayBuffer()).byteLength).toBeGreaterThan(0);
+    expect(response.headers.get("content-type")).toMatch(/application\/json/);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("content-security-policy")).toBe("default-src 'none'");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("strict-transport-security")).toMatch(/max-age=\d+/);
+    expect(response.headers.get("x-request-id")).toBe(REQUEST_ID);
+
+    const body = await response.json();
+    expect(body.error.code).toBe("internal_error");
+    expect(body.error.requestId).toBe(REQUEST_ID);
+    expect(apiErrorSchema.safeParse(body).success).toBe(true);
+
+    const logged = sink.entries.find((entry) => entry.level === "error");
+    expect(logged).toBeDefined();
+    expect(logged?.requestId).toBe(REQUEST_ID);
+  });
 });
