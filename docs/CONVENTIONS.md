@@ -25,11 +25,11 @@ it silently. When two documents disagree, apply §10.
 
 ## 2. Test pyramid
 
-| Layer | Tool | Use for |
-|---|---|---|
-| Unit | Vitest | Pure logic, validators, mappers, formatters |
+| Layer                  | Tool                                               | Use for                                                                           |
+| ---------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Unit                   | Vitest                                             | Pure logic, validators, mappers, formatters                                       |
 | Integration / contract | Vitest + `mongodb-memory-server` **ReplSet** + MSW | Route handlers, DB access (transactions need a replica set), third-party adapters |
-| E2E (API) | Playwright | Journeys spanning several routes only |
+| E2E (API)              | Playwright                                         | Journeys spanning several routes only                                             |
 
 - MongoDB integration tests MUST run against `mongodb-memory-server` started as a
   **replica set** so multi-document transactions work exactly as in production.
@@ -65,25 +65,25 @@ application code and never import a vendor logging SDK outside its adapter.
 
 ### 5.1 Level policy
 
-| Level | Use when |
-|---|---|
-| `fatal` | The process cannot continue |
-| `error` | 5xx, unhandled errors, upstream contract break, invariant violation |
-| `warn` | Security-relevant denials (bad signature, CSRF, rate limit, lease lost), degraded fallbacks |
-| `info` | One access line per request, state transitions, cron summaries, domain events emitted |
-| `debug` | Internals useful while developing |
-| `trace` | Verbose internals; **off in production** |
+| Level   | Use when                                                                                    |
+| ------- | ------------------------------------------------------------------------------------------- |
+| `fatal` | The process cannot continue                                                                 |
+| `error` | 5xx, unhandled errors, upstream contract break, invariant violation                         |
+| `warn`  | Security-relevant denials (bad signature, CSRF, rate limit, lease lost), degraded fallbacks |
+| `info`  | One access line per request, state transitions, cron summaries, domain events emitted       |
+| `debug` | Internals useful while developing                                                           |
+| `trace` | Verbose internals; **off in production**                                                    |
 
 ### 5.2 Field dictionary
 
-| Field | Required | Type | Meaning |
-|---|---|---|---|
-| `event` | yes | string | Dotted event name, e.g. `billing.webhook.projected` |
-| `requestId` | yes | string | Correlation id for the originating request |
-| `tenantId` | no | string | Tenant scope, when the event is tenant-bound |
-| `userId` | no | string | Acting user, when authenticated |
-| `durationMs` | no | number | Elapsed time for the operation being logged |
-| `err` | no | Error | Serialised error (message, code, stack for `error`+) |
+| Field        | Required | Type   | Meaning                                              |
+| ------------ | -------- | ------ | ---------------------------------------------------- |
+| `event`      | yes      | string | Dotted event name, e.g. `billing.webhook.projected`  |
+| `requestId`  | yes      | string | Correlation id for the originating request           |
+| `tenantId`   | no       | string | Tenant scope, when the event is tenant-bound         |
+| `userId`     | no       | string | Acting user, when authenticated                      |
+| `durationMs` | no       | number | Elapsed time for the operation being logged          |
+| `err`        | no       | Error  | Serialised error (message, code, stack for `error`+) |
 
 `event` and `requestId` are mandatory on every log line. Anything tenant- or
 user-scoped that lacks `tenantId`/`userId` when they are known is a defect.
@@ -94,7 +94,7 @@ These values MUST never appear in a log field, message or error serialisation:
 
 - passwords, password hashes and reset tokens
 - API keys, access/refresh tokens, session ids, CSRF tokens and cookies
-- `Authorization`, `Cookie` and `Set-Cookie` header values (log the header *name*
+- `Authorization`, `Cookie` and `Set-Cookie` header values (log the header _name_
   and a redacted placeholder only)
 - webhook signing secrets and signatures
 - private keys, certificates and connection strings

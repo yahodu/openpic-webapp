@@ -3,7 +3,7 @@ name: Create Draft PR on New Branch
 on:
   create:
     branches:
-      - '**'
+      - "**"
 
 jobs:
   create-draft-pr:

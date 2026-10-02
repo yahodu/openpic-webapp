@@ -67,9 +67,7 @@ describe("createLoggerFromEnv — transport selection", () => {
 
     expect(output).toContain("hello from env");
 
-    const line = output
-      .split("\n")
-      .find((candidate) => candidate.includes("hello from env"));
+    const line = output.split("\n").find((candidate) => candidate.includes("hello from env"));
     expect(JSON.parse(line ?? "{}")).toMatchObject({ level: "info", msg: "hello from env" });
   });
 

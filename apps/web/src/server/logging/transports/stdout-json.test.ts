@@ -30,6 +30,11 @@ describe("stdoutJsonTransport", () => {
 
     void transport.write(makeLogEntry({ msg: "single" }));
 
-    expect(lines.join("").split("\n").filter((line) => line.length > 0)).toHaveLength(1);
+    expect(
+      lines
+        .join("")
+        .split("\n")
+        .filter((line) => line.length > 0)
+    ).toHaveLength(1);
   });
 });

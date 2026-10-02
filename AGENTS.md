@@ -27,16 +27,17 @@ recorded in `docs/adr/`, and the PR + DoD gate lives in
 
 ### 1.2 Task completion states
 
-| State | When | How |
-|---|---|---|
-| **Done** | Task is terminal — no review needed (e.g. docs, research, config) | `kanban_complete(summary=..., metadata=...)` |
-| **Review** | Implementation finished — needs human or reviewer profile eyes | `kanban_request_review(summary=...)` |
-| **Blocked** | External decision needed | `kanban_comment(body=...)` + `kanban_block(reason=...)` |
-| **Changes requested** | Reviewer found issues | `kanban_request_changes(reason=...)` — re-queues implementer |
+| State                 | When                                                              | How                                                          |
+| --------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------ |
+| **Done**              | Task is terminal — no review needed (e.g. docs, research, config) | `kanban_complete(summary=..., metadata=...)`                 |
+| **Review**            | Implementation finished — needs human or reviewer profile eyes    | `kanban_request_review(summary=...)`                         |
+| **Blocked**           | External decision needed                                          | `kanban_comment(body=...)` + `kanban_block(reason=...)`      |
+| **Changes requested** | Reviewer found issues                                             | `kanban_request_changes(reason=...)` — re-queues implementer |
 
 ### 1.3 Decomposition
 
 Orchestrator agents decompose work into Kanban cards. Rules:
+
 - Do NOT execute work yourself — route it.
 - One card per independent workstream. Do NOT bundle unrelated work.
 - Link dependencies via `parents=[...]` on `kanban_create`. Do not use prose.
@@ -62,11 +63,13 @@ Exceptions (ask the user): throwaway prototypes, generated code, config files.
 Branch naming: `OP-XXX-(feature|bug|task)-description` (validated by CI).
 
 Commit messages: Conventional Commits format —
+
 ```
 type(scope): OP-XXX short description
 
 Longer explanation if needed.
 ```
+
 Types: `feat`, `fix`, `refactor`, `docs`, `test`, `ci`, `chore`, `perf`.
 
 ### 2.2 Pre-commit verification
@@ -124,22 +127,22 @@ Before `git commit` or `git push`, run the verification pipeline:
 
 ### 4.1 Within Kanban
 
-| Channel | Content |
-|---|---|
-| `kanban_complete(summary=...)` | Human-readable 1-3 sentence handoff |
+| Channel                         | Content                                                 |
+| ------------------------------- | ------------------------------------------------------- |
+| `kanban_complete(summary=...)`  | Human-readable 1-3 sentence handoff                     |
 | `kanban_complete(metadata=...)` | Structured facts (changed files, test counts, findings) |
-| `kanban_comment(body=...)` | Durable context, reasoning, long-form notes |
-| `kanban_block(reason=...)` | One-sentence blocker for human attention |
+| `kanban_comment(body=...)`      | Durable context, reasoning, long-form notes             |
+| `kanban_block(reason=...)`      | One-sentence blocker for human attention                |
 
 ### 4.2 Escalation
 
-| Situation | Action |
-|---|---|
-| Missing credential / capability wall | `kanban_block(kind="capability", reason=...)` |
-| Need a human decision | `kanban_block(kind="needs_input", reason=...)` + `kanban_comment` with full context |
-| Waiting on another task | `kanban_block(kind="dependency", reason=...)` — auto-resumes when parent completes |
-| Flaky / transient failure | `kanban_block(kind="transient", reason=...)` |
-| Repeated block/unblock cycle | Task auto-escalates to triage — no manual action needed |
+| Situation                            | Action                                                                              |
+| ------------------------------------ | ----------------------------------------------------------------------------------- |
+| Missing credential / capability wall | `kanban_block(kind="capability", reason=...)`                                       |
+| Need a human decision                | `kanban_block(kind="needs_input", reason=...)` + `kanban_comment` with full context |
+| Waiting on another task              | `kanban_block(kind="dependency", reason=...)` — auto-resumes when parent completes  |
+| Flaky / transient failure            | `kanban_block(kind="transient", reason=...)`                                        |
+| Repeated block/unblock cycle         | Task auto-escalates to triage — no manual action needed                             |
 
 ### 4.3 External notifications
 
@@ -187,5 +190,5 @@ Before any task is complete:
 
 ---
 
-*This file is the entry point. If a document linked here is missing or stale,
-the agent should update it or flag it via `kanban_comment`.*
+_This file is the entry point. If a document linked here is missing or stale,
+the agent should update it or flag it via `kanban_comment`._
