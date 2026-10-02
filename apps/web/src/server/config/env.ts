@@ -279,6 +279,23 @@ const configSchema = rawSchema
     });
   });
 
+/**
+ * Resolve the current application environment without requiring the full
+ * configuration to be valid.
+ *
+ * The HTTP pipeline must not turn a request into a 500 merely because the
+ * process env is incomplete (e.g. in unit tests); this reads `APP_ENV`
+ * directly and degrades to `development` for a missing or unknown value.
+ *
+ * @returns The app env name, never throwing.
+ */
+export function getAppEnv(): AppEnv {
+  const raw = process.env.APP_ENV;
+  return raw !== undefined && (APP_ENVS as readonly string[]).includes(raw)
+    ? (raw as AppEnv)
+    : "development";
+}
+
 /** Recursively freeze an object graph so callers cannot mutate configuration. */
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === "object") {
