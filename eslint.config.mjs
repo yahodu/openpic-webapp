@@ -102,6 +102,25 @@ export default tseslint.config(
     },
   },
   {
+    // Domain and service code must read time through the injected `Clock`
+    // port (OP-72), never the ambient wall clock — that is what makes those
+    // layers deterministic in tests.
+    files: ["apps/web/src/server/domain/**", "apps/web/src/server/services/**"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "NewExpression[callee.name='Date']",
+          message: "Use the Clock port, not `new Date()`.",
+        },
+        {
+          selector: "MemberExpression[object.name='Date'][property.name='now']",
+          message: "Use the Clock port, not `Date.now()`.",
+        },
+      ],
+    },
+  },
+  {
     // Tests, mocks, e2e and config files: process.env is legitimate, and
     // type-aware strictness is relaxed where the harness needs it.
     files: [
@@ -117,6 +136,9 @@ export default tseslint.config(
     ],
     rules: {
       "no-restricted-properties": "off",
+      // Spec authors annotate complex array types as `Array<T>` / `readonly T[]`
+      // for readability; the stylistic preference must not fail the build.
+      "@typescript-eslint/array-type": "off",
     },
   },
   prettier

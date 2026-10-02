@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-
 import { getConfig, type AppConfig } from "../config/env";
+import { REQUEST_ID_HEADER, getRequestContext, newRequestId } from "../runtime/request-context";
 import { redactEntry } from "./redaction";
 import { serializeError } from "./serialize-error";
 import { betterStackTransport } from "./transports/better-stack";
@@ -209,23 +208,21 @@ function buildProcessLoggerSafely(): Logger {
   }
 }
 
-/** Generate a request id when the inbound request did not carry one. */
-function generateRequestId(): string {
-  return randomUUID();
-}
-
 /**
  * Scope the process logger to one inbound request.
  *
- * Binds `requestId` (from the `x-request-id` header, or generated),
- * `route`, and the optional tenant/user ids.
+ * Binds the correlation `requestId`: inside a request scope (OP-72) it is the
+ * context's resolved id, so every line agrees with the echoed `x-request-id`;
+ * outside a request scope it falls back to the inbound header (or a freshly
+ * minted `req_` id) for direct callers such as tests and scripts.
  *
  * @param request - The inbound request.
  * @param options - Route and optional tenant/user bindings.
  * @returns A child logger for the request.
  */
 export function requestLogger(request: Request, options: RequestLoggerOptions): Logger {
-  const requestId = request.headers.get("x-request-id") ?? generateRequestId();
+  const context = getRequestContext();
+  const requestId = context?.requestId ?? request.headers.get(REQUEST_ID_HEADER) ?? newRequestId();
 
   return getLogger().child({
     requestId,
