@@ -16,6 +16,9 @@ export default tseslint.config(
       "**/next-env.d.ts",
       "**/.husky/**",
       "eslint.config.mjs",
+      // Plain-JS e2e server launcher: run by Node directly, outside the
+      // TypeScript project, so it is not covered by the type-aware parser.
+      "apps/web/e2e/*.mjs",
     ],
   },
   js.configs.recommended,

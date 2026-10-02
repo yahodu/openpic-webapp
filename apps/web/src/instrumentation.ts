@@ -4,6 +4,11 @@
  * in any other environment (development, test, production).
  */
 export async function register(): Promise<void> {
+  // Disposability (OP-75 §5): close the pooled Mongo client on SIGTERM/SIGINT
+  // for a self-hosted process. Next.js calls `register()` once per server boot.
+  const { registerMongoShutdownHook } = await import("./server/db/lifecycle");
+  registerMongoShutdownHook();
+
   if (process.env.APP_ENV !== "e2e") {
     return;
   }
