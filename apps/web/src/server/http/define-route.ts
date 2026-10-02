@@ -10,10 +10,8 @@ import {
   type RequestContext,
 } from "@/server/runtime/request-context";
 
-import { AppError, toErrorEnvelope } from "./app-error";
-import { appError } from "./errors";
 import { serializeResponse } from "./serialize-response";
-import { toFieldErrors } from "./validation";
+import { jsonResponse, parseJsonBody, errorResponse } from "./respond";
 
 /**
  * `defineRoute` — the shared HTTP pipeline (architecture §3).
@@ -29,6 +27,9 @@ import { toFieldErrors } from "./validation";
  * result is serialized through the response schema before it reaches the wire.
  * Every failure is projected onto the shared `ApiError` envelope, and every JSON
  * response carries the default security headers (contract §0.12).
+ *
+ * The wire-facing details (security headers, JSON response builders and the body
+ * validator) live in `./respond`.
  */
 
 /** The context handed to the pluggable stages (pre-validation). */
@@ -90,15 +91,6 @@ export type RouteHandler = (request: Request) => Promise<Response>;
 export function created<TResponse>(body: TResponse, location: string): RouteResult<TResponse> {
   return { status: 201, body, headers: { location } };
 }
-
-const SECURITY_HEADERS: Readonly<Record<string, string>> = {
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "no-store",
-  "content-security-policy": "default-src 'none'",
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
-  "strict-transport-security": "max-age=63072000; includeSubDomains",
-};
 
 /**
  * Declare an HTTP route on the shared pipeline.
@@ -164,80 +156,6 @@ export function defineRoute<TBody = unknown, TResponse = unknown>(
 }
 
 /**
- * Read and validate the request body against `schema`.
- *
- * Enforces `application/json` (415), well-formed JSON (400) and the schema
- * (422 with field details), in that order, before the handler ever runs.
- *
- * @param request - The inbound request.
- * @param schema - The declared body schema.
- * @returns The schema-parsed body.
- * @throws {AppError} `unsupported_media_type`, `malformed_json` or `validation_failed`.
- */
-async function parseJsonBody(request: Request, schema: z.ZodType): Promise<unknown> {
-  const contentType = request.headers.get("content-type") ?? "";
-  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-  if (mediaType !== "application/json") {
-    throw appError("unsupported_media_type");
-  }
-
-  const raw = await request.text();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw appError("malformed_json");
-  }
-
-  const result = schema.safeParse(parsed);
-  if (!result.success) {
-    throw new AppError("validation_failed", {
-      details: { fields: toFieldErrors(result.error) },
-    });
-  }
-
-  return result.data;
-}
-
-/** Project any thrown value onto a JSON error response and log it at the right level. */
-function errorResponse(
-  error: unknown,
-  requestId: string,
-  request: Request,
-  logger: Logger
-): Response {
-  const status = error instanceof AppError ? error.status : 500;
-
-  if (status >= 500) {
-    logger.error("request failed", { event: "http.error", status, err: error });
-  } else {
-    logger.info("request rejected", { event: "http.request.rejected", status });
-  }
-
-  const envelope = toErrorEnvelope(error, requestId);
-  const headers: Record<string, string> = { [REQUEST_ID_HEADER]: requestId };
-
-  if (status === 401) {
-    headers["www-authenticate"] = "Bearer";
-    return jsonResponse(
-      {
-        error: {
-          ...envelope.error,
-          details: {
-            ...(envelope.error.details ?? {}),
-            loginUrl: `${new URL(request.url).origin}/login`,
-          },
-        },
-      },
-      status,
-      headers
-    );
-  }
-
-  return jsonResponse(envelope, status, headers);
-}
-
-/**
  * Resolve the effective environment for response serialization.
  *
  * Prefers the explicit option, then the process environment (read through the
@@ -245,16 +163,4 @@ function errorResponse(
  */
 function resolveAppEnv(explicit: string | undefined): string {
   return explicit ?? getAppEnv();
-}
-
-/** Build a JSON response with the default security headers plus any extras. */
-function jsonResponse(
-  body: unknown,
-  status: number,
-  extraHeaders: Record<string, string> = {}
-): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...SECURITY_HEADERS, ...extraHeaders },
-  });
 }
