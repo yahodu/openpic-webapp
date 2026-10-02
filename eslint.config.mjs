@@ -9,6 +9,7 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/dist/**",
       "**/.next/**",
+      "**/.worktrees/**",
       "**/coverage/**",
       "**/playwright-report/**",
       "**/test-results/**",
@@ -139,6 +140,14 @@ export default tseslint.config(
       // Spec authors annotate complex array types as `Array<T>` / `readonly T[]`
       // for readability; the stylistic preference must not fail the build.
       "@typescript-eslint/array-type": "off",
+      // `Response.json()` / Playwright's `response.json()` are typed `any`, so
+      // asserting on parsed envelopes trips the unsafe-* rules. That is inherent
+      // to testing an HTTP response, not a defect in the spec.
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
     },
   },
   prettier
