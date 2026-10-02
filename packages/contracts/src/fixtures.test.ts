@@ -28,8 +28,19 @@ describe("fixture builders", () => {
     expect(apiErrorSchema.safeParse(buildApiError()).success).toBe(true);
   });
 
+  // Builders follow CONVENTIONS §3: `schema.parse({ ...defaults, ...overrides })`
+  // — a *shallow* spread, so an override of a nested object must be complete.
   it("buildApiError honours a valid override", () => {
-    expect(buildApiError({ error: { code: "forbidden" } }).error.code).toBe("forbidden");
+    const overridden = buildApiError({
+      error: {
+        code: "forbidden",
+        message: "not allowed",
+        requestId: "req_1",
+        retryable: false,
+      },
+    });
+
+    expect(overridden.error.code).toBe("forbidden");
   });
 
   it("buildPage returns a page that satisfies its schema", () => {

@@ -170,7 +170,7 @@ describe("maskedContactSchema", () => {
   });
 
   it.each([
-    "+919876543210", // an unmasked phone number
+    "+919812345678", // an unmasked phone number
     "john@example.com", // an unmasked email address
     "•••• 3210", // whitespace is not part of a masked contact
     "", // an empty string is not a contact

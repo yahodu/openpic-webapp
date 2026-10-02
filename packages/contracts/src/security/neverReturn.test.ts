@@ -84,6 +84,12 @@ describe("findForbiddenFields", () => {
     expect(findForbiddenFields({ url: R2_ENDPOINT }, "default")).toEqual(["url"]);
   });
 
+  it("flags an R2 endpoint hostname embedded inside a longer string", () => {
+    const body = { note: `retrieved from ${R2_ENDPOINT} on 2026-01-01` };
+
+    expect(findForbiddenFields(body, "default")).toEqual(["note"]);
+  });
+
   it("does not flag a value that is not an R2 endpoint", () => {
     expect(
       findForbiddenFields({ url: "https://cdn.openpic.example/openpic/photo.jpg" }, "default")
