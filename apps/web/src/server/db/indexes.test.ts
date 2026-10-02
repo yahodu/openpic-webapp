@@ -129,13 +129,10 @@ describe("index spec lint — U2 TTL indexes", () => {
     const ttlSpecs = INDEX_SPECS.filter(isTtl);
 
     for (const spec of ttlSpecs) {
-      expect(spec.keys, `TTL index '${String(spec.name)}' must key on ${EXPIRE_AT}`).toEqual([
+      expect(spec.keys, `TTL index '${spec.name}' must key on ${EXPIRE_AT}`).toEqual([
         [EXPIRE_AT, 1],
       ]);
-      expect(
-        spec.expireAfterSeconds,
-        `TTL index '${String(spec.name)}' must expire immediately`
-      ).toBe(0);
+      expect(spec.expireAfterSeconds, `TTL index '${spec.name}' must expire immediately`).toBe(0);
     }
   });
 
