@@ -59,6 +59,61 @@ export interface AppConfig {
   };
 }
 
+/**
+ * Connection-pool tunables for the Mongo client (OP-75, §1).
+ *
+ * These are deliberately *not* part of {@link AppConfig}: the validated
+ * configuration shape is a frozen contract asserted by its own specs, whereas
+ * pool sizing is an operational tuning knob with sane defaults. Every value is
+ * still read from the environment, with a positive-integer guard so a typo in a
+ * deployed value degrades to the default rather than breaking the pool.
+ */
+export interface MongoPoolConfig {
+  readonly maxPoolSize: number;
+  readonly serverSelectionTimeoutMS: number;
+  readonly connectTimeoutMS: number;
+  readonly socketTimeoutMS: number;
+}
+
+const DEFAULT_MONGO_POOL: MongoPoolConfig = {
+  maxPoolSize: 10,
+  serverSelectionTimeoutMS: 5_000,
+  connectTimeoutMS: 10_000,
+  socketTimeoutMS: 45_000,
+};
+
+/** Parse a positive integer, falling back to `fallback` for absent/invalid values. */
+function positiveInteger(value: string | undefined, fallback: number): number {
+  if (value === undefined || value === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * Read the Mongo pool tunables from the environment.
+ *
+ * @returns The pool size and timeouts, each defaulted when unset or invalid.
+ */
+export function getMongoPoolConfig(): MongoPoolConfig {
+  return {
+    maxPoolSize: positiveInteger(process.env.MONGODB_MAX_POOL_SIZE, DEFAULT_MONGO_POOL.maxPoolSize),
+    serverSelectionTimeoutMS: positiveInteger(
+      process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS,
+      DEFAULT_MONGO_POOL.serverSelectionTimeoutMS
+    ),
+    connectTimeoutMS: positiveInteger(
+      process.env.MONGODB_CONNECT_TIMEOUT_MS,
+      DEFAULT_MONGO_POOL.connectTimeoutMS
+    ),
+    socketTimeoutMS: positiveInteger(
+      process.env.MONGODB_SOCKET_TIMEOUT_MS,
+      DEFAULT_MONGO_POOL.socketTimeoutMS
+    ),
+  };
+}
+
 interface ProviderSpec {
   readonly key: string;
   readonly values: readonly string[];
