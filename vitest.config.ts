@@ -1,6 +1,19 @@
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "vitest/config";
 
+/**
+ * Mirror the `@/* -> apps/web/src/*` path alias from `apps/web/tsconfig.json`
+ * so Vitest can import route handlers / server modules by the same specifier
+ * Next.js uses. Only the `@/` prefix is rewritten, so workspace packages such
+ * as `@openpic/contracts` are left alone.
+ */
+const webSrc = fileURLToPath(new URL("./apps/web/src/", import.meta.url));
+
 export default defineConfig({
+  resolve: {
+    alias: [{ find: /^@\//, replacement: webSrc }],
+  },
   test: {
     projects: [
       {

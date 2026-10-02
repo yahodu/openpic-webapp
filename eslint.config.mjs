@@ -51,9 +51,10 @@ export default tseslint.config(
     },
   },
   {
-    // The logger stdout adapter is the single console exemption.
+    // The logger stdout adapter is the single console exemption, and the
+    // logging internals are allowed to import each other.
     files: ["apps/web/src/server/logging/**"],
-    rules: { "no-console": "off" },
+    rules: { "no-console": "off", "no-restricted-imports": "off" },
   },
   {
     // Config is the single process.env exemption.
@@ -61,7 +62,9 @@ export default tseslint.config(
     rules: { "no-restricted-properties": "off" },
   },
   {
-    // Import boundary: route handlers must not reach into adapters directly.
+    // Import boundary: route handlers must not reach into adapters directly,
+    // and nobody outside the logging folder may import its internals — only
+    // the `Logger` port from `@/server/logging`.
     files: ["apps/web/src/app/**"],
     rules: {
       "no-restricted-imports": [
@@ -71,6 +74,27 @@ export default tseslint.config(
             {
               group: ["**/server/adapters/**", "@/server/adapters/*"],
               message: "Route handlers must depend on services, not adapters.",
+            },
+            {
+              group: ["**/server/logging/**", "@/server/logging/*"],
+              message: "Import only the Logger port from @/server/logging.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Same logging boundary for the rest of the server tree.
+    files: ["apps/web/src/server/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/server/logging/**", "@/server/logging/*"],
+              message: "Import only the Logger port from @/server/logging.",
             },
           ],
         },
