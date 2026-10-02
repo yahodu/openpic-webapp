@@ -61,9 +61,7 @@ describe("Better Stack ingest (MSW)", () => {
   });
 
   it("swallows an ingest 500, reports once to stderr, and keeps serving other transports", async () => {
-    server.use(
-      http.post(INGEST_URL, () => new HttpResponse(null, { status: 500 }))
-    );
+    server.use(http.post(INGEST_URL, () => new HttpResponse(null, { status: 500 })));
 
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const sink = memoryTransport();

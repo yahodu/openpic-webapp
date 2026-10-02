@@ -46,9 +46,7 @@ describe("GET /api/v1/health — request context and id echo", () => {
     const sink = installMemoryLogger();
     const inbound = "0123456789abcdef";
 
-    const response = await GET(
-      new Request(HEALTH_URL, { headers: { "x-request-id": inbound } })
-    );
+    const response = await GET(new Request(HEALTH_URL, { headers: { "x-request-id": inbound } }));
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-request-id")).toBe(inbound);

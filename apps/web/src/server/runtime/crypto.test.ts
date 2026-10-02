@@ -36,9 +36,7 @@ describe("sha256Hex", () => {
 
   it("U4: hashes UTF-8 bytes, not UTF-16 code units", () => {
     // 'é' is 2 UTF-8 bytes (0xc3 0xa9); a code-unit hash would differ.
-    expect(sha256Hex("é")).toBe(
-      "4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c"
-    );
+    expect(sha256Hex("é")).toBe("4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c");
     // Astral-plane characters (a surrogate pair) must hash the same 4 bytes.
     expect(sha256Hex("🚀")).toBe(
       "ebbc0b2870eb323f2b6cffa5c493ceef81ae7eb36afc73d4e0367301631daec5"

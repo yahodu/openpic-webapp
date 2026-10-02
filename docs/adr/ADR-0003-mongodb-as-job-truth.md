@@ -13,7 +13,7 @@ state is needed.
 
 **MongoDB is the authoritative store for job truth.** Every job is a document
 holding identity, tenant, status, attempts, lease and timestamps. The queue
-broker is a *delivery* mechanism only: it may be swapped, drained or lost without
+broker is a _delivery_ mechanism only: it may be swapped, drained or lost without
 losing intent or outcome. State transitions are persisted in Mongo inside a
 transaction — hence integration tests run `mongodb-memory-server` as a **replica
 set** (conventions §2) — and are idempotent, keyed on the job's natural

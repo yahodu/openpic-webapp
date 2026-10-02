@@ -59,14 +59,11 @@ describe("compositeTransport", () => {
 
   it("resolves without throwing when every transport fails, reporting each once", async () => {
     const reports: unknown[] = [];
-    const composite = compositeTransport(
-      [throwing(new Error("a")), rejecting(new Error("b"))],
-      {
-        reportError: (error) => {
-          reports.push(error);
-        },
-      }
-    );
+    const composite = compositeTransport([throwing(new Error("a")), rejecting(new Error("b"))], {
+      reportError: (error) => {
+        reports.push(error);
+      },
+    });
 
     await expect(composite.write(makeLogEntry())).resolves.toBeUndefined();
     expect(reports).toHaveLength(2);
