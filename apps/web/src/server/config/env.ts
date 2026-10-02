@@ -50,6 +50,8 @@ export interface AppConfig {
     readonly level: LogLevel;
     readonly transports: readonly string[];
     readonly pretty: boolean;
+    readonly betterStackSourceToken: string | undefined;
+    readonly betterStackIngestHost: string | undefined;
   };
   readonly media: {
     readonly signingSecretCurrent: string;
@@ -95,6 +97,8 @@ interface RawEnv {
   readonly LOG_LEVEL: string | undefined;
   readonly LOG_TRANSPORTS: string | undefined;
   readonly LOG_PRETTY: string | undefined;
+  readonly BETTERSTACK_SOURCE_TOKEN: string | undefined;
+  readonly BETTERSTACK_INGEST_HOST: string | undefined;
   readonly RATE_LIMIT_PROVIDER: string | undefined;
   readonly STORAGE_PROVIDER: string | undefined;
   readonly QUEUE_PROVIDER: string | undefined;
@@ -130,6 +134,8 @@ const rawSchema = z.object({
   LOG_LEVEL: optionalString,
   LOG_TRANSPORTS: optionalString,
   LOG_PRETTY: optionalString,
+  BETTERSTACK_SOURCE_TOKEN: optionalString,
+  BETTERSTACK_INGEST_HOST: optionalString,
   RATE_LIMIT_PROVIDER: optionalString,
   STORAGE_PROVIDER: optionalString,
   QUEUE_PROVIDER: optionalString,
@@ -261,6 +267,8 @@ const configSchema = rawSchema
         level: (raw.LOG_LEVEL ?? "info") as LogLevel,
         transports: raw.LOG_TRANSPORTS === undefined ? ["stdout"] : splitList(raw.LOG_TRANSPORTS),
         pretty: parseBoolean(raw.LOG_PRETTY, false),
+        betterStackSourceToken: raw.BETTERSTACK_SOURCE_TOKEN,
+        betterStackIngestHost: raw.BETTERSTACK_INGEST_HOST,
       },
       media: {
         signingSecretCurrent: raw.MEDIA_SIGNING_SECRET_CURRENT,
