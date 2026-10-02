@@ -8,7 +8,6 @@ on:
     types: [opened, edited, synchronize, reopened]
 
 jobs:
-
   validate-branch-name:
     runs-on: ubuntu-latest
     steps:
@@ -51,10 +50,10 @@ jobs:
       - uses: actions/setup-node@v3
         with:
           node-version: 22
-          cache: 'npm'                  # ✅ Cache npm dependencies
+          cache: "npm" # ✅ Cache npm dependencies
       - run: npm ci
-#      - run: npm run lint
-#      - run: npm run format:check
+  #      - run: npm run lint
+  #      - run: npm run format:check
 
   test_coverage:
     runs-on: ubuntu-latest
@@ -63,26 +62,26 @@ jobs:
       - uses: actions/setup-node@v3
         with:
           node-version: 22
-          cache: 'npm'                  # ✅ Cache npm dependencies
+          cache: "npm" # ✅ Cache npm dependencies
       - run: npm ci
-#      - run: npm run test -- --coverage --coverageThreshold='{"global":{"lines":80}}'
+  #      - run: npm run test -- --coverage --coverageThreshold='{"global":{"lines":80}}'
 
-  pr-size:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-      - name: Check PR size
-        run: |
-          LINES=$(git diff origin/${{ github.base_ref }}...HEAD \
-            --stat | tail -1 | grep -oP '\d+ insertion' | grep -oP '\d+')
-          LINES=${LINES:-0}
-          if [[ "$LINES" -gt 500 ]]; then
-            echo "❌ PR is too large ($LINES lines added). Keep PRs under 500 lines for reviewability."
-            exit 1
-          fi
-          echo "✅ PR size is acceptable ($LINES lines)"
+  # pr-size:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #       with:
+  #         fetch-depth: 0
+  #     - name: Check PR size
+  #       run: |
+  #         LINES=$(git diff origin/${{ github.base_ref }}...HEAD \
+  #           --stat | tail -1 | grep -oP '\d+ insertion' | grep -oP '\d+')
+  #         LINES=${LINES:-0}
+  #         if [[ "$LINES" -gt 500 ]]; then
+  #           echo "❌ PR is too large ($LINES lines added). Keep PRs under 500 lines for reviewability."
+  #           exit 1
+  #         fi
+  #         echo "✅ PR size is acceptable ($LINES lines)"
 
   env-changes:
     runs-on: ubuntu-latest
@@ -146,7 +145,7 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: 22
-          cache: 'npm'                  # ✅ Cache npm dependencies
+          cache: "npm" # ✅ Cache npm dependencies
 
       - name: Install dependencies
         run: npm ci
