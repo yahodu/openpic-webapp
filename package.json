@@ -16,6 +16,7 @@
     "test:int": "vitest run --project integration",
     "test:e2e": "playwright test -c apps/web/playwright.config.ts",
     "test:coverage": "vitest run --project unit --project integration --coverage",
+    "db:ensure-indexes": "node --experimental-strip-types --import ./scripts/db/register-extensionless.mjs scripts/db/ensure-indexes.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p packages/contracts/tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
