@@ -6,6 +6,6 @@
     "allowJs": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["*.ts", "*.mjs", "*.js", "scripts/**/*.ts"],
+  "include": ["*.ts", "*.mjs", "*.js", "scripts/**/*.ts", "scripts/**/*.mjs"],
   "exclude": ["node_modules", "apps", "packages"]
 }

@@ -1,5 +1,5 @@
 /**
- * Collection-name registry (OP-75, §3).
+ * Collection-name registry (OP-75, §3; OP-76, schema §21).
  *
  * Every collection name the application uses is declared here so a rename or a
  * typo is caught at the type level rather than silently creating a new
@@ -14,6 +14,16 @@ export const COLLECTIONS = {
   uploads: "uploads",
   billingAccounts: "billing_accounts",
   auditLogs: "audit_logs",
+  notifications: "notifications",
+  events: "events",
+  eventOrganizers: "event_organizers",
+  eventImages: "event_images",
+  subscriptions: "subscriptions",
+  dispatches: "notification_dispatches",
+  accessLinks: "access_links",
+  mediaAssets: "media_assets",
+  faceMatches: "face_matches",
+  providerWebhookEvents: "provider_webhook_events",
 } as const;
 
 /** The name of any registered collection. */

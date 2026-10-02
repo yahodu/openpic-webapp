@@ -351,6 +351,21 @@ export function getAppEnv(): AppEnv {
     : "development";
 }
 
+/**
+ * Whether Atlas vector search is enabled for this deployment (OP-76, §3).
+ *
+ * Atlas Search indexes are an opt-in, deployment-specific capability: the
+ * bootstrap script reads this switch and skips vector-index creation unless it
+ * is explicitly `true`. Like {@link getAppEnv} it is deliberately outside the
+ * frozen {@link AppConfig} shape (which is asserted by its own specs) and reads
+ * `process.env` directly, never throwing.
+ *
+ * @returns True only when `ATLAS_SEARCH_ENABLED` is exactly `"true"`.
+ */
+export function getAtlasSearchEnabled(): boolean {
+  return parseBoolean(process.env.ATLAS_SEARCH_ENABLED, false);
+}
+
 /** Recursively freeze an object graph so callers cannot mutate configuration. */
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === "object") {
