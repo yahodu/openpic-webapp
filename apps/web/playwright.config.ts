@@ -16,7 +16,9 @@ export default defineConfig({
     extraHTTPHeaders: { accept: "application/json" },
   },
   webServer: {
-    command: "node .next/standalone/apps/web/server.js",
+    // The launcher boots a MongoDB replica set for the readiness probe and then
+    // starts the standalone server (see `e2e/start-server.mjs`).
+    command: "node e2e/start-server.mjs",
     url: "http://127.0.0.1:3000/api/v1/health",
     env: { APP_ENV: "e2e", PORT: "3000", HOSTNAME: "127.0.0.1" },
     reuseExistingServer: !process.env.CI,
