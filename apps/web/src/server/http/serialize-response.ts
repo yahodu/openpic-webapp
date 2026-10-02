@@ -32,13 +32,18 @@ export interface SerializeResponseOptions<T> {
  * The matching case returns the schema-parsed body. A mismatch outside
  * production throws an error naming the route; in production it is logged at
  * error (event `http.response.serialization_failed`) and the body is returned
- * parsed without the unknown fields.
+ * parsed without the unknown fields. When production cannot even loosely parse
+ * the body (a wrong type, not merely an extra field) it throws, so the pipeline
+ * maps it onto the generic `500 internal_error` envelope instead of serving an
+ * empty 2xx.
  *
  * @param options - Schema, data, route, logger and environment.
  * @returns The schema-projected body.
- * @throws {Error} when the body does not match and `env` is not `production`.
+ * @throws {Error} when the body does not match and `env` is not `production`,
+ *   or when in production the body cannot be parsed even without the unknown
+ *   fields.
  */
-export function serializeResponse<T>(options: SerializeResponseOptions<T>): T | undefined {
+export function serializeResponse<T>(options: SerializeResponseOptions<T>): T {
   // A plain `z.object` silently strips unknown keys, which would hide exactly the
   // leak this control exists to catch, so object schemas are validated strictly.
   const validator: z.ZodType =
@@ -63,9 +68,13 @@ export function serializeResponse<T>(options: SerializeResponseOptions<T>): T | 
 
   // Strip unknown fields with a non-strict parse. If the body cannot be parsed
   // at all (a wrong type, not merely an extra field) nothing safe can be
-  // returned, so the body is dropped rather than leaking raw handler output.
+  // returned: throwing lets the pipeline project it onto the generic 500
+  // envelope rather than serving a 2xx with an empty body.
   const looseResult = options.schema.safeParse(options.data);
-  return looseResult.success ? looseResult.data : undefined;
+  if (!looseResult.success) {
+    throw new Error(`Response for ${options.route} could not be serialized`);
+  }
+  return looseResult.data;
 }
 
 /** Render the Zod issues for a developer-facing thrown message. */
