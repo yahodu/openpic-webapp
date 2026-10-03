@@ -140,6 +140,29 @@ function assertUpdateScope(
   return base;
 }
 
+/**
+ * Scope a write: merge `tenantId` into its filter and refuse a foreign tenant in
+ * either the filter or the update document. The three update methods share this
+ * two-step transform, so it lives here once.
+ *
+ * @param scope - The tenant scope, or undefined for a platform-scope handle.
+ * @param collection - The collection name (log-safe).
+ * @param filter - The caller's filter.
+ * @param update - The caller's update document.
+ * @returns The scoped filter and the validated update document.
+ */
+function scopeWrite(
+  scope: TenantScope | undefined,
+  collection: string,
+  filter: unknown,
+  update: unknown
+): { filter: Document; update: Document } {
+  return {
+    filter: scopeFilter(scope, collection, filter),
+    update: assertUpdateScope(scope?.tenantId, collection, update),
+  };
+}
+
 /** Stamp `tenantId` onto an upsert's `$setOnInsert` so a new row is born scoped. */
 function stampUpsert(scope: TenantScope | undefined, update: Document, options: unknown): Document {
   if (scope === undefined || !isRecord(options) || options.upsert !== true) {
@@ -188,23 +211,28 @@ export function collectionHandle(db: Db, name: string, scope?: TenantScope): Rep
       return collection.findOne(scopeFilter(scope, name, filter), options);
     },
     async findOneAndUpdate(filter, update, options) {
-      const merged = scopeFilter(scope, name, filter);
-      const scoped = assertUpdateScope(scope?.tenantId, name, update);
+      const scoped = scopeWrite(scope, name, filter, update);
       return collection.findOneAndUpdate(
-        merged,
-        stampUpsert(scope, scoped, options),
+        scoped.filter,
+        stampUpsert(scope, scoped.update, options),
         options ?? {}
       );
     },
     async updateOne(filter, update, options) {
-      const merged = scopeFilter(scope, name, filter);
-      const scoped = assertUpdateScope(scope?.tenantId, name, update);
-      return collection.updateOne(merged, stampUpsert(scope, scoped, options), options ?? {});
+      const scoped = scopeWrite(scope, name, filter, update);
+      return collection.updateOne(
+        scoped.filter,
+        stampUpsert(scope, scoped.update, options),
+        options ?? {}
+      );
     },
     async updateMany(filter, update, options) {
-      const merged = scopeFilter(scope, name, filter);
-      const scoped = assertUpdateScope(scope?.tenantId, name, update);
-      return collection.updateMany(merged, stampUpsert(scope, scoped, options), options);
+      const scoped = scopeWrite(scope, name, filter, update);
+      return collection.updateMany(
+        scoped.filter,
+        stampUpsert(scope, scoped.update, options),
+        options
+      );
     },
     async deleteOne(filter, options) {
       return collection.deleteOne(scopeFilter(scope, name, filter), options);
