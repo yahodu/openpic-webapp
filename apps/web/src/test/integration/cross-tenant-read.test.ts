@@ -188,4 +188,84 @@ describe("crossTenantReads.findAttendeeProfilesBySubjectUser", () => {
       expect(itemsOf(farPage)).toEqual([]);
     });
   });
+
+  it("I2: with no page argument returns every matching profile (no implicit limit)", async () => {
+    await withTestDb(async (test) => {
+      const profiles = test.db.collection(PROFILES_COLLECTION);
+      const mine = Array.from({ length: 30 }, (_value, index) => ({
+        tenantId: `tenant-${String((index % 3) + 1)}`,
+        eventId: `event-${String(index)}`,
+        subject: { kind: "user", userId: "user-1" },
+        updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      }));
+      const theirs = Array.from({ length: 3 }, (_value, index) => ({
+        tenantId: `tenant-${String((index % 3) + 1)}`,
+        eventId: `other-${String(index)}`,
+        subject: { kind: "user", userId: "user-2" },
+        updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+      }));
+      await profiles.insertMany([...mine, ...theirs]);
+
+      const page = await crossTenantReads.findAttendeeProfilesBySubjectUser(
+        "user-1",
+        undefined,
+        test.db
+      );
+
+      expect(itemsOf(page)).toHaveLength(30);
+      expect(itemsOf(page).every((item) => item.subject?.userId === "user-1")).toBe(true);
+    });
+  });
+
+  it("I2: orders by ascending _id so paging is stable and non-overlapping", async () => {
+    await withTestDb(async (test) => {
+      const ids = await seedProfiles(test);
+      // user-1's rows were inserted at indices 0, 2 and 3, so ascending _id order
+      // is exactly the insertion order of those three.
+      const ordered = [ids.user1Tenant1, ids.user1Tenant2, ids.user1Tenant3];
+
+      const all = await crossTenantReads.findAttendeeProfilesBySubjectUser(
+        "user-1",
+        { limit: 100 },
+        test.db
+      );
+      expect(itemsOf(all).map((item) => item.id)).toEqual(ordered);
+
+      const first = await crossTenantReads.findAttendeeProfilesBySubjectUser(
+        "user-1",
+        { limit: 1, offset: 0 },
+        test.db
+      );
+      const second = await crossTenantReads.findAttendeeProfilesBySubjectUser(
+        "user-1",
+        { limit: 1, offset: 1 },
+        test.db
+      );
+      const third = await crossTenantReads.findAttendeeProfilesBySubjectUser(
+        "user-1",
+        { limit: 1, offset: 2 },
+        test.db
+      );
+
+      const flat = [...itemsOf(first), ...itemsOf(second), ...itemsOf(third)].map(
+        (item) => item.id
+      );
+      expect(flat).toEqual(ordered);
+      expect(new Set(flat).size).toBe(3);
+    });
+  });
+
+  it("I2: an offset without a limit skips rows and returns the remainder", async () => {
+    await withTestDb(async (test) => {
+      const ids = await seedProfiles(test);
+
+      const page = await crossTenantReads.findAttendeeProfilesBySubjectUser(
+        "user-1",
+        { offset: 1 },
+        test.db
+      );
+
+      expect(itemsOf(page).map((item) => item.id)).toEqual([ids.user1Tenant2, ids.user1Tenant3]);
+    });
+  });
 });
