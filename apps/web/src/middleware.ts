@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import type { ApiErrorCode } from "@openpic/contracts";
+import type { ApiErrorCode, ApiErrorEnvelope } from "@openpic/contracts";
 
 import { getConfig } from "@/server/config/env";
 import { logEdgeSecurityWarning } from "@/server/logging/edge";
@@ -48,16 +48,6 @@ const DENIALS: Readonly<
     message: "Internal routes are not reachable from a browser.",
   },
 };
-
-/** The shared error envelope shape, inlined so the edge bundle stays minimal. */
-interface EdgeErrorEnvelope {
-  readonly error: {
-    readonly code: ApiErrorCode;
-    readonly message: string;
-    readonly requestId: string;
-    readonly retryable: false;
-  };
-}
 
 /** Resolve the correlation id: echo a valid inbound id, else mint one. */
 function resolveRequestId(inbound: string | null): string {
@@ -125,7 +115,7 @@ export function middleware(request: NextRequest): NextResponse | Promise<NextRes
   });
 
   const denial = DENIALS[decision.reason];
-  const body: EdgeErrorEnvelope = {
+  const body: ApiErrorEnvelope = {
     error: {
       code: denial.code,
       message: denial.message,
