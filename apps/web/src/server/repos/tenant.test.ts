@@ -605,6 +605,7 @@ describe("tenantRepo", () => {
       await expect(
         repo.collection("events").updateOne({ eventId: "event-1" }, [{ $project: { tenantId: 0 } }])
       ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
     });
 
     it("U7: rejects a pipeline $project that excludes tenantId with false", async () => {
@@ -616,6 +617,7 @@ describe("tenantRepo", () => {
           .collection("events")
           .updateOne({ eventId: "event-1" }, [{ $project: { tenantId: false } }])
       ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
     });
 
     it("U7: rejects a mixed projection that keeps a field but excludes tenantId", async () => {
@@ -627,6 +629,7 @@ describe("tenantRepo", () => {
           .collection("events")
           .updateOne({ eventId: "event-1" }, [{ $project: { name: 1, tenantId: 0 } }])
       ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
     });
 
     it("U7: rejects a pipeline $project that overwrites tenantId with an expression", async () => {
@@ -638,6 +641,7 @@ describe("tenantRepo", () => {
           .collection("events")
           .updateOne({ eventId: "event-1" }, [{ $project: { tenantId: "$name" } }])
       ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
     });
 
     it("U7: rejects a $project stage that drops tenantId even when a later stage also runs", async () => {
@@ -652,6 +656,7 @@ describe("tenantRepo", () => {
             { $project: { name: 1 } },
           ])
       ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
     });
   });
 
