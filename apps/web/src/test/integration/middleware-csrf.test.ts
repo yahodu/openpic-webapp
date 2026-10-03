@@ -6,12 +6,12 @@ import { apiErrorSchema } from "@openpic/contracts";
 import { makeEnv, toProcessEnv } from "@/test/factories/env";
 
 /**
- * I1 — the edge middleware contract (OP-78).
+ * I1 — the edge middleware contract (OP-78, plus the OP-78 reviewer follow-ups).
  *
  * `src/middleware.ts` is invoked here the way Next.js invokes it: with a
- * `NextRequest`, producing either a `NextResponse.next()` (the request
- * continues — observable as the `x-middleware-next: 1` continuation header) or
- * a security `Response` that stops the request.
+ * `NextRequest`. An allowed request produces a continuation response (status
+ * `200`, empty body, no JSON envelope); a denied request produces a security
+ * `Response` that stops the request.
  *
  * The middleware resolves `ALLOWED_ORIGINS` from the validated configuration, so
  * each run installs a fresh, complete environment before importing the module
@@ -19,13 +19,22 @@ import { makeEnv, toProcessEnv } from "@/test/factories/env";
  *
  * Contract:
  *   - A denied request answers `403` with the shared `{ error }` envelope whose
- *     code is `csrf_failed`, echoing the inbound `x-request-id`.
- *   - An allowed request continues (`x-middleware-next: 1`).
+ *     code is `csrf_failed` (or `forbidden` for an internal route), echoing the
+ *     inbound `x-request-id` when it is well-formed and minting one otherwise.
+ *   - An allowed request continues: status `200`, no JSON error body. (Asserted
+ *     on the response *shape*, not on Next.js's internal continuation header.)
+ *   - The browser session cookie is recognised under both its plain and
+ *     `__Secure-`-prefixed names (Better Auth prefixes secure cookies).
+ *   - A denial emits exactly one structured security warning; the event name
+ *     distinguishes a CSRF failure from an internal-route denial.
  */
 const APP_ORIGIN = "http://localhost:3000";
 const FOREIGN_ORIGIN = "https://evil.example";
 const REQUEST_ID = "0123456789abcdef";
 const SESSION_COOKIE = "better-auth.session_token=test-stub";
+const SECURE_SESSION_COOKIE = "__Secure-better-auth.session_token=test-stub";
+const INTERNAL_PATH = "/api/v1/internal/jobs/reap";
+const MINTED_REQUEST_ID = /^req_[0-9a-f]{32}$/;
 
 const ORIGINAL_ENV = process.env;
 
@@ -58,6 +67,47 @@ function requestFor(path: string, options: RequestOptions = {}): NextRequest {
   });
 }
 
+/** A request with exactly the given headers (no default correlation id). */
+function requestWithHeaders(
+  path: string,
+  headers: Record<string, string>,
+  method = "POST"
+): NextRequest {
+  return new NextRequest(`http://localhost${path}`, { method, headers });
+}
+
+/** Assert the request was allowed through (a continuation, not a denial). */
+function expectContinued(response: Response): void {
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type") ?? "").not.toContain("application/json");
+}
+
+/** Parse the structured `security.*` warning lines out of captured console calls. */
+function parseSecurityWarnings(calls: readonly (readonly unknown[])[]): Record<string, unknown>[] {
+  const warnings: Record<string, unknown>[] = [];
+  for (const call of calls) {
+    const argument = call[0];
+    if (typeof argument !== "string") {
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(argument);
+    } catch {
+      continue;
+    }
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      typeof (parsed as { event?: unknown }).event === "string" &&
+      (parsed as { event: string }).event.startsWith("security.")
+    ) {
+      warnings.push(parsed as Record<string, unknown>);
+    }
+  }
+  return warnings;
+}
+
 describe("middleware — CSRF origin + header enforcement", () => {
   it("I1: returns a 403 csrf_failed envelope for a cookie POST with a foreign Origin", async () => {
     const response = await middleware(
@@ -71,7 +121,6 @@ describe("middleware — CSRF origin + header enforcement", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(response.headers.get("x-middleware-next")).toBeNull();
     expect(response.headers.get("content-type")).toContain("application/json");
 
     const body = await response.json();
@@ -104,8 +153,7 @@ describe("middleware — CSRF origin + header enforcement", () => {
       })
     );
 
-    expect(response.headers.get("x-middleware-next")).toBe("1");
-    expect(response.status).not.toBe(403);
+    expectContinued(response);
   });
 });
 
@@ -120,7 +168,7 @@ describe("middleware — exemptions", () => {
       })
     );
 
-    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expectContinued(response);
   });
 
   it("I5: lets a GET with a foreign Origin continue", async () => {
@@ -131,7 +179,7 @@ describe("middleware — exemptions", () => {
       })
     );
 
-    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expectContinued(response);
   });
 
   it("I6: lets a webhook POST with a foreign Origin continue", async () => {
@@ -141,7 +189,7 @@ describe("middleware — exemptions", () => {
       })
     );
 
-    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expectContinued(response);
   });
 
   it("I7: lets an auth POST with a foreign Origin continue", async () => {
@@ -151,20 +199,19 @@ describe("middleware — exemptions", () => {
       })
     );
 
-    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expectContinued(response);
   });
 });
 
 describe("middleware — internal-route shielding", () => {
   it("I8: rejects an internal route carrying a browser Origin header", async () => {
     const response = await middleware(
-      requestFor("/api/v1/internal/jobs/reap", {
+      requestFor(INTERNAL_PATH, {
         headers: { origin: APP_ORIGIN, authorization: "Bearer internal-secret" },
       })
     );
 
     expect(response.status).toBe(403);
-    expect(response.headers.get("x-middleware-next")).toBeNull();
 
     const body = await response.json();
     expect(body.error.code).toBe("forbidden");
@@ -173,11 +220,168 @@ describe("middleware — internal-route shielding", () => {
 
   it("I9: lets a server-to-server internal request (no Origin) continue", async () => {
     const response = await middleware(
-      requestFor("/api/v1/internal/jobs/reap", {
+      requestFor(INTERNAL_PATH, {
         headers: { authorization: "Bearer internal-secret" },
       })
     );
 
-    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expectContinued(response);
   });
+});
+
+describe("middleware — session-cookie recognition", () => {
+  it("I10: rejects a foreign-Origin POST carrying the __Secure- session cookie", async () => {
+    const response = await middleware(
+      requestFor("/api/v1/echo", {
+        headers: {
+          origin: FOREIGN_ORIGIN,
+          "x-requested-with": "XMLHttpRequest",
+          cookie: SECURE_SESSION_COOKIE,
+        },
+      })
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error.code).toBe("csrf_failed");
+  });
+
+  it("I11: rejects a missing-header POST carrying the __Secure- session cookie", async () => {
+    const response = await middleware(
+      requestFor("/api/v1/echo", {
+        headers: { origin: APP_ORIGIN, cookie: SECURE_SESSION_COOKIE },
+      })
+    );
+
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error.code).toBe("csrf_failed");
+  });
+
+  it("I12: does not treat a near-miss cookie name as the session cookie", async () => {
+    const response = await middleware(
+      requestFor("/api/v1/echo", {
+        headers: {
+          origin: FOREIGN_ORIGIN,
+          "x-requested-with": "XMLHttpRequest",
+          cookie: "__Secure-better-auth.session_token_backup=test-stub",
+        },
+      })
+    );
+
+    expectContinued(response);
+  });
+
+  it("I13: does not treat an unrelated __Secure- cookie as the session cookie", async () => {
+    const response = await middleware(
+      requestFor("/api/v1/echo", {
+        headers: {
+          origin: FOREIGN_ORIGIN,
+          "x-requested-with": "XMLHttpRequest",
+          cookie: "__Secure-some-other=test-stub",
+        },
+      })
+    );
+
+    expectContinued(response);
+  });
+});
+
+describe("middleware — security warn log", () => {
+  it("I14: logs a distinct event for an internal-route denial", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await middleware(
+        requestFor(INTERNAL_PATH, {
+          headers: { origin: FOREIGN_ORIGIN, authorization: "Bearer internal-secret" },
+        })
+      );
+
+      const warnings = parseSecurityWarnings(warn.mock.calls);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        level: "warn",
+        event: "security.internal_origin_denied",
+        path: INTERNAL_PATH,
+        originHost: "evil.example",
+      });
+
+      const raw = String(warn.mock.calls[0]?.[0] ?? "");
+      expect(raw).not.toContain("internal-secret");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("I15: logs security.csrf_failed (path without query, host only, no cookie) for a CSRF denial", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await middleware(
+        requestFor("/api/v1/echo?secret=leak-me", {
+          headers: {
+            origin: FOREIGN_ORIGIN,
+            "x-requested-with": "XMLHttpRequest",
+            cookie: SESSION_COOKIE,
+          },
+        })
+      );
+
+      const warnings = parseSecurityWarnings(warn.mock.calls);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        level: "warn",
+        event: "security.csrf_failed",
+        path: "/api/v1/echo",
+        originHost: "evil.example",
+      });
+
+      const raw = String(warn.mock.calls[0]?.[0] ?? "");
+      expect(raw).not.toContain("test-stub");
+      expect(raw).not.toContain("leak-me");
+      expect(raw).not.toContain("better-auth.session_token");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("middleware — correlation id resolution", () => {
+  function denialHeaders(): Record<string, string> {
+    return {
+      origin: FOREIGN_ORIGIN,
+      "x-requested-with": "XMLHttpRequest",
+      cookie: SESSION_COOKIE,
+    };
+  }
+
+  async function denialBody(headers: Record<string, string>) {
+    const response = await middleware(requestWithHeaders("/api/v1/echo", headers));
+    expect(response.status).toBe(403);
+    return response.json();
+  }
+
+  it("I16: mints a correlation id when the header is absent", async () => {
+    const body = await denialBody(denialHeaders());
+
+    expect(body.error.requestId).toMatch(MINTED_REQUEST_ID);
+  });
+
+  it.each(["abc", "short_7", "has space", "with;semi", "A".repeat(65)])(
+    "I17: mints a correlation id for an out-of-spec inbound id %j",
+    async (inbound: string) => {
+      const body = await denialBody({ ...denialHeaders(), "x-request-id": inbound });
+
+      expect(body.error.requestId).toMatch(MINTED_REQUEST_ID);
+      expect(body.error.requestId).not.toBe(inbound);
+    }
+  );
+
+  it.each(["ABCDEF12", "0123456789abcdef", "A".repeat(64)])(
+    "I18: echoes a well-formed inbound id %j",
+    async (inbound: string) => {
+      const body = await denialBody({ ...denialHeaders(), "x-request-id": inbound });
+
+      expect(body.error.requestId).toBe(inbound);
+    }
+  );
 });
