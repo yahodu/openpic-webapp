@@ -39,8 +39,29 @@ export const ERROR_CODES = [
 /** A member of the closed {@link ERROR_CODES} set. */
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
-/** Zod enum mirroring {@link ERROR_CODES}, for validating inbound `error.code`. */
-export const errorCodeSchema = z.enum(ERROR_CODES);
+/**
+ * Codes the edge gate (middleware) emits before the request reaches the
+ * application pipeline.
+ *
+ * They share the client envelope but are not built through the server
+ * `AppError` catalogue, which only maps the application pipeline's business
+ * errors to a status/retry policy; the middleware serializes its own minimal
+ * `403` response. Kept separate so the business catalogue can stay an exact,
+ * exhaustively-typed table.
+ */
+export const EDGE_ERROR_CODES = ["csrf_failed"] as const;
+
+/** A member of the {@link EDGE_ERROR_CODES} set. */
+export type EdgeErrorCode = (typeof EDGE_ERROR_CODES)[number];
+
+/** Every code a client-facing error envelope may carry (business + edge). */
+export const API_ERROR_CODES = [...ERROR_CODES, ...EDGE_ERROR_CODES] as const;
+
+/** A member of the {@link API_ERROR_CODES} set. */
+export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
+
+/** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
+export const errorCodeSchema = z.enum(API_ERROR_CODES);
 
 /** One offending field of a rejected request. */
 export interface FieldError {
@@ -67,7 +88,7 @@ export const fieldErrorSchema = z.object({
  * to be inferred from the status code.
  */
 export interface ApiError {
-  readonly code: ErrorCode;
+  readonly code: ApiErrorCode;
   readonly message: string;
   /** Correlation id echoed from the `x-request-id` response header. */
   readonly requestId: string;
