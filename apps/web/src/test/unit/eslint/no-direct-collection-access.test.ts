@@ -89,5 +89,17 @@ ruleTester.run("no-direct-collection-access", rule, {
       filename: "/repo/apps/web/src/server/services/events.ts",
       errors: [{ messageId: "noDirectCollectionAccess" }],
     },
+    {
+      name: "an identifier bound to the collection member expression must not bypass the rule",
+      code: 'const f = db.collection; f("events").find({});',
+      filename: "/repo/apps/web/src/server/services/events.ts",
+      errors: [{ messageId: "noDirectCollectionAccess" }],
+    },
+    {
+      name: "a renamed alias of a destructured collection method must not bypass the rule",
+      code: 'const { collection: c } = db; const d = c; d("events");',
+      filename: "/repo/apps/web/src/server/services/events.ts",
+      errors: [{ messageId: "noDirectCollectionAccess" }],
+    },
   ],
 });
