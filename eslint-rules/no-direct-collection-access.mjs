@@ -111,21 +111,19 @@ const rule = {
         if (!declarator || declarator.type !== "VariableDeclarator") {
           continue;
         }
-        const init = declarator.init;
-        if (!init || init.type !== "Identifier") {
-          continue;
-        }
-        if (identifierKind(init, seen) !== RAW_DB) {
+        const initKind = initializerKind(declarator.init, seen);
+        if (initKind === undefined) {
           continue;
         }
 
         if (declarator.id.type === "Identifier") {
-          // `const driver = db;` (or an alias of an alias).
-          kind = RAW_DB;
+          // `const driver = db;` (an alias of an alias) or
+          // `const f = db.collection;` (an alias of the destructured method).
+          kind = initKind;
           break;
         }
 
-        if (declarator.id.type === "ObjectPattern") {
+        if (declarator.id.type === "ObjectPattern" && initKind === RAW_DB) {
           // `const { collection } = db;` / `const { collection: c } = db;`.
           const property = declarator.id.properties.find(
             (entry) => entry.type === "Property" && entry.value === def.name
@@ -162,6 +160,40 @@ const rule = {
       }
       const variable = resolveVariable(node);
       return variable ? variableKind(variable, seen) : undefined;
+    }
+
+    /**
+     * The kind an initializer expression produces:
+     *   - `db` (or an alias of it)                    → `"db"`
+     *   - `db.collection` (or an alias of the method) → `"collection"`
+     *   - anything else (calls, literals, …)          → `undefined`
+     *
+     * Following member expressions closes the "extract the method first" hole
+     * (`const f = db.collection; f("events")`) so the rule is not fooled by
+     * pulling the `collection` method out before calling it.
+     *
+     * @param {import("estree").Expression | null} init
+     * @param {Set<import("eslint").Scope.Variable>} seen
+     * @returns {"db" | "collection" | undefined}
+     */
+    function initializerKind(init, seen) {
+      if (!init) {
+        return undefined;
+      }
+      if (init.type === "Identifier") {
+        return identifierKind(init, seen);
+      }
+      if (
+        init.type === "MemberExpression" &&
+        init.computed === false &&
+        init.property.type === "Identifier" &&
+        init.property.name === RAW_COLLECTION &&
+        init.object.type === "Identifier" &&
+        identifierKind(init.object, seen) === RAW_DB
+      ) {
+        return RAW_COLLECTION;
+      }
+      return undefined;
     }
 
     return {
