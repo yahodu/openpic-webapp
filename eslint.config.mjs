@@ -163,6 +163,13 @@ export default tseslint.config(
     // (`src/server/repos/**`) and the db folder (`src/server/db/**`) may call
     // `db.collection(...)`. Everywhere else must obtain a scoped handle from
     // `tenantRepo`/`platformRepo`, so a filter can never omit `tenantId`.
+    //
+    // Registration scope is deliberately limited to `apps/web/src/**`: that is
+    // where the application's tenant-scoped query paths live, and the rule
+    // exempts non-app driver use by *not* being registered there. The one-off
+    // admin process `scripts/db/ensure-indexes.ts` drives `db.collection(...)`
+    // legitimately for index maintenance, and `packages/contracts` is type-only
+    // and never touches the driver, so neither should be bound by this rule.
     files: ["apps/web/src/**/*.ts", "apps/web/src/**/*.tsx"],
     plugins: {
       openpic: {
