@@ -268,6 +268,114 @@ describe("tenantRepo", () => {
       });
       expect(fake.lastCall("updateOne")?.args[1]).toEqual(stages);
     });
+
+    /**
+     * Gap B (t_863fd2d7) — operators that can strip or overwrite the tenant
+     * field are refused. A tenant-scoped pipeline update that removes
+     * `tenantId` (`$unset`) or replaces the whole document
+     * (`$replaceWith`/`$replaceRoot`) would orphan or de-scope the row, so the
+     * scope transform refuses it with a {@link TenantScopeViolation} and never
+     * reaches the driver. Operators that cannot touch the tenant field pass
+     * through unchanged.
+     *
+     * `$project` (an alias namespace of `$unset`) is deliberately NOT pinned:
+     * the update-pipeline `$project` form rewrites the whole document and its
+     * decision is out of scope for this card.
+     */
+    it("U6: rejects an updateOne pipeline $unset that names tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateOne({ eventId: "event-1" }, [{ $unset: "tenantId" }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
+    });
+
+    it("U6: rejects an updateMany pipeline $unset that names tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateMany({}, [{ $unset: "tenantId" }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateMany")).toBeUndefined();
+    });
+
+    it("U6: rejects a findOneAndUpdate pipeline $unset that names tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").findOneAndUpdate({ eventId: "event-1" }, [{ $unset: "tenantId" }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("findOneAndUpdate")).toBeUndefined();
+    });
+
+    it("U6: rejects a pipeline $unset naming tenantId in document form", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateOne({ eventId: "event-1" }, [{ $unset: { tenantId: "" } }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+
+    it("U6: rejects a pipeline $unset array that includes tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, [{ $unset: ["name", "tenantId"] }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+
+    it("U6: rejects a pipeline stage that removes tenantId even when a later stage also runs", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne(
+            { eventId: "event-1" },
+            asPipeline([{ $set: { name: "renamed" } }, { $unset: "tenantId" }])
+          )
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+
+    it("U6: accepts a pipeline $unset of a field other than tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      const stages = [{ $unset: "legacy" }];
+      await repo.collection("events").updateOne({ eventId: "event-1" }, asPipeline(stages));
+
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual(stages);
+    });
+
+    it("U6: rejects a pipeline $replaceWith stage (it can drop the tenant field)", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateOne({ eventId: "event-1" }, [{ $replaceWith: {} }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
+    });
+
+    it("U6: rejects a pipeline $replaceRoot stage (it can drop the tenant field)", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, [{ $replaceRoot: { newRoot: {} } }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
   });
 
   describe("scope violations", () => {
