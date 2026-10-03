@@ -18,6 +18,7 @@ export const COLLECTIONS = {
   events: "events",
   eventOrganizers: "event_organizers",
   eventImages: "event_images",
+  attendeeEventProfiles: "attendee_event_profiles",
   subscriptions: "subscriptions",
   dispatches: "notification_dispatches",
   accessLinks: "access_links",
