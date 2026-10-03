@@ -143,7 +143,30 @@ function unsetNamesTenant(value: unknown): boolean {
   return false;
 }
 
-/** An update document must not move a row into (or create it in) another tenant. */
+/**
+ * True when an `$rename` operand touches the tenant field: `tenantId` is the
+ * source key (the field is moved away) or any destination value (the scope is
+ * overwritten with another field's value).
+ */
+function renameTouchesTenant(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    Object.prototype.hasOwnProperty.call(value, "tenantId") ||
+    Object.values(value).some((destination) => destination === "tenantId")
+  );
+}
+
+/**
+ * An update document must not move a row into (or create it in) another tenant,
+ * strip the tenant field, or overwrite it with another field's value.
+ *
+ * `$set`/`$setOnInsert` are inspected for a foreign `tenantId`; operators that
+ * can remove or rename the tenant field (`$unset` naming `tenantId`, `$rename`
+ * naming it as source or destination) are refused outright, before the driver
+ * is reached.
+ */
 function assertUpdateScope(
   tenantId: string | undefined,
   collection: string,
@@ -164,6 +187,12 @@ function assertUpdateScope(
   const setOnInsert: unknown = base.$setOnInsert;
   if (isRecord(setOnInsert)) {
     assertTenant(tenantId, collection, setOnInsert.tenantId);
+  }
+  if (unsetNamesTenant(base.$unset)) {
+    refuseScope(collection);
+  }
+  if (renameTouchesTenant(base.$rename)) {
+    refuseScope(collection);
   }
   return base;
 }
