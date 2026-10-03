@@ -180,4 +180,90 @@ describe("decideCsrf — U1 decision table", () => {
       expect(decision).toEqual({ allowed: true });
     });
   });
+
+  describe("precedence between rules", () => {
+    it("shields a cross-origin GET on an internal route (internal-route check precedes the safe-method exemption)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          method: "GET",
+          path: "/api/v1/internal/jobs/reap",
+          origin: "https://evil.example",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "internal_origin" });
+    });
+
+    it("shields an internal route even when the Origin is allowlisted", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({ path: "/api/v1/internal/jobs/reap", origin: "http://localhost:3000" }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "internal_origin" });
+    });
+
+    it("shields an internal route carrying a Bearer token (internal-route check precedes the Bearer exemption)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          path: "/api/v1/internal/jobs/reap",
+          origin: "https://evil.example",
+          authorization: "Bearer opat_example-token",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "internal_origin" });
+    });
+
+    it("shields an internal route with no session cookie (internal-route check precedes the cookie exemption)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          path: "/api/v1/internal/jobs/reap",
+          origin: "https://evil.example",
+          hasSessionCookie: false,
+          requestedWith: null,
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "internal_origin" });
+    });
+
+    it("reports origin_not_allowed before missing_csrf_header when both a foreign Origin and no header are present", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({ origin: "https://evil.example", requestedWith: null }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "origin_not_allowed" });
+    });
+
+    it("lets a non-cookie foreign-origin POST through with no CSRF header (cookie exemption precedes the origin check)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          hasSessionCookie: false,
+          origin: "https://evil.example",
+          requestedWith: null,
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: true });
+    });
+
+    it("lets a Bearer foreign-origin POST through with no CSRF header (Bearer exemption precedes the origin check)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          origin: "https://evil.example",
+          requestedWith: null,
+          authorization: "Bearer opat_example-token",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: true });
+    });
+  });
 });
