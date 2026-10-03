@@ -89,6 +89,7 @@ function csrfFacts(request: NextRequest): CsrfFacts {
     requestedWith: request.headers.get(CSRF_HEADER),
     authorization: request.headers.get("authorization"),
     hasSessionCookie: hasSessionCookie(request),
+    secFetchSite: request.headers.get("sec-fetch-site"),
   };
 }
 

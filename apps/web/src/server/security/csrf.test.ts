@@ -155,6 +155,132 @@ describe("decideCsrf — U1 decision table", () => {
     });
   });
 
+  // Human decision (ADR-0004): a browser context is marked by
+  // `Sec-Fetch-Site: same-origin` or `Sec-Fetch-Site: cross-site`; a request
+  // that carries any other value (`none`, `same-site`) or none of this header
+  // at all is treated as server-to-server and still passes on `/api/v1/internal/**`.
+  describe("internal-route browser-context shielding (Sec-Fetch-Site)", () => {
+    it("denies an internal route whose Sec-Fetch-Site is same-origin (a same-origin request carries no Origin)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          path: "/api/v1/internal/jobs/reap",
+          origin: null,
+          requestedWith: null,
+          hasSessionCookie: false,
+          secFetchSite: "same-origin",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "internal_origin" });
+    });
+
+    it("denies an internal route whose Sec-Fetch-Site is cross-site", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          path: "/api/v1/internal/jobs/reap",
+          origin: null,
+          requestedWith: null,
+          hasSessionCookie: false,
+          secFetchSite: "cross-site",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "internal_origin" });
+    });
+
+    it("denies a GET on an internal route whose Sec-Fetch-Site is same-origin (internal-route check precedes the safe-method exemption)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          method: "GET",
+          path: "/api/v1/internal/jobs/reap",
+          origin: null,
+          requestedWith: null,
+          hasSessionCookie: false,
+          secFetchSite: "same-origin",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "internal_origin" });
+    });
+
+    it("denies an internal route carrying a Bearer token whose Sec-Fetch-Site is same-origin (internal-route check precedes the Bearer exemption)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          path: "/api/v1/internal/jobs/reap",
+          origin: null,
+          requestedWith: null,
+          authorization: "Bearer opat_example-token",
+          secFetchSite: "same-origin",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "internal_origin" });
+    });
+
+    it("allows an internal route whose Sec-Fetch-Site is none (typed-URL/bookmark navigation is outside the decided deny set)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          method: "GET",
+          path: "/api/v1/internal/jobs/reap",
+          origin: null,
+          requestedWith: null,
+          hasSessionCookie: false,
+          secFetchSite: "none",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: true });
+    });
+
+    it("allows an internal route whose Sec-Fetch-Site is same-site (only same-origin and cross-site are denied)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          path: "/api/v1/internal/jobs/reap",
+          origin: null,
+          requestedWith: null,
+          hasSessionCookie: false,
+          secFetchSite: "same-site",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: true });
+    });
+
+    it("allows an internal route with no Sec-Fetch-Site header (server-to-server client)", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          path: "/api/v1/internal/jobs/reap",
+          origin: null,
+          requestedWith: null,
+          hasSessionCookie: false,
+          secFetchSite: null,
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: true });
+    });
+
+    it("does not apply Sec-Fetch-Site shielding to a non-internal route", () => {
+      const decision = decideCsrf(
+        makeCsrfFacts({
+          origin: "https://evil.example",
+          requestedWith: "XMLHttpRequest",
+          secFetchSite: "cross-site",
+        }),
+        ALLOWED_ORIGINS
+      );
+
+      expect(decision).toEqual({ allowed: false, reason: "origin_not_allowed" });
+    });
+  });
+
   describe("exact-match details", () => {
     it("treats a lowercased header value as missing (case-sensitive per contract)", () => {
       const decision = decideCsrf(
