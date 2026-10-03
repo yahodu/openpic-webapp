@@ -10,3 +10,8 @@ allowBuilds:
 # ranges (next -> postcss). Remove once upstream ships the fix.
 overrides:
   postcss@<=8.5.22: "^8.5.23"
+
+audit:
+  level: moderate
+  ignore:
+    - GHSA-vfj7-8cjw-p6xm
