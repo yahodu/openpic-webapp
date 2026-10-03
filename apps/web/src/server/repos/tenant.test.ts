@@ -378,6 +378,121 @@ describe("tenantRepo", () => {
     });
   });
 
+  /**
+   * Gap C (t_5bf439f4) — the update-pipeline `$project` operator (the
+   * inclusion/exclusion alias namespace of `$unset`) can rewrite the output
+   * document and drop or overwrite `tenantId`, orphaning/de-scoping the row —
+   * the same outcome the t_863fd2d7 pins refuse for `$unset`. A tenant-scoped
+   * pipeline update is therefore refused with a {@link TenantScopeViolation}
+   * (and never reaches the driver) whenever a `$project` stage can remove or
+   * overwrite the tenant field:
+   *
+   *   - an **inclusion form** (any field mapped to a truthy projection or an
+   *     expression) that does not name `tenantId` outputs only the named
+   *     fields, dropping it — e.g. `{ $project: { name: 1 } }`;
+   *   - an explicit **exclusion of `tenantId`** (`tenantId: 0` / `false`),
+   *     alone or mixed into an otherwise-inclusive spec — e.g.
+   *     `{ $project: { name: 1, tenantId: 0 } }`;
+   *   - a **non-inclusion value for `tenantId`** (`tenantId: "$name"`) that
+   *     overwrites it.
+   *
+   * A `$project` that cannot touch the tenant field (a pure exclusion of some
+   * *other* field, e.g. `{ $project: { status: 0 } }`) or that explicitly keeps
+   * it (`{ $project: { tenantId: 1, name: 1 } }`) is a legitimate in-scope
+   * update. This card pins the **refusals** only, so an implementation may
+   * refuse every tenant-scoped `$project` stage (a safe superset) or exactly
+   * the de-scoping forms; either satisfies these specs.
+   */
+  describe("update-pipeline $project tenant-field removal", () => {
+    it("U7: rejects an updateOne pipeline $project inclusion form that omits tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateOne({ eventId: "event-1" }, [{ $project: { name: 1 } }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
+    });
+
+    it("U7: rejects an updateMany pipeline $project inclusion form that omits tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateMany({}, [{ $project: { name: 1 } }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateMany")).toBeUndefined();
+    });
+
+    it("U7: rejects a findOneAndUpdate pipeline $project inclusion form that omits tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .findOneAndUpdate({ eventId: "event-1" }, [{ $project: { name: 1 } }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("findOneAndUpdate")).toBeUndefined();
+    });
+
+    it("U7: rejects a pipeline $project that excludes tenantId with 0", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateOne({ eventId: "event-1" }, [{ $project: { tenantId: 0 } }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+
+    it("U7: rejects a pipeline $project that excludes tenantId with false", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, [{ $project: { tenantId: false } }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+
+    it("U7: rejects a mixed projection that keeps a field but excludes tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, [{ $project: { name: 1, tenantId: 0 } }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+
+    it("U7: rejects a pipeline $project that overwrites tenantId with an expression", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, [{ $project: { tenantId: "$name" } }])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+
+    it("U7: rejects a $project stage that drops tenantId even when a later stage also runs", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, [
+            { $set: { name: "renamed" } },
+            { $project: { name: 1 } },
+          ])
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+  });
+
   describe("scope violations", () => {
     it("U5: throws TenantScopeViolation when a filter supplies another tenantId", () => {
       const fake = makeFakeMongo();
