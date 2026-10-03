@@ -6,7 +6,7 @@ import { getConfig } from "@/server/config/env";
 import { logEdgeSecurityWarning } from "@/server/logging/edge";
 import {
   CSRF_HEADER,
-  SESSION_COOKIE_NAME,
+  SESSION_COOKIE_NAMES,
   decideCsrf,
   type CsrfFacts,
   type CsrfReason,
@@ -77,7 +77,7 @@ function hasSessionCookie(request: NextRequest): boolean {
   }
   return header
     .split(";")
-    .some((pair) => (pair.split("=", 1)[0] ?? "").trim() === SESSION_COOKIE_NAME);
+    .some((pair) => SESSION_COOKIE_NAMES.has((pair.split("=", 1)[0] ?? "").trim()));
 }
 
 /** Extract the security-relevant facts the decision table consumes. */
@@ -109,7 +109,10 @@ export function middleware(request: NextRequest): NextResponse | Promise<NextRes
   }
 
   logEdgeSecurityWarning({
-    event: "security.csrf_failed",
+    event:
+      decision.reason === "internal_origin"
+        ? "security.internal_origin_denied"
+        : "security.csrf_failed",
     path: pathname,
     originHost: originHost(origin),
   });

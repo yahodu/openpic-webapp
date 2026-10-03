@@ -30,6 +30,22 @@
 /** A browser session cookie whose presence marks a request as cookie-authenticated. */
 export const SESSION_COOKIE_NAME = "better-auth.session_token";
 
+/**
+ * The same session cookie under Better Auth's `__Secure-` prefix, which is
+ * applied when secure cookies are active (the production/staging default).
+ */
+export const SECURE_SESSION_COOKIE_NAME = "__Secure-better-auth.session_token";
+
+/**
+ * Every accepted session-cookie name, matched exactly. Prefix/substring
+ * matching is deliberately avoided so near-miss or unrelated `__Secure-`
+ * cookies are not mistaken for the session cookie.
+ */
+export const SESSION_COOKIE_NAMES: ReadonlySet<string> = new Set([
+  SESSION_COOKIE_NAME,
+  SECURE_SESSION_COOKIE_NAME,
+]);
+
 /** The value the custom `X-Requested-With` header must carry (case-sensitive). */
 export const CSRF_HEADER = "x-requested-with";
 export const CSRF_HEADER_VALUE = "XMLHttpRequest";
