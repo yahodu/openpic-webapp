@@ -91,6 +91,17 @@ function reportScopeViolation(collection: string): void {
 }
 
 /**
+ * Log and refuse an operation that would escape (or strip) the tenant scope.
+ *
+ * @param collection - The collection name (log-safe).
+ * @throws TenantScopeViolation always.
+ */
+function refuseScope(collection: string): never {
+  reportScopeViolation(collection);
+  throw new TenantScopeViolation(collection);
+}
+
+/**
  * Refuse an operation whose supplied `tenantId` differs from the scope.
  *
  * @param tenantId - The scope the repository is bound to.
@@ -100,8 +111,7 @@ function reportScopeViolation(collection: string): void {
  */
 function assertTenant(tenantId: string, collection: string, supplied: unknown): void {
   if (supplied !== undefined && supplied !== tenantId) {
-    reportScopeViolation(collection);
-    throw new TenantScopeViolation(collection);
+    refuseScope(collection);
   }
 }
 
@@ -119,6 +129,20 @@ function scopeFilter(
   return { ...base, tenantId: scope.tenantId };
 }
 
+/** True when an `$unset` operand names the tenant field (string, array or document form). */
+function unsetNamesTenant(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value === "tenantId";
+  }
+  if (Array.isArray(value)) {
+    return value.includes("tenantId");
+  }
+  if (isRecord(value)) {
+    return Object.prototype.hasOwnProperty.call(value, "tenantId");
+  }
+  return false;
+}
+
 /** An update document must not move a row into (or create it in) another tenant. */
 function assertUpdateScope(
   tenantId: string | undefined,
@@ -126,7 +150,7 @@ function assertUpdateScope(
   update: unknown
 ): Document | Document[] {
   if (tenantId === undefined) {
-    return asDocument(update);
+    return Array.isArray(update) ? (update as Document[]) : asDocument(update);
   }
   if (Array.isArray(update)) {
     assertPipelineScope(tenantId, collection, update);
@@ -146,11 +170,14 @@ function assertUpdateScope(
 
 /**
  * An update *pipeline* (`Document[]`) must not move a row into another tenant in
- * any stage, and must reach the driver unchanged (array and order preserved).
+ * any stage, strip the tenant field, or replace the whole document, and must
+ * reach the driver unchanged (array and order preserved).
  *
- * `$set` and its alias `$addFields` are inspected on every stage. Whole
- * document-replacing operators (`$replaceWith`/`$replaceRoot`) are not covered
- * here (out of scope — no spec pins them).
+ * `$set` and its alias `$addFields` are inspected on every stage for a foreign
+ * `tenantId`. Operators that can remove or overwrite the tenant field
+ * (`$unset` naming `tenantId`, `$replaceWith`, `$replaceRoot`) are refused
+ * outright. `$project` (an alias namespace of `$unset` in the update pipeline)
+ * is deliberately not covered here (out of scope — no spec pins it).
  */
 function assertPipelineScope(tenantId: string, collection: string, pipeline: unknown[]): void {
   for (const stage of pipeline) {
@@ -164,6 +191,15 @@ function assertPipelineScope(tenantId: string, collection: string, pipeline: unk
     const addFields: unknown = stage.$addFields;
     if (isRecord(addFields)) {
       assertTenant(tenantId, collection, addFields.tenantId);
+    }
+    if (unsetNamesTenant(stage.$unset)) {
+      refuseScope(collection);
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(stage, "$replaceWith") ||
+      Object.prototype.hasOwnProperty.call(stage, "$replaceRoot")
+    ) {
+      refuseScope(collection);
     }
   }
 }
