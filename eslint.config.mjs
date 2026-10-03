@@ -3,6 +3,8 @@ import prettier from "eslint-config-prettier";
 import security from "eslint-plugin-security";
 import tseslint from "typescript-eslint";
 
+import noDirectCollectionAccess from "./eslint-rules/no-direct-collection-access.mjs";
+
 export default tseslint.config(
   {
     ignores: [
@@ -16,6 +18,9 @@ export default tseslint.config(
       "**/next-env.d.ts",
       "**/.husky/**",
       "eslint.config.mjs",
+      // The custom rule module itself is plain JS executed by the ESLint
+      // loader, outside the TypeScript project (like the e2e launcher below).
+      "eslint-rules/**",
       // Plain-JS e2e server launcher: run by Node directly, outside the
       // TypeScript project, so it is not covered by the type-aware parser.
       "apps/web/e2e/*.mjs",
@@ -151,6 +156,21 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-call": "off",
       "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-unsafe-argument": "off",
+    },
+  },
+  {
+    // Tenant isolation invariant (OP-77): only the repository layer
+    // (`src/server/repos/**`) and the db folder (`src/server/db/**`) may call
+    // `db.collection(...)`. Everywhere else must obtain a scoped handle from
+    // `tenantRepo`/`platformRepo`, so a filter can never omit `tenantId`.
+    files: ["apps/web/src/**/*.ts", "apps/web/src/**/*.tsx"],
+    plugins: {
+      openpic: {
+        rules: { "no-direct-collection-access": noDirectCollectionAccess },
+      },
+    },
+    rules: {
+      "openpic/no-direct-collection-access": "error",
     },
   },
   prettier
