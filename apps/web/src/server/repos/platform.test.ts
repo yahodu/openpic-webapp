@@ -96,4 +96,83 @@ describe("platformRepo", () => {
 
     expect(fake.lastCall("deleteMany")?.args[0]).toEqual({ archived: true });
   });
+
+  /**
+   * Gap A (t_863fd2d7) — a platform-scope handle must not coerce an
+   * aggregation-pipeline update to `{}`.
+   *
+   * `Collection.updateOne`/`updateMany`/`findOneAndUpdate` accept a second
+   * argument that is either an update document or an update *pipeline*
+   * (`Document[]`). On a platform-scope handle there is no tenant scope to
+   * inspect, so the array must reach the driver exactly as given: same stages,
+   * same order — never a `{}` (which the driver would reject as an update with
+   * no atomic operators, silently losing the write).
+   */
+  describe("aggregation-pipeline updates", () => {
+    it("U8: passes an updateOne pipeline through unchanged (never coerced to {})", async () => {
+      const fake = makeFakeMongo();
+      const repo = platformRepo(fake.db);
+
+      await repo.collection("plans").updateOne({ slug: "pro" }, [{ $set: { active: true } }]);
+
+      expect(fake.lastCall("updateOne")?.args[0]).toEqual({ slug: "pro" });
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual([{ $set: { active: true } }]);
+    });
+
+    it("U8: passes a multi-stage updateOne pipeline through preserving stage order", async () => {
+      const fake = makeFakeMongo();
+      const repo = platformRepo(fake.db);
+
+      const stages = [{ $set: { active: true } }, { $unset: "legacy" }];
+      await repo.collection("plans").updateOne({ slug: "pro" }, stages);
+
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual([
+        { $set: { active: true } },
+        { $unset: "legacy" },
+      ]);
+    });
+
+    it("U8: passes an updateMany pipeline through unchanged", async () => {
+      const fake = makeFakeMongo();
+      const repo = platformRepo(fake.db);
+
+      await repo.collection("plans").updateMany({ tier: "free" }, [{ $set: { active: true } }]);
+
+      expect(fake.lastCall("updateMany")?.args[0]).toEqual({ tier: "free" });
+      expect(fake.lastCall("updateMany")?.args[1]).toEqual([{ $set: { active: true } }]);
+    });
+
+    it("U8: passes a findOneAndUpdate pipeline through unchanged", async () => {
+      const fake = makeFakeMongo();
+      const repo = platformRepo(fake.db);
+
+      await repo
+        .collection("plans")
+        .findOneAndUpdate({ slug: "pro" }, [{ $set: { active: true } }]);
+
+      expect(fake.lastCall("findOneAndUpdate")?.args[0]).toEqual({ slug: "pro" });
+      expect(fake.lastCall("findOneAndUpdate")?.args[1]).toEqual([{ $set: { active: true } }]);
+    });
+
+    it("U8: does not stamp $setOnInsert onto an upsert pipeline update", async () => {
+      const fake = makeFakeMongo();
+      const repo = platformRepo(fake.db);
+
+      await repo
+        .collection("plans")
+        .updateOne({ slug: "pro" }, [{ $set: { active: true } }], { upsert: true });
+
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual([{ $set: { active: true } }]);
+    });
+
+    it("U8: passes a pipeline that names a tenantId through (there is no scope to conflict with)", async () => {
+      const fake = makeFakeMongo();
+      const repo = platformRepo(fake.db);
+
+      const stages = [{ $set: { tenantId: "tenant-b", active: true } }];
+      await repo.collection("plans").updateOne({ slug: "pro" }, stages);
+
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual(stages);
+    });
+  });
 });
