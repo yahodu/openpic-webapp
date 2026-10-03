@@ -12,9 +12,12 @@
  *   - Signals are exhaustive: `{ allowed: true }` or `{ allowed: false, reason }`.
  *     The middleware maps a `reason` to the shared error envelope.
  *   - Internal routes are server-to-server only and are checked *before* the
- *     safe-method and Bearer exemptions: any browser `Origin` header on
- *     `/api/v1/internal/**` is rejected regardless of method or credentials,
- *     so a browser can never reach an internal route.
+ *     safe-method and Bearer exemptions: any request that marks a browser
+ *     context — an `Origin` header, or `Sec-Fetch-Site: same-origin` /
+ *     `cross-site` — on `/api/v1/internal/**` is rejected regardless of method
+ *     or credentials, so a browser can never reach an internal route. (A
+ *     request with no Fetch metadata, or with `Sec-Fetch-Site: none` or
+ *     `same-site`, is treated as server-to-server and passes; see ADR-0004.)
  *   - Safe methods (GET/HEAD/OPTIONS) do not change state and always pass.
  *   - A `Bearer` request carries explicit, non-ambient credentials and is
  *     exempt (the browser never attaches it automatically, so CSRF does not
@@ -80,8 +83,9 @@ export interface CsrfFacts {
    * an SDK send none; browsers always do).
    *
    * On `/api/v1/internal/**` a value of `same-origin` or `cross-site` marks a
-   * browser context and is denied (see ADR-0004). Deferred as optional so this
-   * contract can be pinned before the middleware populates it.
+   * browser context and is denied (see ADR-0004). The middleware populates it
+   * from the `Sec-Fetch-Site` header; it stays optional so `CsrfFacts` mirrors
+   * a request that may carry no Fetch metadata (server-to-server clients).
    */
   readonly secFetchSite?: string | null;
 }
@@ -112,11 +116,15 @@ function isBearer(authorization: string | null): boolean {
  */
 export function decideCsrf(facts: CsrfFacts, allowedOrigins: readonly string[]): CsrfDecision {
   // Internal routes are unreachable from a browser: reject any request that
-  // carries an Origin, no matter the method or credentials.
+  // marks a browser context — an `Origin` header, or Fetch metadata
+  // (`Sec-Fetch-Site: same-origin`/`cross-site`) — no matter the method or
+  // credentials.
   if (isWithin(facts.path, INTERNAL_PATH_PREFIX)) {
-    return facts.origin === null
-      ? { allowed: true }
-      : { allowed: false, reason: "internal_origin" };
+    const browserContext =
+      facts.origin !== null ||
+      facts.secFetchSite === "same-origin" ||
+      facts.secFetchSite === "cross-site";
+    return browserContext ? { allowed: false, reason: "internal_origin" } : { allowed: true };
   }
 
   if (SAFE_METHODS.has(facts.method.toUpperCase())) {
