@@ -204,9 +204,21 @@ function assertUpdateScope(
  *
  * `$set` and its alias `$addFields` are inspected on every stage for a foreign
  * `tenantId`. Operators that can remove or overwrite the tenant field
- * (`$unset` naming `tenantId`, `$replaceWith`, `$replaceRoot`) are refused
- * outright. `$project` (an alias namespace of `$unset` in the update pipeline)
- * is deliberately not covered here (out of scope — no spec pins it).
+ * (`$unset` naming `tenantId`, `$project`, `$replaceWith`, `$replaceRoot`) are
+ * refused outright on a tenant-scoped handle.
+ *
+ * `$project` is the inclusion/exclusion alias namespace of `$unset` in an update
+ * pipeline: an inclusion form that omits `tenantId` (`{ $project: { name: 1 } }`),
+ * an explicit exclusion (`{ $project: { tenantId: 0 } }`), a mixed form, or an
+ * expression rewrite (`{ $project: { tenantId: "$name" } }`) all drop or
+ * overwrite the tenant field and de-scope the stored row. Distinguishing the
+ * safe forms (a pure exclusion of some *other* field, or an explicit
+ * `{ tenantId: 1 }` inclusion) from the de-scoping ones is fiddly and error
+ * prone, so this guard takes the safe superset the spec allows and refuses
+ * **every** `$project` stage on a tenant-scoped pipeline, mirroring the blanket
+ * `$replaceWith`/`$replaceRoot` treatment. A platform-scope handle
+ * (`tenantId === undefined`) never reaches this guard, so a platform `$project`
+ * pipeline still passes through unchanged.
  */
 function assertPipelineScope(tenantId: string, collection: string, pipeline: unknown[]): void {
   for (const stage of pipeline) {
@@ -225,6 +237,7 @@ function assertPipelineScope(tenantId: string, collection: string, pipeline: unk
       refuseScope(collection);
     }
     if (
+      Object.prototype.hasOwnProperty.call(stage, "$project") ||
       Object.prototype.hasOwnProperty.call(stage, "$replaceWith") ||
       Object.prototype.hasOwnProperty.call(stage, "$replaceRoot")
     ) {
