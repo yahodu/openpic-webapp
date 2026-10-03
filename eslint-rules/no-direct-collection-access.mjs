@@ -20,9 +20,13 @@
  * raw driver — an alias (`const driver = db; driver.collection(...)`) or a
  * destructured method (`const { collection } = db; collection(...)`) — is
  * reported at the offending call just like a literal `db.collection(...)`.
- * Resolution goes through scope analysis, so a same-named variable that does
- * not come from the driver (a parameter, a repository handle, a plain import)
- * is never flagged.
+ * Aliases and destructured bindings are traced through scope analysis, so a
+ * differently named variable that does not come from the driver (a repository
+ * handle, an unrelated import) is never flagged. The literal identifier `db`,
+ * however, is always treated as the driver handle — it is the canonical name of
+ * the driver in this codebase and is frequently an ambient/unresolved global —
+ * so a local binding that shadows it (e.g. a parameter named `db`) is reported
+ * as well.
  */
 const ALLOWED_PATH = /[/\\]src[/\\]server[/\\](db|repos)[/\\]/;
 
