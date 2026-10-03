@@ -49,17 +49,17 @@ export interface RepositoryCollection {
   findOne(filter?: Document, options?: Document): ReturnType<Collection["findOne"]>;
   findOneAndUpdate(
     filter: Document,
-    update: Document,
+    update: Document | Document[],
     options?: Document
   ): ReturnType<Collection["findOneAndUpdate"]>;
   updateOne(
     filter: Document,
-    update: Document,
+    update: Document | Document[],
     options?: Document
   ): ReturnType<Collection["updateOne"]>;
   updateMany(
     filter: Document,
-    update: Document,
+    update: Document | Document[],
     options?: Document
   ): ReturnType<Collection["updateMany"]>;
   deleteOne(filter?: Document, options?: Document): ReturnType<Collection["deleteOne"]>;
@@ -124,9 +124,13 @@ function assertUpdateScope(
   tenantId: string | undefined,
   collection: string,
   update: unknown
-): Document {
+): Document | Document[] {
   if (tenantId === undefined) {
     return asDocument(update);
+  }
+  if (Array.isArray(update)) {
+    assertPipelineScope(tenantId, collection, update);
+    return update as Document[];
   }
   const base = asDocument(update);
   const set: unknown = base.$set;
@@ -138,6 +142,30 @@ function assertUpdateScope(
     assertTenant(tenantId, collection, setOnInsert.tenantId);
   }
   return base;
+}
+
+/**
+ * An update *pipeline* (`Document[]`) must not move a row into another tenant in
+ * any stage, and must reach the driver unchanged (array and order preserved).
+ *
+ * `$set` and its alias `$addFields` are inspected on every stage. Whole
+ * document-replacing operators (`$replaceWith`/`$replaceRoot`) are not covered
+ * here (out of scope — no spec pins them).
+ */
+function assertPipelineScope(tenantId: string, collection: string, pipeline: unknown[]): void {
+  for (const stage of pipeline) {
+    if (!isRecord(stage)) {
+      continue;
+    }
+    const set: unknown = stage.$set;
+    if (isRecord(set)) {
+      assertTenant(tenantId, collection, set.tenantId);
+    }
+    const addFields: unknown = stage.$addFields;
+    if (isRecord(addFields)) {
+      assertTenant(tenantId, collection, addFields.tenantId);
+    }
+  }
 }
 
 /**
@@ -156,7 +184,7 @@ function scopeWrite(
   collection: string,
   filter: unknown,
   update: unknown
-): { filter: Document; update: Document } {
+): { filter: Document; update: Document | Document[] } {
   return {
     filter: scopeFilter(scope, collection, filter),
     update: assertUpdateScope(scope?.tenantId, collection, update),
@@ -164,8 +192,17 @@ function scopeWrite(
 }
 
 /** Stamp `tenantId` onto an upsert's `$setOnInsert` so a new row is born scoped. */
-function stampUpsert(scope: TenantScope | undefined, update: Document, options: unknown): Document {
-  if (scope === undefined || !isRecord(options) || options.upsert !== true) {
+function stampUpsert(
+  scope: TenantScope | undefined,
+  update: Document | Document[],
+  options: unknown
+): Document | Document[] {
+  if (
+    scope === undefined ||
+    Array.isArray(update) ||
+    !isRecord(options) ||
+    options.upsert !== true
+  ) {
     return update;
   }
   const setOnInsert = isRecord(update.$setOnInsert) ? update.$setOnInsert : {};

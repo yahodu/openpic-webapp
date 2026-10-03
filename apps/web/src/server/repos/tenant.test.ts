@@ -1,3 +1,4 @@
+import type { Document } from "mongodb";
 import { describe, expect, it } from "vitest";
 
 import { TenantScopeViolation, tenantRepo } from "@/server/repos";
@@ -183,6 +184,92 @@ describe("tenantRepo", () => {
     });
   });
 
+  describe("aggregation-pipeline updates", () => {
+    /**
+     * A pipeline update (`[{ $set: … }]`) is a legitimate MongoDB update form —
+     * `Collection.updateOne` accepts a `Document[]`. The scope transform must
+     * inspect its stages exactly as it inspects a document update: a stage that
+     * names a foreign `tenantId` is refused, and a benign pipeline reaches the
+     * driver unchanged (never coerced to `{}`).
+     */
+    const asPipeline = (stages: Document[]): Document => stages;
+
+    it("U6: rejects an updateOne pipeline stage that names another tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, asPipeline([{ $set: { tenantId: "tenant-b" } }]))
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
+    });
+
+    it("U6: rejects an updateMany pipeline stage that names another tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateMany({}, asPipeline([{ $set: { tenantId: "tenant-b" } }]))
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateMany")).toBeUndefined();
+    });
+
+    it("U6: rejects a findOneAndUpdate pipeline stage that names another tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .findOneAndUpdate(
+            { eventId: "event-1" },
+            asPipeline([{ $set: { tenantId: "tenant-b" } }])
+          )
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("findOneAndUpdate")).toBeUndefined();
+    });
+
+    it("U6: rejects a foreign tenantId in any stage of a multi-stage pipeline", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne(
+            { eventId: "event-1" },
+            asPipeline([{ $set: { name: "renamed" } }, { $set: { tenantId: "tenant-b" } }])
+          )
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+
+    it("U6: accepts a pipeline that sets the repository's own tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      const stages = [{ $set: { tenantId: "tenant-a", name: "renamed" } }];
+      await repo.collection("events").updateOne({ eventId: "event-1" }, asPipeline(stages));
+
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual(stages);
+    });
+
+    it("U6: passes a benign pipeline through to the driver unchanged", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      const stages = [{ $set: { name: "renamed" } }];
+      await repo.collection("events").updateOne({ eventId: "event-1" }, asPipeline(stages));
+
+      expect(fake.lastCall("updateOne")?.args[0]).toEqual({
+        eventId: "event-1",
+        tenantId: "tenant-a",
+      });
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual(stages);
+    });
+  });
+
   describe("scope violations", () => {
     it("U5: throws TenantScopeViolation when a filter supplies another tenantId", () => {
       const fake = makeFakeMongo();
@@ -239,8 +326,14 @@ describe("tenantRepo", () => {
       expect(entry).toBeDefined();
       expect(entry?.level).toBe("error");
       expect(entry?.collection).toBe("events");
-      // The rejection must not leak either tenant's identifier into the logs.
+      // The rejection must not leak either tenant's identifier into the logs:
+      // neither the foreign one the caller tried (tenant-b) nor the repository's
+      // own scope (tenant-a). The whole sink is checked, not just this entry, so
+      // an identifier escaping in any other field or line is caught too.
       expect(JSON.stringify(entry)).not.toContain("tenant-b");
+      expect(JSON.stringify(entry)).not.toContain("tenant-a");
+      expect(JSON.stringify(sink.entries)).not.toContain("tenant-b");
+      expect(JSON.stringify(sink.entries)).not.toContain("tenant-a");
     });
   });
 });

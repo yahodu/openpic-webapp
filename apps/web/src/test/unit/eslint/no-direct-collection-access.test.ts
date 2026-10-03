@@ -47,6 +47,16 @@ ruleTester.run("no-direct-collection-access", rule, {
       code: 'tenant.collection("events").find({});',
       filename: "/repo/apps/web/src/server/services/events.ts",
     },
+    {
+      name: "a repository handle alias is not the raw driver",
+      code: 'const driver = tenantRepo("t1"); driver.collection("events").find({});',
+      filename: "/repo/apps/web/src/server/services/events.ts",
+    },
+    {
+      name: "a differently named method on db is not a direct collection access",
+      code: "db.listCollections();",
+      filename: "/repo/apps/web/src/server/services/events.ts",
+    },
   ],
   invalid: [
     {
@@ -65,6 +75,18 @@ ruleTester.run("no-direct-collection-access", rule, {
       name: "a sibling server folder must not reach the driver directly",
       code: 'const cursor = db.collection("media_assets").aggregate([]);',
       filename: "/repo/apps/web/src/server/jobs/sweep.ts",
+      errors: [{ messageId: "noDirectCollectionAccess" }],
+    },
+    {
+      name: "an aliased driver handle must not bypass the rule",
+      code: 'const driver = db; driver.collection("events").find({});',
+      filename: "/repo/apps/web/src/server/services/events.ts",
+      errors: [{ messageId: "noDirectCollectionAccess" }],
+    },
+    {
+      name: "a destructured collection method must not bypass the rule",
+      code: 'const { collection } = db; collection("events").find({});',
+      filename: "/repo/apps/web/src/server/services/events.ts",
       errors: [{ messageId: "noDirectCollectionAccess" }],
     },
   ],
