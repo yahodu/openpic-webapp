@@ -74,6 +74,16 @@ export interface CsrfFacts {
   readonly authorization: string | null;
   /** Whether the request carries the session cookie. */
   readonly hasSessionCookie: boolean;
+  /**
+   * The `Sec-Fetch-Site` header value, or `null` when the caller sent no Fetch
+   * metadata at all (server-to-server clients such as Node `fetch`, `curl` or
+   * an SDK send none; browsers always do).
+   *
+   * On `/api/v1/internal/**` a value of `same-origin` or `cross-site` marks a
+   * browser context and is denied (see ADR-0004). Deferred as optional so this
+   * contract can be pinned before the middleware populates it.
+   */
+  readonly secFetchSite?: string | null;
 }
 
 /** Why the gate rejected a request; the middleware maps it to an error code. */

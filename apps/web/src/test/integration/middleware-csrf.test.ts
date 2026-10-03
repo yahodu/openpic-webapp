@@ -229,6 +229,85 @@ describe("middleware — internal-route shielding", () => {
   });
 });
 
+describe("middleware — internal-route fetch-metadata shielding", () => {
+  it("I19: rejects an internal route whose Sec-Fetch-Site is same-origin (no Origin header)", async () => {
+    const response = await middleware(
+      requestFor(INTERNAL_PATH, {
+        headers: { "sec-fetch-site": "same-origin", authorization: "Bearer internal-secret" },
+      })
+    );
+
+    expect(response.status).toBe(403);
+
+    const body = await response.json();
+    expect(body.error.code).toBe("forbidden");
+    expect(apiErrorSchema.safeParse(body).success).toBe(true);
+  });
+
+  it("I20: rejects an internal route whose Sec-Fetch-Site is cross-site (no Origin header)", async () => {
+    const response = await middleware(
+      requestFor(INTERNAL_PATH, {
+        headers: { "sec-fetch-site": "cross-site", authorization: "Bearer internal-secret" },
+      })
+    );
+
+    expect(response.status).toBe(403);
+
+    const body = await response.json();
+    expect(body.error.code).toBe("forbidden");
+  });
+
+  it("I21: lets an internal GET with Sec-Fetch-Site: none continue (typed-URL/bookmark navigation is outside the decided deny set)", async () => {
+    const response = await middleware(
+      requestFor(INTERNAL_PATH, {
+        method: "GET",
+        headers: { "sec-fetch-site": "none", authorization: "Bearer internal-secret" },
+      })
+    );
+
+    expectContinued(response);
+  });
+
+  it("I22: still lets a non-internal same-origin cookie POST with Sec-Fetch-Site: same-origin continue (scoped to internal routes)", async () => {
+    const response = await middleware(
+      requestFor("/api/v1/echo", {
+        headers: {
+          origin: APP_ORIGIN,
+          "x-requested-with": "XMLHttpRequest",
+          cookie: SESSION_COOKIE,
+          "sec-fetch-site": "same-origin",
+        },
+      })
+    );
+
+    expectContinued(response);
+  });
+
+  it("I23: logs security.internal_origin_denied for a Sec-Fetch-Site browser-context denial", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await middleware(
+        requestFor(INTERNAL_PATH, {
+          headers: { "sec-fetch-site": "same-origin", authorization: "Bearer internal-secret" },
+        })
+      );
+
+      const warnings = parseSecurityWarnings(warn.mock.calls);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatchObject({
+        level: "warn",
+        event: "security.internal_origin_denied",
+        path: INTERNAL_PATH,
+      });
+
+      const raw = String(warn.mock.calls[0]?.[0] ?? "");
+      expect(raw).not.toContain("internal-secret");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("middleware — session-cookie recognition", () => {
   it("I10: rejects a foreign-Origin POST carrying the __Secure- session cookie", async () => {
     const response = await middleware(

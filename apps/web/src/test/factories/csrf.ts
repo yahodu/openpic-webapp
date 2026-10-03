@@ -18,6 +18,7 @@ export function makeCsrfFacts(overrides: Partial<CsrfFacts> = {}): CsrfFacts {
     origin: "http://localhost:3000",
     requestedWith: "XMLHttpRequest",
     authorization: null,
+    secFetchSite: null,
     hasSessionCookie: true,
     ...overrides,
   };
