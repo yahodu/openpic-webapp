@@ -378,6 +378,168 @@ describe("tenantRepo", () => {
     });
   });
 
+  describe("document-update tenant-field removal", () => {
+    /**
+     * Gap (t_a55af189) — the *plain* (non-pipeline) update document path.
+     *
+     * `assertUpdateScope` inspects only `$set`/`$setOnInsert` for a foreign
+     * `tenantId`; operators that can remove or rename the field (`$unset`
+     * naming `tenantId`, `$rename` naming `tenantId`) sail through and reach
+     * the driver, de-scoping the row. That is the same de-scoping outcome the
+     * pipeline refusals close, on the more common update form, so the
+     * document branch must refuse those operators with a
+     * {@link TenantScopeViolation} and never reach the driver.
+     *
+     * Syntactic forms pinned: `$unset` string, `$unset` document, `$unset`
+     * array (the three shapes MongoDB accepts) and `$rename`, across the three
+     * update methods. A `$rename` whose *destination* is `tenantId` (it
+     * overwrites the scope with another field's value) is refused too.
+     * Operators that cannot touch the tenant field pass through unchanged, and
+     * a `$set`/`$setOnInsert` naming the repository's own `tenantId` is
+     * explicitly still accepted.
+     */
+    it("U9: rejects an updateOne $unset that removes tenantId (document form)", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateOne({ eventId: "event-1" }, { $unset: { tenantId: "" } })
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
+    });
+
+    it("U9: rejects an updateMany $unset that removes tenantId (string form)", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo.collection("events").updateMany({}, { $unset: "tenantId" })
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateMany")).toBeUndefined();
+    });
+
+    it("U9: rejects a findOneAndUpdate $unset array that includes tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .findOneAndUpdate({ eventId: "event-1" }, { $unset: ["name", "tenantId"] })
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("findOneAndUpdate")).toBeUndefined();
+    });
+
+    it("U9: rejects a findOneAndUpdate $rename whose source is tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .findOneAndUpdate({ eventId: "event-1" }, { $rename: { tenantId: "oldTenant" } })
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("findOneAndUpdate")).toBeUndefined();
+    });
+
+    it("U9: rejects an updateOne $rename whose source is tenantId", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, { $rename: { tenantId: "oldTenant" } })
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
+    });
+
+    it("U9: rejects a $rename whose destination is tenantId (it overwrites the scope)", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, { $rename: { oldTenant: "tenantId" } })
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
+    });
+
+    it("U9: rejects a $unset naming tenantId even when a benign $set is also present", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne(
+            { eventId: "event-1" },
+            { $set: { name: "renamed" }, $unset: { tenantId: "" } }
+          )
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+      expect(fake.lastCall("updateOne")).toBeUndefined();
+    });
+
+    it("U9: accepts a document $unset of a field other than tenantId unchanged", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      const update = { $unset: { legacy: "" } };
+      await repo.collection("events").updateOne({ eventId: "event-1" }, update);
+
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual(update);
+    });
+
+    it("U9: accepts a document $rename that does not involve tenantId unchanged", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      const update = { $rename: { legacy: "oldLegacy" } };
+      await repo.collection("events").updateOne({ eventId: "event-1" }, update);
+
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual(update);
+    });
+
+    it("U9: accepts a document $set that repeats the repository's own tenantId unchanged", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      const update = { $set: { tenantId: "tenant-a", name: "renamed" } };
+      await repo.collection("events").updateOne({ eventId: "event-1" }, update);
+
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual(update);
+    });
+
+    it("U9: accepts a document $setOnInsert that repeats the repository's own tenantId on an upsert", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await repo
+        .collection("events")
+        .updateOne(
+          { externalRef: "ref-1" },
+          { $setOnInsert: { tenantId: "tenant-a", name: "new" } },
+          { upsert: true }
+        );
+
+      expect(fake.lastCall("updateOne")?.args[1]).toEqual({
+        $setOnInsert: { tenantId: "tenant-a", name: "new" },
+      });
+    });
+
+    it("U9: rejects a document $set that names another tenantId (control)", async () => {
+      const fake = makeFakeMongo();
+      const repo = tenantRepo("tenant-a", fake.db);
+
+      await expect(
+        repo
+          .collection("events")
+          .updateOne({ eventId: "event-1" }, { $set: { tenantId: "tenant-b" } })
+      ).rejects.toBeInstanceOf(TenantScopeViolation);
+    });
+  });
+
   describe("scope violations", () => {
     it("U5: throws TenantScopeViolation when a filter supplies another tenantId", () => {
       const fake = makeFakeMongo();
