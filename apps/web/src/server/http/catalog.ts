@@ -97,6 +97,21 @@ export const PIPELINE_ERROR_TRANSPORT: Readonly<Record<PipelineErrorCode, ErrorC
     retryable: false,
     message: "This endpoint requires an Idempotency-Key header.",
   },
+  invalid_cursor: {
+    status: 400,
+    retryable: false,
+    message: "The pagination cursor is invalid.",
+  },
+  precondition_required: {
+    status: 428,
+    retryable: false,
+    message: "This request requires an If-Match precondition.",
+  },
+  etag_mismatch: {
+    status: 412,
+    retryable: false,
+    message: "The resource changed since the supplied entity tag.",
+  },
 };
 
 /** Every client-facing code's transport: Appendix A first, then pipeline codes. */
