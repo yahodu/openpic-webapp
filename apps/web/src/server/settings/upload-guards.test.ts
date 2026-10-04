@@ -157,6 +157,14 @@ const HEIC = [0x00, 0x00, 0x00, 0x18, ...ascii("ftyp"), ...ascii("heic")];
 const AVIF = [0x00, 0x00, 0x00, 0x1c, ...ascii("ftyp"), ...ascii("avif")];
 const CR3 = [0x00, 0x00, 0x00, 0x18, ...ascii("ftyp"), ...ascii("crx ")];
 
+// Alternative real-world prefixes for containers already pinned above: the same
+// container reached through a different (still valid) magic. Big-endian TIFF is
+// the `MM 00 2A` byte order of the pinned little-endian TIFF; Olympus ORF files
+// may carry `MMOR` or `IIRS` as their first four bytes instead of `IIRO`.
+const TIFF_BE = [0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x08, 0x00, 0x00];
+const ORF_MM = [...ascii("MMOR"), 0x00, 0x08, 0x00, 0x00];
+const ORF_IIRS = [...ascii("IIRS"), 0x00, 0x08, 0x00, 0x00];
+
 /** The magic-byte prefix that must sniff to each detectable container. */
 const MAGIC: readonly { readonly format: UploadFormatId; readonly prefix: readonly number[] }[] = [
   { format: "jpeg", prefix: JPEG },
@@ -173,6 +181,26 @@ const MAGIC: readonly { readonly format: UploadFormatId; readonly prefix: readon
 ];
 
 /**
+ * Alternative real-world magic-byte prefixes that must sniff to the **same
+ * container** as their pinned representative in {@link MAGIC} (card §1, §2).
+ *
+ * A big-endian TIFF (`MM 00 2A …`) is the same container as the pinned
+ * little-endian TIFF (ADR-0010 §2), and Olympus ORF files legitimately carry
+ * `MMOR` or `IIRS` instead of the pinned `IIRO` (ADR-0009 §3). Pinning each
+ * variant by value stops a future narrowing of the sniff table from silently
+ * refusing a format the allow-list accepts.
+ */
+const MAGIC_VARIANTS: readonly {
+  readonly label: string;
+  readonly container: UploadFormatId;
+  readonly prefix: readonly number[];
+}[] = [
+  { label: "big-endian TIFF", container: "tiff", prefix: TIFF_BE },
+  { label: "Olympus ORF MMOR", container: "orf", prefix: ORF_MM },
+  { label: "Olympus ORF IIRS", container: "orf", prefix: ORF_IIRS },
+];
+
+/**
  * The HEIF `ftyp` **major brands** real Apple/Android `.heic`/`.heif` files
  * carry, pinned by value (card §1). `heic` is already covered by {@link MAGIC};
  * the rest are the broadening this spec pins. Detection must map every one of
@@ -186,6 +214,14 @@ const HEIF_MAJOR_BRANDS: readonly string[] = ["heic", "heix", "hevc", "hevx", "m
  * container.
  */
 const AVIF_MAJOR_BRANDS: readonly string[] = ["avif", "avis"];
+
+/**
+ * ISO-BMFF `ftyp` major brands that are **not** recognised as HEIF/AVIF/CR3
+ * (card §3). A box carrying one of these is not an accepted image, so detection
+ * must return `null` and the guard must reject it as `unrecognized_format`
+ * rather than guessing a container from the surrounding bytes (fail-closed).
+ */
+const UNRECOGNIZED_FTYP_BRANDS: readonly string[] = ["mp42", "isom"];
 
 /**
  * Build a {@link SNIFF_BYTES}-agnostic ISO-BMFF `ftyp` prefix whose **major
@@ -236,6 +272,10 @@ describe("magic-byte sniffing", () => {
     expect(sniffUploadFormat(padded(prefix))).toBe(format);
   });
 
+  it.each(MAGIC_VARIANTS)("sniffs the $label variant as $container", ({ container, prefix }) => {
+    expect(sniffUploadFormat(padded(prefix))).toBe(container);
+  });
+
   it.each(HEIF_MAJOR_BRANDS)("sniffs the HEIF ftyp major brand %s as heic", (brand) => {
     expect(sniffUploadFormat(padded(ftyp(brand)))).toBe("heic");
   });
@@ -243,6 +283,13 @@ describe("magic-byte sniffing", () => {
   it.each(AVIF_MAJOR_BRANDS)("sniffs the AVIF ftyp major brand %s as avif", (brand) => {
     expect(sniffUploadFormat(padded(ftyp(brand)))).toBe("avif");
   });
+
+  it.each(UNRECOGNIZED_FTYP_BRANDS)(
+    "detects nothing for the unrecognized ftyp major brand %s",
+    (brand) => {
+      expect(sniffUploadFormat(padded(ftyp(brand)))).toBeNull();
+    }
+  );
 
   it("returns null for bytes that match no accepted signature", () => {
     expect(sniffUploadFormat(padded(ascii("GIF89a")))).toBeNull();
@@ -254,6 +301,12 @@ describe("magic-byte sniffing", () => {
 
   it("does not throw on a truncated buffer shorter than the magic", () => {
     expect(sniffUploadFormat(new Uint8Array([0xff, 0xd8]))).toBeNull();
+  });
+
+  it("detects nothing for a buffer truncated part-way through a longer signature", () => {
+    // A 3-byte PNG prefix clears the minimum-length gate but is shorter than the
+    // 8-byte PNG magic, so the signature compare must bail out without throwing.
+    expect(sniffUploadFormat(new Uint8Array([0x89, 0x50, 0x4e]))).toBeNull();
   });
 
   it("detects a complete magic that fits in a buffer shorter than the sniff window", () => {
@@ -339,6 +392,44 @@ describe("guardUploadType accepts every HEIF/AVIF major brand end-to-end", () =>
     (testCase) => {
       const result = guardUploadType({
         bytes: padded(ftyp(testCase.brand)),
+        fileName: testCase.fileName,
+        declaredMimeType: testCase.mimeType,
+      });
+
+      expect(result).toEqual({ ok: true, format: testCase.format });
+    }
+  );
+});
+
+/**
+ * Alternative real-world magic-byte variants that must be accepted **end-to-end**
+ * for an already-allow-listed format (card §1, §2). Each case pairs the format's
+ * extension and declared MIME with the variant magic so the three claims agree:
+ * a big-endian TIFF must satisfy every TIFF-container extension (`.tif`,
+ * `.tiff`, `.nef`, `.arw`, `.dng`), and an `MMOR`/`IIRS` header must satisfy
+ * `.orf` (ADR-0010 §2, ADR-0009 §3).
+ */
+const VARIANT_ACCEPT_CASES: readonly {
+  readonly format: UploadFormatId;
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly prefix: readonly number[];
+}[] = [
+  { format: "tiff", fileName: "scan-be.tif", mimeType: "image/tiff", prefix: TIFF_BE },
+  { format: "tiff", fileName: "scan-be.tiff", mimeType: "image/tiff", prefix: TIFF_BE },
+  { format: "nef", fileName: "DSC_0430.NEF", mimeType: "image/tiff", prefix: TIFF_BE },
+  { format: "arw", fileName: "DSC_0430.ARW", mimeType: "image/tiff", prefix: TIFF_BE },
+  { format: "dng", fileName: "photo-be.dng", mimeType: "image/tiff", prefix: TIFF_BE },
+  { format: "orf", fileName: "photo-mm.orf", mimeType: "image/tiff", prefix: ORF_MM },
+  { format: "orf", fileName: "photo-iirs.orf", mimeType: "image/tiff", prefix: ORF_IIRS },
+];
+
+describe("guardUploadType accepts the alternative TIFF/ORF magic-byte variants", () => {
+  it.each(VARIANT_ACCEPT_CASES)(
+    "accepts $fileName declared $mimeType carrying the variant bytes as $format",
+    (testCase) => {
+      const result = guardUploadType({
+        bytes: padded(testCase.prefix),
         fileName: testCase.fileName,
         declaredMimeType: testCase.mimeType,
       });
@@ -441,6 +532,28 @@ describe("guardUploadType rejects declarations outside the allow-list", () => {
   });
 });
 
+describe("guardUploadType rejects an ftyp box with an unrecognized major brand", () => {
+  it.each(UNRECOGNIZED_FTYP_BRANDS)(
+    "reports unrecognized_format for the %s major brand and signals delete-and-write-nothing",
+    (brand) => {
+      const rejected = expectRejected(
+        guardUploadType({
+          bytes: padded(ftyp(brand)),
+          fileName: "photo.heic",
+          declaredMimeType: "image/heic",
+        })
+      );
+
+      expect(rejected.status).toBe(415);
+      expect(rejected.code).toBe("unsupported_media_type");
+      expect(rejected.reason).toBe("unrecognized_format");
+      expect(rejected.detectedFormat).toBeNull();
+      expect(rejected.deleteObject).toBe(true);
+      expect(rejected.persist).toBe(false);
+    }
+  );
+});
+
 describe("guardUploadType reports the first failing claim in ADR-0009 §7 precedence order", () => {
   it("reports unsupported_extension when the extension, MIME and bytes all fail", () => {
     const rejected = expectRejected(
@@ -468,6 +581,22 @@ describe("guardUploadType reports the first failing claim in ADR-0009 §7 preced
     );
 
     expect(rejected.reason).toBe("unsupported_media_type");
+    expect(rejected.detectedFormat).toBeNull();
+    expect(rejected.status).toBe(415);
+    expect(rejected.deleteObject).toBe(true);
+    expect(rejected.persist).toBe(false);
+  });
+
+  it("still reports unsupported_extension when the extension, MIME and bytes each fail on their own", () => {
+    const rejected = expectRejected(
+      guardUploadType({
+        bytes: padded(JPEG),
+        fileName: "photo.gif",
+        declaredMimeType: "image/gif",
+      })
+    );
+
+    expect(rejected.reason).toBe("unsupported_extension");
     expect(rejected.detectedFormat).toBeNull();
     expect(rejected.status).toBe(415);
     expect(rejected.deleteObject).toBe(true);
