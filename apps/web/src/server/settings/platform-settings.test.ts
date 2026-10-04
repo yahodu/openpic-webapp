@@ -40,21 +40,37 @@ import { makeFakeMongo } from "../../test/helpers/fake-mongo";
  * The cache reads the injected `clock` exactly once per call, so the TTL is
  * deterministic under `fixedClock(start, stepMs)`.
  */
+/**
+ * The literal ranges fixed by the contract — "Validation guards:
+ * `gracePeriodDays` 1–60; `reminderDays` strictly increasing and all
+ * `< gracePeriodDays`; `leaseMinutes` 1–60; `pollIntervalSeconds` 10–300"
+ * (`docs/API Contract.md` §9.10). Pinned here by value, never derived from
+ * `SETTING_BOUNDS`, so a stale (`max: 61`) or widened (`min: 0, max: 1000`)
+ * range in the implementation fails the spec instead of passing it.
+ */
+const CONTRACT_BOUNDS: readonly { key: string; min: number; max: number }[] = [
+  { key: "dunning.gracePeriodDays", min: 1, max: 60 },
+  { key: "notifications.pollIntervalSeconds", min: 10, max: 300 },
+  { key: "pipeline.leaseMinutes", min: 1, max: 60 },
+];
+
+const byKey = (a: { key: string }, b: { key: string }) => a.key.localeCompare(b.key);
+
 describe("platform settings numeric guards", () => {
-  it("U1: exposes a guard for every bounded scalar tunable in the contract", () => {
-    expect(SETTING_BOUNDS.map((bound) => bound.key).sort()).toEqual(
-      [
-        "dunning.gracePeriodDays",
-        "notifications.pollIntervalSeconds",
-        "pipeline.leaseMinutes",
-      ].sort()
-    );
+  it("U1: exposes exactly the bounded scalars from the contract, with their literal ranges", () => {
+    expect(
+      SETTING_BOUNDS.map((bound: { key: string; min: number; max: number }) => ({
+        key: bound.key,
+        min: bound.min,
+        max: bound.max,
+      })).sort(byKey)
+    ).toEqual([...CONTRACT_BOUNDS].sort(byKey));
   });
 
-  it.each(SETTING_BOUNDS)(
-    "U1: rejects $key below its minimum with the guard's key/min/max",
+  it.each(CONTRACT_BOUNDS)(
+    "U1: rejects $key below its minimum ($min) with the contract's key/min/max",
     (bound) => {
-      expect(checkSettingBound(bound.key, Number(bound.min) - 1)).toEqual({
+      expect(checkSettingBound(bound.key, bound.min - 1)).toEqual({
         key: bound.key,
         min: bound.min,
         max: bound.max,
@@ -62,10 +78,10 @@ describe("platform settings numeric guards", () => {
     }
   );
 
-  it.each(SETTING_BOUNDS)(
-    "U1: rejects $key above its maximum with the guard's key/min/max",
+  it.each(CONTRACT_BOUNDS)(
+    "U1: rejects $key above its maximum ($max) with the contract's key/min/max",
     (bound) => {
-      expect(checkSettingBound(bound.key, Number(bound.max) + 1)).toEqual({
+      expect(checkSettingBound(bound.key, bound.max + 1)).toEqual({
         key: bound.key,
         min: bound.min,
         max: bound.max,
@@ -73,7 +89,7 @@ describe("platform settings numeric guards", () => {
     }
   );
 
-  it.each(SETTING_BOUNDS)("U1: accepts $key at its inclusive bounds", (bound) => {
+  it.each(CONTRACT_BOUNDS)("U1: accepts $key at its inclusive bounds", (bound) => {
     expect(checkSettingBound(bound.key, bound.min)).toBeNull();
     expect(checkSettingBound(bound.key, bound.max)).toBeNull();
   });
@@ -95,6 +111,18 @@ describe("platform settings reminderDays guard", () => {
   it("U2: rejects a reminder day equal to the grace period (strictly before is required)", () => {
     expect(validateReminderDays([1, 5, 14], 14)).toEqual([
       { key: "dunning.reminderDays", index: 2, day: 14, problem: "not_before_grace" },
+    ]);
+  });
+
+  it("U2: reports not_strictly_increasing when an index is both non-increasing and not before grace", () => {
+    // Index 1 (20 >= grace 14) is not_before_grace. Index 2 (20 == previous 20)
+    // breaks BOTH rules, so its `problem` is ambiguous unless precedence is
+    // pinned: the strict-increase rule is evaluated first and exactly one
+    // violation is emitted per offending index. (Every non-increasing-and->=
+    // grace index necessarily follows a day that is itself >= grace.)
+    expect(validateReminderDays([1, 20, 20], 14)).toEqual([
+      { key: "dunning.reminderDays", index: 1, day: 20, problem: "not_before_grace" },
+      { key: "dunning.reminderDays", index: 2, day: 20, problem: "not_strictly_increasing" },
     ]);
   });
 
