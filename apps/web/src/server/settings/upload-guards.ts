@@ -119,21 +119,40 @@ function matches(bytes: Uint8Array, offset: number, signature: readonly number[]
   return signature.every((byte, index) => bytes[offset + index] === byte);
 }
 
+/** Render a four-character code as its four ASCII bytes, for readable brand tables. */
+function fourCc(code: string): readonly number[] {
+  return [code.charCodeAt(0), code.charCodeAt(1), code.charCodeAt(2), code.charCodeAt(3)];
+}
+
+/**
+ * The ISO-BMFF `ftyp` **major brands** (bytes 8…12) the guard recognises, each
+ * mapped to the container it proves (ADR-0011 §3).
+ *
+ * HEIF files carry several equivalent major brands (`heic`/`heix`/`hevc`/`hevx`
+ * for image/sequence profiles and `msf1`/`mif1` for the generic HEIF container);
+ * AVIF uses `avif` for stills and `avis` for image sequences. Canon CR3 keeps
+ * its dedicated `crx ` brand. The brand is a detection detail only — it never
+ * widens the extension/MIME allow-lists.
+ */
+const FTYP_MAJOR_BRANDS: readonly (readonly [UploadContainer, readonly number[]])[] = [
+  ["heic", fourCc("heic")],
+  ["heic", fourCc("heix")],
+  ["heic", fourCc("hevc")],
+  ["heic", fourCc("hevx")],
+  ["heic", fourCc("msf1")],
+  ["heic", fourCc("mif1")],
+  ["avif", fourCc("avif")],
+  ["avif", fourCc("avis")],
+  ["cr3", fourCc("crx ")],
+];
+
 /** Detect the ISO Base Media File Format (`ftyp`) brand at bytes 8…12. */
 function sniffFtypBrand(bytes: Uint8Array): UploadContainer | null {
   if (!matches(bytes, 4, [0x66, 0x74, 0x79, 0x70])) {
     return null;
   }
-  if (matches(bytes, 8, [0x68, 0x65, 0x69, 0x63])) {
-    return "heic"; // "heic"
-  }
-  if (matches(bytes, 8, [0x61, 0x76, 0x69, 0x66])) {
-    return "avif"; // "avif"
-  }
-  if (matches(bytes, 8, [0x63, 0x72, 0x78, 0x20])) {
-    return "cr3"; // "crx "
-  }
-  return null;
+  const match = FTYP_MAJOR_BRANDS.find(([, signature]) => matches(bytes, 8, signature));
+  return match === undefined ? null : match[0];
 }
 
 /**
