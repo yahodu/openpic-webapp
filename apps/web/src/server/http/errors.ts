@@ -1,8 +1,8 @@
-import type { ErrorCode } from "@openpic/contracts";
+import type { AppErrorCode } from "@openpic/contracts";
 
 import { AppError, type AppErrorOptions } from "./app-error";
 
-export { ERROR_CATALOG, type ErrorCatalogEntry } from "./catalog";
+export { ERROR_CATALOG, PIPELINE_ERROR_TRANSPORT, type ErrorCatalogEntry } from "./catalog";
 
 /**
  * The error catalogue facade: a factory plus a type guard.
@@ -22,7 +22,7 @@ export { ERROR_CATALOG, type ErrorCatalogEntry } from "./catalog";
  * @example
  * throw appError("not_found", { details: { resource: "photo" } });
  */
-export function appError(code: ErrorCode, options: AppErrorOptions = {}): AppError {
+export function appError(code: AppErrorCode, options: AppErrorOptions = {}): AppError {
   return new AppError(code, options);
 }
 

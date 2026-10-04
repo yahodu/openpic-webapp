@@ -1,4 +1,4 @@
-import type { ErrorCode } from "@openpic/contracts";
+import type { AppErrorCode, ErrorCode, PipelineErrorCode } from "@openpic/contracts";
 
 /**
  * The server error catalogue — the executable copy of contract Appendix A.
@@ -72,3 +72,45 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, ErrorCatalogEntry>> = {
   },
   gateway_timeout: { status: 504, retryable: true, message: "An upstream service timed out." },
 };
+
+/**
+ * Transport for pipeline codes that carry no Appendix A row (contract §0.9).
+ *
+ * A shared pipeline stage owns the status/retry policy of its own error codes;
+ * keeping them out of {@link ERROR_CATALOG} preserves that table as the exact,
+ * exhaustive copy of Appendix A while still giving `appError` a default
+ * transport for every member of the client code enum.
+ */
+export const PIPELINE_ERROR_TRANSPORT: Readonly<Record<PipelineErrorCode, ErrorCatalogEntry>> = {
+  idempotency_in_progress: {
+    status: 409,
+    retryable: true,
+    message: "A request with this idempotency key is still in progress.",
+  },
+  idempotency_key_reuse: {
+    status: 422,
+    retryable: false,
+    message: "This idempotency key was reused with a different request.",
+  },
+  idempotency_key_required: {
+    status: 400,
+    retryable: false,
+    message: "This endpoint requires an Idempotency-Key header.",
+  },
+};
+
+/** Every client-facing code's transport: Appendix A first, then pipeline codes. */
+const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
+  ...ERROR_CATALOG,
+  ...PIPELINE_ERROR_TRANSPORT,
+};
+
+/**
+ * Resolve the catalogue entry (status, retry policy, safe message) for a code.
+ *
+ * @param code - Any code an `AppError` may carry.
+ * @returns The code's transport entry.
+ */
+export function catalogEntryFor(code: AppErrorCode): ErrorCatalogEntry {
+  return TRANSPORT[code];
+}

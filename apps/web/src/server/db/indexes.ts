@@ -215,6 +215,26 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+
+  // idempotency_keys — one claim per (key, scope, principal); the unique index
+  // is what makes the idempotency stage's claim atomic (§0.9).
+  {
+    collection: COLLECTIONS.idempotencyKeys,
+    name: "idempotency_keys_key_scope_principal_unique",
+    keys: [
+      ["key", 1],
+      ["scope", 1],
+      ["principalId", 1],
+    ],
+    unique: true,
+  },
+  // idempotency_keys — 24-hour retention via the TTL monitor (§0.9/§22).
+  {
+    collection: COLLECTIONS.idempotencyKeys,
+    name: "idempotency_keys_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
 ];
 
 /** The outcome of a bootstrap run: which indexes were built and which existed. */
