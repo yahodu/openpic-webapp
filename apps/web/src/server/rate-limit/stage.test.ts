@@ -92,6 +92,44 @@ describe("rateLimitStage — attendee-session trust", () => {
     expect(keys.join("|")).not.toContain(raw);
   });
 
+  it("admits liveness.challenge when a server-validated attendeeSessionId resolves an identity", async () => {
+    const keys: string[] = [];
+    const limiter: RateLimiter = {
+      limit: (key) => {
+        keys.push(key);
+        return Promise.resolve(allowed());
+      },
+    };
+    // The positive path: a session resolver has validated the request and
+    // produced the resolved attendee identity. liveness.challenge is
+    // attendee-only, so a validated identity must be admitted and limited
+    // normally (headers attached, request not fail-closed).
+    const resolvedSessionId = "sess_resolved_attendee_9f2c";
+    const stage = rateLimitStage({
+      classKey: "liveness.challenge",
+      limiter,
+      salt: SALT,
+      facts: { attendeeSessionId: resolvedSessionId },
+    });
+
+    const headers = await stage(
+      context(),
+      new Request(URL, {
+        method: "POST",
+        headers: { "x-attendee-session": "att_raw_session_token_9f2c" },
+      })
+    );
+
+    // Bucketed on the resolved attendee identity, exactly once.
+    expect(keys).toEqual([`liveness.challenge:attendee:${resolvedSessionId}`]);
+    // Admitted with the §0.11 RateLimit headers — not a 503 fail-closed.
+    expect(headers).toEqual({
+      "RateLimit-Limit": "12",
+      "RateLimit-Remaining": "11",
+      "RateLimit-Reset": "30",
+    });
+  });
+
   it("does not mint a fresh attendee bucket when X-Attendee-Session is rotated or forged", async () => {
     const keys: string[] = [];
     const limiter: RateLimiter = {
@@ -145,21 +183,26 @@ describe("rateLimitStage — attendee-session trust", () => {
     const limiter: RateLimiter = {
       limit: () => Promise.resolve(allowed({ success: false, limit: 12, remaining: 0 })),
     };
+    // A resolving facts value makes the evaluator consult the denying limiter,
+    // so this genuinely exercises the `ratelimit.exceeded` path (not the
+    // no-identity `ratelimit.limiter_failed` branch).
     const stage = asCallable(
-      rateLimitStage({ classKey: "liveness.challenge", limiter, salt: SALT })
+      rateLimitStage({
+        classKey: "liveness.challenge",
+        limiter,
+        salt: SALT,
+        facts: { attendeeSessionId: "sess_resolved_attendee_9f2c" },
+      })
     );
 
     await expect(
       stage(context(), new Request(URL, { method: "POST", headers: { "x-attendee-session": raw } }))
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject({ code: "rate_limited" });
 
-    // A denial (or a fail-closed limiter failure) must be observed ...
-    expect(
-      sink.entries.some(
-        (entry) =>
-          entry.event === "ratelimit.exceeded" || entry.event === "ratelimit.limiter_failed"
-      )
-    ).toBe(true);
+    // The denial log path must be the one that actually fired ...
+    const denial = sink.entries.find((entry) => entry.event === "ratelimit.exceeded");
+    expect(denial).toBeDefined();
+    expect(denial?.level).toBe("warn");
     // ... and the raw session token must not be anywhere in the log.
     expect(JSON.stringify(sink.entries)).not.toContain(raw);
   });
