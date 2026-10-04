@@ -201,4 +201,32 @@ describe("rate-limit stage in the pipeline (memory adapter)", () => {
     expect(statuses.filter((status) => status === 429).length).toBeGreaterThan(0);
     expect(JSON.stringify(sink.entries)).not.toContain(contact);
   });
+
+  it("does not silently allow a fail-closed class when the request carries no usable identity", async () => {
+    const sink = installMemoryLogger();
+    const route = makeRoute({
+      classKey: "liveness.challenge",
+      limiter: memoryRateLimiter(),
+    });
+
+    // No principal, no x-forwarded-for and no attendee session: the request has
+    // no identity to key on, so it must not be treated as unlimited.
+    const response = await route(new Request(URL, { method: "POST" }));
+
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body.error.code).toBe("service_unavailable");
+    expect(apiErrorSchema.safeParse(body).success).toBe(true);
+    expect(sink.entries.some((entry) => entry.event === "ratelimit.limiter_failed")).toBe(true);
+  });
+
+  it("surfaces a missing identity as a limiter failure even when the class fails open", async () => {
+    const sink = installMemoryLogger();
+    const route = makeRoute({ limiter: memoryRateLimiter() });
+
+    const response = await route(new Request(URL, { method: "POST" }));
+
+    expect(response.status).toBe(200);
+    expect(sink.entries.some((entry) => entry.event === "ratelimit.limiter_failed")).toBe(true);
+  });
 });

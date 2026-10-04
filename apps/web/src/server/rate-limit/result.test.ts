@@ -31,6 +31,19 @@ describe("strictestRateLimitResult", () => {
     expect(strictest.remaining).toBe(10);
     expect(strictest.limit).toBe(60);
   });
+
+  it("U2: denies when the minimum-remaining result is allowed but another result is denied", () => {
+    // The binding constraint (fewest remaining) happens to be the *allowed* key
+    // here, while a second key is already denied. Success must still be the AND
+    // over every key, so the request is denied; the numbers still describe the
+    // minimum-remaining key, not the denied one.
+    const strictest = strictestRateLimitResult([
+      { success: true, limit: 5, remaining: 0, resetSeconds: 12 },
+      { success: false, limit: 15, remaining: 5, resetSeconds: 40 },
+    ]);
+
+    expect(strictest).toEqual({ success: false, limit: 5, remaining: 0, resetSeconds: 12 });
+  });
 });
 
 describe("rateLimitHeaders", () => {
