@@ -1,0 +1,15 @@
+title = "openpic gitleaks configuration"
+
+# Extend the default gitleaks ruleset rather than replacing it.
+[extend]
+useDefault = true
+
+# Documentation code samples intentionally use identifier-like strings that
+# match the generic-api-key heuristic (e.g. `modelKey: "insightface-antelopev2-2026-03"`).
+# Allowlist the exact non-secret value so the docs can be committed.
+[allowlist]
+description = "docs: non-secret model identifier matching generic-api-key"
+regexTarget = "secret"
+regexes = [
+  '''insightface-antelopev2-2026-03''',
+]
