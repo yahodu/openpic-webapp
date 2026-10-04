@@ -1,6 +1,6 @@
-import type { ApiErrorEnvelope, ErrorCode } from "@openpic/contracts";
+import type { ApiErrorEnvelope, AppErrorCode } from "@openpic/contracts";
 
-import { ERROR_CATALOG } from "./catalog";
+import { catalogEntryFor } from "./catalog";
 
 /**
  * `AppError` — the single error type the HTTP pipeline understands.
@@ -34,8 +34,8 @@ export interface AppErrorOptions {
 
 /** A typed application error with an HTTP status and retry policy. */
 export class AppError extends Error {
-  /** The catalogued machine-readable code. */
-  readonly code: ErrorCode;
+  /** The machine-readable code (Appendix A business or pipeline code). */
+  readonly code: AppErrorCode;
   /** The HTTP status this error is served with. */
   readonly status: number;
   /** Whether the client may retry the request. */
@@ -53,8 +53,8 @@ export class AppError extends Error {
    * @param code - A member of the client-facing error catalogue.
    * @param options - Message/details and transport overrides.
    */
-  constructor(code: ErrorCode, options: AppErrorOptions = {}) {
-    const entry = ERROR_CATALOG[code];
+  constructor(code: AppErrorCode, options: AppErrorOptions = {}) {
+    const entry = catalogEntryFor(code);
     const status = options.status ?? entry.status;
     super(options.message ?? entry.message);
     this.name = "AppError";
@@ -102,9 +102,9 @@ export function toErrorEnvelope(error: unknown, requestId: string): ApiErrorEnve
   return {
     error: {
       code: "internal_error",
-      message: ERROR_CATALOG.internal_error.message,
+      message: catalogEntryFor("internal_error").message,
       requestId,
-      retryable: ERROR_CATALOG.internal_error.retryable,
+      retryable: catalogEntryFor("internal_error").retryable,
     },
   };
 }

@@ -40,6 +40,23 @@ export const ERROR_CODES = [
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 /**
+ * Codes a shared pipeline stage emits whose HTTP transport is defined by the
+ * stage's own story (API contract §0.9) rather than by Appendix A.
+ *
+ * They are part of the client-facing code enum so `error.code` is a closed set,
+ * but they carry no Appendix A row; the server transports them from the stage
+ * that owns them (the idempotency stage).
+ */
+export const PIPELINE_ERROR_CODES = [
+  "idempotency_in_progress",
+  "idempotency_key_reuse",
+  "idempotency_key_required",
+] as const;
+
+/** A member of the {@link PIPELINE_ERROR_CODES} set. */
+export type PipelineErrorCode = (typeof PIPELINE_ERROR_CODES)[number];
+
+/**
  * Codes the edge gate (middleware) emits before the request reaches the
  * application pipeline.
  *
@@ -54,11 +71,22 @@ export const EDGE_ERROR_CODES = ["csrf_failed"] as const;
 /** A member of the {@link EDGE_ERROR_CODES} set. */
 export type EdgeErrorCode = (typeof EDGE_ERROR_CODES)[number];
 
-/** Every code a client-facing error envelope may carry (business + edge). */
-export const API_ERROR_CODES = [...ERROR_CODES, ...EDGE_ERROR_CODES] as const;
+/** Every code a client-facing error envelope may carry (business + edge + pipeline). */
+export const API_ERROR_CODES = [
+  ...ERROR_CODES,
+  ...EDGE_ERROR_CODES,
+  ...PIPELINE_ERROR_CODES,
+] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
+
+/**
+ * Codes the server `AppError` may carry: the business catalogue plus the
+ * pipeline codes. Edge codes (`csrf_failed`) are emitted by middleware before
+ * the pipeline and are never raised as `AppError`s.
+ */
+export type AppErrorCode = ErrorCode | PipelineErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
