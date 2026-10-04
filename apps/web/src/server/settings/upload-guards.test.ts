@@ -172,6 +172,32 @@ const MAGIC: readonly { readonly format: UploadFormatId; readonly prefix: readon
   { format: "rw2", prefix: RW2 },
 ];
 
+/**
+ * The HEIF `ftyp` **major brands** real Apple/Android `.heic`/`.heif` files
+ * carry, pinned by value (card §1). `heic` is already covered by {@link MAGIC};
+ * the rest are the broadening this spec pins. Detection must map every one of
+ * them to the `heic` container.
+ */
+const HEIF_MAJOR_BRANDS: readonly string[] = ["heic", "heix", "hevc", "hevx", "msf1", "mif1"];
+
+/**
+ * The AVIF `ftyp` **major brands**: `avif` for still images and `avis` for AVIF
+ * image sequences, pinned by value (card §2). Both must map to the `avif`
+ * container.
+ */
+const AVIF_MAJOR_BRANDS: readonly string[] = ["avif", "avis"];
+
+/**
+ * Build a {@link SNIFF_BYTES}-agnostic ISO-BMFF `ftyp` prefix whose **major
+ * brand** is `brand` at bytes 8…12 — the bytes a real HEIF/AVIF file carries.
+ *
+ * @param brand - The four-character major brand (e.g. `"heix"`, `"avis"`).
+ * @returns The magic-byte prefix (`size` + `"ftyp"` + brand).
+ */
+function ftyp(brand: string): number[] {
+  return [0x00, 0x00, 0x00, 0x18, ...ascii("ftyp"), ...ascii(brand)];
+}
+
 describe("upload format allow-lists", () => {
   it("exposes exactly the allowed extensions, asserted by value", () => {
     expect(sorted(allowedExtensions)).toEqual(sorted(EXPECTED_EXTENSIONS));
@@ -208,6 +234,14 @@ describe("upload format allow-lists", () => {
 describe("magic-byte sniffing", () => {
   it.each(MAGIC)("detects a $format header as $format", ({ format, prefix }) => {
     expect(sniffUploadFormat(padded(prefix))).toBe(format);
+  });
+
+  it.each(HEIF_MAJOR_BRANDS)("sniffs the HEIF ftyp major brand %s as heic", (brand) => {
+    expect(sniffUploadFormat(padded(ftyp(brand)))).toBe("heic");
+  });
+
+  it.each(AVIF_MAJOR_BRANDS)("sniffs the AVIF ftyp major brand %s as avif", (brand) => {
+    expect(sniffUploadFormat(padded(ftyp(brand)))).toBe("avif");
   });
 
   it("returns null for bytes that match no accepted signature", () => {
@@ -273,6 +307,45 @@ describe("guardUploadType accepts a file whose declarations match its bytes", ()
 
     expect(result).toEqual({ ok: true, format: "jpeg" });
   });
+});
+
+/**
+ * A `.heic`/`.heif`/`.avif` file whose bytes carry any of the broad major
+ * brands must be accepted end-to-end (card §3): the brand is a detection
+ * detail that must not leak into the allow-list decision. Each case pairs a
+ * representative extension + declared MIME with one major brand.
+ */
+const BROAD_BRAND_ACCEPT_CASES: readonly {
+  readonly format: UploadFormatId;
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly brand: string;
+}[] = [
+  ...HEIF_MAJOR_BRANDS.flatMap((brand) => [
+    { format: "heic" as const, fileName: "photo.heic", mimeType: "image/heic", brand },
+    { format: "heic" as const, fileName: "photo.heif", mimeType: "image/heif", brand },
+  ]),
+  ...AVIF_MAJOR_BRANDS.map((brand) => ({
+    format: "avif" as const,
+    fileName: "photo.avif",
+    mimeType: "image/avif",
+    brand,
+  })),
+];
+
+describe("guardUploadType accepts every HEIF/AVIF major brand end-to-end", () => {
+  it.each(BROAD_BRAND_ACCEPT_CASES)(
+    "accepts $fileName declared $mimeType carrying $brand bytes as $format",
+    (testCase) => {
+      const result = guardUploadType({
+        bytes: padded(ftyp(testCase.brand)),
+        fileName: testCase.fileName,
+        declaredMimeType: testCase.mimeType,
+      });
+
+      expect(result).toEqual({ ok: true, format: testCase.format });
+    }
+  );
 });
 
 /** A file whose declared type and/or extension disagrees with its bytes. */
@@ -362,6 +435,40 @@ describe("guardUploadType rejects declarations outside the allow-list", () => {
     );
 
     expect(rejected.reason).toBe("unsupported_media_type");
+    expect(rejected.status).toBe(415);
+    expect(rejected.deleteObject).toBe(true);
+    expect(rejected.persist).toBe(false);
+  });
+});
+
+describe("guardUploadType reports the first failing claim in ADR-0009 §7 precedence order", () => {
+  it("reports unsupported_extension when the extension, MIME and bytes all fail", () => {
+    const rejected = expectRejected(
+      guardUploadType({
+        bytes: padded(PNG),
+        fileName: "photo.gif",
+        declaredMimeType: "image/jpeg",
+      })
+    );
+
+    expect(rejected.reason).toBe("unsupported_extension");
+    expect(rejected.detectedFormat).toBeNull();
+    expect(rejected.status).toBe(415);
+    expect(rejected.deleteObject).toBe(true);
+    expect(rejected.persist).toBe(false);
+  });
+
+  it("reports unsupported_media_type when the extension is allowed but the MIME and bytes fail", () => {
+    const rejected = expectRejected(
+      guardUploadType({
+        bytes: padded(JPEG),
+        fileName: "photo.png",
+        declaredMimeType: "image/gif",
+      })
+    );
+
+    expect(rejected.reason).toBe("unsupported_media_type");
+    expect(rejected.detectedFormat).toBeNull();
     expect(rejected.status).toBe(415);
     expect(rejected.deleteObject).toBe(true);
     expect(rejected.persist).toBe(false);
