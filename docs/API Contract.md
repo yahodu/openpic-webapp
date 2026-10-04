@@ -275,13 +275,13 @@ Semantics, backed by `idempotencyKeys` (`{key, scope}` unique, TTL 24 h, `scope 
 
 Mutable resources with meaningful concurrent-edit risk return a **strong `ETag`** and accept `If-Match`:
 
-| Resource                        | ETag source                                                           |
-| ------------------------------- | --------------------------------------------------------------------- |
-| `events`                        | `W/"<updatedAt.getTime()>-<schemaVersion>"` — strong for our purposes |
-| `plans` (admin)                 | `version`                                                             |
-| `notificationTypes` (admin)     | `version`                                                             |
-| `notificationTemplates` (admin) | `version`                                                             |
-| `platformSettings`              | `updatedAt`                                                           |
+| Resource                        | ETag source                               |
+| ------------------------------- | ----------------------------------------- |
+| `events`                        | `"<updatedAt.getTime()>-<schemaVersion>"` |
+| `plans` (admin)                 | `version`                                 |
+| `notificationTypes` (admin)     | `version`                                 |
+| `notificationTemplates` (admin) | `version`                                 |
+| `platformSettings`              | `updatedAt`                               |
 
 `PATCH` without `If-Match` on these → `428 precondition_required`. `If-Match` mismatch → `412 etag_mismatch` with `details.currentETag`.
 
