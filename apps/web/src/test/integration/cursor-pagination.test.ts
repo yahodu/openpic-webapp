@@ -1,10 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { decodeCursor } from "@/server/http/cursor";
 import { paginateByCursor, type CursorPage, type CursorSort } from "@/server/repos/paginate";
 import { tenantRepo } from "@/server/repos/tenant";
 
+import { closeMongoClient } from "../../server/db/mongo";
+import { makeEnv, toProcessEnv } from "../factories/env";
 import { createTestDb } from "../helpers/db";
+
+beforeAll(() => {
+  const uri = process.env.MONGO_TEST_URI;
+  if (!uri) {
+    throw new Error(
+      "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
+    );
+  }
+
+  Object.assign(process.env, toProcessEnv(makeEnv({ APP_ENV: "test", MONGODB_URI: uri })));
+});
+
+afterAll(async () => {
+  await closeMongoClient();
+});
 
 /**
  * I1 — cursor (keyset) pagination never skips or duplicates a row (API
@@ -70,7 +87,7 @@ describe("paginateByCursor — 95 rows with duplicate createdAt in pages of 40",
       const pages: CursorPage<ImageRow>[] = [];
       let cursor: string | null = null;
       while (pages.length < 10) {
-        const page = await paginateByCursor<ImageRow>(images, {
+        const page: CursorPage<ImageRow> = await paginateByCursor<ImageRow>(images, {
           sort: SORT,
           limit: pageSize,
           cursor,
@@ -84,9 +101,13 @@ describe("paginateByCursor — 95 rows with duplicate createdAt in pages of 40",
 
       expect(pages).toHaveLength(3);
 
+      const lastPage = pages[2];
+      if (lastPage === undefined) {
+        throw new Error("expected a third page of 15 rows");
+      }
       expect(pages.map((page) => page.items.length)).toEqual([40, 40, 15]);
       expect(pages.map((page) => page.hasMore)).toEqual([true, true, false]);
-      expect(pages[2].nextCursor).toBeNull();
+      expect(lastPage.nextCursor).toBeNull();
 
       const ids = pages.flatMap((page) => page.items.map((row) => row._id));
       expect(ids).toEqual(expectedIds(rows));
@@ -103,12 +124,22 @@ describe("paginateByCursor — 95 rows with duplicate createdAt in pages of 40",
       const images = tenantRepo(TENANT_ID, test.db).collection("images");
       await images.insertMany([...rows]);
 
-      const first = await paginateByCursor<ImageRow>(images, { sort: SORT, limit: 40 });
+      const first: CursorPage<ImageRow> = await paginateByCursor<ImageRow>(images, {
+        sort: SORT,
+        limit: 40,
+      });
 
-      expect(first.nextCursor).not.toBeNull();
-      expect(decodeCursor(first.nextCursor as string)).toEqual({
-        c: first.items[39].createdAt.toISOString(),
-        i: first.items[39]._id,
+      const lastReturned = first.items[39];
+      if (lastReturned === undefined) {
+        throw new Error("expected a full first page of 40 rows");
+      }
+      const { nextCursor } = first;
+      if (nextCursor === null) {
+        throw new Error("expected a next cursor on a full first page");
+      }
+      expect(decodeCursor(nextCursor)).toEqual({
+        c: lastReturned.createdAt.toISOString(),
+        i: lastReturned._id,
       });
     } finally {
       await test.cleanup();

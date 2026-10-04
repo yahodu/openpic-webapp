@@ -168,10 +168,19 @@ describe("buildCursorPage — hasMore / nextCursor semantics", () => {
   it("U4: a full page with an extra row reports hasMore and a cursor for the last returned row", () => {
     const page = buildCursorPage(rows, 40, keyOf);
 
+    const lastReturned = rows[39];
+    if (lastReturned === undefined) {
+      throw new Error("expected 41 fixture rows");
+    }
     expect(page.items).toEqual(rows.slice(0, 40));
     expect(page.hasMore).toBe(true);
-    expect(page.nextCursor).toBe(encodeCursor(keyOf(rows[39])));
-    expect(decodeCursor(page.nextCursor as string)).toEqual(keyOf(rows[39]));
+    expect(page.nextCursor).toBe(encodeCursor(keyOf(lastReturned)));
+
+    const { nextCursor } = page;
+    if (nextCursor === null) {
+      throw new Error("expected a next cursor on a full page");
+    }
+    expect(decodeCursor(nextCursor)).toEqual(keyOf(lastReturned));
   });
 
   it("U4: exactly `limit` rows is terminal — hasMore false and nextCursor null", () => {
