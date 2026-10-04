@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { apiErrorSchema } from "@openpic/contracts";
+import { apiErrorSchema, findForbiddenFields } from "@openpic/contracts";
 
 import { closeMongoClient } from "../../server/db/mongo";
 import { ensureIndexes } from "../../server/db/indexes";
@@ -19,11 +19,14 @@ import { createTestDb, type TestDb } from "../helpers/db";
  * Integration contract — the idempotency stage inside the `defineRoute`
  * pipeline (API contract §0.9), against a real MongoDB replica set.
  *
- * Cases: I1 first call 201 + stored; I2 replay identical body + 200 + replay
- * header; I3 concurrency executes the handler exactly once; I4 same key /
- * different body -> 422; I5 missing key on a required route -> 400; I6 a
- * throwing handler releases the key; I7 the TTL index exists; I8 the key is
- * scoped per principal so one principal can never read another's stored body.
+ * Cases: I1 first call 201 + stored (and its snapshot passes the never-return
+ * scan); I2 replay identical body + 200 + replay header; I3 concurrency
+ * executes the handler exactly once; I4 same key / different body -> 422; I5a
+ * missing key on a required route -> 400; I5b an optional route accepts no key;
+ * I5c a malformed key -> 422; I5d a valid-but-non-v4 UUID -> 422; I6 a throwing
+ * handler releases the key; I6b a handler returning a 5xx result releases the
+ * key; I7 the TTL and per-principal unique indexes exist; I8 the key is scoped
+ * per principal so one principal can never read another's stored body.
  */
 
 /** The collection the stage persists records in (API contract §0.9). */
@@ -72,16 +75,21 @@ function deferred(): { readonly promise: Promise<void>; readonly resolve: () => 
   return { promise, resolve };
 }
 
+/** The minimal `RouteResult` these test routes produce. */
+interface TestResult {
+  readonly status?: number;
+  readonly body: { readonly id: string; readonly amount: number };
+  readonly headers?: Record<string, string>;
+}
+
 interface RouteOptions {
   readonly store: IdempotencyStore;
   readonly required?: boolean;
   readonly userId?: string;
   readonly tenantId?: string;
-  readonly handler?: (ctx: { readonly body: { amount: number } }) => {
-    status?: number;
-    body: { id: string; amount: number };
-    headers?: Record<string, string>;
-  };
+  readonly handler?: (ctx: {
+    readonly body: { amount: number };
+  }) => TestResult | Promise<TestResult>;
 }
 
 /** Build the write route under test with the idempotency stage attached. */
@@ -184,6 +192,14 @@ describe("idempotency stage in the pipeline (MongoDB)", () => {
       );
       expect(stored[0]?.responseSnapshot).toBeDefined();
       expect(stored[0]?.expireAt).toBeInstanceOf(Date);
+
+      // The stored snapshot is a response projection, so it must pass the
+      // never-return scanner exactly as a live response would (contract §0.15).
+      expect(findForbiddenFields(stored[0]?.responseSnapshot)).toEqual([]);
+      // ...and the scanner is not vacuous: credential material would be caught.
+      expect(
+        findForbiddenFields({ status: 201, body: { sessionToken: "raw" }, headers: {} })
+      ).toContain("body.sessionToken");
     });
   });
 
@@ -225,9 +241,10 @@ describe("idempotency stage in the pipeline (MongoDB)", () => {
         store,
         userId: "user-a",
         tenantId: "tenant-1",
-        handler: () => {
+        handler: async () => {
           calls += 1;
           started.resolve();
+          await gate.promise;
           return {
             status: 201,
             body: { id: "thing-1", amount: 7 },
@@ -283,7 +300,7 @@ describe("idempotency stage in the pipeline (MongoDB)", () => {
     });
   });
 
-  it("I5: a required route rejects a missing Idempotency-Key with 400 idempotency_key_required", async () => {
+  it("I5a: a required route rejects a missing Idempotency-Key with 400 idempotency_key_required", async () => {
     await withTestDb(async (test) => {
       await ensureIndexes(test.db);
       const store = mongoIdempotencyStore(test.db);
@@ -309,7 +326,7 @@ describe("idempotency stage in the pipeline (MongoDB)", () => {
     });
   });
 
-  it("I5: an optional route accepts a request with no Idempotency-Key", async () => {
+  it("I5b: an optional route accepts a request with no Idempotency-Key", async () => {
     await withTestDb(async (test) => {
       await ensureIndexes(test.db);
       const store = mongoIdempotencyStore(test.db);
@@ -322,7 +339,7 @@ describe("idempotency stage in the pipeline (MongoDB)", () => {
     });
   });
 
-  it("I5: rejects a malformed (non-UUIDv4) Idempotency-Key with 422 validation_failed", async () => {
+  it("I5c: rejects a malformed (non-UUID) Idempotency-Key with 422 validation_failed", async () => {
     await withTestDb(async (test) => {
       await ensureIndexes(test.db);
       const store = mongoIdempotencyStore(test.db);
@@ -334,6 +351,33 @@ describe("idempotency stage in the pipeline (MongoDB)", () => {
       const body = await response.json();
       expect(body.error.code).toBe("validation_failed");
       expect(apiErrorSchema.safeParse(body).success).toBe(true);
+    });
+  });
+
+  it("I5d: rejects a syntactically valid but non-v4 UUID Idempotency-Key with 422 validation_failed", async () => {
+    await withTestDb(async (test) => {
+      await ensureIndexes(test.db);
+      const store = mongoIdempotencyStore(test.db);
+      let calls = 0;
+      const route = makeRoute({
+        store,
+        userId: "user-a",
+        tenantId: "tenant-1",
+        handler: () => {
+          calls += 1;
+          return { status: 201, body: { id: "thing-1", amount: 1 }, headers: {} };
+        },
+      });
+
+      // A well-formed UUID whose version nibble is 1, not 4. The contract
+      // requires a UUIDv4 key specifically (§0.9).
+      const response = await route(post({ amount: 1 }, "11111111-1111-1111-8111-111111111111"));
+
+      expect(response.status).toBe(422);
+      const body = await response.json();
+      expect(body.error.code).toBe("validation_failed");
+      expect(apiErrorSchema.safeParse(body).success).toBe(true);
+      expect(calls).toBe(0);
     });
   });
 
@@ -368,7 +412,44 @@ describe("idempotency stage in the pipeline (MongoDB)", () => {
     });
   });
 
-  it("I7: ensureIndexes builds a TTL index on expireAt and a unique index on the key", async () => {
+  it("I6b: a handler that returns a 5xx result releases the key so a retry executes again", async () => {
+    await withTestDb(async (test) => {
+      await ensureIndexes(test.db);
+      const store = mongoIdempotencyStore(test.db);
+      const key = "77777777-7777-4777-8777-777777777777";
+      let calls = 0;
+      const route = makeRoute({
+        store,
+        userId: "user-a",
+        tenantId: "tenant-1",
+        handler: () => {
+          calls += 1;
+          if (calls === 1) {
+            // A 5xx *result* (not a throw): the key must still be released.
+            return { status: 503, body: { id: "thing-1", amount: 5 }, headers: {} };
+          }
+          return {
+            status: 201,
+            body: { id: "thing-1", amount: 5 },
+            headers: { location: `${ROUTE}/thing-1` },
+          };
+        },
+      });
+
+      const first = await route(post({ amount: 5 }, key));
+      expect(first.status).toBe(503);
+
+      const afterFailure = await test.db.collection(IDEMPOTENCY_COLLECTION).find({ key }).toArray();
+      expect(afterFailure).toHaveLength(0);
+
+      const retry = await route(post({ amount: 5 }, key));
+      expect(retry.status).toBe(201);
+      expect(retry.headers.get(IDEMPOTENCY_REPLAYED_HEADER)).toBeNull();
+      expect(calls).toBe(2);
+    });
+  });
+
+  it("I7: ensureIndexes builds a TTL index on expireAt and a per-principal unique index on the key", async () => {
     await withTestDb(async (test) => {
       await ensureIndexes(test.db);
 
@@ -380,7 +461,11 @@ describe("idempotency stage in the pipeline (MongoDB)", () => {
 
       const unique = findUniqueIndexOn(indexes, "key");
       expect(unique).toBeDefined();
-      expect(Object.keys(unique?.key as Record<string, unknown>)).toContain("scope");
+      const uniqueKeys = Object.keys(unique?.key as Record<string, unknown>);
+      expect(uniqueKeys).toContain("scope");
+      // The uniqueness must also include the principal, so two principals may
+      // hold the same key without colliding (§0.9).
+      expect(uniqueKeys).toContain("principalId");
     });
   });
 

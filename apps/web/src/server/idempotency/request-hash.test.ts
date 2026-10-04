@@ -18,7 +18,7 @@ import { canonicalJson, requestHash } from "./index";
 /** The reference digest, computed independently of the production helper. */
 function expectedHash(body: unknown, tenantId: string, userId: string): string {
   return createHash("sha256")
-    .update(`${String(canonicalJson(body))}\n${tenantId}\n${userId}`)
+    .update(`${canonicalJson(body)}\n${tenantId}\n${userId}`)
     .digest("hex");
 }
 
