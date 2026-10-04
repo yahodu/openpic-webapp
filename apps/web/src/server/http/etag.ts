@@ -48,15 +48,19 @@ export function weakETag(token: string | number): string {
 }
 
 /**
- * The weak ETag for an event: its `updatedAt` in epoch milliseconds composed
+ * The strong ETag for an event: its `updatedAt` in epoch milliseconds composed
  * with the schema version that last wrote it.
+ *
+ * A strong tag (not `W/"…"`) is required so the value a client reads from a
+ * `GET` can satisfy the strong `If-Match` comparison on a later `PATCH`/`PUT`
+ * (RFC 7232; contract §0.10).
  *
  * @param updatedAt - The event's last-write timestamp.
  * @param schemaVersion - The event schema version.
- * @returns `W/"<updatedAtMs>-<schemaVersion>"`.
+ * @returns `"<updatedAtMs>-<schemaVersion>"`.
  */
 export function eventETag(updatedAt: Date, schemaVersion: number): string {
-  return weakETag(`${String(updatedAt.getTime())}-${String(schemaVersion)}`);
+  return strongETag(`${String(updatedAt.getTime())}-${String(schemaVersion)}`);
 }
 
 /** One parsed entity tag: its opaque value and weakness flag. */

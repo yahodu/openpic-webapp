@@ -18,8 +18,9 @@ by the pinned RED specs:
 2. `ERROR_CODES`/`AppErrorCode` had to carry three new codes (`invalid_cursor`,
    `precondition_required`, `etag_mismatch`), but `errors.test.ts` asserts
    `ERROR_CATALOG` is _exactly_ the 23 Appendix-A transport rows.
-3. `eventETag` is weak while `If-Match` is strict-strong, which makes events
-   un-editable (§0.10 self-contradiction).
+3. `eventETag` was weak while `If-Match` is strict-strong, which made events
+   un-editable (§0.10 self-contradiction) — resolved by making the event ETag
+   strong (see Decision below).
 
 ## Decision
 
@@ -59,6 +60,15 @@ so `jsonResponse` emits zero bytes), and enforces `If-Match` on unsafe methods �
 `428 precondition_required { header }` when absent and `required`, `412
 etag_mismatch { currentETag }` on a mismatch. `resolve() === null` is a no-op.
 
+### Events ETag — strong `"<ms>-<v>"` (option a)
+
+`eventETag(updatedAt, schemaVersion)` returns a **strong** tag
+`"<updatedAt.getTime()>-<schemaVersion>"` (no `W/` prefix). The generic
+`ifMatchSatisfied` / `ifNoneMatchSatisfied` helpers stay RFC-7232-correct and
+shared by every resource; the contradiction is removed on the producer side
+instead of by weakening the comparison. This was the contract owner's choice
+(option a) when resolving the §0.10 self-contradiction.
+
 ### Error-code placement — `PIPELINE_ERROR_CODES`, not `ERROR_CODES`
 
 `invalid_cursor`, `precondition_required` and `etag_mismatch` are added to
@@ -82,10 +92,12 @@ keyset helper), not the card note's single `pagination.ts`.
   `paginateByCursor`; the compound key is opaque to clients.
 - A mutable endpoint gets optimistic concurrency by mounting `etagStage`, which
   emits the wire `ETag` and the `428`/`412`/`304` behaviours from one place.
-- **Open (deferred):** an event's current `ETag` is weak (`eventETag`) while
-  `If-Match` is strong, so no client value can satisfy it. Resolving that
-  contract contradiction is routed to the testcase-writer follow-up
-  (OP-81 · t_ac3a6c2c); the helper specs intentionally pin both halves for now.
+- **Resolved (option a):** the events `ETag` is now strong (`eventETag` emits
+  `"<updatedAt.getTime()>-<schemaVersion>"`, matching contract §0.10), so the
+  value a client reads from a `GET` satisfies the strong `If-Match` comparison
+  on a later `PATCH`/`PUT`. No client value could satisfy a weak current tag
+  under the RFC-7232 strong comparison, which is why the producer was fixed
+  rather than the comparison relaxed.
 
 ## Alternatives considered
 
