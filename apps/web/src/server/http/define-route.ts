@@ -19,8 +19,13 @@ import { jsonResponse, parseJsonBody, errorResponse } from "./respond";
  * A route declares its contract (input schema, response schema, pluggable
  * stages and handler) and the pipeline runs the stages in the documented order:
  *
- *   context -> rate limit -> auth -> CSRF -> tenant resolution -> idempotency ->
- *   ETag -> validate -> handler -> serialize
+ *   context -> rate limit -> auth -> rate limit (identity) -> CSRF ->
+ *   tenant resolution -> idempotency -> ETag -> validate -> handler -> serialize
+ *
+ * Rate limiting is deliberately two-tier (§0.11, ADR-0005): the coarse
+ * `rateLimit` stage runs first (before auth), and the identity-keyed
+ * `rateLimitIdentity` stage runs immediately after `auth` with the parsed body,
+ * so it can key on `ctx.principal` and the request `contact`.
  *
  * Every stage is optional and a no-op until its own story lands. The handler
  * only runs after validation succeeds and receives the typed, parsed input; its
@@ -122,6 +127,21 @@ function isStageHook(value: unknown): value is StageHook {
   );
 }
 
+/**
+ * The post-auth, identity-keyed rate-limit stage (two-tier limiting, §0.11,
+ * ADR-0005).
+ *
+ * It runs immediately after `auth` — so it can read `ctx.principal` — and is
+ * handed the request body as a third argument (the pipeline parses the body
+ * once, before this stage), so contact-keyed classes (`auth.otp`/`auth.verify`)
+ * can key on the body's `contact`.
+ */
+export type RouteIdentityStage = (
+  ctx: RouteStageContext,
+  request: Request,
+  body: unknown
+) => unknown;
+
 /** Narrow a stage result to a header map, ignoring every other return. */
 function stageHeadersOf(value: unknown): Record<string, string> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -156,10 +176,15 @@ export interface DefineRouteOptions<TBody = unknown, TResponse = unknown> {
   readonly env?: string;
   /** An explicit logger; defaults to the request-scoped process logger. */
   readonly logger?: Logger;
-  /** Rate-limit stage (no-op until its story lands). */
+  /** Coarse, pre-auth rate-limit stage (no-op until its story lands). */
   readonly rateLimit?: RouteStage;
   /** Authentication stage (no-op until its story lands). */
   readonly auth?: RouteStage;
+  /**
+   * Identity-keyed rate-limit stage; runs immediately after `auth` and receives
+   * the parsed request body as its third argument (two-tier limiting, §0.11).
+   */
+  readonly rateLimitIdentity?: RouteIdentityStage;
   /** CSRF stage (no-op until its story lands). */
   readonly csrf?: RouteStage;
   /** Tenant-resolution stage (no-op until its story lands). */
@@ -191,15 +216,6 @@ export function created<TResponse>(body: TResponse, location: string): RouteResu
 export function defineRoute<TBody = unknown, TResponse = unknown>(
   options: DefineRouteOptions<TBody, TResponse>
 ): RouteHandler {
-  const stages: readonly (RouteStage | undefined)[] = [
-    options.rateLimit,
-    options.auth,
-    options.csrf,
-    options.tenant,
-    options.idempotency,
-    options.etag,
-  ];
-
   return async (request: Request): Promise<Response> => {
     const requestId = resolveRequestId(request.headers.get(REQUEST_ID_HEADER));
     const startedAt = systemClock.now();
@@ -233,12 +249,30 @@ export function defineRoute<TBody = unknown, TResponse = unknown>(
       };
 
       try {
-        for (const stage of stages) {
-          if (stage === undefined) {
-            continue;
+        // Parse the body at most once. The post-auth identity stage needs it
+        // (contact-keyed classes) and the handler consumes the same parsed
+        // value, so `parseJsonBody` never reads the request stream twice. It
+        // reads a clone, so a later stage that clones the request (the
+        // idempotency stage hashes the body) still sees an unread stream.
+        let parsedBody: unknown;
+        let bodyParsed = false;
+        const resolveBody = async (): Promise<unknown> => {
+          if (!bodyParsed) {
+            parsedBody =
+              options.body === undefined
+                ? undefined
+                : await parseJsonBody(request.clone(), options.body);
+            bodyParsed = true;
           }
-          const value = await stage(context, request);
+          return parsedBody;
+        };
 
+        /**
+         * Fold one stage's return into the pipeline: merge its headers, serve a
+         * replay immediately, or register its result/error hooks. Returns the
+         * short-circuit response when the stage produced one.
+         */
+        const applyStageResult = (value: unknown): Response | undefined => {
           if (isStageHook(value)) {
             if (value.headers !== undefined) {
               Object.assign(stageHeaders, value.headers);
@@ -251,17 +285,47 @@ export function defineRoute<TBody = unknown, TResponse = unknown>(
               });
             }
             hooks.push(value);
-            continue;
+            return undefined;
           }
 
           const headers = stageHeadersOf(value);
           if (headers !== undefined) {
             Object.assign(stageHeaders, headers);
           }
+          return undefined;
+        };
+
+        const runStage = async (stage: RouteStage | undefined): Promise<Response | undefined> =>
+          stage === undefined ? undefined : applyStageResult(await stage(context, request));
+
+        // Two-tier limiting (§0.11, ADR-0005): the coarse, pre-auth stage runs
+        // first; the identity-keyed stage runs immediately after auth, with the
+        // parsed body, so it can see `ctx.principal` and the request `contact`.
+        let replay = await runStage(options.rateLimit);
+        if (replay !== undefined) {
+          return replay;
+        }
+        replay = await runStage(options.auth);
+        if (replay !== undefined) {
+          return replay;
+        }
+        if (options.rateLimitIdentity !== undefined) {
+          const identityBody = await resolveBody();
+          const identityReplay = applyStageResult(
+            await options.rateLimitIdentity(context, request, identityBody)
+          );
+          if (identityReplay !== undefined) {
+            return identityReplay;
+          }
+        }
+        for (const stage of [options.csrf, options.tenant, options.idempotency, options.etag]) {
+          const stageReplay = await runStage(stage);
+          if (stageReplay !== undefined) {
+            return stageReplay;
+          }
         }
 
-        const body =
-          options.body === undefined ? undefined : await parseJsonBody(request, options.body);
+        const body = await resolveBody();
         const handlerContext: HandlerContext<TBody> = { ...context, body: body as TBody };
 
         const result = await options.handler(handlerContext);
