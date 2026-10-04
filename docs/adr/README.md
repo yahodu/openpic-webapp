@@ -16,5 +16,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0008](ADR-0008-platform-settings-green-implementation.md)  | `platformSettings` GREEN: full §20.4 schema, defaults fallback, deferred §4  | Accepted |
 | [0009](ADR-0009-upload-type-guards.md)                      | Upload type guards: extension + MIME + magic bytes, delete-and-write-nothing | Accepted |
 | [0010](ADR-0010-upload-type-guards-green-implementation.md) | Upload type guards GREEN: sniff order, logging, extension-authoritative TIFF | Accepted |
+| [0011](ADR-0011-heif-avif-ftyp-brand-set.md)                | HEIF/AVIF `ftyp` major-brand set accepted by the upload type guard           | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
