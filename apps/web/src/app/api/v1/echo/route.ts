@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getRateLimitConfig } from "@/server/config/env";
 import { defineRoute } from "@/server/http/define-route";
+import { idempotencyStage, mongoIdempotencyStore } from "@/server/idempotency";
 import { createRateLimiter, rateLimitStage } from "@/server/rate-limit";
 
 /**
@@ -33,6 +34,10 @@ export const POST = defineRoute({
     classKey: "write.normal",
     limiter: createRateLimiter(),
     salt: getRateLimitConfig().salt,
+  }),
+  idempotency: idempotencyStage({
+    store: mongoIdempotencyStore(),
+    required: false,
   }),
   handler: (ctx) => ({ body: { message: ctx.body.message } }),
 });
