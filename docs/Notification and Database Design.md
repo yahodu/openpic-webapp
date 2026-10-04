@@ -355,20 +355,18 @@ stateDiagram-v2
 ```
 
 ```js
-const res = await db
-  .collection("invitations")
-  .findOneAndUpdate(
-    { _id: inviteId, status: "pending", expiresAt: { $gt: new Date() } },
-    {
-      $set: {
-        status: "accepted",
-        resolvedAt: new Date(),
-        resolvedVia: "email",
-        resolvedByUserId: userId,
-      },
+const res = await db.collection("invitations").findOneAndUpdate(
+  { _id: inviteId, status: "pending", expiresAt: { $gt: new Date() } },
+  {
+    $set: {
+      status: "accepted",
+      resolvedAt: new Date(),
+      resolvedVia: "email",
+      resolvedByUserId: userId,
     },
-    { returnDocument: "after" }
-  );
+  },
+  { returnDocument: "after" }
+);
 
 if (!res) {
   // already accepted / rejected / revoked / expired
