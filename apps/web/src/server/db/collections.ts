@@ -25,6 +25,7 @@ export const COLLECTIONS = {
   mediaAssets: "media_assets",
   faceMatches: "face_matches",
   providerWebhookEvents: "provider_webhook_events",
+  idempotencyKeys: "idempotency_keys",
 } as const;
 
 /** The name of any registered collection. */
