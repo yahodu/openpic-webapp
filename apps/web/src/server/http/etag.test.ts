@@ -48,9 +48,17 @@ describe("ETag formatting", () => {
     expect(weakETag(7)).toBe('W/"7"');
   });
 
-  it("U5: eventETag is the weak <updatedAtMs>-<schemaVersion> composite", () => {
-    expect(eventETag(new Date(1790086920000), 3)).toBe('W/"1790086920000-3"');
-    expect(eventETag(new Date(0), 0)).toBe('W/"0-0"');
+  it("U5: eventETag is the strong <updatedAtMs>-<schemaVersion> composite", () => {
+    expect(eventETag(new Date(1790086920000), 3)).toBe('"1790086920000-3"');
+    expect(eventETag(new Date(0), 0)).toBe('"0-0"');
+  });
+});
+
+describe("events ETag — the current tag satisfies its own If-Match precondition", () => {
+  it("U5/U6: a client can If-Match the events resource's own current ETag", () => {
+    const current = eventETag(new Date(1790086920000), 3);
+
+    expect(ifMatchSatisfied(request("PATCH", { "if-match": current }), current)).toBe(true);
   });
 });
 
