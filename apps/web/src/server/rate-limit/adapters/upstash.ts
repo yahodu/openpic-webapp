@@ -27,16 +27,33 @@ const upstashEnvelopeSchema = z.object({
   result: upstashResultSchema,
 });
 
-/** A Lua sliding-window script understood by Upstash; the body is opaque here. */
+/**
+ * A Lua sliding-window script understood by Upstash.
+ *
+ * Two adjacent fixed buckets are tracked (`currentKey`/`previousKey`) and the
+ * previous bucket is weighted by how much of the window has elapsed, so a burst
+ * that straddles a window boundary cannot be over-admitted — a request is
+ * admitted only when `previous * weight + current` is within `limit`. The script
+ * returns the documented `[currentFields, previousFields, success]` tuple so the
+ * adapter can render `RateLimit-Remaining` from the same counts.
+ */
 const RATE_LIMIT_SCRIPT = `
-local key = KEYS[1]
+local base = KEYS[1]
 local limit = tonumber(ARGV[1])
-local window = tonumber(ARGV[2])
-local current = redis.call("INCR", key)
-if current == 1 then redis.call("EXPIRE", key, window) end
-local ttl = redis.call("TTL", key)
-if ttl < 0 then ttl = window end
-return { { key, tostring(current) }, {}, current <= limit and 1 or 0 }
+local windowMs = tonumber(ARGV[2]) * 1000
+local now = tonumber(ARGV[3])
+local windowIndex = math.floor(now / windowMs)
+local currentKey = base .. ":" .. windowIndex
+local previousKey = base .. ":" .. (windowIndex - 1)
+local current = redis.call("INCR", currentKey)
+if current == 1 then redis.call("PEXPIRE", currentKey, windowMs * 2) end
+local prev = tonumber(redis.call("GET", previousKey) or "0")
+local elapsed = now % windowMs
+local weight = 1 - (elapsed / windowMs)
+local weighted = math.floor(prev * weight) + current
+local success = 0
+if weighted <= limit then success = 1 end
+return { { currentKey, tostring(current) }, { previousKey, tostring(prev) }, success }
 `.trim();
 
 /** Construction options for {@link upstashRateLimiter}. */
@@ -60,6 +77,7 @@ export function upstashRateLimiter(options: UpstashRateLimiterOptions): RateLimi
 
   return {
     async limit(key: string, rule: RateLimitRuleRef): Promise<RateLimitResult> {
+      const now = Date.now();
       const response = await fetchImpl(options.url, {
         method: "POST",
         headers: {
@@ -73,6 +91,7 @@ export function upstashRateLimiter(options: UpstashRateLimiterOptions): RateLimi
           key,
           String(rule.limit),
           String(rule.windowSeconds),
+          String(now),
         ]),
       });
 
@@ -82,15 +101,25 @@ export function upstashRateLimiter(options: UpstashRateLimiterOptions): RateLimi
         throw new Error("Upstash rate limit response did not match the expected shape.");
       }
 
-      const [current, , rawSuccess] = parsed.data.result;
-      const count = Number(current[1]);
+      const [current, previous, rawSuccess] = parsed.data.result;
+      const currentCount = Number(current[1]);
+      const previousCount = previous.length >= 2 ? Number(previous[1]) : 0;
+      const windowMs = rule.windowSeconds * 1000;
+      const elapsed = now % windowMs;
+      const weight = 1 - elapsed / windowMs;
+      const weighted = Math.floor(previousCount * weight) + currentCount;
+
+      if (!Number.isFinite(currentCount) || !Number.isFinite(weighted)) {
+        throw new Error("Upstash rate limit response carried a non-numeric count.");
+      }
+
       const success = typeof rawSuccess === "boolean" ? rawSuccess : rawSuccess > 0;
 
       return {
         success,
         limit: rule.limit,
-        remaining: Math.max(0, rule.limit - count),
-        resetSeconds: rule.windowSeconds,
+        remaining: Math.max(0, rule.limit - weighted),
+        resetSeconds: Math.max(1, Math.ceil((windowMs - elapsed) / 1000)),
       };
     },
   };

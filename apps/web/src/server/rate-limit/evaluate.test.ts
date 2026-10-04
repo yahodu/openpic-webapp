@@ -96,6 +96,33 @@ describe("evaluateRateLimit", () => {
     expect(limit).toHaveBeenCalledTimes(1);
   });
 
+  it("U4: treats a limited class with no usable identity as a limiter failure, never a silent bypass", async () => {
+    const limit = vi.fn((): Promise<RateLimitResult> => Promise.resolve(allowed()));
+    const evaluation = await evaluateRateLimit({
+      classKey: "write.normal",
+      facts: {},
+      limiter: { limit },
+      salt: SALT,
+    });
+
+    expect(evaluation.outcome).toBe("unavailable");
+    expect(evaluation.success).toBe(false);
+    expect(limit).not.toHaveBeenCalled();
+  });
+
+  it("U4: treats a blank identity fact as absent (an empty IP cannot key a bucket)", async () => {
+    const limit = vi.fn((): Promise<RateLimitResult> => Promise.resolve(allowed()));
+    const evaluation = await evaluateRateLimit({
+      classKey: "write.normal",
+      facts: { ip: "" },
+      limiter: { limit },
+      salt: SALT,
+    });
+
+    expect(evaluation.outcome).toBe("unavailable");
+    expect(limit).not.toHaveBeenCalled();
+  });
+
   it("U5: never consults the limiter for the webhook class", async () => {
     const limit = vi.fn((): Promise<RateLimitResult> => Promise.resolve(allowed()));
     const evaluation = await evaluateRateLimit({

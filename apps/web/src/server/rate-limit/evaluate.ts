@@ -58,7 +58,9 @@ export interface EvaluateRateLimitOptions {
  *
  * Rules whose identity is absent are skipped (a caller with no contact is not
  * bucketed against the contact limit); a rule whose consultation throws aborts
- * the evaluation as `unavailable` so the caller can fail open/closed.
+ * the evaluation as `unavailable` so the caller can fail open/closed. A limited
+ * class with *no* derivable identity is likewise `unavailable` — never a silent
+ * unlimited allow — and the limiter is not consulted.
  *
  * @param options - Class, facts, limiter and salt.
  * @returns The folded evaluation.
@@ -98,7 +100,17 @@ export async function evaluateRateLimit(
   }
 
   if (results.length === 0) {
-    return allowedResult(false);
+    // No usable identity: the request cannot be attributed, so it must not be
+    // treated as unlimited. Surface it as `unavailable` (the caller applies the
+    // class failure policy) without consulting the limiter.
+    return {
+      outcome: "unavailable",
+      success: false,
+      limit: 0,
+      remaining: 0,
+      resetSeconds: 0,
+      bypass: false,
+    };
   }
 
   const strictest = strictestRateLimitResult(results);

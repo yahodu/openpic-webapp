@@ -1,4 +1,4 @@
-import type { RouteStage } from "@/server/http/define-route";
+import type { RouteStageContext } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { requestLogger } from "@/server/logging";
 
@@ -33,12 +33,18 @@ export interface RateLimitStageOptions {
 /**
  * Build the rate-limit pipeline stage for a class.
  *
+ * The returned stage is usable both as the coarse, pre-auth `RouteStage`
+ * (2-argument) and as the post-auth identity stage (`rateLimitIdentity`,
+ * which the pipeline calls with the parsed request body as a third argument).
+ *
  * @param options - Class, limiter, salt and optional pre-derived facts.
  * @returns A stage that emits headers or denies the request.
  */
-export function rateLimitStage(options: RateLimitStageOptions): RouteStage {
-  return async (ctx, request): Promise<Record<string, string>> => {
-    const facts = options.facts ?? deriveFacts(ctx.principal, request);
+export function rateLimitStage(
+  options: RateLimitStageOptions
+): (ctx: RouteStageContext, request: Request, body?: unknown) => Promise<Record<string, string>> {
+  return async (ctx, request, body): Promise<Record<string, string>> => {
+    const facts = options.facts ?? deriveFacts(ctx.principal, request, body);
     const evaluation = await evaluateRateLimit({
       classKey: options.classKey,
       facts,
@@ -76,16 +82,50 @@ export function rateLimitStage(options: RateLimitStageOptions): RouteStage {
   };
 }
 
-/** Derive the request facts the stage keys on (principal, attendee, IP). */
-function deriveFacts(principal: string | undefined, request: Request): RateLimitFacts {
-  const attendeeSessionId = request.headers.get("x-attendee-session") ?? undefined;
+/**
+ * Derive the request facts the stage keys on (principal, contact, IP).
+ *
+ * `X-Attendee-Session` is a documented *request* header (§0.12) whose token is
+ * a secret hashed at rest (§0.15): a client-supplied value is never trusted as
+ * an identity. The attendee scope is keyed only from a pre-validated
+ * `facts.attendeeSessionId` supplied by a server-side session resolver (the
+ * resolved, non-raw session identity). When no resolver has run, the attendee
+ * identity is simply absent, so an attendee-only class cannot mint a fresh
+ * bucket per forged header.
+ *
+ * Pre-auth (the coarse stage) only `principal` (absent), `ip` and any explicit
+ * `facts` are available; the parsed request body is absent, so no `contact` is
+ * derived. The post-auth identity stage receives the parsed body and can key
+ * the contact-scoped `auth.otp`/`auth.verify` rules on it.
+ */
+function deriveFacts(
+  principal: string | undefined,
+  request: Request,
+  body: unknown
+): RateLimitFacts {
   const ip = firstForwardedHop(request.headers.get("x-forwarded-for"));
+  const contact = deriveContact(body);
 
   return {
     ...(principal === undefined ? {} : { principalId: principal }),
-    ...(attendeeSessionId === undefined || attendeeSessionId === "" ? {} : { attendeeSessionId }),
     ...(ip === undefined ? {} : { ip }),
+    ...(contact === undefined ? {} : { contact }),
   };
+}
+
+/**
+ * The contact a request body carries for the contact-keyed classes.
+ *
+ * `auth.otp`/`auth.verify` declare a `contact` field; the stage normalises and
+ * salts-hashes it before it becomes a limiter key, so a raw email/phone never
+ * appears in a key (§0.15). A missing or blank field is simply absent.
+ */
+function deriveContact(body: unknown): string | undefined {
+  if (typeof body !== "object" || body === null) {
+    return undefined;
+  }
+  const value = (body as { contact?: unknown }).contact;
+  return typeof value === "string" && value !== "" ? value : undefined;
 }
 
 /**
