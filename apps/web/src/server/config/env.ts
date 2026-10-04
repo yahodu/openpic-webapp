@@ -155,6 +155,9 @@ interface RawEnv {
   readonly BETTERSTACK_SOURCE_TOKEN: string | undefined;
   readonly BETTERSTACK_INGEST_HOST: string | undefined;
   readonly RATE_LIMIT_PROVIDER: string | undefined;
+  readonly UPSTASH_REDIS_REST_URL: string | undefined;
+  readonly UPSTASH_REDIS_REST_TOKEN: string | undefined;
+  readonly RATE_LIMIT_SALT: string | undefined;
   readonly STORAGE_PROVIDER: string | undefined;
   readonly QUEUE_PROVIDER: string | undefined;
   readonly PAYMENT_PROVIDER: string | undefined;
@@ -192,6 +195,9 @@ const rawSchema = z.object({
   BETTERSTACK_SOURCE_TOKEN: optionalString,
   BETTERSTACK_INGEST_HOST: optionalString,
   RATE_LIMIT_PROVIDER: optionalString,
+  UPSTASH_REDIS_REST_URL: optionalString,
+  UPSTASH_REDIS_REST_TOKEN: optionalString,
+  RATE_LIMIT_SALT: optionalString,
   STORAGE_PROVIDER: optionalString,
   QUEUE_PROVIDER: optionalString,
   PAYMENT_PROVIDER: optionalString,
@@ -364,6 +370,43 @@ export function getAppEnv(): AppEnv {
  */
 export function getAtlasSearchEnabled(): boolean {
   return parseBoolean(process.env.ATLAS_SEARCH_ENABLED, false);
+}
+
+/**
+ * Runtime configuration for the rate-limit port (OP-79, contract §0.11).
+ *
+ * Kept outside the frozen {@link AppConfig} shape because it is operational
+ * wiring (an Upstash URL/token pair and the identity-hashing salt) rather than
+ * a deploy contract. The salt is required in production so an operator can
+ * rotate it independently of code; outside production it degrades to a stable
+ * development default so local/e2e runs behave deterministically.
+ */
+export interface RateLimitRuntimeConfig {
+  /** The selected backend: `memory` or `redis`. */
+  readonly provider: string;
+  /** The Upstash REST URL, when the `redis` provider is selected. */
+  readonly upstashUrl: string | undefined;
+  /** The Upstash REST token, when the `redis` provider is selected. */
+  readonly upstashToken: string | undefined;
+  /** The salt mixed into every hashed rate-limit identity. */
+  readonly salt: string;
+}
+
+/** Stable dev/e2e salt; production must set `RATE_LIMIT_SALT` explicitly. */
+const DEFAULT_RATE_LIMIT_SALT = "openpic-dev-rate-limit-salt";
+
+/**
+ * Read the rate-limit runtime wiring from the environment.
+ *
+ * @returns The provider selection, Upstash credentials and the hashing salt.
+ */
+export function getRateLimitConfig(): RateLimitRuntimeConfig {
+  return {
+    provider: process.env.RATE_LIMIT_PROVIDER ?? DEFAULT_PROVIDER,
+    upstashUrl: process.env.UPSTASH_REDIS_REST_URL,
+    upstashToken: process.env.UPSTASH_REDIS_REST_TOKEN,
+    salt: process.env.RATE_LIMIT_SALT ?? DEFAULT_RATE_LIMIT_SALT,
+  };
 }
 
 /** Recursively freeze an object graph so callers cannot mutate configuration. */
