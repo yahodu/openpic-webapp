@@ -21,8 +21,10 @@ import type { RouteStageContext } from "@/server/http/define-route";
  * policy, never silently bucket whatever the caller sent.
  *
  * These pins drive the stage with forged/rotating headers and observe the
- * limiter keys and the emitted logs; they do not assume any particular
- * server-side session source.
+ * limiter keys and the emitted logs. The "trust" pins below supply a healthy
+ * server-side fact (`facts.attendeeSessionId`) — what a session resolver
+ * produces after validating the header — to prove the raw header is ignored;
+ * the fail-closed pin supplies no such fact.
  */
 
 const SALT = "stage-rate-limit-salt";
@@ -65,8 +67,16 @@ describe("rateLimitStage — attendee-session trust", () => {
         return Promise.resolve(allowed());
       },
     };
+    // A healthy server-side resolver has already validated the session and
+    // produced a stable resolved identity; only that may key the bucket.
+    const resolvedSessionId = "sess_resolved_attendee_9f2c";
     const stage = asCallable(
-      rateLimitStage({ classKey: "liveness.challenge", limiter, salt: SALT })
+      rateLimitStage({
+        classKey: "liveness.challenge",
+        limiter,
+        salt: SALT,
+        facts: { attendeeSessionId: resolvedSessionId },
+      })
     );
     const raw = "att_raw_session_token_9f2c";
 
@@ -75,6 +85,10 @@ describe("rateLimitStage — attendee-session trust", () => {
       new Request(URL, { method: "POST", headers: { "x-attendee-session": raw } })
     );
 
+    // The resolved identity is what got bucketed (the limiter ran exactly once),
+    // and the raw client-supplied header never reached the limiter key.
+    expect(keys).toHaveLength(1);
+    expect(keys.join("|")).toContain(resolvedSessionId);
     expect(keys.join("|")).not.toContain(raw);
   });
 
@@ -86,8 +100,15 @@ describe("rateLimitStage — attendee-session trust", () => {
         return Promise.resolve(allowed());
       },
     };
+    // The server-side session identity is fixed; a client rotating or forging
+    // the request header must not move the bucket.
     const stage = asCallable(
-      rateLimitStage({ classKey: "liveness.challenge", limiter, salt: SALT })
+      rateLimitStage({
+        classKey: "liveness.challenge",
+        limiter,
+        salt: SALT,
+        facts: { attendeeSessionId: "sess_resolved_attendee_9f2c" },
+      })
     );
 
     for (const forged of ["forged-a", "forged-b", "forged-c"]) {
@@ -99,7 +120,9 @@ describe("rateLimitStage — attendee-session trust", () => {
 
     // A rotating header must not map to a rotating identity, or the per-attendee
     // bucket for liveness.challenge could be evaded indefinitely.
-    expect(new Set(keys).size).toBeLessThanOrEqual(1);
+    expect(keys).toHaveLength(3);
+    expect(new Set(keys).size).toBe(1);
+    expect(keys.join("|")).not.toContain("forged");
   });
 
   it("fails closed for liveness.challenge when the X-Attendee-Session value is not a validated session", async () => {

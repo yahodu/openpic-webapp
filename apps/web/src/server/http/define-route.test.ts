@@ -3,8 +3,33 @@ import { z } from "zod";
 
 import { apiErrorSchema } from "@openpic/contracts";
 
-import { defineRoute } from "@/server/http/define-route";
+import { defineRoute, type RouteHandler, type RouteStageContext } from "@/server/http/define-route";
 import { createLogger, memoryTransport } from "@/server/logging";
+
+/**
+ * OP-79 follow-up — two-tier rate limiting (human ruling, Option A1).
+ *
+ * `defineRoute` keeps the coarse, pre-auth IP-keyed rate stage (`rateLimit`,
+ * first, unchanged) and gains a second, post-auth identity-keyed stage
+ * (`rateLimitIdentity`) that runs immediately after `auth`. The pipeline parses
+ * the request body and hands it to that stage as its third argument, so the
+ * contact-keyed `auth.otp`/`auth.verify` classes can key on the body's
+ * `contact` (principal-keyed classes key on `ctx.principal`, published by the
+ * route `auth` stage).
+ *
+ * Until the option lands in `DefineRouteOptions`, this local type + cast express
+ * the contract without touching production code. The cast has no runtime effect,
+ * so the pin below stays RED until the stage is wired into the pipeline.
+ */
+type RateLimitIdentityStage = (ctx: RouteStageContext, request: Request, body: unknown) => unknown;
+
+type DefineRouteOptionsWithIdentityStage = Parameters<typeof defineRoute>[0] & {
+  readonly rateLimitIdentity?: RateLimitIdentityStage;
+};
+
+const defineRouteWithIdentityStage = defineRoute as unknown as (
+  options: DefineRouteOptionsWithIdentityStage
+) => RouteHandler;
 
 function testLogger(): ReturnType<typeof createLogger> {
   const sink = memoryTransport();
@@ -32,7 +57,7 @@ describe("defineRoute", () => {
     const calls: string[] = [];
     const logger = testLogger();
 
-    const route = defineRoute({
+    const route = defineRouteWithIdentityStage({
       route: "/api/v1/things",
       body: z.object({ name: z.string().min(1) }),
       response: z.object({ id: z.string() }),
@@ -43,6 +68,9 @@ describe("defineRoute", () => {
       },
       auth: () => {
         calls.push("auth");
+      },
+      rateLimitIdentity: () => {
+        calls.push("rateLimitIdentity");
       },
       csrf: () => {
         calls.push("csrf");
@@ -76,9 +104,12 @@ describe("defineRoute", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ id: "1" });
+    // Two-tier: the coarse pre-auth rate stage is first, the identity-keyed
+    // stage runs immediately after auth (and before the remaining stages).
     expect(calls).toEqual([
       "rateLimit",
       "auth",
+      "rateLimitIdentity",
       "csrf",
       "tenant",
       "idempotency",

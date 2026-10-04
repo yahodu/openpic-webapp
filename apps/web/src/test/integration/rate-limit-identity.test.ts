@@ -9,7 +9,12 @@ import {
   type RateLimitFacts,
   type RateLimiter,
 } from "../../server/rate-limit";
-import { defineRoute, type RouteHandler, type RouteStage } from "../../server/http/define-route";
+import {
+  defineRoute,
+  type RouteHandler,
+  type RouteStage,
+  type RouteStageContext,
+} from "../../server/http/define-route";
 import {
   createLogger,
   memoryTransport,
@@ -34,6 +39,30 @@ import {
  *   - `auth.otp` / `auth.verify` must enforce their contact-keyed rule when a
  *     contact is available to the pipeline.
  */
+
+/**
+ * OP-79 follow-up — two-tier rate limiting (human ruling, Option A1).
+ *
+ * `defineRoute` keeps the coarse, pre-auth IP-keyed stage (`rateLimit`, first)
+ * and gains a post-auth identity-keyed stage (`rateLimitIdentity`) that runs
+ * immediately after `auth`. The pipeline parses the request body and hands it to
+ * that stage as its third argument, so the contact-keyed `auth.otp` /
+ * `auth.verify` classes can key on the body's `contact`; principal-keyed classes
+ * key on `ctx.principal`, published by the route `auth` stage.
+ *
+ * Until the option lands in `DefineRouteOptions`, this local type + cast express
+ * the contract without touching production code. The cast has no runtime effect,
+ * so the pins below stay RED until the stage is wired into the pipeline.
+ */
+type RateLimitIdentityStage = (ctx: RouteStageContext, request: Request, body: unknown) => unknown;
+
+type DefineRouteOptionsWithIdentityStage = Parameters<typeof defineRoute>[0] & {
+  readonly rateLimitIdentity?: RateLimitIdentityStage;
+};
+
+const defineRouteWithIdentityStage = defineRoute as unknown as (
+  options: DefineRouteOptionsWithIdentityStage
+) => RouteHandler;
 
 const SALT = "integration-identity-salt";
 const ROUTE = "/api/v1/identity";
@@ -76,20 +105,30 @@ interface RouteOptions {
   readonly classKey?: RateLimitClass;
   readonly facts?: RateLimitFacts;
   readonly withAuth?: boolean;
+  /**
+   * Which tier owns the stage under test: the coarse pre-auth stage
+   * (`rateLimit`) or the post-auth identity stage (`rateLimitIdentity`,
+   * the default). Attendee fail-closed pins keep exercising the coarse stage so
+   * the already-implemented behaviour stays pinned.
+   */
+  readonly tier?: "coarse" | "identity";
 }
 
 function makeRoute(options: RouteOptions): RouteHandler {
-  return defineRoute({
+  const stage = rateLimitStage({
+    classKey: options.classKey ?? "write.normal",
+    limiter: options.limiter,
+    salt: SALT,
+    ...(options.facts === undefined ? {} : { facts: options.facts }),
+  });
+  return defineRouteWithIdentityStage({
     route: ROUTE,
     body: BodySchema,
     response: ResponseSchema,
     env: "test",
-    rateLimit: rateLimitStage({
-      classKey: options.classKey ?? "write.normal",
-      limiter: options.limiter,
-      salt: SALT,
-      ...(options.facts === undefined ? {} : { facts: options.facts }),
-    }),
+    ...((options.tier ?? "identity") === "coarse"
+      ? { rateLimit: stage }
+      : { rateLimitIdentity: stage }),
     ...(options.withAuth === true ? { auth: principalAuthStage() } : {}),
     handler: () => ({ body: { ok: true } }),
   });
@@ -106,7 +145,13 @@ function post(headers: Record<string, string>, body: unknown): Request {
 describe("attendee-session trust through the pipeline", () => {
   it("does not admit liveness.challenge when X-Attendee-Session is rotated/forged", async () => {
     installMemoryLogger();
-    const route = makeRoute({ classKey: "liveness.challenge", limiter: memoryRateLimiter() });
+    const route = makeRoute({
+      classKey: "liveness.challenge",
+      limiter: memoryRateLimiter(),
+      // The attendee-session trust pins exercise the already-implemented coarse
+      // stage so their fail-closed behaviour stays pinned on this branch.
+      tier: "coarse",
+    });
 
     const statuses: number[] = [];
     for (let i = 0; i < 13; i += 1) {
@@ -136,7 +181,7 @@ describe("attendee-session trust through the pipeline", () => {
         return Promise.resolve({ success: true, limit: 12, remaining: 11, resetSeconds: 30 });
       },
     };
-    const route = makeRoute({ classKey: "liveness.challenge", limiter });
+    const route = makeRoute({ classKey: "liveness.challenge", limiter, tier: "coarse" });
     const raw = "att_raw_session_token_9f2c";
 
     await route(post({ "x-attendee-session": raw }, { contact: "ada@example.com" }));
