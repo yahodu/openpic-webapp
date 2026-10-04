@@ -41,8 +41,28 @@ export interface HandlerContext<TBody = unknown> extends RequestContext {
   readonly body: TBody;
 }
 
-/** A pluggable pipeline stage; a no-op until its story lands. */
-export type RouteStage = (ctx: RouteStageContext) => void | Promise<void>;
+/**
+ * A pluggable pipeline stage.
+ *
+ * A stage may return a `Record<string, string>` of headers, which the pipeline
+ * merges into the *success* response (the rate stage uses this to attach the
+ * `RateLimit-*` headers). It may instead throw an `AppError` to deny the
+ * request; `AppError.headers` travel with that error response. A stage that
+ * returns nothing (or whose return is not a header map) is a no-op.
+ */
+export type RouteStage = (ctx: RouteStageContext, request: Request) => unknown;
+
+/** Narrow a stage result to a header map, ignoring every other return. */
+function stageHeadersOf(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.every(([, headerValue]) => typeof headerValue === "string")) {
+    return Object.fromEntries(entries) as Record<string, string>;
+  }
+  return undefined;
+}
 
 /** The handler's successful result. */
 export interface RouteResult<TResponse = unknown> {
@@ -122,9 +142,13 @@ export function defineRoute<TBody = unknown, TResponse = unknown>(
           : options.logger.child({ requestId, route: options.route });
 
       try {
+        const stageHeaders: Record<string, string> = {};
         for (const stage of stages) {
           if (stage !== undefined) {
-            await stage(context);
+            const headers = stageHeadersOf(await stage(context, request));
+            if (headers !== undefined) {
+              Object.assign(stageHeaders, headers);
+            }
           }
         }
 
@@ -145,6 +169,7 @@ export function defineRoute<TBody = unknown, TResponse = unknown>(
         });
 
         return jsonResponse(serialized, status, {
+          ...stageHeaders,
           ...(result.headers ?? {}),
           [REQUEST_ID_HEADER]: requestId,
         });

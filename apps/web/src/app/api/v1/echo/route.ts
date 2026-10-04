@@ -1,6 +1,8 @@
 import { z } from "zod";
 
+import { getRateLimitConfig } from "@/server/config/env";
 import { defineRoute } from "@/server/http/define-route";
+import { createRateLimiter, rateLimitStage } from "@/server/rate-limit";
 
 /**
  * `POST /api/v1/echo` — the tracer-bullet route for the HTTP pipeline.
@@ -27,5 +29,10 @@ export const POST = defineRoute({
   route: "/api/v1/echo",
   body: EchoRequestSchema,
   response: EchoResponseSchema,
+  rateLimit: rateLimitStage({
+    classKey: "write.normal",
+    limiter: createRateLimiter(),
+    salt: getRateLimitConfig().salt,
+  }),
   handler: (ctx) => ({ body: { message: ctx.body.message } }),
 });

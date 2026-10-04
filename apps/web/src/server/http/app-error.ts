@@ -22,6 +22,14 @@ export interface AppErrorOptions {
   readonly retryable?: boolean;
   /** Whether message/details may be sent. Defaults to `status < 500`. */
   readonly expose?: boolean;
+  /**
+   * Extra response headers to attach when this error becomes a response.
+   *
+   * The rate-limit stage uses this to carry `Retry-After` and the
+   * `RateLimit-*` headers on a `429`; `errorResponse` merges them over its
+   * defaults.
+   */
+  readonly headers?: Record<string, string>;
 }
 
 /** A typed application error with an HTTP status and retry policy. */
@@ -36,6 +44,8 @@ export class AppError extends Error {
   readonly expose: boolean;
   /** Structured, non-sensitive context; only sent when exposed. */
   readonly details?: Record<string, unknown>;
+  /** Extra response headers to attach when this error becomes a response. */
+  readonly headers?: Record<string, string>;
   /** The catalogue's generic message for this code (used when hidden). */
   readonly catalogMessage: string;
 
@@ -55,6 +65,9 @@ export class AppError extends Error {
     this.catalogMessage = entry.message;
     if (options.details !== undefined) {
       this.details = options.details;
+    }
+    if (options.headers !== undefined) {
+      this.headers = options.headers;
     }
   }
 }

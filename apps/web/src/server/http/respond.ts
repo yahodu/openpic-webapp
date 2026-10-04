@@ -88,7 +88,11 @@ export function errorResponse(
   }
 
   const envelope = toErrorEnvelope(error, requestId);
-  const headers: Record<string, string> = { [REQUEST_ID_HEADER]: requestId };
+  const errorHeaders = isAppError(error) && error.headers !== undefined ? error.headers : {};
+  const headers: Record<string, string> = {
+    [REQUEST_ID_HEADER]: requestId,
+    ...errorHeaders,
+  };
 
   // A 401 points the client at the login page (contract §0.12) alongside the
   // `WWW-Authenticate` challenge, so an unauthenticated caller can recover.
