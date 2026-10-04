@@ -9,12 +9,7 @@ import {
   type RateLimitFacts,
   type RateLimiter,
 } from "../../server/rate-limit";
-import {
-  defineRoute,
-  type RouteHandler,
-  type RouteStage,
-  type RouteStageContext,
-} from "../../server/http/define-route";
+import { defineRoute, type RouteHandler, type RouteStage } from "../../server/http/define-route";
 import {
   createLogger,
   memoryTransport,
@@ -50,19 +45,10 @@ import {
  * `auth.verify` classes can key on the body's `contact`; principal-keyed classes
  * key on `ctx.principal`, published by the route `auth` stage.
  *
- * Until the option lands in `DefineRouteOptions`, this local type + cast express
- * the contract without touching production code. The cast has no runtime effect,
- * so the pins below stay RED until the stage is wired into the pipeline.
+ * `rateLimitIdentity` is declared on the real `DefineRouteOptions` type
+ * (contract §0.11), so these pins exercise the production type surface directly
+ * — a future rename of the option can no longer pass silently behind a cast.
  */
-type RateLimitIdentityStage = (ctx: RouteStageContext, request: Request, body: unknown) => unknown;
-
-type DefineRouteOptionsWithIdentityStage = Parameters<typeof defineRoute>[0] & {
-  readonly rateLimitIdentity?: RateLimitIdentityStage;
-};
-
-const defineRouteWithIdentityStage = defineRoute as unknown as (
-  options: DefineRouteOptionsWithIdentityStage
-) => RouteHandler;
 
 const SALT = "integration-identity-salt";
 const ROUTE = "/api/v1/identity";
@@ -121,7 +107,7 @@ function makeRoute(options: RouteOptions): RouteHandler {
     salt: SALT,
     ...(options.facts === undefined ? {} : { facts: options.facts }),
   });
-  return defineRouteWithIdentityStage({
+  return defineRoute({
     route: ROUTE,
     body: BodySchema,
     response: ResponseSchema,
@@ -188,6 +174,35 @@ describe("attendee-session trust through the pipeline", () => {
 
     expect(keys.join("|")).not.toContain(raw);
     expect(JSON.stringify(sink.entries)).not.toContain(raw);
+  });
+
+  it("admits and limits liveness.challenge when a validated attendee identity is resolved", async () => {
+    installMemoryLogger();
+    const route = makeRoute({
+      classKey: "liveness.challenge",
+      limiter: memoryRateLimiter(),
+      // The positive path: a server-side session resolver validated the request
+      // and produced the attendee identity. The identity-keyed stage must admit
+      // and limit it normally — never fail closed on a resolved session.
+      facts: { attendeeSessionId: "sess_resolved_attendee_9f2c" },
+    });
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 13; i += 1) {
+      const response = await route(
+        post(
+          { "x-attendee-session": `forged-session-${String(i)}` },
+          { contact: "ada@example.com" }
+        )
+      );
+      statuses.push(response.status);
+    }
+
+    // §0.11 liveness.challenge allows 12/hour per attendee: the first 12 are
+    // admitted (200), the 13th is 429 — and no request is ever 503.
+    expect(statuses.slice(0, 12).every((status) => status === 200)).toBe(true);
+    expect(statuses[12]).toBe(429);
+    expect(statuses).not.toContain(503);
   });
 });
 

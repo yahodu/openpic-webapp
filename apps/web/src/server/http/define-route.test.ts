@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { apiErrorSchema } from "@openpic/contracts";
 
-import { defineRoute, type RouteHandler, type RouteStageContext } from "@/server/http/define-route";
+import { defineRoute } from "@/server/http/define-route";
 import { createLogger, memoryTransport } from "@/server/logging";
 
 /**
@@ -17,19 +17,10 @@ import { createLogger, memoryTransport } from "@/server/logging";
  * `contact` (principal-keyed classes key on `ctx.principal`, published by the
  * route `auth` stage).
  *
- * Until the option lands in `DefineRouteOptions`, this local type + cast express
- * the contract without touching production code. The cast has no runtime effect,
- * so the pin below stays RED until the stage is wired into the pipeline.
+ * `rateLimitIdentity` is declared on the real `DefineRouteOptions` type
+ * (contract §0.11), so these pins exercise the production type surface directly
+ * — a future rename of the option can no longer pass silently behind a cast.
  */
-type RateLimitIdentityStage = (ctx: RouteStageContext, request: Request, body: unknown) => unknown;
-
-type DefineRouteOptionsWithIdentityStage = Parameters<typeof defineRoute>[0] & {
-  readonly rateLimitIdentity?: RateLimitIdentityStage;
-};
-
-const defineRouteWithIdentityStage = defineRoute as unknown as (
-  options: DefineRouteOptionsWithIdentityStage
-) => RouteHandler;
 
 function testLogger(): ReturnType<typeof createLogger> {
   const sink = memoryTransport();
@@ -57,7 +48,7 @@ describe("defineRoute", () => {
     const calls: string[] = [];
     const logger = testLogger();
 
-    const route = defineRouteWithIdentityStage({
+    const route = defineRoute({
       route: "/api/v1/things",
       body: z.object({ name: z.string().min(1) }),
       response: z.object({ id: z.string() }),
