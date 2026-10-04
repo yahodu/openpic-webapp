@@ -398,13 +398,36 @@ const DEFAULT_RATE_LIMIT_SALT = "openpic-dev-rate-limit-salt";
 /**
  * Read the rate-limit runtime wiring from the environment.
  *
+ * Fails closed: when the `redis` provider is selected, both Upstash REST
+ * credentials must be present and non-blank. A misconfigured deployment must
+ * never silently degrade to the per-process memory limiter, which cannot
+ * enforce abuse protection across serverless instances.
+ *
  * @returns The provider selection, Upstash credentials and the hashing salt.
+ * @throws {ConfigError} When `redis` is selected without its credentials.
  */
 export function getRateLimitConfig(): RateLimitRuntimeConfig {
+  const provider = process.env.RATE_LIMIT_PROVIDER ?? DEFAULT_PROVIDER;
+  const upstashUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (provider === "redis") {
+    const missing: string[] = [];
+    if (upstashUrl === undefined || upstashUrl.trim() === "") {
+      missing.push("UPSTASH_REDIS_REST_URL");
+    }
+    if (upstashToken === undefined || upstashToken.trim() === "") {
+      missing.push("UPSTASH_REDIS_REST_TOKEN");
+    }
+    if (missing.length > 0) {
+      throw new ConfigError(missing);
+    }
+  }
+
   return {
-    provider: process.env.RATE_LIMIT_PROVIDER ?? DEFAULT_PROVIDER,
-    upstashUrl: process.env.UPSTASH_REDIS_REST_URL,
-    upstashToken: process.env.UPSTASH_REDIS_REST_TOKEN,
+    provider,
+    upstashUrl,
+    upstashToken,
     salt: process.env.RATE_LIMIT_SALT ?? DEFAULT_RATE_LIMIT_SALT,
   };
 }

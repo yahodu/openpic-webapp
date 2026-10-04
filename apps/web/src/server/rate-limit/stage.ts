@@ -76,14 +76,22 @@ export function rateLimitStage(options: RateLimitStageOptions): RouteStage {
   };
 }
 
-/** Derive the request facts the stage keys on (principal, attendee, IP). */
+/**
+ * Derive the request facts the stage keys on (principal, attendee, IP).
+ *
+ * `X-Attendee-Session` is a documented *request* header (§0.12) whose token is
+ * a secret hashed at rest (§0.15): a client-supplied value is never trusted as
+ * an identity. The attendee scope is keyed only from a pre-validated
+ * `facts.attendeeSessionId` supplied by a server-side session resolver (the
+ * resolved, non-raw session identity). When no resolver has run, the attendee
+ * identity is simply absent, so an attendee-only class cannot mint a fresh
+ * bucket per forged header.
+ */
 function deriveFacts(principal: string | undefined, request: Request): RateLimitFacts {
-  const attendeeSessionId = request.headers.get("x-attendee-session") ?? undefined;
   const ip = firstForwardedHop(request.headers.get("x-forwarded-for"));
 
   return {
     ...(principal === undefined ? {} : { principalId: principal }),
-    ...(attendeeSessionId === undefined || attendeeSessionId === "" ? {} : { attendeeSessionId }),
     ...(ip === undefined ? {} : { ip }),
   };
 }
