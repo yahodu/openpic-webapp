@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/yahodu/openpic-webapp/compare/v1.1.0...v1.2.0) (2026-10-04)
+
+### Features
+
+- **http:** OP-81 events strong ETag ([#114](https://github.com/yahodu/openpic-webapp/issues/114)) ([d9c6c3a](https://github.com/yahodu/openpic-webapp/commit/d9c6c3a6600fd626e8fcd5cc07b91200c7fc437d))
+
 ## [1.1.0](https://github.com/yahodu/openpic-webapp/compare/v1.0.4...v1.1.0) (2026-10-04)
 
 ### Features
