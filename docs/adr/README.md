@@ -10,5 +10,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0002](ADR-0002-logging-port.md)                  | Logging behind a port; Better Stack swappable           | Accepted |
 | [0003](ADR-0003-mongodb-as-job-truth.md)          | MongoDB is the source of truth for jobs                 | Accepted |
 | [0004](ADR-0004-internal-route-fetch-metadata.md) | Internal routes deny browser contexts by Fetch metadata | Accepted |
+| [0005](ADR-0005-two-tier-rate-limiting.md)        | Two-tier rate limiting: coarse edge + identity pipeline | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
