@@ -51,6 +51,9 @@ export const PIPELINE_ERROR_CODES = [
   "idempotency_in_progress",
   "idempotency_key_reuse",
   "idempotency_key_required",
+  "invalid_cursor",
+  "precondition_required",
+  "etag_mismatch",
 ] as const;
 
 /** A member of the {@link PIPELINE_ERROR_CODES} set. */
