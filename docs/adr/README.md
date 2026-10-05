@@ -43,5 +43,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0035](ADR-0035-op85-instrumentation-boot-guard-red-pin.md)                      | Instrumentation production boot guard pinned by a direct spec (RED pins)                           | Accepted |
 | [0036](ADR-0036-op85-instrumentation-boot-guard-review-signoff.md)               | OP-85 follow-up review sign-off: instrumentation boot guard coverage pin lands (PR #151)           | Accepted |
 | [0037](ADR-0037-integration-spec-ci-readiness-budget.md)                         | Integration-spec CI budget: deterministic Mongo readiness + explicit timeout (de-flake)            | Accepted |
+| [0038](ADR-0038-op89-identity-lifecycle-hooks-red.md)                            | Identity lifecycle hooks: profile defaults, lazy invites, completion, new-device and admin sign-in | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
