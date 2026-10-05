@@ -36,5 +36,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0028](ADR-0028-internal-hmac-and-cron-framework.md)                             | Internal HMAC auth and the bounded cron job framework                                              | Accepted |
 | [0029](ADR-0029-domain-events-outbox.md)                                         | Domain-event outbox: one `emitDomainEvent` write point, per-consumer flags, atomic claims          | Accepted |
 | [0030](ADR-0030-op85-followup-trust-verify-parity-cap.md)                        | OP-85 follow-up: trusted-header precedence, anonymous-verify error parity, cap fail-closed         | Accepted |
+| [0031](ADR-0031-op88-green-review-signoff.md)                                    | OP-88 GREEN review sign-off: outbox ships; per-emit lookup + claim-lease hardening deferred        | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
