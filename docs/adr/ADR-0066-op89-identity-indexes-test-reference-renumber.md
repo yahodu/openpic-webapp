@@ -1,6 +1,6 @@
-# ADR-0065 — OP-89 follow-up: stale ADR-0046 test references in the identity pin specs renumbered to ADR-0050
+# ADR-0066 — OP-89 follow-up: stale ADR-0046 test references in the identity pin specs renumbered to ADR-0050
 
-- **Status:** Accepted · **Date:** 2026-10-06
+- **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** OP-89 follow-up test-only cleanup (`t_c9c415e6`, Test Author) · **Relates to:** [ADR-0050](ADR-0050-op89-identity-lifecycle-indexes-ttls-red-pins.md) (the pins ADR, renumbered from ADR-0046), [ADR-0058](ADR-0058-op89-identity-lifecycle-indexes-green-review.md) (the GREEN review sign-off that filed this finding), [ADR-0034](ADR-0034-op85-adr-0032-test-reference-renumber.md) (the stale-test-reference precedent)
 - **Schema:** n/a · **Contract:** n/a (comment/`describe`-title strings only)
 
@@ -59,14 +59,15 @@ test-reference renumber) and **0060**–`0063` to the sibling lanes, initially
 assigning this lane **0064**. The record was renamed `ADR-0059-*` → `ADR-0064-*`
 accordingly.
 
-At merge time that assignment had been overtaken: PR #177 (`t_4f3ad9e7`, the
-OP-89 partial-failure-recovery GREEN) merged first and took the contiguous
-**0062**–**0064** block (coverage pins 0062, review sign-off 0063, recovery
-GREEN 0064), so `main` carried `0001`–`0064` densely. This record therefore
-re-resolved to the lowest free number on the merged tree, **0065**; the file was
-renamed `ADR-0064-*` → `ADR-0065-*` and the `docs/adr/README.md` row set to
-0065, ascending after 0064. The decision content is unchanged by either
-renumber. Central cross-lane ADR allocation remains owned by the orchestrator
+At merge time that assignment was twice overtaken by sibling lanes finalising on
+`main` first: PR #177 (`t_4f3ad9e7`, the OP-89 partial-failure-recovery GREEN)
+took the contiguous **0062**–**0064** block (coverage pins 0062, review sign-off
+0063, recovery GREEN 0064), and PR #178 (that GREEN's review sign-off) then took
+**0065**, leaving `main` dense through **0065**. This record therefore re-resolved
+to the lowest free number on the merged tree, **0066**; the file was renamed
+`ADR-0065-*` → `ADR-0066-*` and the `docs/adr/README.md` row set to 0066,
+ascending after 0065. The decision content is unchanged by any of the three
+renumbers. Central cross-lane ADR allocation remains owned by the orchestrator
 card `t_eb61c823`.
 
 ## Consequences
