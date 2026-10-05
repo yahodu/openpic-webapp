@@ -50,5 +50,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0042](ADR-0042-op89-identity-lifecycle-hooks-green-review.md)                   | OP-89 GREEN review sign-off: index/TTL gaps, unwired sections 4–6, idempotency routing               | Accepted |
 | [0044](ADR-0044-op90-me-projection-red.md)                                       | OP-90 RED: the full `GET`/`PATCH /me` §1.2 projection, capabilities, and forbidden/unknown fields    | Accepted |
 | [0045](ADR-0045-op90-me-projection-red-review-signoff.md)                        | OP-90 RED review sign-off: pins approved; contract decisions and 2 coverage gaps routed              | Accepted |
+| [0046](ADR-0046-op90-me-projection-red-followup-review-signoff.md)               | OP-90 RED follow-up review sign-off: the empty-PATCH 422 and pure-attendee pins land                 | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
