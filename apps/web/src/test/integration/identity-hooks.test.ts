@@ -1,4 +1,4 @@
-import { ObjectId } from "mongodb";
+import { ObjectId, type Db, type Document } from "mongodb";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createAuth, type AuthLike } from "@/server/auth";
@@ -10,6 +10,7 @@ import {
   handleSessionCreated,
   handleTwoFactorToggled,
   handleUserCreated,
+  type EmitDomainEvent,
 } from "@/server/auth/identity-hooks";
 import { otpInbox } from "@/server/auth/otp-inbox";
 import { getRateLimitConfig } from "@/server/config/env";
@@ -924,6 +925,193 @@ describe("handleSessionCreated — unclaimed op_att claim service", () => {
       );
       expect(signedIn.status).toBe(200);
       expect(sessionCookie(signedIn)).toBeDefined();
+    });
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * OP-89 follow-up pins (ADR-0046) — the bounded new-device read.
+ *
+ * `handleSessionCreated` decides "new device" from the user's `sessionDevices`
+ * sightings, filtered to the 24-hour window and capped at the newest 100 rows
+ * (ADR-0043 §2). The cap can drop an in-window sighting of the *matching*
+ * device when the user has more than 100 sightings, which would re-emit
+ * `auth.signin.new_device` for a device the user has already used. These pins
+ * fix the intended contract:
+ *
+ *   R1 — an in-window sighting of the same device must suppress the event no
+ *        matter how many other sightings exist (the decision reads the
+ *        matching device's window, not an arbitrary newest-100 slice);
+ *   R2 — the read must nevertheless stay bounded by the 100-sighting cap, so a
+ *        user with a long sighting history never forces an unbounded scan.
+ *
+ * R1 is RED against the delivered code (the cap drops the matching sighting);
+ * R2 guards the bound so a fix cannot simply remove the limit.
+ * ------------------------------------------------------------------------- */
+
+/** The app-owned per-session device sightings collection (schema §13.5). */
+const SESSION_DEVICES_COLLECTION = "sessionDevices";
+
+/** The documented cap on the new-device read (ADR-0043 §2, ADR-0046). */
+const SESSION_DEVICE_READ_CAP = 100;
+
+/**
+ * Wrap a driver cursor so its terminal `toArray()` reports how many rows it
+ * read. Chained cursor methods (`sort`, `limit`, …) return a cursor again, so
+ * the proxy re-applies on each hop and only the terminal call is measured.
+ */
+function trackCursor(cursor: unknown, onRead: (count: number) => void): unknown {
+  return new Proxy(cursor as object, {
+    get(target, property, receiver) {
+      if (property === "toArray") {
+        return async () => {
+          const docs = await (target as { toArray(): Promise<unknown[]> }).toArray();
+          onRead(docs.length);
+          return docs;
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value === "function") {
+        return (...args: unknown[]) => {
+          const next = (value as (...a: unknown[]) => unknown).apply(target, args);
+          return trackCursor(next, onRead);
+        };
+      }
+      return value;
+    },
+  });
+}
+
+/**
+ * A `Db` that measures every `sessionDevices` read, leaving all other
+ * collections and all writes untouched.
+ */
+function trackSessionDeviceReads(db: Db, onRead: (count: number) => void): Db {
+  return new Proxy(db, {
+    get(target, property, receiver) {
+      if (property === "collection") {
+        return (name: string) => {
+          const collection = target.collection(name);
+          if (name !== SESSION_DEVICES_COLLECTION) {
+            return collection;
+          }
+          return new Proxy(collection, {
+            get(collectionTarget, collectionProp, collectionReceiver) {
+              if (collectionProp === "find") {
+                return (filter: Document = {}, options?: Document) =>
+                  trackCursor(collectionTarget.find(filter, options), onRead);
+              }
+              const value = Reflect.get(collectionTarget, collectionProp, collectionReceiver);
+              return typeof value === "function" ? value.bind(collectionTarget) : value;
+            },
+          });
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+/** An outbox seam that records the `eventKey` of every emit attempt. */
+function recordingEmit(record: string[]): EmitDomainEvent {
+  return (input) => {
+    record.push(input.eventKey);
+    return Promise.resolve({ deduped: false, id: new ObjectId().toHexString() });
+  };
+}
+
+/**
+ * Build `count` in-window sightings for one user, newest-first, all for
+ * devices other than the one under test.
+ */
+function seedInWindowSightings(
+  count: number,
+  opts: { readonly userId: ObjectId; readonly salt: string; readonly now: Date }
+): Document[] {
+  const expireAt = new Date(opts.now.getTime() + 6 * 24 * 60 * 60 * 1000);
+  const rows: Document[] = [];
+  for (let i = 0; i < count; i += 1) {
+    rows.push({
+      userId: opts.userId,
+      fingerprintHash: hashFingerprint({ userAgent: `seed-device-${String(i)}` }, opts.salt),
+      createdAt: new Date(opts.now.getTime() - (i + 1) * 60_000),
+      expireAt,
+    });
+  }
+  return rows;
+}
+
+describe("OP-89 new-device read cap (ADR-0046)", () => {
+  it("R1: an in-window matching sighting outside the newest 100 still suppresses auth.signin.new_device", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const device = {
+        userAgent: "Mozilla/5.0 (DeepHistory)",
+        ip: "203.0.113.201",
+        acceptLanguage: "en-IN",
+      };
+      const salt = getRateLimitConfig().salt;
+      const matchingHash = hashFingerprint(device, salt);
+
+      // 149 newer sightings of other devices fill the 100-row cap, and the
+      // matching device's single in-window sighting is the OLDEST row.
+      const rows = seedInWindowSightings(149, { userId, salt, now: T0 });
+      rows.push({
+        userId,
+        fingerprintHash: matchingHash,
+        createdAt: new Date(T0.getTime() - (NEW_DEVICE_WINDOW - 60_000)),
+        expireAt: new Date(T0.getTime() + 6 * 24 * 60 * 60 * 1000),
+      });
+      await test.db.collection(SESSION_DEVICES_COLLECTION).insertMany(rows);
+
+      const emitted: string[] = [];
+      await handleSessionCreated(
+        { userId: userId.toHexString(), sessionId: "session-cap-1", device },
+        { db: test.db, emit: recordingEmit(emitted), clock: fixedClock(T0) }
+      );
+
+      expect(
+        emitted,
+        "an in-window sighting of the same device must suppress auth.signin.new_device regardless of how many other sightings the user has"
+      ).not.toContain("auth.signin.new_device");
+    });
+  });
+
+  it("R2: the new-device read never exceeds the 100-sighting cap", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const device = {
+        userAgent: "Mozilla/5.0 (CapBound)",
+        ip: "203.0.113.202",
+        acceptLanguage: "en-IN",
+      };
+      const salt = getRateLimitConfig().salt;
+
+      // 150 in-window sightings, none matching the incoming device: a genuinely
+      // new device. The read must stay bounded even though the collection holds
+      // more rows than the cap.
+      await test.db
+        .collection(SESSION_DEVICES_COLLECTION)
+        .insertMany(seedInWindowSightings(150, { userId, salt, now: T0 }));
+
+      const readSizes: number[] = [];
+      const emitted: string[] = [];
+      await handleSessionCreated(
+        { userId: userId.toHexString(), sessionId: "session-cap-2", device },
+        {
+          db: trackSessionDeviceReads(test.db, (count) => readSizes.push(count)),
+          emit: recordingEmit(emitted),
+          clock: fixedClock(T0),
+        }
+      );
+
+      expect(emitted).toContain("auth.signin.new_device");
+      expect(readSizes, "the sessionDevices read must run exactly once").toHaveLength(1);
+      expect(
+        Math.max(...readSizes),
+        `the new-device read must stay bounded by the ${String(SESSION_DEVICE_READ_CAP)}-sighting cap`
+      ).toBeLessThanOrEqual(SESSION_DEVICE_READ_CAP);
     });
   });
 });

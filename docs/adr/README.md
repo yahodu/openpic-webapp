@@ -50,5 +50,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0042](ADR-0042-op89-identity-lifecycle-hooks-green-review.md)                   | OP-89 GREEN review sign-off: index/TTL gaps, unwired sections 4–6, idempotency routing               | Accepted |
 | [0043](ADR-0043-op89-identity-lifecycle-indexes-ttls.md)                         | OP-89 follow-up: declare the identity-lifecycle collections' indexes and TTLs                        | Accepted |
 | [0044](ADR-0044-op89-identity-lifecycle-indexes-ttls-review.md)                  | OP-89 follow-up review sign-off: index/TTL gaps closed, unpinned-spec coverage routed                | Accepted |
+| [0046](ADR-0046-op89-identity-lifecycle-indexes-ttls-red-pins.md)                | OP-89 RED pins: identity-lifecycle index/TTL shapes and the bounded new-device read                  | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
