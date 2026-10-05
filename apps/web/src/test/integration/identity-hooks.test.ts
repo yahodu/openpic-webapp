@@ -1035,7 +1035,7 @@ describe("re-run idempotency — a redelivered hook emits exactly once (card AC)
   });
 });
 
-describe("section 4-6 surface seam — createIdentityLifecycleSeams (ADR-0043 §3)", () => {
+describe("section 4-6 surface seam — createIdentityLifecycleSeams (ADR-0045 §3)", () => {
   it("S8: the contact-changed seam emits the flags event and records one fanout", async () => {
     await withTestDb(async (test) => {
       const userId = new ObjectId();
@@ -1134,7 +1134,7 @@ describe("section 4-6 surface seam — createIdentityLifecycleSeams (ADR-0043 §
   });
 });
 
-describe("section 2 surface — the contact-verified Better Auth adapter (ADR-0043 §3)", () => {
+describe("section 2 surface — the contact-verified Better Auth adapter (ADR-0045 §3)", () => {
   it("S11: user.update.after completes the account and emits auth.account.completed once", async () => {
     await withTestDb(async (test) => {
       const userId = new ObjectId();
@@ -1159,7 +1159,7 @@ describe("section 2 surface — the contact-verified Better Auth adapter (ADR-00
 });
 
 /* ------------------------------------------------------------------------- *
- * OP-89 follow-up pins (ADR-0046) — the bounded new-device read.
+ * OP-89 follow-up pins (ADR-0050) — the bounded new-device read.
  *
  * `handleSessionCreated` decides "new device" from the user's `sessionDevices`
  * sightings, filtered to the 24-hour window and capped at the newest 100 rows
@@ -1181,7 +1181,7 @@ describe("section 2 surface — the contact-verified Better Auth adapter (ADR-00
 /** The app-owned per-session device sightings collection (schema §13.5). */
 const SESSION_DEVICES_COLLECTION = "sessionDevices";
 
-/** The documented cap on the new-device read (ADR-0043 §2, ADR-0046). */
+/** The documented cap on the new-device read (ADR-0043 §2, ADR-0050). */
 const SESSION_DEVICE_READ_CAP = 100;
 
 /**
@@ -1292,7 +1292,7 @@ function seedSameDeviceSightings(
   return rows;
 }
 
-describe("OP-89 new-device read cap (ADR-0046)", () => {
+describe("OP-89 new-device read cap (ADR-0050)", () => {
   it("R1: an in-window matching sighting outside the newest 100 still suppresses auth.signin.new_device", async () => {
     await withTestDb(async (test) => {
       const userId = new ObjectId();

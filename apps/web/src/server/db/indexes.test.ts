@@ -190,7 +190,7 @@ describe("index spec lint — plans catalogue uniqueness (OP-83 follow-up)", () 
 });
 
 /**
- * OP-89 follow-up pins (ADR-0046) — the identity-lifecycle collections.
+ * OP-89 follow-up pins (ADR-0050) — the identity-lifecycle collections.
  *
  * These are **append-only** additions: the existing U1/U2 lints assert the
  * shape of *whatever* specs exist, so a regression that deletes one of these
@@ -206,7 +206,7 @@ describe("index spec lint — plans catalogue uniqueness (OP-83 follow-up)", () 
  *   - `userProfiles.userId` is unique (ADR-0041 §4) and the DSR purge scan is
  *     backed by a partial `{status, deletionScheduledAt}` index (schema §13.2).
  */
-describe("index spec pins — OP-89 identity lifecycle (ADR-0046)", () => {
+describe("index spec pins — OP-89 identity lifecycle (ADR-0050)", () => {
   /** The declared spec with this exact name, or `undefined`. */
   function specNamed(name: string): IndexSpec | undefined {
     return INDEX_SPECS.find((candidate) => candidate.name === name);
