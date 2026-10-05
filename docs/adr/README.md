@@ -75,6 +75,9 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0067](ADR-0067-op91-sessions-and-account-deletion-red.md)                         | OP-91 RED: sessions & devices list/revoke and the account-deletion cancel window                         | Accepted |
 | [0068](ADR-0068-op91-sessions-and-account-deletion-green.md)                       | OP-91 GREEN: the §1.3 sessions surfaces and the §1.4 deletion cancel window                              | Accepted |
 | [0069](ADR-0069-op91-green-review-signoff.md)                                      | OP-91 GREEN review sign-off: §1.3/§1.4 verified; deletion-requested emission and three Low refs routed   | Accepted |
+| [0070](ADR-0070-op91-followup-deletion-requested-red.md)                           | OP-91 follow-up RED: pin `account.deletion.requested` emission + I3 count/ADR-reference hygiene          | Accepted |
+| [0071](ADR-0071-op91-followup-deletion-requested-green.md)                         | OP-91 follow-up GREEN: emit `account.deletion.requested` on `POST /me/deletion` via the lifecycle seam   | Accepted |
+| [0075](ADR-0075-op91-followup-deletion-requested-green-review-signoff.md)          | OP-91 follow-up GREEN review sign-off: deletion-requested emission verified; one ref routed              | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
