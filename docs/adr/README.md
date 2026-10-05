@@ -25,5 +25,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0017](ADR-0017-notification-routing-matrix-green-implementation.md)             | Notification routing matrix GREEN: 81-key transcription, derived fields, atomic reconcile          | Accepted |
 | [0018](ADR-0018-notification-routing-follow-up-severity-and-mobile-invariant.md) | Notification routing follow-up: `auth.account.completed` severity and enabled-mobile invariant     | Accepted |
 | [0019](ADR-0019-matrix-transcription-guard-and-lint-override-removal.md)         | §4 matrix transcription guard (table-driven spec); broad test-lint override removed                | Accepted |
+| [0020](ADR-0020-better-auth-config-otp-phone-2fa.md)                             | Better Auth config: OTP + phone + 2FA, cookie policy, test-only OTP route                          | Accepted |
+| [0021](ADR-0021-better-auth-config-green-implementation.md)                      | Better Auth config GREEN: hook-based policy, `__test__` rewrite, SMS-only 2FA flow                 | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.

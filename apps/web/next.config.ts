@@ -22,6 +22,23 @@ const nextConfig: NextConfig = {
   productionBrowserSourceMaps: false,
   reactStrictMode: true,
   transpilePackages: ["@openpic/contracts"],
+  /**
+   * Route the test-only OTP read-back endpoint.
+   *
+   * The contract path is `/api/v1/__test__/otp`, but Next.js treats an
+   * underscore-prefixed segment (`__test__`) as a *private folder* and excludes
+   * it from routing, so a route file placed there is never served. A rewrite
+   * maps the public path onto a normal handler; the handler itself is what
+   * enforces the `test`/`e2e`-only guard (and answers `404` everywhere else).
+   */
+  rewrites() {
+    return Promise.resolve([
+      {
+        source: "/api/v1/__test__/otp",
+        destination: "/api/v1/test-support/otp",
+      },
+    ]);
+  },
   // Lint is a dedicated gate (`pnpm lint`, run separately in CI). Running it a
   // second time inside `next build` only couples the build to spec-file style
   // and makes `next start`/Playwright impossible to reach.

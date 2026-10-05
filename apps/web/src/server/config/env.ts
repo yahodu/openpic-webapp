@@ -395,6 +395,21 @@ export interface RateLimitRuntimeConfig {
 /** Stable dev/e2e salt; production must set `RATE_LIMIT_SALT` explicitly. */
 const DEFAULT_RATE_LIMIT_SALT = "openpic-dev-rate-limit-salt";
 
+/** Default Better Auth session lifetime (7 days) when the env does not set one. */
+const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+/**
+ * Read the Better Auth session lifetime from the environment (OP-85 §3).
+ *
+ * Kept outside the frozen {@link AppConfig} shape (which is asserted by its own
+ * specs) because it is an operational tuneable, not a deploy contract.
+ *
+ * @returns The session lifetime in seconds, defaulted when unset or invalid.
+ */
+export function getSessionTtlSeconds(): number {
+  return positiveInteger(process.env.SESSION_TTL_SECONDS, DEFAULT_SESSION_TTL_SECONDS);
+}
+
 /**
  * Read the rate-limit runtime wiring from the environment.
  *
