@@ -70,6 +70,35 @@ production file altered. Commit `1c58445`.
    missing, so such a row could never be reclaimed. Unreachable through this
    module (every claim stamps `claimedAt`), but worth a defensive guard + pin.
 
+## 5. Follow-up resolution (OP-88 outbox hardening, 2026-10-05)
+
+The three deferred follow-ups in §4 were decomposed by `openpic-orchestrator`
+(parent `t_9f9cfe6c`) into a RED card (`t_f79fc7c8`) and this GREEN card
+(`t_2505b480`), which resolves them:
+
+1. **Finding 1 (Medium/perf) — FIXED.** `resolveNotificationsFlag` no longer
+   issues a per-emit `findOne`; it reads the enabled `typeKey` set through the
+   new clock-once TTL cache `@/server/notifications/notification-type-cache`
+   (`getEnabledNotificationTypeKeys` / `invalidateNotificationTypeCache`,
+   `NOTIFICATION_TYPE_CACHE_TTL_MS = 30_000`), mirroring `getPlatformSettings`.
+   One bounded `find({}, { projection: { typeKey: 1, enabled: 1 } })` per
+   window; strict-`<` expiry; the accepted staleness window is ≤30 000 ms,
+   observed no later than the first call at/after the TTL (or immediately after
+   invalidation).
+2. **Finding 3 (Low/correctness) — FIXED.** The stale branch of the
+   `claimPendingEvents` filter now also reclaims an `in_progress` row whose
+   `claimedAt` is missing
+   (`$or: [{ claimedAt: { $lt: staleBefore } }, { claimedAt: { $exists: false } }]`);
+   a fresh `claimedAt` stays non-reclaimable and a reclaimed row is stamped like
+   any claim.
+3. **Finding 2 (Low/design) — DEFERRED, unchanged.** v1 still drains one
+   consumer per event at a time, so the single top-level `claimedAt`/`claimedBy`
+   lease stays (ADR-0029 §Consequences). A per-consumer lease object is required
+   only before parallel consumer fan-out is scheduled; no per-consumer lease was
+   added.
+
+Cross-reference: ADR-0029 (§Consequences) for the single-lease decision.
+
 ## Consequences
 
 - OP-88 ships; the outbox is the single write point and the fan-out is

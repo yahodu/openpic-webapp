@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { COLLECTIONS } from "@/server/db/collections";
 import { emitDomainEvent, claimPendingEvents } from "@/server/domain/domain-events";
 import { createLogger, memoryTransport, setLogger, type MemoryTransport } from "@/server/logging";
+import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
 import { fixedClock } from "@/server/runtime/clock";
+import { addMilliseconds } from "@/server/runtime/time";
 import {
   invalidatePlatformSettings,
   PLATFORM_SETTINGS_DEFAULTS,
@@ -60,6 +62,11 @@ const DOMAIN_EVENTS = "domain_events";
 
 /** A fixed instant so occurredAt/expireAt are exact, not "about a day". */
 const T0 = "2026-03-01T00:00:00.000Z";
+
+/** The ISO instant `plusMs` after `T0` — used to cross the 30 s TTL window. */
+function at(plusMs: number): string {
+  return addMilliseconds(fixedClock(T0).now(), plusMs).toISOString();
+}
 
 /** The stored document fields these specs inspect. */
 interface InsertedEvent {
@@ -126,10 +133,21 @@ function fakeDbWithDomainEvents(overrides: Record<string, unknown>): FakeMongo {
   return fake;
 }
 
+/** How many reads the fake recorded against the `notification_types` catalogue. */
+function notificationTypeReads(fake: FakeMongo): number {
+  return fake.calls.filter(
+    (call) =>
+      call.collection === COLLECTIONS.notificationTypes &&
+      (call.method === "find" || call.method === "findOne")
+  ).length;
+}
+
 beforeEach(() => {
-  // The settings read path is cached process-wide; clear it so each spec's
-  // fake `platformSettings` document is the one the writer sees.
+  // Both read paths are cached process-wide; clear them so each spec's fake
+  // `platformSettings` / `notification_types` documents are the ones the writer
+  // sees.
   invalidatePlatformSettings();
+  invalidateNotificationTypeCache();
 });
 
 describe("emitDomainEvent — the eventKey gate", () => {
@@ -312,6 +330,101 @@ describe("emitDomainEvent — dispatch flags", () => {
     await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
       db: fake.db,
       clock: fixedClock(T0),
+    });
+
+    expect(insertedEvent(fake).dispatch.notifications).toBe("skipped");
+  });
+});
+
+describe("emitDomainEvent — the notification-type cache (OP-88 follow-up D1)", () => {
+  it("U5: reads notification_types once across two emits within the TTL window", async () => {
+    const fake = makeFakeMongo();
+    fake.seed(COLLECTIONS.notificationTypes, [
+      makeNotificationType({ typeKey: "collab.invite.accepted", enabled: true }),
+    ]);
+
+    await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
+      db: fake.db,
+      clock: fixedClock(T0),
+    });
+    await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
+      db: fake.db,
+      clock: fixedClock(T0),
+    });
+
+    expect(notificationTypeReads(fake)).toBe(1);
+  });
+
+  it("U6: keeps seeing the cached enabled set inside the 30 s window", async () => {
+    const fake = makeFakeMongo();
+    fake.seed(COLLECTIONS.notificationTypes, [
+      makeNotificationType({ typeKey: "collab.invite.accepted", enabled: true }),
+    ]);
+
+    await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
+      db: fake.db,
+      clock: fixedClock(T0),
+    });
+    expect(insertedEvent(fake).dispatch.notifications).toBe("pending");
+
+    // The operator disables the type behind the cache's back; the change is not
+    // observed inside the accepted staleness window.
+    fake.seed(COLLECTIONS.notificationTypes, [
+      makeNotificationType({ typeKey: "collab.invite.accepted", enabled: false }),
+    ]);
+
+    await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
+      db: fake.db,
+      clock: fixedClock(at(10_000)),
+    });
+
+    expect(insertedEvent(fake).dispatch.notifications).toBe("pending");
+  });
+
+  it("U7: observes the change at exactly the 30 s boundary", async () => {
+    const fake = makeFakeMongo();
+    fake.seed(COLLECTIONS.notificationTypes, [
+      makeNotificationType({ typeKey: "collab.invite.accepted", enabled: true }),
+    ]);
+
+    await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
+      db: fake.db,
+      clock: fixedClock(T0),
+    });
+    expect(insertedEvent(fake).dispatch.notifications).toBe("pending");
+
+    fake.seed(COLLECTIONS.notificationTypes, [
+      makeNotificationType({ typeKey: "collab.invite.accepted", enabled: false }),
+    ]);
+
+    await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
+      db: fake.db,
+      clock: fixedClock(at(30_000)),
+    });
+
+    expect(insertedEvent(fake).dispatch.notifications).toBe("skipped");
+  });
+
+  it("U8: invalidateNotificationTypeCache forces the change to be observed immediately", async () => {
+    const fake = makeFakeMongo();
+    fake.seed(COLLECTIONS.notificationTypes, [
+      makeNotificationType({ typeKey: "collab.invite.accepted", enabled: true }),
+    ]);
+
+    await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
+      db: fake.db,
+      clock: fixedClock(T0),
+    });
+    expect(insertedEvent(fake).dispatch.notifications).toBe("pending");
+
+    fake.seed(COLLECTIONS.notificationTypes, [
+      makeNotificationType({ typeKey: "collab.invite.accepted", enabled: false }),
+    ]);
+    invalidateNotificationTypeCache();
+
+    await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
+      db: fake.db,
+      clock: fixedClock(at(1000)),
     });
 
     expect(insertedEvent(fake).dispatch.notifications).toBe("skipped");

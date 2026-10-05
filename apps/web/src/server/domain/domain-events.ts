@@ -5,6 +5,7 @@ import { z } from "zod";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { getLogger } from "@/server/logging";
+import { getEnabledNotificationTypeKeys } from "@/server/notifications/notification-type-cache";
 import { NOTIFICATION_TYPE_KEYS } from "@/server/notifications/notification-types.values";
 import { platformRepo } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
@@ -220,16 +221,11 @@ function domainEventsCollection(db: Db) {
 /** The `notifications` flag: `pending` only when an enabled type exists. */
 async function resolveNotificationsFlag(
   db: Db,
+  clock: Clock,
   eventKey: string
 ): Promise<DomainEventDispatchStatus> {
-  const row = await platformRepo(db)
-    .collection(COLLECTIONS.notificationTypes)
-    .findOne({ typeKey: eventKey });
-  if (row === null) {
-    return "skipped";
-  }
-  const { enabled } = row as { enabled?: unknown };
-  return enabled === true ? "pending" : "skipped";
+  const enabledTypeKeys = await getEnabledNotificationTypeKeys({ db, clock });
+  return enabledTypeKeys.has(eventKey) ? "pending" : "skipped";
 }
 
 /** Narrow a driver result to a stored outbox row, failing loudly on a bad shape. */
@@ -290,7 +286,7 @@ export async function emitDomainEvent(
   const occurredAt = clock.now();
   const settings = await getPlatformSettings({ db, clock });
   const expireAt = addDays(occurredAt, settings.retention.domainEventDays);
-  const notifications = await resolveNotificationsFlag(db, event.eventKey);
+  const notifications = await resolveNotificationsFlag(db, clock, event.eventKey);
 
   const doc: Document = {
     eventKey: event.eventKey,
@@ -359,7 +355,10 @@ export async function claimPendingEvents(
   const filter: Document = {
     $or: [
       { [statusPath]: "pending" },
-      { [statusPath]: "in_progress", claimedAt: { $lt: staleBefore } },
+      {
+        [statusPath]: "in_progress",
+        $or: [{ claimedAt: { $lt: staleBefore } }, { claimedAt: { $exists: false } }],
+      },
     ],
   };
   const update: Document = {
