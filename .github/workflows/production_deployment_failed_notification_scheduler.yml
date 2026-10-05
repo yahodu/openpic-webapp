@@ -11,26 +11,27 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Send Slack alert
+      - name: Send Discord alert
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
         run: |
-          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+          PAYLOAD=$(jq -n \
+            --arg url "https://github.com/${REPO}/deployments" \
+            --arg repo "$REPO" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              embeds: [{
+                title: "🚨 Production Deployment Failed",
+                url: $url,
+                description: "The latest Vercel production deployment failed and is still unresolved.\nThis alert repeats every 15 minutes until a deployment succeeds.\n\n[View Deployments](\($url))",
+                color: 15548997,
+                footer: { text: $repo },
+                timestamp: $ts
+              }]
+            }')
+
+          curl -sS --fail \
             -H "Content-Type: application/json" \
-            -d '{
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "🚨 Production Deployment Failed",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*The latest Vercel production deployment has failed and is still unresolved.*\n\nThis alert will repeat every 15 minutes until a successful deployment occurs.\n\n<https://github.com/${{ github.repository }}/deployments|View Deployments>"
-                  }
-                }
-              ]
-            }'
+            -d "$PAYLOAD" \
+            "$DISCORD_WEBHOOK_URL"

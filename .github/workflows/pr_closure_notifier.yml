@@ -1,4 +1,4 @@
-name: Notify Slack on PR Close
+name: Notify Discord on PR Close
 
 permissions:
   contents: read
@@ -8,50 +8,58 @@ on:
     types: [closed]
 
 jobs:
-  notify-slack-merged:
+  notify-discord:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true
     steps:
-      - name: Send Slack notification (merged)
-        uses: slackapi/slack-github-action@v1.27.0
-        with:
-          payload: |
-            {
-              "text": "✅ PR Merged: *<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>*",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*PR Merged* in `${{ github.repository }}`\n*<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>*\nMerged by: ${{ github.event.pull_request.merged_by.login }}\nBranch: `${{ github.event.pull_request.head.ref }}` → `${{ github.event.pull_request.base.ref }}`"
-                  }
-                }
-              ]
-            }
+      - name: Send Discord notification
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_AVATAR: ${{ github.event.pull_request.user.avatar_url }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          CLOSED_AT: ${{ github.event.pull_request.closed_at }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$MERGED" = "true" ]; then
+            COLOR=5763719          # green
+            HEADLINE="✅ Merged by ${MERGED_BY}"
+          else
+            COLOR=15548997         # red
+            HEADLINE="🔴 Closed without merging"
+          fi
 
-  notify-slack-closed:
-    runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == false
-    steps:
-      - name: Send Slack notification (closed without merge)
-        uses: slackapi/slack-github-action@v1.27.0
-        with:
-          payload: |
-            {
-              "text": "🔴 PR Closed (unmerged): *<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>*",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*PR Closed without merge* in `${{ github.repository }}`\n*<${{ github.event.pull_request.html_url }}|${{ github.event.pull_request.title }}>*\nClosed by: ${{ github.event.pull_request.user.login }}\nBranch: `${{ github.event.pull_request.head.ref }}`"
-                  }
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+          PAYLOAD=$(jq -n \
+            --arg title "#${PR_NUMBER} ${PR_TITLE}" \
+            --arg url "$PR_URL" \
+            --arg desc "$HEADLINE" \
+            --arg author "$PR_AUTHOR" \
+            --arg avatar "$PR_AUTHOR_AVATAR" \
+            --arg branch "\`${HEAD_REF}\` → \`${BASE_REF}\`" \
+            --arg repo "$REPO" \
+            --arg ts "$CLOSED_AT" \
+            --argjson color "$COLOR" \
+            '{
+              embeds: [{
+                title: ($title | .[0:250]),
+                url: $url,
+                description: $desc,
+                color: $color,
+                author: { name: $author, icon_url: $avatar },
+                fields: [
+                  { name: "Branch", value: $branch, inline: true }
+                ],
+                footer: { text: $repo },
+                timestamp: $ts
+              }]
+            }')
+
+          curl -sS --fail \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$DISCORD_WEBHOOK_URL"
