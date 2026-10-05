@@ -1,6 +1,6 @@
 import { ObjectId, type Db } from "mongodb";
 import { http, HttpResponse } from "msw";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { memoryMessageTransport } from "@/server/adapters/memory-message-transport";
 import { novuTransport } from "@/server/adapters/novu/novu-transport";
@@ -343,6 +343,9 @@ describe("runNotificationFanOut — preference opt-out (I2)", () => {
     await withTestDb(async (test) => {
       const tenantId = new ObjectId().toHexString();
       const organizer = newUserId();
+      // The actor is a peer who edited the event — deliberately *not* a recipient,
+      // so the assertion is about the opt-out skip, not about actor exclusion (U2).
+      const editor = newUserId();
       await seedRecipient(test.db, {
         userId: organizer,
         prefs: { byType: { "event.details.updated": { email: "off" } } },
@@ -352,7 +355,7 @@ describe("runNotificationFanOut — preference opt-out (I2)", () => {
       await insertEvent(test.db, {
         eventKey: "event.details.updated",
         tenantId,
-        actorRef: { kind: "user", id: organizer },
+        actorRef: { kind: "user", id: editor },
         subjectRef: { kind: "event", id: new ObjectId().toHexString() },
         payload: {
           eventId: new ObjectId().toHexString(),
@@ -377,6 +380,50 @@ describe("runNotificationFanOut — preference opt-out (I2)", () => {
         skipReason: "user_opt_out",
       });
       expect(transport.outbox.some((message) => message.channel === "email")).toBe(false);
+    });
+  });
+});
+
+describe("runNotificationFanOut — actor exclusion at the outbox boundary (I2b)", () => {
+  it("does not deliver to the actor even when the audience includes them", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = new ObjectId().toHexString();
+      const actor = newUserId();
+      const peer = newUserId();
+      await seedRecipient(test.db, { userId: actor });
+      await seedRecipient(test.db, { userId: peer });
+
+      const transport = memoryMessageTransport();
+      await insertEvent(test.db, {
+        eventKey: "event.details.updated",
+        tenantId,
+        actorRef: { kind: "user", id: actor },
+        subjectRef: { kind: "event", id: new ObjectId().toHexString() },
+        payload: {
+          eventId: new ObjectId().toHexString(),
+          actionUrl: "https://app.openpic.in/events/abc",
+        },
+      });
+
+      // The audience resolves to both the actor and the peer; U2 must drop the actor.
+      await runNotificationFanOut(
+        runOptions(
+          test.db,
+          transport,
+          fixedRecipients({ listEventRoleMembers: promised([actor, peer]) })
+        )
+      );
+
+      const dispatches = await dispatchesOf(test.db);
+      expect(dispatchesFor(dispatches, actor)).toHaveLength(0);
+      const peerEmail = dispatchesFor(dispatches, peer).find(
+        (dispatch) => dispatch.channel === "email"
+      );
+      expect(peerEmail?.status).toBe("sent");
+
+      const notifications = await notificationsOf(test.db);
+      expect(notifications.some((row) => String(row.userId) === actor)).toBe(false);
+      expect(notifications.some((row) => String(row.userId) === peer)).toBe(true);
     });
   });
 });
@@ -475,6 +522,9 @@ describe("runNotificationFanOut — transport failure isolation (I5)", () => {
       const tenantId = new ObjectId().toHexString();
       const failing = newUserId();
       const healthy = newUserId();
+      // The actor is a peer scheduler — not a recipient — so actor exclusion (U2)
+      // cannot remove `healthy` and collapse the scenario to a single recipient.
+      const editor = newUserId();
       await seedRecipient(test.db, { userId: failing, email: `failing-${failing}@example.com` });
       await seedRecipient(test.db, { userId: healthy, email: `healthy-${healthy}@example.com` });
 
@@ -498,7 +548,7 @@ describe("runNotificationFanOut — transport failure isolation (I5)", () => {
       const eventId = await insertEvent(test.db, {
         eventKey: "event.details.updated",
         tenantId,
-        actorRef: { kind: "user", id: healthy },
+        actorRef: { kind: "user", id: editor },
         subjectRef: { kind: "event", id: new ObjectId().toHexString() },
         payload: {
           eventId: new ObjectId().toHexString(),
@@ -586,6 +636,10 @@ describe("runNotificationFanOut — billing audience guard (I7)", () => {
       await seedRecipient(test.db, { userId: coOrganizer });
 
       const transport = memoryMessageTransport();
+      const recipients = fixedRecipients({
+        getBillingContactUserId: promised(billing),
+        listEventRoleMembers: vi.fn(promised([coOrganizer])),
+      });
       await insertEvent(test.db, {
         eventKey: "billing.payment.failed",
         tenantId,
@@ -597,16 +651,11 @@ describe("runNotificationFanOut — billing audience guard (I7)", () => {
         },
       });
 
-      await runNotificationFanOut(
-        runOptions(
-          test.db,
-          transport,
-          fixedRecipients({
-            getBillingContactUserId: promised(billing),
-            listEventRoleMembers: promised([coOrganizer]),
-          })
-        )
-      );
+      await runNotificationFanOut(runOptions(test.db, transport, recipients));
+
+      // `billing.payment.failed`'s audience is `billing_contact` only, so the event
+      // role source is never consulted and a co-organizer cannot be pulled in.
+      expect(recipients.listEventRoleMembers).not.toHaveBeenCalled();
 
       const notifications = await notificationsOf(test.db);
       const dispatches = await dispatchesOf(test.db);

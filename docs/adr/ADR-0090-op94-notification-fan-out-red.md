@@ -18,7 +18,8 @@ outbox rows, resolves recipients at send time, runs `resolveChannel` per
 ledger (including every skip), and hands rendered messages to the injected
 transport — exactly once, isolating a per-recipient provider failure.
 
-The RED card pins the behaviours (`U1`–`U3`, `I1`–`I8`) but not the module path,
+The RED card pins the behaviours (`U1`–`U3`, `I1`–`I8` plus the actor-exclusion
+pin `I2b`) but not the module path,
 export names, the recipient-port shape, the dedupe-key composition or the feed
 aggregation filter. Those are decided here so the GREEN implementer and any
 later refactor cannot drift.
@@ -88,6 +89,19 @@ stored"):
 - `subjectUserId` is always a recipient (the notification is about them); the
   `actorUserId` is then removed (design §4.5/§4.6 "minus the actor"). The result
   is deduped, first-seen order preserved.
+- `billing_contact` resolves through `getBillingContactUserId` **only**; I7 pins
+  that `listEventRoleMembers` is _not_ called for a billing type, so a
+  co-organizer cannot be pulled into a `billing.payment.failed` audience.
+
+**Deriving `actorUserId` / `subjectUserId` from a stored event.** `resolveRecipients`
+takes the two ids, not the refs, so the fan-out must map the `domainEvents` row
+itself: `actorUserId = actorRef.kind === "user" ? actorRef.id : null` and
+`subjectUserId = subjectRef.kind === "user" ? subjectRef.id : null`. Any other ref
+kind (`system`, `invitation`, `event`, `subscription`, …) yields `null` for that
+side. I2 and I5 therefore set the actor to a **non-recipient** peer, so they
+exercise the opt-out skip and the failure isolation independently of actor
+exclusion; I2b additionally pins that an actor who _is_ in the resolved audience
+is still dropped (no feed row, no dispatch).
 
 **Why a repository port.** The membership data layer (`eventMembers` /
 `event_organizers`, accepted co-organizer `invitations`, `attendeeEventProfiles`
@@ -111,11 +125,12 @@ only require the injected port to supply them.
 `null`; a template referencing an unsupplied variable **throws** naming the
 variable. It is a pure string function.
 
-**Channel suffix decision.** The schema §19.5 unique index is
-`{tenantId, dedupeKey}` partial on a string `dedupeKey`. A single interpolated
-key shared by the `email` and `sms` dispatches of `attendee.matches.ready` would
-make the second channel collide with the first. The fan-out therefore composes
-the stored `dispatch.dedupeKey` as `` `${interpolateDedupeKey(typeRow.dedupe.keyTemplate, vars)}:${channel}` ``.
+**Channel suffix decision.** Design §19.5 describes the index as a unique
+`{dedupeKey}`; the index actually implemented in `indexes.ts`
+(`dispatches_tenant_dedupe_unique`) is `{tenantId, dedupeKey}` partial on a string
+`dedupeKey` — per tenant, not per channel. A single interpolated key shared by the
+`email` and `sms` dispatches of `attendee.matches.ready` would make the second
+channel collide with the first. The fan-out therefore composes the stored `dispatch.dedupeKey` as `` `${interpolateDedupeKey(typeRow.dedupe.keyTemplate, vars)}:${channel}` ``.
 U3 pins the pure interpolation; I8 pins the channel-correct outcome (two batches
 → exactly one SMS sent, the second skipped `deduped`). **This is the author's
 resolution of an ambiguity in §19.5** and is recorded here as an assumption.
@@ -184,6 +199,27 @@ Per claimed event (GREEN card §2–§5):
 Base tree: the OP-93 GREEN branch `OP-93-task-channel-resolution-and-template-renderer-green`
 (`origin/main` already merged, `resolve-channel`/`render-template` present), on
 the worktree branch `OP-94-task-notification-fan-out-red`.
+
+## Review round 2 — fixture corrections (same card)
+
+Review round 1 (PR #188) requested changes; all were test-side/ADR-wording and
+none changed the contract. Corrections applied in place (no new ADR row, to keep
+the `docs/adr/README.md` hotspot untouched):
+
+1. **I2 / I5 actor collision (blocking).** Both fixtures set `actorRef.id` to a
+   member of the resolved recipient set, which U2 excludes, making their asserted
+   deliveries unsatisfiable. The actor is now a distinct non-recipient peer
+   (`editor`), so I2 measures the opt-out skip and I5 the per-recipient failure
+   isolation. The `actorRef`/`subjectRef` → `actorUserId`/`subjectUserId`
+   derivation is stated above (the root-cause contract gap).
+2. **New pin I2b.** An event whose audience explicitly contains the actor is
+   dropped for the actor (no feed row, no dispatch) and delivered to the peer —
+   the wiring-level proof that was missing.
+3. **I7 strengthened.** The co-organizer/billing claim was structural; I7 now
+   also asserts `listEventRoleMembers` is **not** called for a
+   `billing_contact`-only type, making it a behavioural pin.
+4. **§19.5 citation** corrected (design text says unique `{dedupeKey}`; the
+   implemented index is `{tenantId, dedupeKey}`).
 
 ## Consequences
 
