@@ -1,3 +1,9 @@
+## [1.15.0](https://github.com/yahodu/openpic-webapp/compare/v1.14.0...v1.15.0) (2026-10-05)
+
+### Features
+
+- **me:** OP-90 complete GET and PATCH /api/v1/me ([#168](https://github.com/yahodu/openpic-webapp/issues/168)) ([ba431c2](https://github.com/yahodu/openpic-webapp/commit/ba431c2c538e51a13e7ec1564cd0df3fc582d96f)), closes [#164](https://github.com/yahodu/openpic-webapp/issues/164)
+
 ## [1.14.0](https://github.com/yahodu/openpic-webapp/compare/v1.13.0...v1.14.0) (2026-10-05)
 
 ### Features
