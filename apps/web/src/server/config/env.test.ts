@@ -53,7 +53,7 @@ import { makeEnv, makeProductionEnv, type EnvInput } from "../../test/factories/
  *   MESSAGE_TRANSPORT            memory | ses              (default memory)
  *   TRUSTED_CLIENT_IP_HEADER     trusted edge header name; REQUIRED in
  *                                production (unset/blank refused — OP-85
- *                                follow-up, ADR-0031)
+ *                                follow-up, ADR-0032)
  *
  * `memory` is accepted for every provider selector EXCEPT when
  * `APP_ENV=production`.
@@ -419,7 +419,7 @@ describe("getConfig — secret length boundary", () => {
   });
 });
 
-describe("getConfig — production requires TRUSTED_CLIENT_IP_HEADER (ADR-0031)", () => {
+describe("getConfig — production requires TRUSTED_CLIENT_IP_HEADER (ADR-0032)", () => {
   it("refuses to start when the knob is unset in production, naming the key", async () => {
     const { getConfig, ConfigError } = await loadEnvConfig(
       makeProductionEnv({ TRUSTED_CLIENT_IP_HEADER: undefined })

@@ -59,7 +59,7 @@ export function makeEnv(overrides: EnvInput = {}): EnvInput {
  * Override a single key to make exactly one thing invalid.
  *
  * `TRUSTED_CLIENT_IP_HEADER` is required in production (OP-85 follow-up,
- * ADR-0031): a production deploy must never silently fall back to the
+ * ADR-0032): a production deploy must never silently fall back to the
  * client-writable `x-forwarded-for` list. The default here keeps every
  * production-env spec valid under that contract; override it to `undefined`
  * or a blank string to exercise the refusal.
