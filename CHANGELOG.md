@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/yahodu/openpic-webapp/compare/v1.2.0...v1.3.0) (2026-10-05)
+
+### Features
+
+- **settings:** OP-82 platformSettings singleton, guards and seed ([#115](https://github.com/yahodu/openpic-webapp/issues/115)) ([bc55129](https://github.com/yahodu/openpic-webapp/commit/bc5512935fc3dfc49575982c4a18d6289a0e3f71))
+
 ## [1.2.0](https://github.com/yahodu/openpic-webapp/compare/v1.1.0...v1.2.0) (2026-10-04)
 
 ### Features
