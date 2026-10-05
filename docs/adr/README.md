@@ -30,5 +30,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0022](ADR-0022-better-auth-hook-module-decomposition.md)                        | Better Auth hooks split into focused modules (OP-85 follow-up refactor)                            | Accepted |
 | [0023](ADR-0023-auth-coverage-red-otp-ip-leg-verify-cap.md)                      | Auth coverage RED: OTP IP leg, unknown-number verify 4xx, callbackURL trust, session verify cap    | Accepted |
 | [0024](ADR-0024-client-ip-trust-model.md)                                        | Client-IP trust model for the auth rate-limit IP leg (configurable edge header)                    | Accepted |
+| [0025](ADR-0025-auth-guards.md)                                                  | Auth guards: one pure decision per label, resolver port, per-session 2FA fact                      | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.

@@ -4,6 +4,7 @@ import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { createAuthMiddleware } from "better-auth/api";
 import { admin } from "better-auth/plugins/admin";
+import { bearer } from "better-auth/plugins/bearer";
 import { emailOTP } from "better-auth/plugins/email-otp";
 import { phoneNumber } from "better-auth/plugins/phone-number";
 import { twoFactor } from "better-auth/plugins/two-factor";
@@ -113,7 +114,26 @@ export function createAuth(options: CreateAuthOptions): AuthLike {
     database: mongodbAdapter(options.db),
     trustedOrigins: [...trustedOrigins],
     emailAndPassword: { enabled: false },
-    session: { expiresIn: getSessionTtlSeconds() },
+    session: {
+      expiresIn: getSessionTtlSeconds(),
+      /**
+       * Whether *this session* passed the second factor (ADR-0025 §4).
+       *
+       * Better Auth 1.7.7 keeps no per-session 2FA fact, and `user.twoFactorEnabled`
+       * alone cannot distinguish an admin session that enrolled 2FA (I8) from a
+       * session minted earlier (I6) or a phone-OTP first-factor sign-in (I7).
+       * The field is server-owned (`input: false`) and set on the verify path by
+       * the two-factor hook.
+       */
+      additionalFields: {
+        twoFactorVerified: {
+          type: "boolean",
+          required: false,
+          defaultValue: false,
+          input: false,
+        },
+      },
+    },
     advanced: {
       useSecureCookies: cookieOptions.useSecureCookies,
       cookiePrefix: cookieOptions.cookiePrefix,
@@ -155,6 +175,11 @@ export function createAuth(options: CreateAuthOptions): AuthLike {
         },
       }),
       admin(),
+      // Mobile clients authenticate with `Authorization: Bearer <session token>`
+      // (contract §0.3); the plugin converts that header into a session and
+      // exposes the token on the sign-in response as `set-auth-token`. The guard
+      // resolver relies on both (ADR-0025 §3).
+      bearer(),
     ],
   });
 

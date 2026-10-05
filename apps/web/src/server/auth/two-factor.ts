@@ -159,6 +159,45 @@ export async function runTwoFactorBeforeHook(
 }
 
 /**
+ * Record that the current session passed the second factor.
+ *
+ * Better Auth 1.7.7 stores no such session fact (ADR-0025 §4), so the
+ * implementation materialises one: on a successful `/two-factor/verify-otp` the
+ * session document is marked `twoFactorVerified: true`. `resolvePrincipal` reads
+ * that field, which is exactly how I8 (allow) vs I6/I7 (deny) is decided — a
+ * per-session fact, not `user.twoFactorEnabled`.
+ *
+ * @param ctx - The `after` hook context.
+ */
+async function recordVerifiedSession(ctx: AuthHookContext): Promise<void> {
+  const returned = ctx.context.returned;
+  // A failed verification leaves the thrown APIError on `returned`; only a
+  // completed challenge carries the JSON payload.
+  if (returned === undefined || returned instanceof Error) {
+    return;
+  }
+
+  const record = ctx.context.newSession ?? ctx.context.session;
+  const sessionId = (record as { session?: { id?: unknown } } | null | undefined)?.session?.id;
+  if (typeof sessionId !== "string" || sessionId === "") {
+    return;
+  }
+
+  const adapter = ctx.context.adapter as {
+    update(args: {
+      model: string;
+      where: { field: string; value: string }[];
+      update: Record<string, unknown>;
+    }): Promise<unknown>;
+  };
+  await adapter.update({
+    model: "session",
+    where: [{ field: "id", value: sessionId }],
+    update: { twoFactorVerified: true },
+  });
+}
+
+/**
  * Convert a full session minted by the email-OTP endpoint into a pending
  * two-factor challenge when the signing-in user has 2FA enabled.
  *
@@ -171,6 +210,10 @@ export async function runTwoFactorAfterHook(
   ctx: AuthHookContext,
   sender: OtpSender
 ): Promise<unknown> {
+  if (ctx.path === "/two-factor/verify-otp") {
+    await recordVerifiedSession(ctx);
+    return undefined;
+  }
   if (ctx.path !== "/sign-in/email-otp") {
     return undefined;
   }
