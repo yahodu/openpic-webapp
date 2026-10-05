@@ -8,6 +8,8 @@ import { GET as meGet, PATCH as mePatch } from "@/app/api/v1/me/route";
 import { createAuth, type AuthLike } from "@/server/auth";
 import { otpInbox } from "@/server/auth/otp-inbox";
 import { closeMongoClient, getDb } from "@/server/db/mongo";
+import { buildMe } from "@/server/me/projection";
+import { meSchema } from "@/server/me/schema";
 
 import { authPost, body, cookiePair, sessionCookie } from "../helpers/auth-requests";
 import { MONGO_READY_HOOK_TIMEOUT_MS, requireMongoTestUri, waitForMongoReady } from "../helpers/db";
@@ -496,6 +498,33 @@ describe("GET /api/v1/me (§1.2 current user)", () => {
 
     expect(me.primaryTenant).toBeNull();
     expect(me.tenants).toEqual([]);
+  });
+
+  it('I10: projects email "" and emailVerified false for a user document lacking email', async () => {
+    // A phone-only account — a `user` document with no `email` — is unreachable
+    // through the auth flows (ADR-0057: `emailOTP` is the only sign-up path and
+    // Better Auth requires `email`), so the projection's defensive branch is
+    // pinned by seeding the document directly. Contract §1.2 keeps `email` a
+    // non-nullable `string`: `asString(user?.email, "")` must yield `""` (never
+    // `null`/`undefined`) and `emailVerified` must be `false`.
+    const userId = new ObjectId();
+    await database.collection(USER_COLLECTION).insertOne({
+      _id: userId,
+      // Deliberately no `email`, and `emailVerified` absent (so `!== true`):
+      // this is the exact shape that drives the fallback branch.
+    });
+
+    const me = await buildMe(database, userId.toHexString());
+
+    expect(me.email).toBe("");
+    expect(typeof me.email).toBe("string");
+    expect(me.emailVerified).toBe(false);
+
+    // The body must still satisfy the route's strict response schema: swapping
+    // the fallback to `null`/`undefined` fails `z.string()` here, which at the
+    // route boundary is a 500 rather than a body the shell can render.
+    const parsed = meSchema.safeParse(me);
+    expect(parsed.success).toBe(true);
   });
 });
 
