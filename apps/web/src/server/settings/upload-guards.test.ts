@@ -532,6 +532,28 @@ describe("guardUploadType rejects declarations outside the allow-list", () => {
   });
 });
 
+describe("guardUploadType treats a fileName with no extension as unsupported", () => {
+  it("rejects a dotless fileName as unsupported_extension with 415", () => {
+    // A name with no dot makes `extensionOf` resolve the whole name to the
+    // empty-string extension (its `lastIndexOf(".") === -1` branch), so the
+    // allow-list lookup misses and the first claim — the extension — decides.
+    const rejected = expectRejected(
+      guardUploadType({
+        bytes: padded(PNG),
+        fileName: "photo",
+        declaredMimeType: "image/png",
+      })
+    );
+
+    expect(rejected.reason).toBe("unsupported_extension");
+    expect(rejected.detectedFormat).toBeNull();
+    expect(rejected.status).toBe(415);
+    expect(rejected.code).toBe("unsupported_media_type");
+    expect(rejected.deleteObject).toBe(true);
+    expect(rejected.persist).toBe(false);
+  });
+});
+
 describe("guardUploadType rejects an ftyp box with an unrecognized major brand", () => {
   it.each(UNRECOGNIZED_FTYP_BRANDS)(
     "reports unrecognized_format for the %s major brand and signals delete-and-write-nothing",
