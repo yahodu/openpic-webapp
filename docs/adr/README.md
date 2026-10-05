@@ -53,5 +53,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0045](ADR-0045-op89-followup-red-idempotency-2fa-transition-and-surface-seams.md) | OP-89 follow-up RED: re-run idempotency, 2FA transition re-emit, section 4–6 + contact-verified seams    | Accepted |
 | [0046](ADR-0046-op89-followup-red-review-signoff.md)                               | OP-89 follow-up RED review sign-off: nine pins verified RED for the right reason                         | Accepted |
 | [0047](ADR-0047-op89-followup-green-idempotency-and-surface-wiring.md)             | OP-89 follow-up GREEN: re-run dedupe for contact.changed / sessions.revoked + section 4–6 surface wiring | Accepted |
+| [0048](ADR-0048-op89-followup-green-review-signoff.md)                             | OP-89 follow-up GREEN review sign-off: dedupe + surfaces verified; two coverage follow-ups routed        | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
