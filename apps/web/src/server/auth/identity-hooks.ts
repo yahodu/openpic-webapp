@@ -79,10 +79,14 @@ const CONTACT_CHANGE_FANOUT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_DEVICE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * How many recent sightings the new-device read considers, newest-first.
+ * How many recent sightings of the incoming device the new-device read considers,
+ * newest-first.
  *
- * The decision only needs the newest in-window sighting per fingerprint, so a
- * bounded, indexed read replaces the former unbounded `find({userId})` (ADR-0043).
+ * The decision only needs the newest in-window sighting of the incoming
+ * fingerprint, so the read is keyed on `{ userId, fingerprintHash }` and bounded
+ * (ADR-0050): keying it on the device keeps an in-window match from being dropped
+ * by the cap, and the cap keeps the read indexed and bounded on the sign-in path
+ * (ADR-0043 §2).
  */
 const SESSION_DEVICE_READ_LIMIT = 100;
 
@@ -529,7 +533,11 @@ export async function handleSessionCreated(
 
   const sightings = await platformRepo(db)
     .collection(SESSION_DEVICES_COLLECTION)
-    .find({ userId, createdAt: { $gt: new Date(now.getTime() - NEW_DEVICE_WINDOW_MS) } })
+    .find({
+      userId,
+      fingerprintHash: deviceHash,
+      createdAt: { $gt: new Date(now.getTime() - NEW_DEVICE_WINDOW_MS) },
+    })
     .sort({ createdAt: -1 })
     .limit(SESSION_DEVICE_READ_LIMIT)
     .toArray();

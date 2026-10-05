@@ -1,4 +1,4 @@
-# ADR-0050 — OP-89 follow-up GREEN coverage pins: the contact-change fan-out on a partial failure, and the stale ADR reference in the pin file
+# ADR-0059 — OP-89 follow-up GREEN coverage pins: the contact-change fan-out on a partial failure, and the stale ADR reference in the pin file
 
 - **Status:** Accepted (RED pin) · **Date:** 2026-10-05
 - **Card:** OP-89 `t_ffd7bc07` (phase 1-Identity, epic Authentication, Test Author coverage follow-up) · **Extends:** ADR-0045 (pins), ADR-0048 (GREEN); **Amends:** nothing
