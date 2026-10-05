@@ -30,7 +30,7 @@ eventKey:   "account.deletion.requested"
 tenantId:   event.userId
 actorRef:   userRef(userId)          // { kind: "user", id: userId }
 subjectRef: userRef(userId)
-payload:    {}
+payload:    { scheduledAt, cancelUrl }   // amended by ADR-0079 (was {})
 dedupeKey:  `account.deletion.requested:${userId}:${instant}`
 ```
 
@@ -61,9 +61,12 @@ database hook for this transition, so there is no double-emit.
   Playwright `--project api` **14 passed**; `tsc`/eslint/prettier clean.
 - No test, mock, fixture or test utility was modified — the only changes are the
   three production files named above.
-- `payload` is intentionally `{}`: the contract's §1.4 requirement pinned by I7
-  is the emission and its subject; payload shape is the notification matrix's
-  concern (§4.2), which is out of scope for this card (ADR-0070).
+- `payload` was intentionally `{}` in this round: the contract's §1.4 requirement
+  pinned by I7 was the emission and its subject; payload shape was the
+  notification matrix's concern (§4.2), which was out of scope for this card
+  (ADR-0070). **Amended by ADR-0079:** a follow-up RED/GREEN pair (ADR-0078 /
+  ADR-0079) pins and now carries `{ scheduledAt, cancelUrl }` on the row, because
+  §4.2 needs the notification consumer to deep-link the cancel window.
 
 ## Alternatives considered
 
@@ -74,4 +77,7 @@ database hook for this transition, so there is no double-emit.
   such hook, and wiring one would risk a double-emit alongside the explicit seam
   call (the I7 count assertion would catch it).
 - **Carry `scheduledAt`/`cancelUrl` in the payload now** — rejected as
-  speculative: no test pins the payload, and §4.2 owns its shape.
+  speculative at this stage: no test pinned the payload, and §4.2 owned its
+  shape. **Amended by ADR-0079:** the follow-up RED (ADR-0078) pinned the payload
+  and the GREEN (ADR-0079) now carries `{ scheduledAt, cancelUrl }`, so this
+  alternative is the decision taken once a test demanded it.

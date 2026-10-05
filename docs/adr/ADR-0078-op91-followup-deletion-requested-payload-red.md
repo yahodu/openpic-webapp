@@ -1,6 +1,7 @@
-# ADR-0076 — OP-91 follow-up RED: pin the `account.deletion.requested` payload (`scheduledAt` + `cancelUrl`)
+# ADR-0078 — OP-91 follow-up RED: pin the `account.deletion.requested` payload (`scheduledAt` + `cancelUrl`)
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-testcase-writer`
+- **Renumbered:** 0076 → 0078 (ADR-0076/0077 were claimed by the OP-92 message-transport lane on `main` before this branch merged; content unchanged)
 - **Card:** `t_c43cf80c` (OP-91 follow-up, phase 1-Identity) · **Stage:** RED (tests + comments only; no production code)
 - **Contract under test:** API contract §1.4 (Account deletion) · notification design §4.2 · ADR-0067 (OP-91 RED), ADR-0068 (OP-91 GREEN), ADR-0069 (green review sign-off), ADR-0070 (deletion-requested emission RED), ADR-0071 (deletion-requested emission GREEN)
 - **Branch:** `OP-91-task-followup-deletion-requested-payload`
