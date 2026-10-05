@@ -3,6 +3,7 @@
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** `t_27242306` (OP-85 reviewer round-1 follow-up, RED) · **Amends:** nothing. **Extends the pins of:** ADR-0020, ADR-0021
 - **Supersedes / amends:** nothing. Records the test-author decisions taken while closing four coverage gaps the OP-85 GREEN suite could not see.
+- **Reviewer note (t_27242306):** this ADR was authored as _ADR-0022_ and **renumbered to 0023** at review, because PR #129 (`c6f99fb`) merged its own `ADR-0022-better-auth-hook-module-decomposition.md` first. Content is unchanged; `origin/main` was merged into the RED branch so the downstream GREEN card starts from post-#129 code.
 
 ## Context
 
