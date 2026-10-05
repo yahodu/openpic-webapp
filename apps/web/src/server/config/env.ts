@@ -183,6 +183,7 @@ interface RawEnv {
   readonly QUEUE_PROVIDER: string | undefined;
   readonly PAYMENT_PROVIDER: string | undefined;
   readonly MESSAGE_TRANSPORT: string | undefined;
+  readonly TRUSTED_CLIENT_IP_HEADER: string | undefined;
 }
 
 /** A missing/invalid configuration error naming only the offending keys. */
@@ -223,6 +224,7 @@ const rawSchema = z.object({
   QUEUE_PROVIDER: optionalString,
   PAYMENT_PROVIDER: optionalString,
   MESSAGE_TRANSPORT: optionalString,
+  TRUSTED_CLIENT_IP_HEADER: optionalString,
 });
 
 /** True for absolute http(s) URLs, which is what a base URL / origin must be. */
@@ -265,6 +267,17 @@ const configSchema = rawSchema
 
     if (!(APP_ENVS as readonly string[]).includes(raw.APP_ENV)) {
       addIssue("APP_ENV");
+    }
+
+    // Production must never silently degrade the auth IP leg to the
+    // client-writable `x-forwarded-for` fallback: the unforgeable edge header
+    // the trusted fronting layer overwrites must be named explicitly
+    // (OP-85 follow-up, ADR-0024/ADR-0031). The key is named, never its value.
+    if (raw.APP_ENV === "production") {
+      const trustedClientIpHeader = raw.TRUSTED_CLIENT_IP_HEADER;
+      if (trustedClientIpHeader === undefined || trustedClientIpHeader.trim() === "") {
+        addIssue("TRUSTED_CLIENT_IP_HEADER");
+      }
     }
 
     if (!isAbsoluteHttpUrl(raw.APP_BASE_URL)) {
