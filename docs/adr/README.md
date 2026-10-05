@@ -71,6 +71,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0063](ADR-0063-op89-followup-coverage-pins-review-signoff.md)                     | OP-89 coverage-pins review sign-off: partial-failure pin RED for the right reason; two Low refs routed   | Accepted |
 | [0064](ADR-0064-op89-followup-green-partial-failure-recovery.md)                   | OP-89 follow-up GREEN: recover the contact-change fan-out after a partial insert failure                 | Accepted |
 | [0065](ADR-0065-op89-followup-green-partial-failure-recovery-review-signoff.md)    | OP-89 follow-up GREEN review sign-off: fan-out recovery verified RED→GREEN; three Low references routed  | Accepted |
+| [0066](ADR-0066-op89-identity-indexes-test-reference-renumber.md)                  | OP-89 follow-up: stale ADR-0046 test references in the identity pin specs renumbered to ADR-0050         | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
