@@ -46,5 +46,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0038](ADR-0038-op89-identity-lifecycle-hooks-red.md)                            | Identity lifecycle hooks: profile defaults, lazy invites, completion, new-device and admin sign-in   | Accepted |
 | [0039](ADR-0039-op89-identity-lifecycle-hooks-red-review-signoff.md)             | OP-89 RED review sign-off: routing the unpinned sections (4/5/6 + claim service) and the /me overlap | Accepted |
 | [0040](ADR-0040-op89-identity-lifecycle-hooks-red-followup.md)                   | OP-89 RED follow-up: sections 4–6 hooks, the contact-change fan-out record and the op_att claim seam | Accepted |
+| [0041](ADR-0041-op89-identity-lifecycle-hooks-green.md)                          | OP-89 GREEN: module contract, profile-precedence read, account-scope ids, `GET /me` slice            | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
