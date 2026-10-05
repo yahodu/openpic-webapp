@@ -2,6 +2,7 @@ import { APIError, getSessionFromCtx } from "better-auth/api";
 
 import { getTrustedClientIpHeader } from "@/server/config/env";
 import {
+  AUTHENTICATED_VERIFY_CAP,
   evaluateRateLimit,
   hashIdentity,
   rateLimitKey,
@@ -57,10 +58,6 @@ const AUTHENTICATED_VERIFY_PATHS: ReadonlySet<string> = new Set([
   "/phone-number/verify",
   "/two-factor/verify-otp",
 ]);
-
-/** The authenticated-verify cap budget (ADR-0023 §4 product decision). */
-const AUTHENTICATED_VERIFY_LIMIT = 10;
-const AUTHENTICATED_VERIFY_WINDOW_SECONDS = 600;
 
 /** The contact (email/phone) an OTP endpoint body carries, when present. */
 function contactFromBody(body: Record<string, unknown>): string | undefined {
@@ -142,7 +139,7 @@ export function createRateLimitHook(
     try {
       const result = await rateLimiter.limit(
         rateLimitKey("auth.verify", "user", hashIdentity(userId, salt)),
-        { limit: AUTHENTICATED_VERIFY_LIMIT, windowSeconds: AUTHENTICATED_VERIFY_WINDOW_SECONDS }
+        AUTHENTICATED_VERIFY_CAP
       );
       allowed = result.success;
     } catch {
