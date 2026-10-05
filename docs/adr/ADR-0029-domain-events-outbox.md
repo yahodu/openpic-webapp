@@ -130,3 +130,29 @@ An info line `domain_event.emitted` carries `eventKey`, `tenantId` and
 - **Catch-all `failed` terminal for notifications** — rejected for v1: the
   documented `dispatch.notifications` vocabulary has no `failed`, so a failed
   claim returns to `pending` and relies on bounded retries elsewhere.
+
+## GREEN implementation addendum (t_c93c6765)
+
+The implementation at `apps/web/src/server/domain/domain-events.ts` confirms the
+contract above. Three supporting decisions were needed to satisfy it without
+weakening any rule:
+
+1. **`@/server/runtime/time` helper.** `src/server/domain/**` is lint-forbidden
+   from constructing `Date`s (`no-restricted-syntax` bans `new Date(...)` /
+   `Date.now()` there). Computing `expireAt` and the stale-claim cutoff from a
+   `clock.now()` reading therefore goes through `addDays` / `addMilliseconds`,
+   which live outside the domain tree so the guard keeps its teeth.
+   `expireAt = addDays(occurredAt, settings.retention.domainEventDays)`.
+2. **The outbox is read through `platformRepo`, not a tenant scope.** Consumers
+   drain `domainEvents` across every tenant, so `claimPendingEvents` cannot be
+   bound to one `tenantId`; the row already carries the `tenantId` the emit
+   supplied. `db.collection(...)` is unavailable outside `db/**`/`repos/**`
+   anyway (the `no-direct-collection-access` lint).
+3. **Indexes.** The dedupe mechanism registers
+   `domain_events_dedupe_unique` (unique partial on `{ dedupeKey }` where the
+   key is a string) and `domain_events_expire_at_ttl` (TTL 0 on `{ expireAt }`),
+   mirroring the `dispatches` pair and schema §18.3/§22.
+
+The claim predicate remains exactly `dispatch[consumer]: "pending"` or a stale
+`in_progress` — `"skipped"`, `"done"` and `"not_applicable"` are never claimed,
+per §18.3's "Replayable = `{dispatch.notifications: "pending"}`".
