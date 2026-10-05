@@ -84,6 +84,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md)              | OP-92 GREEN: `MessageTransport` port, Novu adapter, workflow drift guard, headers, logging and lint      | Accepted |
 | [0077](ADR-0077-op92-green-review-signoff.md)                                      | OP-92 GREEN review sign-off: pins verified; Novu HTTP-plumbing refactor; drift-guard hardening routed    | Accepted |
 | [0078](ADR-0078-op93-channel-resolution-and-template-renderer-red.md)              | OP-93 RED: `resolveChannel` pure resolver contract and strict template renderer                          | Accepted |
+| [0079](ADR-0079-op93-red-review-signoff.md)                                        | OP-93 RED review sign-off: pins verified; lane wiring and body drift routed                              | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
