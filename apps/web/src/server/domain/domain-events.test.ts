@@ -47,6 +47,12 @@ import { makeFakeMongo, type FakeMongo } from "../../test/helpers/fake-mongo";
  *   The clock stamps `occurredAt`; `expireAt` = occurredAt +
  *   settings.retention.domainEventDays. Logs `domain_event.emitted` at info
  *   with eventKey/tenantId/subjectRef only — never the payload.
+ *
+ *   Settings seam: the writer MUST read the singleton through the injected
+ *   `db` — `getPlatformSettings({ db, clock })` — not the ambient/real client,
+ *   so the unit specs' `platformSettings` document on the recording fake is the
+ *   one it observes. The `getPlatformSettings` cache is process-wide, so specs
+ *   call `invalidatePlatformSettings()` in `beforeEach`.
  */
 
 /** The stored outbox collection (schema §18.3). */
@@ -169,6 +175,25 @@ describe("emitDomainEvent — payload deep scan", () => {
       count: 3,
     });
   });
+
+  it("accepts a payload whose keys merely CONTAIN a forbidden token as a substring", async () => {
+    const fake = makeFakeMongo();
+
+    // ADR-0029 §3: the scan is an exact key match, not a substring match. A
+    // buggy `key.includes(token)` scan would wrongly reject this payload.
+    await emitDomainEvent(
+      makeDomainEventInput({
+        payload: { emailVerified: true, phoneNumber: "placeholder", tokenCount: 2 },
+      }),
+      { db: fake.db, clock: fixedClock(T0) }
+    );
+
+    expect(insertedEvent(fake).payload).toEqual({
+      emailVerified: true,
+      phoneNumber: "placeholder",
+      tokenCount: 2,
+    });
+  });
 });
 
 describe("emitDomainEvent — timestamps and retention", () => {
@@ -232,6 +257,20 @@ describe("emitDomainEvent — dispatch flags", () => {
       queue: "not_applicable",
     });
   });
+
+  it("marks notifications skipped when the matching notification type is disabled", async () => {
+    const fake = makeFakeMongo();
+    fake.seed(COLLECTIONS.notificationTypes, [
+      makeNotificationType({ typeKey: "collab.invite.accepted", enabled: false }),
+    ]);
+
+    await emitDomainEvent(makeDomainEventInput({ eventKey: "collab.invite.accepted" }), {
+      db: fake.db,
+      clock: fixedClock(T0),
+    });
+
+    expect(insertedEvent(fake).dispatch.notifications).toBe("skipped");
+  });
 });
 
 describe("emitDomainEvent — logging", () => {
@@ -249,5 +288,16 @@ describe("emitDomainEvent — logging", () => {
     expect(entry?.eventKey).toBe("collab.invite.accepted");
     expect(entry?.tenantId).toBe("t_1");
     expect(JSON.stringify(sink.entries)).not.toContain("payload-marker-9f3a");
+  });
+
+  it("logs domain_event.emitted carrying the subjectRef kind and id", async () => {
+    const sink = installMemoryLogger();
+    const fake = makeFakeMongo();
+
+    await emitDomainEvent(makeDomainEventInput(), { db: fake.db, clock: fixedClock(T0) });
+
+    const entry = sink.entries.find((candidate) => candidate.event === "domain_event.emitted");
+    expect(entry).toBeDefined();
+    expect(entry?.subjectRef).toEqual({ kind: "invitation", id: "inv_1" });
   });
 });

@@ -37,6 +37,13 @@ markFailed(eventId: ObjectId | string, consumer: DomainEventConsumer, options?: 
 
 `DomainEventConsumer` is `"notifications" | "analytics" | "queue"`.
 
+`DomainEventInput.eventKey`, `actorRef.kind` and `subjectRef.kind` are typed as
+plain `string`s validated at **runtime** (by the Zod schema and the catalogue
+gate), never as a closed Zod enum/union. `makeDomainEventInput` deliberately
+produces invalid inputs for U1/U2 — an unknown `eventKey` and a contact-bearing
+payload — so a closed-union type would make those specs fail to typecheck; the
+catalogue itself is carried as `readonly string[]` (`NOTIFICATION_TYPE_KEYS`).
+
 The module lives under `src/server/domain/**`, which carries the 90 % coverage
 threshold and the "no ambient `Date`" lint rule (time enters through the
 injected `Clock` port).
@@ -62,6 +69,14 @@ out of the append-only log and out of digest buckets read hours later.
 `occurredAt` is stamped from the injected `Clock`; `expireAt` =
 `occurredAt + platformSettings.retention.domainEventDays`, defaulting to the
 documented 180 days when the singleton is absent. No hard-coded retention.
+
+The singleton is read through the **injected `db`** —
+`getPlatformSettings({ db, clock })` — never the ambient/real client. Unit specs
+U3/U3b seed a `platformSettings` document on the recording fake and expect the
+writer to observe it; without forwarding `db`, `getPlatformSettings` would read
+the absent real singleton and take the 180-day default, failing U3. The
+`getPlatformSettings` cache is process-wide, so the specs call
+`invalidatePlatformSettings()` in `beforeEach`.
 
 ### 5. `dispatch` flags
 
