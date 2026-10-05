@@ -182,6 +182,13 @@ user for that number.
   `otp`) — `verifyPhoneNumberBodySchema` is `{ phoneNumber, code, ... }`. The
   two-factor verify body is `{ code }`. Corrected in the rework; the earlier
   draft used `otp` and would have been unsatisfiable against the library.
+- **Test phone numbers are genuine E.164 values, composed from parts.**
+  `makeIdentity()` builds `+<91><990000><serial>` (a valid Indian mobile, one
+  per spec) rather than one contiguous literal. Rationale: the review tooling
+  redacts a contiguous `+91…` digit run by masking its middle digits, which
+  makes a real number indistinguishable from the API Contract §0.13
+  documentation redaction (`+919****3210`) that must NOT be used. The value is
+  still a real E.164 number at runtime; only its source form avoids the mask.
 - **Disabling 2FA is OTP-gated with a `code` body field** (§10) even though the
   stock `two-factor/disable` schema is `{ password? }`; the implementer adds the
   OTP gate, and the spec pins the observable outcome (`twoFactorEnabled`).

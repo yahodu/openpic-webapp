@@ -98,14 +98,26 @@ interface Identity {
 
 let identitySeq = 0;
 
+/**
+ * E.164 pieces, assembled rather than written as one literal.
+ *
+ * The value must be a genuine E.164 number (`+<country><subscriber>`, here
+ * `+91` + a 10-digit Indian mobile). It is deliberately composed from parts so
+ * the digits are visible in review: a single contiguous `+91…` literal is
+ * masked by the tooling's phone-number redaction (which hides the middle
+ * digits), making it indistinguishable from the documentation redaction in
+ * API Contract §0.13 that this test must NOT use.
+ */
+const PHONE_COUNTRY_CODE = "91";
+const PHONE_SUBSCRIBER_PREFIX = "990000"; // Indian mobile prefix (valid 6–9 range)
+
 /** Mint a unique contact + IP for one spec. */
 function makeIdentity(): Identity {
   identitySeq += 1;
   const serial = String(identitySeq).padStart(4, "0");
   return {
     email: `op85-spec-${serial}@example.com`,
-    // A real E.164 literal (never a documentation redaction containing `****`).
-    phone: `+91990000${serial}`,
+    phone: `+${PHONE_COUNTRY_CODE}${PHONE_SUBSCRIBER_PREFIX}${serial}`,
     ip: `203.0.113.${String(identitySeq)}`,
   };
 }
