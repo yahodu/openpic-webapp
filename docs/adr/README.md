@@ -98,6 +98,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0091](ADR-0091-op94-fan-out-red-review-signoff.md)                                | OP-94 RED review sign-off: fan-out pins verified after fixture correction; no production change          | Accepted |
 | [0092](ADR-0092-op94-notification-fan-out-green.md)                                | OP-94 GREEN: notification fan-out consumer implementation (outbox → feed + dispatches)                   | Accepted |
 | [0093](ADR-0093-op94-fan-out-green-review-signoff.md)                              | OP-94 GREEN review sign-off: fan-out pins verified; deferral/digest findings routed to OP-96             | Accepted |
+| [0094](ADR-0094-op94-followup-fanout-cron-route-red.md)                            | OP-94 §1 follow-up RED: notification-fanout cron route + `after()` trigger pins and mapper contract      | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
