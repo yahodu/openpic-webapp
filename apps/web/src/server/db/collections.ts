@@ -26,6 +26,7 @@ export const COLLECTIONS = {
   faceMatches: "face_matches",
   providerWebhookEvents: "provider_webhook_events",
   idempotencyKeys: "idempotency_keys",
+  plans: "plans",
 } as const;
 
 /** The name of any registered collection. */
