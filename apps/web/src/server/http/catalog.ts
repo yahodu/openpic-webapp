@@ -1,4 +1,5 @@
 import type {
+  AccountErrorCode,
   AppErrorCode,
   AuthErrorCode,
   ErrorCode,
@@ -185,6 +186,27 @@ export const REQUEST_SHAPE_ERROR_TRANSPORT: Readonly<
 };
 
 /**
+ * Transport for the account-lifecycle codes (contract §1.3–§1.4, Appendix
+ * A.2).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the request-shape
+ * codes: that table stays the exact base Appendix A copy. The identity story
+ * owns these rows and feeds them into the same dispatch table.
+ */
+export const ACCOUNT_ERROR_TRANSPORT: Readonly<Record<AccountErrorCode, ErrorCatalogEntry>> = {
+  confirmation_mismatch: {
+    status: 422,
+    retryable: false,
+    message: "The confirmation value does not match the account.",
+  },
+  deletion_already_executed: {
+    status: 409,
+    retryable: false,
+    message: "The account deletion can no longer be cancelled.",
+  },
+};
+
+/**
  * Transport for the machine-to-machine internal-auth codes (contract §0.3,
  * ADR-0028 §3).
  *
@@ -217,6 +239,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...AUTH_ERROR_TRANSPORT,
   ...REQUEST_SHAPE_ERROR_TRANSPORT,
   ...INTERNAL_ERROR_TRANSPORT,
+  ...ACCOUNT_ERROR_TRANSPORT,
 };
 
 /**
