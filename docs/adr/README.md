@@ -29,7 +29,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0021](ADR-0021-better-auth-config-green-implementation.md)                      | Better Auth config GREEN: hook-based policy, `__test__` rewrite, SMS-only 2FA flow                 | Accepted |
 | [0022](ADR-0022-better-auth-hook-module-decomposition.md)                        | Better Auth hooks split into focused modules (OP-85 follow-up refactor)                            | Accepted |
 | [0023](ADR-0023-auth-coverage-red-otp-ip-leg-verify-cap.md)                      | Auth coverage RED: OTP IP leg, unknown-number verify 4xx, callbackURL trust, session verify cap    | Accepted |
-| [0024](ADR-0024-client-ip-trust-model.md)                                        | Client-IP trust model for the auth rate-limit IP leg (configurable edge header)                    | Accepted |
+| [0024](ADR-0024-client-ip-trust-model.md)                                        | Client-IP trust model for the auth IP leg (`TRUSTED_CLIENT_IP_HEADER` required in production)      | Accepted |
 | [0025](ADR-0025-auth-guards.md)                                                  | Auth guards: one pure decision per label, resolver port, per-session 2FA fact                      | Accepted |
 | [0026](ADR-0026-op86-ban-exemption-and-2fa-signin-pins.md)                       | OP-86 review-gap pins: `/me` ban exemption and the 2FA sign-in branch                              | Accepted |
 | [0027](ADR-0027-op86-ban-exemption-green.md)                                     | OP-86 follow-up GREEN: wire `/me` `allowBanned`, confirm the 2FA sign-in branch                    | Accepted |
@@ -37,5 +37,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0029](ADR-0029-domain-events-outbox.md)                                         | Domain-event outbox: one `emitDomainEvent` write point, per-consumer flags, atomic claims          | Accepted |
 | [0030](ADR-0030-op85-followup-trust-verify-parity-cap.md)                        | OP-85 follow-up: trusted-header precedence, anonymous-verify error parity, cap fail-closed         | Accepted |
 | [0031](ADR-0031-op88-green-review-signoff.md)                                    | OP-88 GREEN review sign-off: outbox ships; per-emit lookup + claim-lease hardening deferred        | Accepted |
+| [0032](ADR-0032-op85-production-trusted-client-ip-required-red.md)               | `TRUSTED_CLIENT_IP_HEADER` required in production (RED pins; ADR-0024 amendment)                   | Accepted |
+| [0033](ADR-0033-op85-production-trusted-client-ip-required-green-signoff.md)     | OP-85 GREEN review sign-off: production-required client-IP header lands; test/coverage follow-ups  | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.

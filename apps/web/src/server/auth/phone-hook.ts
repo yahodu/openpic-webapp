@@ -8,10 +8,14 @@ import { type AuthHookContext, bodyOf } from "./internal";
  *
  * Two distinct policies live on the phone endpoints:
  *
- *   - **Anonymous `send-otp`** is allowed only for an existing, *verified*
- *     user. A caller who is not signed in and asks for a code for a number that
- *     is unknown or unverified is refused (403), so the endpoint can never be
- *     used to enumerate numbers.
+ *   - **Anonymous `send-otp`** is resolved against the number's owning user. An
+ *     unsigned-in caller asking for a code for a number that is unknown or
+ *     unverified is refused with the same `403 phone_not_verified`, so those two
+ *     cases are indistinguishable. A known, *verified* number is accepted
+ *     (`200 { message: "code sent" }` plus a real SMS OTP), so an anonymous
+ *     caller can learn that a verified account exists — a residual oracle
+ *     bounded by the `auth.otp` rate limit and recorded in the ADR-0030
+ *     follow-up addendum (spec I21).
  *   - **Authenticated `verify`** binds the new number to the signed-in user.
  *     Better Auth only performs the bind when `updatePhoneNumber` is set, so the
  *     hook rewrites the body to set it. An unauthenticated verify is left

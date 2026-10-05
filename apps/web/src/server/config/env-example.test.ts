@@ -31,6 +31,7 @@ const REQUIRED_KEYS = [
   "QUEUE_PROVIDER",
   "PAYMENT_PROVIDER",
   "MESSAGE_TRANSPORT",
+  "TRUSTED_CLIENT_IP_HEADER",
 ] as const;
 
 describe(".env.example", () => {

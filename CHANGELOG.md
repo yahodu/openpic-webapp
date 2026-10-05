@@ -1,3 +1,9 @@
+## [1.12.0](https://github.com/yahodu/openpic-webapp/compare/v1.11.0...v1.12.0) (2026-10-05)
+
+### Features
+
+- **auth:** OP-85 require TRUSTED_CLIENT_IP_HEADER in production ([#147](https://github.com/yahodu/openpic-webapp/issues/147)) ([4651f3a](https://github.com/yahodu/openpic-webapp/commit/4651f3a27b9ee72ca206bc39131951e213f29363))
+
 ## [1.11.0](https://github.com/yahodu/openpic-webapp/compare/v1.10.1...v1.11.0) (2026-10-05)
 
 ### Features
