@@ -93,6 +93,7 @@ export interface DomainEventDocument {
   readonly dispatch: DomainEventDispatch;
   readonly dedupeKey?: string;
   readonly claimedAt?: Date;
+  readonly claimedBy?: string;
 }
 
 /** The result of an emit: `deduped` on a `dedupeKey` collision, else the new id. */
