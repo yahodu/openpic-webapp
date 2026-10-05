@@ -56,5 +56,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0048](ADR-0048-op89-followup-green-idempotency-and-surface-wiring.md)             | OP-89 follow-up GREEN: re-run dedupe for contact.changed / sessions.revoked + section 4–6 surface wiring | Accepted |
 | [0049](ADR-0049-op89-followup-green-review-signoff.md)                             | OP-89 follow-up GREEN review sign-off: dedupe + surfaces verified; two coverage follow-ups routed        | Accepted |
 | [0050](ADR-0050-op89-followup-green-coverage-pins.md)                              | OP-89 follow-up coverage pins: contact-change fan-out on a partial failure; stale ADR reference fixed    | Accepted |
+| [0051](ADR-0051-op89-followup-coverage-pins-review-signoff.md)                     | OP-89 coverage-pins review sign-off: partial-failure pin RED for the right reason; two Low refs routed   | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
