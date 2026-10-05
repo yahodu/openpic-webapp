@@ -48,5 +48,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0040](ADR-0040-op89-identity-lifecycle-hooks-red-followup.md)                   | OP-89 RED follow-up: sections 4–6 hooks, the contact-change fan-out record and the op_att claim seam | Accepted |
 | [0041](ADR-0041-op89-identity-lifecycle-hooks-green.md)                          | OP-89 GREEN: module contract, profile-precedence read, account-scope ids, `GET /me` slice            | Accepted |
 | [0042](ADR-0042-op89-identity-lifecycle-hooks-green-review.md)                   | OP-89 GREEN review sign-off: index/TTL gaps, unwired sections 4–6, idempotency routing               | Accepted |
+| [0044](ADR-0044-op90-me-projection-red.md)                                       | OP-90 RED: the full `GET`/`PATCH /me` §1.2 projection, capabilities, and forbidden/unknown fields    | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
