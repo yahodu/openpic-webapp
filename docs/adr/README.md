@@ -21,5 +21,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0013](ADR-0013-upload-guards-dotless-extension-pin.md)     | Upload guard: pin the `extensionOf` dotless-name branch                                            | Accepted |
 | [0014](ADR-0014-plans-catalogue-schema-and-seed.md)         | `plans` catalogue schema and seed: unique tierRank, integer money, version-on-change               | Accepted |
 | [0015](ADR-0015-plans-seed-concurrency-atomic-upsert.md)    | `plans` seed concurrency: atomic conditioned upsert and `{key:1}` unique index                     | Accepted |
+| [0016](ADR-0016-better-auth-config-otp-phone-2fa.md)        | Better Auth config: OTP + phone + 2FA, cookie policy, test-only OTP route                          | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
