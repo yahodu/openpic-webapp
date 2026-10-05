@@ -50,5 +50,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0042](ADR-0042-op89-identity-lifecycle-hooks-green-review.md)                   | OP-89 GREEN review sign-off: index/TTL gaps, unwired sections 4–6, idempotency routing               | Accepted |
 | [0043](ADR-0043-op89-identity-lifecycle-indexes-ttls.md)                         | OP-89 follow-up: declare the identity-lifecycle collections' indexes and TTLs                        | Accepted |
 | [0044](ADR-0044-op89-identity-lifecycle-indexes-ttls-review.md)                  | OP-89 follow-up review sign-off: index/TTL gaps closed, unpinned-spec coverage routed                | Accepted |
+| [0047](ADR-0047-op90-me-contract-decisions.md)                                   | OP-90 `/me`: caller `phoneNumber` is raw E.164; foreign `avatarAssetId` is `422 validation_failed`   | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
