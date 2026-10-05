@@ -123,6 +123,44 @@ must add a minimal `GET /api/v1/me` protected by `requireAuth("user")` (the
 contract §1.2 route; its response body is OP-88's concern). Without it E1
 answers `404`, not `401`.
 
+### 7. `session_expired` is unobservable in OP-86 (out of scope)
+
+Appendix A lists `session_expired` (401, `{ loginUrl }`) alongside
+`authentication_required`. OP-86 pins the latter only. Better Auth's
+`GET /api/auth/get-session` resolves **both** a missing cookie and an expired
+cookie to `null`; it returns no reason, so `resolvePrincipal` cannot tell the
+two apart and `requireAuth` has no signal from which to choose
+`session_expired`. Inventing a heuristic (e.g. treating an absent session with a
+stale cookie name as "expired") would be untestable and wrong for a garbage
+cookie. The RED suite therefore does **not** assert `session_expired`; the code
+stays in the contract catalogue for a later story that can observe expiry (a
+signed expiry hint, a `Set-Cookie` clear-and-redirect flow, etc.). The integration
+suite carries a matching comment so the omission is explicit rather than an
+oversight.
+
+### 8. Follow-up pins added after review round 1
+
+The review of commit `4794e9c` found the RED suite asserted only admin
+_denials_, so a `resolvePrincipal` that hard-codes `sessionTwoFactorVerified:
+false` would pass while shipping an admin label nobody can satisfy. The
+follow-up (card `t_9b8eff27`) closes that gap and the remaining Appendix A
+detail gaps **without changing any existing observable expectation**:
+
+- **I8 (new)** — the admin ALLOW positive control: one session verifies its
+  phone, enables and confirms 2FA, the profile becomes `platformRole: "admin"`,
+  and that same session gets `200` with `ctx.principal` set.
+- **I7 (strengthened, same intent)** — the phone-OTP-first sign-in is pinned to
+  the deterministic branch. The unauthenticated `/phone-number/verify` mints a
+  full session even with 2FA enabled because the two-factor plugin intercepts
+  only `/sign-in/phone-number`; so the cookie exists and the guard must return
+  exactly `403 admin_2fa_required` (no longer "401 or 403").
+- **U4 (new)** — `account_suspended.details` carries `{ reason, supportUrl }`
+  (non-empty strings; the contract fixes the keys, not the values).
+- **U5 (new)** — `forbidden.details.requiredRole == "admin"` when the `admin`
+  label denies a client.
+- **Integration (new)** — `authentication_required.details.loginUrl` is asserted
+  in-process, not only in e2e E1.
+
 ## Consequences
 
 - Policy, resolution and transport are independently testable: unit specs drive

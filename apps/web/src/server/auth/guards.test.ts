@@ -379,3 +379,44 @@ describe("U3: account_incomplete details", () => {
     });
   });
 });
+
+/**
+ * U4 — `account_suspended` details (Appendix A.1). A suspended profile denies
+ * with `{ reason, supportUrl }` so the client can explain the block and offer a
+ * route to support. The contract fixes the key names, not the values: the
+ * schema (§13.2) carries no suspension-reason field, so GREEN owns a stable
+ * machine reason. This pins that both keys exist and are non-empty strings.
+ */
+describe("U4: account_suspended details", () => {
+  it("carries a reason and a supportUrl", () => {
+    const decision = evaluateAuth("user", facts(makeUserPrincipal({ status: "suspended" })));
+
+    expect(decision.allowed).toBe(false);
+    if (decision.allowed) {
+      throw new Error("expected account_suspended");
+    }
+    const details = decision.details as { reason?: unknown; supportUrl?: unknown };
+    expect(typeof details.reason).toBe("string");
+    expect(String(details.reason).length).toBeGreaterThan(0);
+    expect(typeof details.supportUrl).toBe("string");
+    expect(String(details.supportUrl).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * U5 — `forbidden` details (Appendix A.1). When the `admin` label denies a
+ * principal whose role is not `admin`, the denial names the role the route
+ * required so the surface can route a client (e.g. hide the admin nav). The
+ * status/deletion `forbidden` cases carry no role.
+ */
+describe("U5: forbidden details", () => {
+  it("names `admin` as the requiredRole when the admin label denies a client", () => {
+    const decision = evaluateAuth("admin", facts(makeUserPrincipal({ platformRole: "client" })));
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      code: "forbidden",
+      details: { requiredRole: "admin" },
+    });
+  });
+});

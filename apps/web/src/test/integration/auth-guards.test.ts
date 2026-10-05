@@ -450,17 +450,54 @@ describe("admin guard (§0.3)", () => {
         { phoneNumber: identity.phone, code: otp.code },
         forward(identity)
       );
+      expect(verified.status).toBe(200);
+
+      // The unauthenticated phone-OTP verify mints a full session even though the
+      // user has 2FA enabled: the two-factor plugin only intercepts
+      // `/sign-in/phone-number`, never `/phone-number/verify` (verified against
+      // the installed 1.7.7 plugin source and reproduced in-process). So this is
+      // the "session minted but second factor never passed" branch, not the
+      // "sign-in refused" one. Pin the mechanism exactly rather than accepting
+      // either outcome.
       const phoneCookie = sessionCookie(verified);
+      if (phoneCookie === undefined) {
+        throw new Error("the phone-OTP sign-in did not mint a session cookie");
+      }
 
       const response = await requestGuardRoute(
         guardRoute(harness, "admin"),
-        phoneCookie === undefined ? undefined : cookiePair(phoneCookie)
+        cookiePair(phoneCookie)
       );
 
-      // Whether the library minted a 2FA-less session (→ 403 admin_2fa_required)
-      // or refused the sign-in entirely (→ 401), the admin route must never be 200.
-      expect(response.status).not.toBe(200);
-      expect([401, 403]).toContain(response.status);
+      expect(response.status).toBe(403);
+      const envelope = (await body(response)) as unknown as ErrorEnvelope;
+      expect(envelope.error.code).toBe("admin_2fa_required");
+    });
+  });
+
+  it("I8: an admin session that completed the second factor is allowed", async () => {
+    await withHarness(async (harness) => {
+      const { auth, database } = harness;
+      const identity = makeIdentity();
+
+      // One session drives the whole 2FA enrolment (verify phone → enable →
+      // confirm) and then authenticates the admin route. ADR-0022 §4 leaves the
+      // per-session mechanism to GREEN; this spec pins only the observable fact:
+      // the session that just passed the second factor is recognised, so a
+      // resolver that hard-codes `sessionTwoFactorVerified: false` cannot pass.
+      const { cookie } = await signInWithEmailOtp(auth, identity);
+      await enableTwoFactor(auth, identity, cookie);
+
+      const user = await findUser(database, identity);
+      expect(user.twoFactorEnabled).toBe(true);
+      await insertProfile(database, user._id, { platformRole: "admin" });
+
+      const response = await requestGuardRoute(guardRoute(harness, "admin"), cookie);
+
+      expect(response.status).toBe(200);
+      expect((await response.json()) as { principal: string }).toEqual({
+        principal: String(user._id),
+      });
     });
   });
 });
@@ -530,6 +567,26 @@ describe("authenticated principal through the pipeline (§0.3)", () => {
       expect(envelope.error.code).toBe("authentication_required");
     });
   });
+
+  it("returns 401 authentication_required with a loginUrl for a missing credential", async () => {
+    // Appendix A pins `authentication_required.details.loginUrl`; today only the
+    // e2e spec checks it, so the in-process envelope must carry it too rather
+    // than relying on Next.js/route glue to add it.
+    await withHarness(async (harness) => {
+      const response = await requestGuardRoute(guardRoute(harness, "user"), undefined);
+
+      expect(response.status).toBe(401);
+      const envelope = (await body(response)) as unknown as ErrorEnvelope;
+      expect(envelope.error.code).toBe("authentication_required");
+      expect(typeof envelope.error.details?.loginUrl).toBe("string");
+    });
+  });
+
+  // `session_expired` (Appendix A, 401) is deliberately NOT exercised here:
+  // Better Auth's `get-session` resolves both a missing and an expired cookie to
+  // `null`, so `resolvePrincipal` cannot distinguish them and OP-86 has no
+  // observable signal to assert. See ADR-0022 §7 — the code is reserved for a
+  // future story that can observe expiry (e.g. a signed expiry hint).
 });
 
 describe("guard denial logging (security_and_logging_requirements)", () => {
