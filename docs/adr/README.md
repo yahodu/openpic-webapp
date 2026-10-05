@@ -58,5 +58,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0050](ADR-0050-op89-identity-lifecycle-indexes-ttls-red-pins.md)                  | OP-89 RED pins: identity-lifecycle index/TTL shapes and the bounded new-device read                      | Accepted |
 | [0051](ADR-0051-op89-identity-lifecycle-indexes-ttls-red-pins-review.md)           | OP-89 RED pins review sign-off: pins verified, cap-guard + ADR-numbering findings routed                 | Accepted |
 | [0052](ADR-0052-op89-identity-lifecycle-red-pins-r3-followup-review.md)            | OP-89 RED-pins R3 follow-up review sign-off: same-device >100 read-cap pin verified                      | Accepted |
+| [0053](ADR-0053-op89-identity-lifecycle-indexes-green-review.md)                   | OP-89 indexes/TTLs GREEN review sign-off: device-keyed bounded new-device read                           | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
