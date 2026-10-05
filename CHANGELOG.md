@@ -1,3 +1,9 @@
+## [1.13.0](https://github.com/yahodu/openpic-webapp/compare/v1.12.1...v1.13.0) (2026-10-05)
+
+### Features
+
+- **auth:** OP-89 identity lifecycle hooks (GREEN) ([#161](https://github.com/yahodu/openpic-webapp/issues/161)) ([8b85b74](https://github.com/yahodu/openpic-webapp/commit/8b85b74a481014908575846e04296a8de918ae71))
+
 ## [1.12.1](https://github.com/yahodu/openpic-webapp/compare/v1.12.0...v1.12.1) (2026-10-05)
 
 ### Performance Improvements
