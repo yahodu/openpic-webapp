@@ -421,6 +421,82 @@ describe("GET /api/v1/me (§1.2 current user)", () => {
     const me = await body(response);
     expect(me.pendingInvitationCount).toBe(2);
   });
+
+  it("I8: projects a pure attendee as primaryTenant null, tenants [] and no capabilities", async () => {
+    // Contract §1.2 note: `primaryTenant` is null for a pure attendee — normal,
+    // not an error — and the shell must not offer event creation. This caller
+    // has no `tenantMembers` row at all.
+    const identity = makeIdentity();
+    const cookie = await signInWithEmailOtp(identity);
+    const user = await findUser(identity);
+    await updateProfile(user._id, {
+      platformRole: "client",
+      status: "active",
+      primaryTenantId: null,
+    });
+
+    const response = await meGet(getMeRequest(cookie));
+    expect(response.status).toBe(200);
+    const me = await body(response);
+
+    expect(me.primaryTenant).toBeNull();
+    expect(me.tenants).toEqual([]);
+    expect(me.capabilities).toEqual({ canCreateEvent: false, canPurchase: false, isAdmin: false });
+  });
+
+  it("I9: never surfaces a primaryTenantId whose membership is removed", async () => {
+    // The projection reads active memberships only: a stale `primaryTenantId`
+    // pointing at a workspace the caller has left must not resurrect it as
+    // `primaryTenant`, nor leak it into `tenants[]`.
+    const identity = makeIdentity();
+    const cookie = await signInWithEmailOtp(identity);
+    const user = await findUser(identity);
+
+    const removedTenant = await insertTenant({
+      slug: "left-studio",
+      name: "Left Studio",
+      status: "active",
+    });
+    await insertTenantMember({
+      tenantId: removedTenant,
+      userId: user._id,
+      role: "member",
+      status: "removed",
+    });
+    await updateProfile(user._id, {
+      platformRole: "client",
+      status: "active",
+      primaryTenantId: removedTenant,
+    });
+
+    const response = await meGet(getMeRequest(cookie));
+    expect(response.status).toBe(200);
+    const me = await body(response);
+
+    expect(me.primaryTenant).toBeNull();
+    expect(me.tenants).toEqual([]);
+  });
+
+  it("I9: never surfaces a primaryTenantId that references a missing tenant", async () => {
+    // A dangling `primaryTenantId` (the tenant document is gone) is likewise
+    // not a membership and must not be surfaced as `primaryTenant`.
+    const identity = makeIdentity();
+    const cookie = await signInWithEmailOtp(identity);
+    const user = await findUser(identity);
+
+    await updateProfile(user._id, {
+      platformRole: "client",
+      status: "active",
+      primaryTenantId: new ObjectId(),
+    });
+
+    const response = await meGet(getMeRequest(cookie));
+    expect(response.status).toBe(200);
+    const me = await body(response);
+
+    expect(me.primaryTenant).toBeNull();
+    expect(me.tenants).toEqual([]);
+  });
 });
 
 describe("PATCH /api/v1/me (§1.2 current user)", () => {
@@ -482,5 +558,22 @@ describe("PATCH /api/v1/me (§1.2 current user)", () => {
     expect(envelope.code).toBe("validation_failed");
     const fields = envelope.details?.fields as Array<{ path?: string }> | undefined;
     expect((fields ?? []).map((issue) => issue.path)).toContain("avatarAssetId");
+  });
+
+  it("I7: rejects an empty PATCH body with 422 validation_failed", async () => {
+    // Contract §1.2: the PATCH body is "all optional, at least one required".
+    // An empty object therefore fails request-shape validation — Appendix A.2
+    // maps that to `422 validation_failed` with `details.fields: [{path, code,
+    // message}]` — and must never be a silent no-op 200.
+    const identity = makeIdentity();
+    const cookie = await signInWithEmailOtp(identity);
+
+    const response = await mePatch(patchMeRequest(cookie, {}));
+    expect(response.status).toBe(422);
+    const envelope = await errorEnvelope(response);
+    expect(envelope.code).toBe("validation_failed");
+    const fields = envelope.details?.fields as Array<{ path?: string }> | undefined;
+    expect(Array.isArray(fields)).toBe(true);
+    expect((fields ?? []).length).toBeGreaterThan(0);
   });
 });

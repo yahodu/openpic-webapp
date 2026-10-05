@@ -111,6 +111,39 @@ consistent with ADR-0041 §2 (`userProfiles`, `notificationPreferences`,
 - **`capabilities` is derived at read time, never stored.** It is advisory
   (§0.14) and must not be persisted on `userProfiles`.
 
+## Follow-up pins from the RED review (card `t_fa8f43f5`)
+
+The round-1 RED review (`t_572f5d3b`, ADR-0045) accepted the U1–U3/I1–I6/E1
+suite with two Low coverage findings, both now pinned in the same
+`me-current-user.test.ts` (additive; the approved specs are untouched):
+
+- **I7 — HTTP-level empty PATCH.** `PATCH /api/v1/me` with body `{}` →
+  `422 validation_failed`. U2 pins the rule at the schema level ("at least one
+  field required"); this pins the observable HTTP envelope. Contract §1.2
+  declares the body "all optional, at least one required" and Appendix A.2
+  maps a request-shape failure to `validation_failed` (`details` shape
+  `{ fields: [{ path, code, message }] }`). **Decision:** the code is
+  `validation_failed`, _not_ `forbidden_field` (that is reserved for a field
+  that may never be supplied, e.g. `email`/`platformRole`, which is exactly why
+  the route must inspect the raw body rather than a strict schema — §3). The
+  spec asserts the status, the code, and that `details.fields` is a non-empty
+  array (an empty body must name the offending issue, not return a 422 with no
+  detail).
+- **I8/I9 — pure-attendee projection.** A signed-in caller with no active
+  `tenantMembers` row projects `primaryTenant: null`, `tenants: []`,
+  `capabilities {canCreateEvent:false, canPurchase:false, isAdmin:false}`
+  (contract §1.2 note — null is normal, not an error). Two stale-pointer cases
+  are covered separately: (I9a) `primaryTenantId` referencing a tenant where
+  the caller's membership is `removed`, and (I9b) `primaryTenantId` referencing
+  a tenant document that does not exist. Both must leave `primaryTenant: null`
+  and `tenants: []` — the pointer is not a membership and must not resurrect
+  the tenant.
+
+All four fail today for the right reason: I7 with
+`TypeError: PATCH is not a function` (no `PATCH` export yet), I8/I9a/I9b with
+`expected undefined to be null` (the OP-89 read slice omits the full
+projection). They extend PR #164 on branch `OP-90-task-get-patch-me-red`.
+
 ## Consequences
 
 - The RED suite fails only for the missing `/me` slice (`expected undefined to be
