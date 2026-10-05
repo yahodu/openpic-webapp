@@ -14,6 +14,8 @@ export type {
   RateLimitScope,
 } from "./identity";
 
+export { resolveClientIp } from "./client-ip";
+
 export {
   RATE_LIMIT_BYPASS_CLASSES,
   RATE_LIMIT_CLASSES,

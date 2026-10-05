@@ -1,7 +1,9 @@
+import { getTrustedClientIpHeader } from "@/server/config/env";
 import type { RouteStageContext } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { requestLogger } from "@/server/logging";
 
+import { resolveClientIp } from "./client-ip";
 import { isRateLimitBypassed, rateLimitFailurePolicy, type RateLimitClass } from "./classes";
 import { evaluateRateLimit, type RateLimiter } from "./evaluate";
 import { deriveRateLimitIdentities, type RateLimitFacts } from "./identity";
@@ -103,7 +105,7 @@ function deriveFacts(
   request: Request,
   body: unknown
 ): RateLimitFacts {
-  const ip = firstForwardedHop(request.headers.get("x-forwarded-for"));
+  const ip = resolveClientIp(request.headers, getTrustedClientIpHeader());
   const contact = deriveContact(body);
 
   return {
@@ -126,20 +128,6 @@ function deriveContact(body: unknown): string | undefined {
   }
   const value = (body as { contact?: unknown }).contact;
   return typeof value === "string" && value !== "" ? value : undefined;
-}
-
-/**
- * The trusted client IP: the first hop of `x-forwarded-for`.
- *
- * Vercel overwrites the header at the platform edge, so the leftmost entry is
- * the real client; fallback hops (`10.0.0.1`) are dropped.
- */
-function firstForwardedHop(value: string | null): string | undefined {
-  if (value === null) {
-    return undefined;
-  }
-  const first = value.split(",")[0]?.trim();
-  return first === undefined || first === "" ? undefined : first;
 }
 
 /**
