@@ -1,4 +1,10 @@
-import type { AppErrorCode, AuthErrorCode, ErrorCode, PipelineErrorCode } from "@openpic/contracts";
+import type {
+  AppErrorCode,
+  AuthErrorCode,
+  ErrorCode,
+  InternalErrorCode,
+  PipelineErrorCode,
+} from "@openpic/contracts";
 
 /**
  * The server error catalogue — the executable copy of contract Appendix A.
@@ -154,11 +160,38 @@ export const AUTH_ERROR_TRANSPORT: Readonly<Record<AuthErrorCode, ErrorCatalogEn
   },
 };
 
-/** Every client-facing code's transport: Appendix A first, then pipeline + auth codes. */
+/**
+ * Transport for the machine-to-machine internal-auth codes (contract §0.3,
+ * ADR-0028 §3).
+ *
+ * Like the auth codes, they are kept out of {@link ERROR_CATALOG} so that table
+ * stays the exact base Appendix A copy; the HMAC story owns these rows and
+ * feeds them into the same dispatch table. All three are `401`, non-retryable.
+ */
+export const INTERNAL_ERROR_TRANSPORT: Readonly<Record<InternalErrorCode, ErrorCatalogEntry>> = {
+  internal_auth_failed: {
+    status: 401,
+    retryable: false,
+    message: "Internal authentication failed.",
+  },
+  invalid_signature: {
+    status: 401,
+    retryable: false,
+    message: "The request signature is invalid.",
+  },
+  stale_signature: {
+    status: 401,
+    retryable: false,
+    message: "The request timestamp is outside the allowed window.",
+  },
+};
+
+/** Every client-facing code's transport: Appendix A first, then pipeline + auth + internal codes. */
 const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...ERROR_CATALOG,
   ...PIPELINE_ERROR_TRANSPORT,
   ...AUTH_ERROR_TRANSPORT,
+  ...INTERNAL_ERROR_TRANSPORT,
 };
 
 /**

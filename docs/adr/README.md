@@ -33,5 +33,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0025](ADR-0025-auth-guards.md)                                                  | Auth guards: one pure decision per label, resolver port, per-session 2FA fact                      | Accepted |
 | [0026](ADR-0026-op86-ban-exemption-and-2fa-signin-pins.md)                       | OP-86 review-gap pins: `/me` ban exemption and the 2FA sign-in branch                              | Accepted |
 | [0027](ADR-0027-op86-ban-exemption-green.md)                                     | OP-86 follow-up GREEN: wire `/me` `allowBanned`, confirm the 2FA sign-in branch                    | Accepted |
+| [0028](ADR-0028-internal-hmac-and-cron-framework.md)                             | Internal HMAC auth and the bounded cron job framework                                              | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
