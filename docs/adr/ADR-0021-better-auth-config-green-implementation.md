@@ -30,6 +30,12 @@ branches on `ctx.path`):
   budget before the challenge it protects even begins. Without this, the enable
   flow's own one-time code consumed one of the ten `auth.verify` tokens and the
   "10 wrong then 429" specs could not hold on the shared per-spec identity.
+  **Complementary cap (ADR-0023 §4, implemented in `t_40c45a13`):** because an
+  authenticated verify is not counted here, the authenticated
+  `phone-number/verify` and `two-factor/verify-otp` branches are independently
+  bounded by a **per-user 10-attempt / 600-second** cap (429, fail-closed),
+  consulted directly with an explicit rule so the frozen `RATE_LIMIT_CLASSES`
+  table stays unchanged.
 - **callbackURL trust** — an absolute `callbackURL` outside `ALLOWED_ORIGINS` is
   `403`. A relative callbackURL is trusted (it resolves against `baseURL`).
 - **phone send-otp eligibility** — an anonymous `phone-number/send-otp` is
@@ -100,10 +106,13 @@ returned.
 - Mutation check: enabling `signUpOnVerification` turns I14 red on both
   assertions, so the flag is genuinely pinned (verified, then reverted).
 - Known under-constrained behaviour: an anonymous `phone-number/verify` with a
-  _valid_ code for a number with no user returns Better Auth's internal
-  `500`, because the plugin's "no user" branch throws before `signUpOnVerification`
-  is consulted. The observable contract (no session, no user) holds and I14
-  pins it, but a cleaner `403` is worth a follow-up spec.
+  _valid_ code for a number with no user returned Better Auth's internal
+  `500`, because the plugin's "no user" branch threw before `signUpOnVerification`
+  was consulted. The observable contract (no session, no user) held and I14
+  pinned it. **Resolved in `t_40c45a13`:** the `before` hook now rejects an
+  anonymous verify for an unknown number with a generic `400 invalid_code`
+  (spec I16), so the endpoint never surfaces a 5xx and does not reveal whether
+  the number has an account.
 
 ## Alternatives considered
 

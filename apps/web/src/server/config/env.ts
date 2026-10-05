@@ -114,6 +114,27 @@ export function getMongoPoolConfig(): MongoPoolConfig {
   };
 }
 
+/**
+ * The request header a trusted edge/proxy sets (and **overwrites**) with the
+ * client's real IP (OP-85 follow-up, ADR-0024).
+ *
+ * `x-forwarded-for` is a comma-separated, client-writable list, so a client can
+ * rotate or prepend to it to evade an IP-keyed limit. A platform/edge header
+ * that the trusted fronting layer overwrites is a value the client cannot
+ * forge. This knob names that header (e.g. `x-real-ip`, `cf-connecting-ip`);
+ * when unset, the resolver keeps the documented dev/e2e fallback
+ * (`x-forwarded-for` leftmost, then `x-real-ip`) — see `resolveClientIp`.
+ *
+ * Kept outside the frozen {@link AppConfig} shape (asserted by its own specs)
+ * because it is deployment wiring, read directly from `process.env`.
+ *
+ * @returns The lowercased header name, or `undefined` when unset/blank.
+ */
+export function getTrustedClientIpHeader(): string | undefined {
+  const value = process.env.TRUSTED_CLIENT_IP_HEADER?.trim().toLowerCase();
+  return value === undefined || value === "" ? undefined : value;
+}
+
 interface ProviderSpec {
   readonly key: string;
   readonly values: readonly string[];
