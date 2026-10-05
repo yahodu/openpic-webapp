@@ -99,6 +99,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0092](ADR-0092-op94-notification-fan-out-green.md)                                | OP-94 GREEN: notification fan-out consumer implementation (outbox → feed + dispatches)                   | Accepted |
 | [0093](ADR-0093-op94-fan-out-green-review-signoff.md)                              | OP-94 GREEN review sign-off: fan-out pins verified; deferral/digest findings routed to OP-96             | Accepted |
 | [0094](ADR-0094-op95-otp-delivery-through-notification-service-red.md)             | OP-95 RED: OTP delivery through the synchronous NotificationService entry point (`sendTransactionalNow`) | Accepted |
+| [0095](ADR-0095-op95-otp-delivery-red-review-signoff.md)                           | OP-95 RED review sign-off: synchronous OTP pins verified RED; e2e-seed and 503-mapping findings routed   | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
