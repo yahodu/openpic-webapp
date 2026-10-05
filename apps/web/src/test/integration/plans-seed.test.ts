@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { ensureIndexes } from "@/server/db/indexes";
 import { closeMongoClient } from "@/server/db/mongo";
 import type { Entitlement, Plan } from "@/server/plans/plans";
 import { SEED_PLANS } from "@/server/plans/plans.values";
@@ -7,6 +8,9 @@ import { seedPlans } from "@/server/plans/seed-plans";
 
 import { makeEnv, toProcessEnv } from "../factories/env";
 import { createTestDb, type TestDb } from "../helpers/db";
+
+/** MongoDB's duplicate-key server error code. */
+const DUPLICATE_KEY = 11000;
 
 /**
  * Integration contract — the `plans` seed against a real MongoDB (OP-83, schema
@@ -76,11 +80,18 @@ async function versionsByKey(test: TestDb): Promise<Array<[string, number]>> {
 
 /**
  * The canonical catalogue with the starter plan's first entitlement limit
- * changed — the shape of a seed edit shipped in a deploy.
+ * changed to a value that provably differs from the current one — the shape of
+ * a seed edit shipped in a deploy.
+ *
+ * The changed limit is derived from the stored/current value (and returned, so
+ * the spec can assert the fixture really changed) rather than hard-coded: a
+ * fixed sentinel could equal a future seeded limit and turn the "changed
+ * catalogue" into a no-op, making the version-bump assertion vacuous.
  */
-function withChangedStarterEntitlement(limit: number): {
+function withChangedStarterEntitlement(): {
   readonly plans: readonly Plan[];
   readonly entitlementKey: string;
+  readonly changedLimit: number;
 } {
   const starter = SEED_PLANS.find((plan) => plan.key === "starter");
   if (starter === undefined) {
@@ -92,11 +103,20 @@ function withChangedStarterEntitlement(limit: number): {
     throw new Error("the starter plan has no entitlements");
   }
 
+  // Read the current limit through `Object.entries` (the security lint treats a
+  // dynamic member access as an object-injection sink).
+  const currentEntry = Object.entries(starter.entitlements).find(([key]) => key === entitlementKey);
+  const currentLimit = currentEntry?.[1].limit ?? null;
+
+  // `+1` is always a different value; a null (unlimited) becomes a finite
+  // number, which is also a change. Both stay non-negative integers.
+  const changedLimit = currentLimit === null ? 1 : currentLimit + 1;
+
   const changed: Plan = {
     ...starter,
     entitlements: Object.fromEntries(
       Object.entries(starter.entitlements).map(([key, spec]): [string, Entitlement] =>
-        key === entitlementKey ? [key, { ...spec, limit }] : [key, spec]
+        key === entitlementKey ? [key, { ...spec, limit: changedLimit }] : [key, spec]
       )
     ),
   };
@@ -104,6 +124,7 @@ function withChangedStarterEntitlement(limit: number): {
   return {
     plans: SEED_PLANS.map((plan) => (plan.key === "starter" ? changed : plan)),
     entitlementKey,
+    changedLimit,
   };
 }
 
@@ -154,19 +175,85 @@ describe("seedPlans entitlement versioning", () => {
       const before = await raw.findOne({ key: "starter" });
       expect(before).not.toBeNull();
 
-      const { plans: changed, entitlementKey } = withChangedStarterEntitlement(9_999);
+      const { plans: changed, entitlementKey, changedLimit } = withChangedStarterEntitlement();
+
+      // Guard against a vacuous fixture: the injected limit must differ from the
+      // seeded one, or the "bumps version" assertion below proves nothing.
+      expect(changedLimit).not.toBe(storedEntitlementLimit(before, entitlementKey));
 
       await seedPlans({ db: test.db, plans: changed });
       const afterFirst = await raw.findOne({ key: "starter" });
 
       expect(afterFirst?.version).toBe((before?.version ?? 0) + 1);
-      expect(storedEntitlementLimit(afterFirst, entitlementKey)).toBe(9_999);
+      expect(storedEntitlementLimit(afterFirst, entitlementKey)).toBe(changedLimit);
 
       // The very same catalogue seeded again must not bump a second time.
       await seedPlans({ db: test.db, plans: changed });
       const afterSecond = await raw.findOne({ key: "starter" });
 
       expect(afterSecond?.version).toBe(afterFirst?.version);
+    });
+  });
+});
+
+describe("plans.key unique index (schema §14.1)", () => {
+  it("I2: ensureIndexes builds a unique {key:1} index that rejects a duplicate plan key", async () => {
+    await withTestDb(async (test) => {
+      await ensureIndexes(test.db);
+      const plans = test.db.collection("plans");
+
+      await plans.insertOne({ key: "starter", version: 1 });
+
+      await expect(plans.insertOne({ key: "starter", version: 2 })).rejects.toMatchObject({
+        code: DUPLICATE_KEY,
+      });
+    });
+  });
+});
+
+describe("seedPlans concurrency", () => {
+  it("I2: overlapping seeds against a fresh database leave exactly one document per key", async () => {
+    await withTestDb(async (test) => {
+      // Several deploy instances (or a cron racing a deploy) starting together.
+      await Promise.all([
+        seedPlans({ db: test.db }),
+        seedPlans({ db: test.db }),
+        seedPlans({ db: test.db }),
+        seedPlans({ db: test.db }),
+        seedPlans({ db: test.db }),
+      ]);
+
+      const rows = await plansCollection(test).find({}).toArray();
+
+      expect(rows).toHaveLength(4);
+      expect(rows.map((plan) => plan.key).sort()).toEqual([
+        "enterprise",
+        "free",
+        "professional",
+        "starter",
+      ]);
+    });
+  });
+
+  it("I2: overlapping seeds of a changed catalogue store the change once, with no duplicate key", async () => {
+    await withTestDb(async (test) => {
+      const { plans: changed, entitlementKey, changedLimit } = withChangedStarterEntitlement();
+
+      // A deploy ships an entitlement change and several instances seed it at
+      // once. The reconcile must be atomic: one document per key, and the
+      // changed entitlement applied exactly once (no half-inserted duplicate).
+      await Promise.all([
+        seedPlans({ db: test.db, plans: changed }),
+        seedPlans({ db: test.db, plans: changed }),
+        seedPlans({ db: test.db, plans: changed }),
+      ]);
+
+      const rows = await plansCollection(test).find({}).toArray();
+      expect(rows).toHaveLength(4);
+
+      const starters = rows.filter((plan) => plan.key === "starter");
+      expect(starters).toHaveLength(1);
+      expect(storedEntitlementLimit(starters[0] ?? null, entitlementKey)).toBe(changedLimit);
     });
   });
 });
