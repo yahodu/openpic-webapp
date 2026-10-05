@@ -505,6 +505,7 @@ Notes:
 - `tenants[]` is derived from `tenantMembers` where `status == "active"`.
 - `capabilities` is a convenience projection; it is **advisory** (§0.14).
 - `unreadNotificationCount` is included so the bell renders on first paint without a second round trip.
+- `phoneNumber` is the caller's **own** contact and is returned **raw E.164** (§0.13 "Phone"), e.g. `"+919876543210"`; the masked form (§0.13 "Masked contact") is reserved for **other users'** contacts (§0.15).
 
 ### `PATCH /api/v1/me`
 
@@ -512,13 +513,13 @@ Auth `user` · Rate `write.normal`
 
 Body (all optional, at least one required):
 
-| Field            | Type           | Validation                                                                                      |
-| ---------------- | -------------- | ----------------------------------------------------------------------------------------------- |
-| `displayName`    | string         | 1–80 chars, trimmed                                                                             |
-| `locale`         | enum           | `"en-IN"` (extend additively)                                                                   |
-| `timeZone`       | string         | valid IANA zone → `422 unknown_timezone`                                                        |
-| `marketingOptIn` | boolean        | Stored separately from transactional preferences (schema §13.2)                                 |
-| `avatarAssetId`  | string \| null | must be a `mediaAssets` doc with `kind: "event_logo"`-class branding upload owned by the caller |
+| Field            | Type           | Validation                                                                                                                                                                            |
+| ---------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `displayName`    | string         | 1–80 chars, trimmed                                                                                                                                                                   |
+| `locale`         | enum           | `"en-IN"` (extend additively)                                                                                                                                                         |
+| `timeZone`       | string         | valid IANA zone → `422 unknown_timezone`                                                                                                                                              |
+| `marketingOptIn` | boolean        | Stored separately from transactional preferences (schema §13.2)                                                                                                                       |
+| `avatarAssetId`  | string \| null | must be a `mediaAssets` doc with `kind: "event_logo"`-class branding upload owned by the caller; otherwise → `422 validation_failed` with `details.fields[].path === "avatarAssetId"` |
 
 `200` → the full `/me` body. Changing email/phone is **not** available here — it goes through Better Auth (which triggers `auth.contact.changed`).
 

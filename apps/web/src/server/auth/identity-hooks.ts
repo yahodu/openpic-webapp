@@ -79,10 +79,14 @@ const CONTACT_CHANGE_FANOUT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_DEVICE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * How many recent sightings the new-device read considers, newest-first.
+ * How many recent sightings of the incoming device the new-device read considers,
+ * newest-first.
  *
- * The decision only needs the newest in-window sighting per fingerprint, so a
- * bounded, indexed read replaces the former unbounded `find({userId})` (ADR-0043).
+ * The decision only needs the newest in-window sighting of the incoming
+ * fingerprint, so the read is keyed on `{ userId, fingerprintHash }` and bounded
+ * (ADR-0050): keying it on the device keeps an in-window match from being dropped
+ * by the cap, and the cap keeps the read indexed and bounded on the sign-in path
+ * (ADR-0043 §2).
  */
 const SESSION_DEVICE_READ_LIMIT = 100;
 
@@ -496,7 +500,11 @@ export async function handleSessionCreated(
 
   const sightings = await platformRepo(db)
     .collection(SESSION_DEVICES_COLLECTION)
-    .find({ userId, createdAt: { $gt: new Date(now.getTime() - NEW_DEVICE_WINDOW_MS) } })
+    .find({
+      userId,
+      fingerprintHash: deviceHash,
+      createdAt: { $gt: new Date(now.getTime() - NEW_DEVICE_WINDOW_MS) },
+    })
     .sort({ createdAt: -1 })
     .limit(SESSION_DEVICE_READ_LIMIT)
     .toArray();
@@ -602,6 +610,7 @@ export async function handleContactChanged(
     actorRef: userRef(event.userId),
     subjectRef: userRef(event.userId),
     payload: { emailChanged, phoneChanged },
+    dedupeKey: `auth.contact.changed:${event.userId}:${now.toISOString()}`,
   });
 
   if (emitted === null) {
@@ -653,14 +662,19 @@ export async function handleTwoFactorToggled(
 /**
  * Announce that every session of a user was revoked.
  *
+ * Deduped on the instant (`eventKey:userId:instant`), matching the contact-changed
+ * and 2FA schemes, so a redelivered invocation collapses to one row while a
+ * genuinely new revoke-all at a later instant re-emits (ADR-0043 §1).
+ *
  * @param event - The user and the revoked session ids.
- * @param deps - The database/outbox seams.
+ * @param deps - The database/outbox/clock seams.
  */
 export async function handleSessionsRevoked(
   event: SessionsRevokedEvent,
   deps: IdentityHookDeps
 ): Promise<void> {
   const resolved = resolveDeps(deps);
+  const now = resolved.clock.now();
 
   await safeEmit(resolved, {
     eventKey: "account.sessions.revoked",
@@ -668,5 +682,6 @@ export async function handleSessionsRevoked(
     actorRef: userRef(event.userId),
     subjectRef: userRef(event.userId),
     payload: { revokedCount: event.sessionIds?.length ?? 0 },
+    dedupeKey: `account.sessions.revoked:${event.userId}:${now.toISOString()}`,
   });
 }

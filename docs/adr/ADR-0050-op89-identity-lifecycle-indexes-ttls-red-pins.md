@@ -1,4 +1,4 @@
-# ADR-0046 — OP-89 follow-up RED pins: the identity-lifecycle index/TTL shapes and the bounded new-device read
+# ADR-0050 — OP-89 follow-up RED pins: the identity-lifecycle index/TTL shapes and the bounded new-device read
 
 - **Status:** Accepted (RED pins) · **Date:** 2026-10-06
 - **Card:** OP-89 `t_13bcd988` (phase 1-Identity, epic Authentication, RED follow-up) · **Amends:** ADR-0043, ADR-0044 (adds the missing pins; does not supersede them)
@@ -117,7 +117,17 @@ the read stays bounded.
 
 ## Numbering
 
-ADR-0043 is the indexes/TTLs implementation and ADR-0044 its review sign-off.
-**ADR-0045 is reserved** for the sibling OP-89 RED-pins follow-up
-(`t_7ce3d03c`, renumbered by its GREEN card `t_42a91a52`). This ADR therefore
-takes **0046** to avoid that collision.
+Authored as **ADR-0046**; **renumbered to ADR-0050 at GREEN integration**
+(card `t_e7d733a0`) after PR #165 (ADR-0045/0046/0048/0049) and the OP-90 ADR-0047
+landed on `main` and occupied 0045–0049. The pins now take the next free
+consecutive numbers: this ADR **0050**, its review sign-off **ADR-0051**, and the
+R3 cap-pin sign-off **ADR-0052**.
+
+The two RED specs pinning this decision still quote **ADR-0046** in their
+comments and `describe` titles (`apps/web/src/server/db/indexes.test.ts`,
+`apps/web/src/test/integration/identity-hooks.test.ts`). Test files are immutable
+to the GREEN card, so those references are left stale and routed to a follow-up
+test-reference renumber (cf. ADR-0034, the stale-test-reference precedent). On
+`main`, **ADR-0046** is now PR #165's follow-up RED review sign-off — a different
+document — so the stale test reference resolves to the wrong ADR until that
+follow-up lands.

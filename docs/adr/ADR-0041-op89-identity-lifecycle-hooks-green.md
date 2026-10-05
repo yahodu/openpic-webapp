@@ -29,11 +29,12 @@ resolved against the tests.
   `databaseHooks.session.create.after` into the handlers. `createAuth` gained
   the `emit` and `claim` seams and installs the block.
 
-Only the two surface-pinned adapters are wired: **user created** (pinned by E1)
-and **session created** (pinned by S7's cookie case). The card's sections 4–6 are
-RED-pinned at the **handler** level only; their adapters into Better Auth's
-`after` hook are not test-pinned and are deliberately not invented here (see
-"Coverage gaps").
+Only the two surface-pinned adapters were wired by this card: **user created**
+(pinned by E1) and **session created** (pinned by S7's cookie case). The card's
+sections 4–6 were RED-pinned at the **handler** level only; their adapters into
+Better Auth's `after` hook were not test-pinned and were deliberately not
+invented here (see "Coverage gaps"). The follow-up cards `t_7ce3d03c`
+(ADR-0045) and `t_42a91a52` (ADR-0047) have since pinned and wired them.
 
 ### 2. Session sightings live in a dedicated `sessionDevices` collection
 
@@ -94,13 +95,21 @@ never blocked; a rejected claim is logged and swallowed.
 
 ## Coverage gaps (requests for the Test Author's next cycle)
 
-- **Surface adapters for sections 4–6.** The handlers are pinned directly; the
-  Better Auth context adapters for contact-changed, 2FA-toggle and
-  sessions-revoked (and for contact-verified) are not. They are intentionally
-  unwired rather than implemented untested (AGENTS.md §2.1).
+- **Surface adapters for sections 4–6.** _Closed by the follow-up cards._ The
+  handlers were originally pinned directly; the contact-changed, 2FA-toggle and
+  sessions-revoked **endpoint seams** (`createIdentityLifecycleSeams`, ADR-0045)
+  and the contact-verified `databaseHooks.user.update.after` adapter are now
+  pinned and wired (ADR-0047). What remains open is the **route bodies** that
+  call the seam: OP-91 `POST /me/sessions:revoke-all`, the 2FA toggle endpoint
+  and the contact-change endpoint — each owns its own card.
 - **`_id`/ordering pins.** No spec pins the `sessionDevices` shape or the
   `autoProvisioned` precedence; both are implementation choices this ADR records.
-- **2FA transition re-emit** (enabled→disabled→enabled) is not pinned.
+- **2FA transition re-emit.** _Closed by the follow-up pins._ The
+  enabled→disabled→enabled re-emit is pinned through the section-5 seam (S10,
+  ADR-0045) and satisfies the handler's instant-derived key.
+- **`§6.7 POST /me/attendee-sessions:claim` endpoint.** Still out of scope; only
+  the session-created hook's non-blocking invocation of the injectable claim
+  seam is delivered.
 
 ## Alternatives considered
 
