@@ -12,6 +12,7 @@ import { closeMongoClient, getDb } from "@/server/db/mongo";
 import { defineRoute, type RouteHandler } from "@/server/http/define-route";
 
 import { makeEnv, toProcessEnv } from "../factories/env";
+import { MONGO_READY_HOOK_TIMEOUT_MS, requireMongoTestUri, waitForMongoReady } from "../helpers/db";
 import { authPost, body, cookiePair, sessionCookie } from "../helpers/auth-requests";
 
 /**
@@ -92,12 +93,7 @@ function makeIdentity(): Identity {
 }
 
 beforeAll(async () => {
-  const uri = process.env.MONGO_TEST_URI;
-  if (!uri) {
-    throw new Error(
-      "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
-    );
-  }
+  const uri = requireMongoTestUri();
 
   // Rebuild the singleton client from this file's configuration: a previous
   // file in the same worker may have left a client bound to the shared URI.
@@ -122,10 +118,14 @@ beforeAll(async () => {
   database = getDb();
   auth = createAuth({ db: database });
 
+  // Cold connect / replica-set discovery / primary election belong in this
+  // hook, never inside a timed spec.
+  await waitForMongoReady();
+
   // Sanity: the singletons must be bound to this spec's private database, or
   // the route would read a database no session was written to.
   expect(database.databaseName).toBe(DB_NAME);
-});
+}, MONGO_READY_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
   await getDb().dropDatabase();

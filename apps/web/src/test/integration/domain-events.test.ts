@@ -15,9 +15,13 @@ import { fixedClock } from "@/server/runtime/clock";
 import { invalidatePlatformSettings } from "@/server/settings/platform-settings";
 
 import { makeDomainEventInput } from "../factories/domain-event";
-import { makeEnv, toProcessEnv } from "../factories/env";
 import { makeNotificationType } from "../factories/notification";
-import { createTestDb, type TestDb } from "../helpers/db";
+import {
+  createTestDb,
+  MONGO_READY_HOOK_TIMEOUT_MS,
+  setupMongoTestEnv,
+  type TestDb,
+} from "../helpers/db";
 
 /**
  * Integration contract — the `domainEvents` transactional outbox (OP-88,
@@ -69,16 +73,9 @@ interface StoredEvent {
   readonly claimedBy?: string;
 }
 
-beforeAll(() => {
-  const uri = process.env.MONGO_TEST_URI;
-  if (!uri) {
-    throw new Error(
-      "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
-    );
-  }
-
-  Object.assign(process.env, toProcessEnv(makeEnv({ APP_ENV: "test", MONGODB_URI: uri })));
-});
+beforeAll(async () => {
+  await setupMongoTestEnv();
+}, MONGO_READY_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
   await closeMongoClient();

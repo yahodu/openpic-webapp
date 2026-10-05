@@ -12,8 +12,12 @@ import {
   type MemoryTransport,
 } from "@/server/logging";
 
-import { makeEnv, toProcessEnv } from "../factories/env";
-import { createTestDb, type TestDb } from "../helpers/db";
+import {
+  MONGO_READY_HOOK_TIMEOUT_MS,
+  createTestDb,
+  setupMongoTestEnv,
+  type TestDb,
+} from "../helpers/db";
 import { expectNoSecretsInLogs } from "../helpers/log-assertions";
 import {
   authPost,
@@ -132,28 +136,14 @@ function makeIdentity(): Identity {
   };
 }
 
-beforeAll(() => {
-  const uri = process.env.MONGO_TEST_URI;
-  if (!uri) {
-    throw new Error(
-      "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
-    );
-  }
-
-  Object.assign(
-    process.env,
-    toProcessEnv(
-      makeEnv({
-        APP_ENV: "test",
-        APP_BASE_URL: APP_ORIGIN,
-        ALLOWED_ORIGINS: APP_ORIGIN,
-        MONGODB_URI: uri,
-        RATE_LIMIT_PROVIDER: "memory",
-        MESSAGE_TRANSPORT: "memory",
-      })
-    )
-  );
-});
+beforeAll(async () => {
+  await setupMongoTestEnv({
+    APP_BASE_URL: APP_ORIGIN,
+    ALLOWED_ORIGINS: APP_ORIGIN,
+    RATE_LIMIT_PROVIDER: "memory",
+    MESSAGE_TRANSPORT: "memory",
+  });
+}, MONGO_READY_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
   await closeMongoClient();

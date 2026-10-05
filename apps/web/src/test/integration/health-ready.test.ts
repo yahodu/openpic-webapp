@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { GET } from "../../app/api/v1/health/ready/route";
 import { closeMongoClient } from "../../server/db/mongo";
 import { createLogger, memoryTransport, setLogger } from "../../server/logging";
-import { makeEnv, toProcessEnv } from "../factories/env";
+import { MONGO_READY_HOOK_TIMEOUT_MS, setupMongoTestEnv } from "../helpers/db";
 
 /**
  * Integration contract — `GET /api/v1/health/ready` against a real database.
@@ -22,16 +22,9 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  * `globalSetup` (the singleton client reads `MONGODB_URI`), proving that the
  * probe really reaches the driver and that a live database yields 200.
  */
-beforeAll(() => {
-  const uri = process.env.MONGO_TEST_URI;
-  if (!uri) {
-    throw new Error(
-      "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
-    );
-  }
-
-  Object.assign(process.env, toProcessEnv(makeEnv({ APP_ENV: "test", MONGODB_URI: uri })));
-});
+beforeAll(async () => {
+  await setupMongoTestEnv();
+}, MONGO_READY_HOOK_TIMEOUT_MS);
 
 beforeEach(() => {
   const sink = memoryTransport();

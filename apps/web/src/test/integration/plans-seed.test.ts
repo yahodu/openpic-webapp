@@ -6,8 +6,12 @@ import type { Entitlement, Plan } from "@/server/plans/plans";
 import { SEED_PLANS } from "@/server/plans/plans.values";
 import { seedPlans } from "@/server/plans/seed-plans";
 
-import { makeEnv, toProcessEnv } from "../factories/env";
-import { createTestDb, type TestDb } from "../helpers/db";
+import {
+  MONGO_READY_HOOK_TIMEOUT_MS,
+  createTestDb,
+  setupMongoTestEnv,
+  type TestDb,
+} from "../helpers/db";
 
 /** MongoDB's duplicate-key server error code. */
 const DUPLICATE_KEY = 11000;
@@ -34,16 +38,9 @@ const DUPLICATE_KEY = 11000;
  *   SEED_PLANS: readonly Plan[]  (`@/server/plans/plans.values`)
  */
 
-beforeAll(() => {
-  const uri = process.env.MONGO_TEST_URI;
-  if (!uri) {
-    throw new Error(
-      "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
-    );
-  }
-
-  Object.assign(process.env, toProcessEnv(makeEnv({ APP_ENV: "test", MONGODB_URI: uri })));
-});
+beforeAll(async () => {
+  await setupMongoTestEnv();
+}, MONGO_READY_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
   await closeMongoClient();
