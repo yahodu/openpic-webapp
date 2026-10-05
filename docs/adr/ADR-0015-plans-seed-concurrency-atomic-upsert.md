@@ -129,3 +129,69 @@ sequential bump is already covered by I1 in `plans-seed.test.ts`.
 - **Assert the index by name in the unit lint.** Rejected: the invariant is
   "one unique `{key:1}` index exists", not what it is called; pinning the name
   couples the spec to an internal label with no behavioural meaning.
+
+## Addendum — GREEN implementation (2026-10-05)
+
+The GREEN delivery (`t_28029f40`) implemented §1 and §2 as follows, with one
+finding that changes _how_ §2 is achieved (not what it guarantees):
+
+### Chosen shape: one pipeline upsert, coalesced in-process
+
+Each plan is written with a single aggregation-pipeline `updateOne({ key },
+[…], { upsert: true })`. The pipeline sets the catalogue fields and computes
+`version` server-side, so the read and the write are one round trip and no
+`version` is ever computed from a stale application-side read:
+
+```ts
+$cond: [
+  { $eq: ["$entitlements", { $literal: plan.entitlements }] },
+  { $ifNull: ["$version", plan.version] }, // unchanged
+  { $add: [{ $ifNull: ["$version", { $subtract: [plan.version, 1] }] }, 1] }, // changed
+];
+```
+
+`$literal` is required: entitlement keys are dotted (`events.active`), which a
+pipeline expression would otherwise parse as a field path. `$eq` compares the
+stored entitlements with the catalogue's as BSON documents; the writer stores
+the catalogue object verbatim, so a value change is detected and an identical
+re-run is a no-op.
+
+### Finding: the bare upsert is NOT deterministic without the unique index
+
+The RED concurrency specs seed a **fresh throwaway database and never call
+`ensureIndexes`**, so the `{key:1}` unique index does not exist when they run.
+MongoDB's documented upsert race (two writers that both miss can both insert)
+therefore does occur: a 15-run probe of the bare pipeline upsert produced a
+duplicate-document failure in 1 run. The reviewer's RED probe (25/25 clean) was
+optimistic — the race is genuinely reachable.
+
+Fixed on two levels, matching the deployment reality:
+
+1. **In-process coalescing.** `seedPlans` serializes runs through a per
+   database+collection promise queue, so a single process never runs two
+   overlapping seeds for the same collection. This makes the no-index
+   same-process case (the RED spec) deterministic.
+2. **The unique index + `E11000` absorption (cross-process).** The index built
+   by `ensureIndexes` is the cross-process backstop; a racing upsert that
+   surfaces `E11000` is caught and re-applied as a plain update against the
+   winner's document, so the error never escapes the caller.
+
+Neither level alone satisfies the RED spec: the index is not bootstrapped in
+the test, and in-process coalescing does not protect two separate deploy
+processes — together they cover both. 30/30 repeat runs of the focused
+integration file are green.
+
+### Verification
+
+- Full unit: 767 passed (RED baseline 766 passed | 1 failed).
+- Full integration: 137 passed (RED baseline 134 passed | 3 failed).
+- `tsc -b`, ESLint (0 errors), Prettier clean.
+
+### Not independently pinned — and why
+
+The pipeline `$eq` compares stored entitlements as ordered BSON, so a
+_catalogue that only reorders entitlement keys_ would be treated as a change
+and bump `version`, whereas the previous `canonicalJson` comparison (order
+insensitive) would not. No RED spec pins reorder-vs-value-change semantics, and
+the priority order of a code-owned catalogue object is stable across deploys,
+so this is left as-is and recorded here as a coverage gap for the test author.
