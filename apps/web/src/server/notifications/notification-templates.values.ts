@@ -36,6 +36,20 @@ const DOWNGRADE_REASSURANCE = "Nothing has been deleted.";
 /** Matches a `{{name}}` placeholder. */
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
+/**
+ * The `auth.otp.*` types whose copy must carry the one-time code (OP-95).
+ *
+ * The code is a template **variable** (`{{code}}`), never a persisted field: the
+ * synchronous sender renders it at send time and the dispatch ledger keeps
+ * metadata only (`retainBody: false`). This is the only place an auth secret is
+ * intentionally interpolated into first-party copy, and it is exactly what
+ * OP-95 ADR-0094 assumption 2 requires.
+ */
+const OTP_CODE_TYPE_KEYS: ReadonlySet<string> = new Set([
+  "auth.otp.email.requested",
+  "auth.otp.mobile.requested",
+]);
+
 /** Humanise a `typeKey` into a readable label (`auth.otp.email.requested` → `Auth Otp Email Requested`). */
 function labelFor(typeKey: string): string {
   return typeKey
@@ -64,6 +78,14 @@ function copyFor(
   group: ChannelGroup["group"]
 ): { readonly subjectTemplate: string; readonly bodyTemplate: string } {
   const label = labelFor(typeKey);
+
+  if (OTP_CODE_TYPE_KEYS.has(typeKey)) {
+    const bodyTemplate =
+      group === "email"
+        ? "Your OpenPic verification code is {{code}}. It expires in a few minutes. View the details at {{actionUrl}}."
+        : "Your OpenPic verification code is {{code}}. It expires in a few minutes.";
+    return { subjectTemplate: "Your OpenPic verification code", bodyTemplate };
+  }
 
   const base =
     group === "email"

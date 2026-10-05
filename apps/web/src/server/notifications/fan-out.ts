@@ -22,8 +22,10 @@
  *   3. **Per-recipient isolation.** One provider failure leaves the event
  *      claimable (`markFailed`) while its peers are still delivered.
  *
- * Deliberately out of scope here (ADR-0090 "Out of scope"): the cron route, the
- * `after()` opportunistic trigger and `sendTransactionalNow()` (OP-95).
+ * Deliberately out of scope here (ADR-0090 "Out of scope"): the cron route and
+ * the `after()` opportunistic trigger. The synchronous transactional entry
+ * point {@link sendTransactionalNow} is *not* out of scope — OP-94 card §6 was
+ * routed to OP-95, so it lives here alongside the async run (ADR-0094).
  */
 
 import { createHash } from "node:crypto";
@@ -60,6 +62,7 @@ import { renderTemplate, type RenderVars } from "@/server/notifications/render-t
 import {
   resolveChannel,
   type ChannelDecision,
+  type ChannelGroupName,
   type GroupPreference,
   type ResolveContacts,
   type ResolveGroupPreferences,
@@ -68,6 +71,8 @@ import {
   type ResolvedChannel,
   type SkipReason,
 } from "@/server/notifications/resolve-channel";
+import { SEED_NOTIFICATION_TEMPLATES } from "@/server/notifications/notification-templates.values";
+import { SEED_NOTIFICATION_TYPES } from "@/server/notifications/notification-types.values";
 import { platformRepo } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
 import { addDays } from "@/server/runtime/time";
@@ -391,7 +396,18 @@ function dedupeVars(
   return vars;
 }
 
-/** The declared variables of a template, taken from the payload superset. */
+/**
+ * The declared variables of a template, taken from the payload superset.
+ *
+ * A declared variable the event payload does not carry is rendered as an empty
+ * string. The event payload is a projection of the domain event, and a shared
+ * type's copy may legitimately declare a value only one dispatch path can
+ * supply — e.g. `auth.otp.*` copy declares `code`, which the synchronous path
+ * renders (`sendTransactionalNow`) while an async fan-out event carries no code.
+ * The renderer itself stays strict (`renderTemplate` still throws on a missing
+ * value); the fan-out, which owns the payload projection, supplies the empty
+ * default so one template can serve both paths.
+ */
 function renderVarsFor(
   template: NotificationTemplate | undefined,
   typeKey: string,
@@ -405,8 +421,7 @@ function renderVarsFor(
     if (typeof value === "string" || typeof value === "number") source[key] = value;
   }
   for (const declared of template.variables) {
-    const value = source[declared];
-    if (value !== undefined) vars[declared] = value;
+    vars[declared] = source[declared] ?? "";
   }
   return vars;
 }
@@ -1084,4 +1099,333 @@ export async function runNotificationFanOut(options: FanOutRunOptions): Promise<
   }
 
   return { claimed: claimed.length, processed, failed };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Synchronous transactional path (OP-95, ADR-0094)                           */
+/* -------------------------------------------------------------------------- */
+
+/** A Better Auth OTP channel — the two destinations an auth secret may travel. */
+export type OtpChannel = "email" | "sms";
+
+/** The facts {@link resolveOtpTarget} needs to pin an OTP channel. */
+export interface OtpTargetInput {
+  readonly channel: OtpChannel;
+  readonly typeRow: NotificationType;
+  readonly profile: ResolveProfile;
+  readonly contacts: ResolveContacts;
+}
+
+/** The concrete routing target the synchronous path dispatches on. */
+export interface OtpTarget {
+  readonly typeKey: string;
+  readonly channelGroup: ChannelGroupName;
+  readonly channel: ResolvedChannel;
+}
+
+/**
+ * The resolved-channel vocabulary the synchronous ledger persists (schema §19.5;
+ * `body` is the OP-95 addition — retained only when the type permits it).
+ */
+export interface DispatchRecord {
+  readonly typeKey: string;
+  readonly channel: ResolvedChannel;
+  readonly channelGroup: string;
+  readonly status: "queued" | "sent" | "failed" | "skipped";
+  readonly skipReason: string | null;
+  readonly contactHash: string | null;
+  readonly dedupeKey: string | null;
+  readonly templateVersion: number | null;
+  readonly body: string | null;
+  readonly attempts: number;
+  readonly lastError: {
+    readonly retryable: boolean;
+    readonly code: string;
+    readonly status?: number;
+  } | null;
+  readonly queuedAt: Date;
+  readonly sentAt: Date | null;
+  readonly failedAt: Date | null;
+  readonly expireAt: Date;
+}
+
+/** The pure inputs {@link buildDispatchRecord} folds into a ledger row. */
+export interface DispatchRecordInput {
+  readonly typeRow: NotificationType;
+  readonly userId?: string | null;
+  readonly tenantId?: string | null;
+  readonly eventId?: string | null;
+  readonly channel: ResolvedChannel;
+  readonly channelGroup: string;
+  readonly contactHash?: string | null;
+  readonly dedupeKey?: string | null;
+  readonly templateVersion?: number | null;
+  readonly rendered?: { readonly subject: string; readonly body: string } | null;
+  readonly now: Date;
+  readonly expireAt: Date;
+}
+
+/** The synchronous send input (ADR-0094). */
+export interface TransactionalSendInput {
+  readonly db?: Db;
+  readonly transport: MessageTransport;
+  readonly clock?: Clock;
+  readonly typeKey: string;
+  readonly channel: OtpChannel;
+  readonly destination: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly userId?: string | null;
+}
+
+/** The result of a synchronous send. */
+export interface TransactionalSendResult {
+  readonly dispatchId: string;
+  readonly status: "sent";
+  readonly providerMessageId: string;
+}
+
+/** A default preference set: only the exhaustion of a channel matters for an OTP. */
+const OTP_PREFS: ResolvePreferences = {
+  global: { in_app: "on", email: "on", mobile: "on" },
+  byType: {},
+  byEvent: {},
+  quietHours: { enabled: false, start: "22:00", end: "07:00", timeZone: "UTC" },
+  locale: FALLBACK_LOCALE,
+};
+
+/** The routing group a Better Auth OTP channel targets. */
+function otpGroupName(channel: OtpChannel): ChannelGroupName {
+  return channel === "email" ? "email" : "mobile";
+}
+
+/**
+ * Pin a Better Auth OTP channel to the concrete `(typeKey, group, channel)` the
+ * synchronous path dispatches (U1, design §4.1).
+ *
+ * It reuses the real {@link resolveChannel} against the seeded OTP type row — it
+ * is not a re-implementation of the resolver. The `auth.otp.mobile.requested`
+ * type declares `mobileCandidates: ["sms"]`, so a `whatsappCapable` user still
+ * gets `sms`; WhatsApp must never carry an auth secret.
+ *
+ * @param input - The requested channel, the type row and the recipient facts.
+ * @returns The pinned target; `channelGroup`/`channel` are the resolver's.
+ * @throws When the resolver does not return a `send` (naming the skip reason).
+ */
+export function resolveOtpTarget(input: OtpTargetInput): OtpTarget {
+  const groupName = otpGroupName(input.channel);
+  const group = input.typeRow.channelGroups.find((candidate) => candidate.group === groupName);
+  if (group === undefined) {
+    throw new Error(`notification type ${input.typeRow.typeKey} has no ${groupName} routing group`);
+  }
+
+  const decision = resolveChannel({
+    typeRow: input.typeRow,
+    group,
+    prefs: OTP_PREFS,
+    profile: input.profile,
+    contacts: input.contacts,
+    suppressions: [],
+    now: new Date(0),
+    eventId: null,
+    throttleState: {},
+  });
+
+  if (decision.kind !== "send") {
+    const detail = decision.kind === "skip" ? decision.reason : decision.kind;
+    throw new Error(`OTP send for ${input.typeRow.typeKey} skipped: ${detail}`);
+  }
+
+  return { typeKey: input.typeRow.typeKey, channelGroup: group.group, channel: decision.channel };
+}
+
+/**
+ * Build the metadata-only dispatch ledger row (U2, schema §19.5).
+ *
+ * The rendered body is stamped onto the row **only** when the type's
+ * `retainBody` is `true`. Every `auth.otp.*` type is `retainBody: false`, so the
+ * one-time code can never reach the durable ledger (contract §0.13).
+ *
+ * @param input - The recipient/rendered facts and the instants.
+ * @returns The ledger row (status `queued`).
+ */
+export function buildDispatchRecord(input: DispatchRecordInput): DispatchRecord {
+  return {
+    typeKey: input.typeRow.typeKey,
+    channel: input.channel,
+    channelGroup: input.channelGroup,
+    status: "queued",
+    skipReason: null,
+    contactHash: input.contactHash ?? null,
+    dedupeKey: input.dedupeKey ?? null,
+    templateVersion: input.templateVersion ?? null,
+    body: input.typeRow.retainBody ? (input.rendered?.body ?? null) : null,
+    attempts: 0,
+    lastError: null,
+    queuedAt: input.now,
+    sentAt: null,
+    failedAt: null,
+    expireAt: input.expireAt,
+  };
+}
+
+/** The contact facts for the requested OTP channel only. */
+function otpContacts(channel: OtpChannel, destination: string): ResolveContacts {
+  return {
+    email: channel === "email" ? destination : null,
+    emailVerified: channel === "email",
+    phoneNumber: channel === "sms" ? destination : null,
+    phoneNumberVerified: channel === "sms",
+  };
+}
+
+/** A seeded OTP type row, used when the catalogue has not been seeded. */
+function seededTypeRow(typeKey: string): NotificationType | null {
+  return SEED_NOTIFICATION_TYPES.find((type) => type.typeKey === typeKey) ?? null;
+}
+
+/** The active seeded templates for a type, grouped by routing channel. */
+function seededTemplates(typeKey: string): Map<string, readonly NotificationTemplate[]> {
+  const byChannel = new Map<string, NotificationTemplate[]>();
+  for (const template of SEED_NOTIFICATION_TEMPLATES) {
+    if (template.typeKey !== typeKey || !template.active) continue;
+    const list = byChannel.get(template.channel);
+    if (list === undefined) {
+      byChannel.set(template.channel, [template]);
+    } else {
+      list.push(template);
+    }
+  }
+  return byChannel;
+}
+
+/**
+ * Send one transactional message synchronously (design §5/§8.2; ADR-0094).
+ *
+ * The synchronous sibling of {@link runNotificationFanOut}: resolve → render →
+ * persist one metadata-only dispatch row → hand the rendered message to the
+ * injected {@link MessageTransport} — with no outbox claim or delay, and never
+ * an in-app feed row. A transport failure marks the row `failed` (carrying the
+ * classified `lastError`) and rethrows so the caller can map it to a retryable
+ * response.
+ *
+ * @param input - Database/clock/transport seams and the rendered inputs.
+ * @returns The dispatch id, `sent` status and the transport receipt id.
+ * @throws When the type/template cannot be resolved or the transport fails.
+ */
+export async function sendTransactionalNow(
+  input: TransactionalSendInput
+): Promise<TransactionalSendResult> {
+  const db = input.db ?? getDb();
+  const clock = input.clock ?? systemClock;
+
+  const storedType = await loadTypeRow(db, input.typeKey);
+  const typeRow = storedType ?? seededTypeRow(input.typeKey);
+  if (typeRow?.enabled !== true) {
+    throw new Error(`unknown or disabled notification type: ${input.typeKey}`);
+  }
+
+  const target = resolveOtpTarget({
+    channel: input.channel,
+    typeRow,
+    profile: {
+      userId: input.userId ?? "",
+      contactCapabilities: { whatsappCapable: null, whatsappCheckedAt: null },
+    },
+    contacts: otpContacts(input.channel, input.destination),
+  });
+
+  const storedTemplates = await loadTemplates(db, input.typeKey);
+  const candidates =
+    storedTemplates.get(target.channelGroup) ??
+    seededTemplates(input.typeKey).get(target.channelGroup) ??
+    [];
+  const template = selectTemplate(candidates, FALLBACK_LOCALE);
+  if (template === undefined) {
+    throw new Error(`no active template for ${input.typeKey}/${target.channelGroup}`);
+  }
+
+  const rendered = renderTemplate(
+    [template],
+    renderVarsFor(template, input.typeKey, input.payload),
+    FALLBACK_LOCALE
+  );
+
+  const now = clock.now();
+  const settings = await getPlatformSettings({ db, clock });
+  const record = buildDispatchRecord({
+    typeRow,
+    userId: input.userId ?? null,
+    channel: target.channel,
+    channelGroup: target.channelGroup,
+    contactHash: contactHashOf(input.destination),
+    templateVersion: template.version,
+    rendered,
+    now,
+    expireAt: addDays(now, settings.retention.dispatchDays),
+  });
+
+  const document = {
+    ...record,
+    userId: asObjectId(input.userId),
+    tenantId: null,
+    eventId: null,
+  };
+  const inserted = await platformRepo(db).collection(COLLECTIONS.dispatches).insertOne(document);
+  const dispatchId = inserted.insertedId.toHexString();
+
+  if (target.channel !== "email" && target.channel !== "sms") {
+    throw new Error(`OTP target resolved to a non-deliverable channel: ${target.channel}`);
+  }
+  const message = buildOutboundMessage(
+    target.channel,
+    input.userId ?? "",
+    input.destination,
+    rendered.subject,
+    rendered.body
+  );
+
+  try {
+    const receipt = await input.transport.send(message);
+    await platformRepo(db)
+      .collection(COLLECTIONS.dispatches)
+      .updateOne(
+        { _id: inserted.insertedId },
+        {
+          $set: {
+            status: "sent",
+            attempts: 1,
+            sentAt: now,
+            providerRef: {
+              provider: "transport",
+              env: transportEnv(),
+              messageId: receipt.providerMessageId,
+            },
+          },
+        }
+      );
+    getLogger().info("notification.transactional_sent", {
+      event: "notification.transactional_sent",
+      typeKey: typeRow.typeKey,
+      channel: target.channel,
+      contactHashPrefix: record.contactHash?.slice(0, 8) ?? null,
+    });
+    return { dispatchId, status: "sent", providerMessageId: receipt.providerMessageId };
+  } catch (error) {
+    const failure = classifyError(error);
+    await platformRepo(db)
+      .collection(COLLECTIONS.dispatches)
+      .updateOne(
+        { _id: inserted.insertedId },
+        { $set: { status: "failed", attempts: 1, failedAt: clock.now(), lastError: failure } }
+      );
+    getLogger().error("notification.transactional_failed", {
+      event: "notification.transactional_failed",
+      typeKey: typeRow.typeKey,
+      channel: target.channel,
+      code: failure.code,
+      retryable: failure.retryable,
+      contactHashPrefix: record.contactHash?.slice(0, 8) ?? null,
+    });
+    throw error;
+  }
 }

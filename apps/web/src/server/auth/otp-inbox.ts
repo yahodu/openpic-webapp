@@ -21,6 +21,14 @@ export interface CapturedOtp {
   readonly channel: OtpChannel;
   readonly to: string;
   readonly code: string;
+  /**
+   * The transport receipt id for the delivered message (OP-95).
+   *
+   * It is the e2e-observable proof that the code travelled through the injected
+   * `MessageTransport`; the OP-85 memory sender minted no provider id, so older
+   * captures may omit it.
+   */
+  readonly providerMessageId?: string | null;
 }
 
 /** The capture surface the auth config writes to and the test route reads. */

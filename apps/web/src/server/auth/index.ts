@@ -2,7 +2,7 @@ import type { Db } from "mongodb";
 
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
-import { createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { admin } from "better-auth/plugins/admin";
 import { bearer } from "better-auth/plugins/bearer";
 import { emailOTP } from "better-auth/plugins/email-otp";
@@ -15,15 +15,17 @@ import {
   getSessionTtlSeconds,
   type AppConfig,
 } from "@/server/config/env";
+import { getMessageTransport } from "@/server/adapters/message-transport-provider";
 import { getDb } from "@/server/db/mongo";
+import type { MessageTransport } from "@/server/notifications/message-transport";
 import { createRateLimiter } from "@/server/rate-limit";
 
 import { assertTrustedCallback } from "./callback-url";
 import { buildCookieOptions } from "./cookies";
 import { createIdentityDatabaseHooks } from "./identity-lifecycle";
 import type { ClaimAttendeeSession, EmitDomainEvent } from "./identity-hooks";
-import { OTP_LENGTH } from "./internal";
-import { memoryOtpSender } from "./otp-sender";
+import { OTP_LENGTH, type AuthHookContext } from "./internal";
+import { notificationOtpSender } from "./otp-sender";
 import { runPhoneHook } from "./phone-hook";
 import { createRateLimitHook } from "./rate-limit-hook";
 import { runTwoFactorAfterHook, runTwoFactorBeforeHook } from "./two-factor";
@@ -67,6 +69,42 @@ export interface AuthLike {
   handler(request: Request): Promise<Response>;
 }
 
+/**
+ * The request-scoped slot an OTP delivery failure is remembered on (OP-95).
+ *
+ * Better Auth's plugin callback runs its `sendVerificationOTP`/`sendOTP` inside
+ * `runInBackgroundOrAwait`, which swallows a rejected promise (it only logs).
+ * To surface a retryable transport failure, the callback stashes the mapped
+ * error on the shared request context and the `after` hook re-throws it, which
+ * turns the swallowed failure back into the endpoint's `503` response.
+ */
+const OTP_DELIVERY_FAILURE = "__openpicOtpDeliveryFailure";
+
+/** The structural view of the endpoint context a plugin send callback receives. */
+interface OtpDeliveryContext {
+  readonly context: unknown;
+}
+
+/** Remember a failed OTP delivery on the shared request context. */
+function rememberOtpDeliveryFailure(ctx: OtpDeliveryContext | undefined, error: unknown): void {
+  if (ctx === undefined) return;
+  (ctx.context as Record<string, unknown>)[OTP_DELIVERY_FAILURE] = error;
+}
+
+/** Read (and clear) a remembered OTP delivery failure from the hook context. */
+function takeOtpDeliveryFailure(ctx: AuthHookContext): unknown {
+  const slot = ctx.context as unknown as Record<string, unknown>;
+  const failure = slot[OTP_DELIVERY_FAILURE];
+  Reflect.deleteProperty(slot, OTP_DELIVERY_FAILURE);
+  return failure;
+}
+
+/** The auth OTP endpoints whose swallowed delivery failure the after hook surfaces. */
+const OTP_SEND_PATHS: ReadonlySet<string> = new Set([
+  "/email-otp/send-verification-otp",
+  "/phone-number/send-otp",
+]);
+
 /** Options accepted by {@link createAuth}. */
 export interface CreateAuthOptions {
   /** The MongoDB database the adapter writes auth collections to. */
@@ -83,6 +121,12 @@ export interface CreateAuthOptions {
    * claim service lands (ADR-0040 §5).
    */
   readonly claim?: ClaimAttendeeSession;
+  /**
+   * The outbound message transport the OTP sender hands rendered messages to.
+   * Defaults to the configured provider (ADR-0094); injectable so a spec can
+   * drive delivery with an in-memory outbox.
+   */
+  readonly transport?: MessageTransport;
 }
 
 /**
@@ -93,7 +137,8 @@ export interface CreateAuthOptions {
  */
 export function createAuth(options: CreateAuthOptions): AuthLike {
   const config: AppConfig = getConfig();
-  const sender = memoryOtpSender();
+  const transport = options.transport ?? getMessageTransport();
+  const sender = notificationOtpSender({ db: options.db, transport });
   const rateLimiter = createRateLimiter();
   const salt = getRateLimitConfig().salt;
   const trustedOrigins: readonly string[] = config.app.allowedOrigins;
@@ -119,7 +164,25 @@ export function createAuth(options: CreateAuthOptions): AuthLike {
     return undefined;
   });
 
-  const after = createAuthMiddleware(async (ctx) => runTwoFactorAfterHook(ctx, sender));
+  const after = createAuthMiddleware(async (ctx) => {
+    const twoFactorResult = await runTwoFactorAfterHook(ctx, sender);
+    if (twoFactorResult !== undefined) return twoFactorResult;
+
+    // A swallowed transport failure from a plugin send callback is surfaced here
+    // as the retryable 503 Better Auth would otherwise never return (OP-95).
+    if (OTP_SEND_PATHS.has(ctx.path)) {
+      const failure = takeOtpDeliveryFailure(ctx);
+      if (failure instanceof APIError) throw failure;
+      if (failure !== undefined) {
+        throw APIError.from("SERVICE_UNAVAILABLE", {
+          message: "OTP delivery is temporarily unavailable. Please retry.",
+          code: "upstream_unavailable",
+        });
+      }
+    }
+
+    return undefined;
+  });
 
   const instance = betterAuth({
     appName: "OpenPic",
@@ -169,15 +232,22 @@ export function createAuth(options: CreateAuthOptions): AuthLike {
     plugins: [
       emailOTP({
         otpLength: OTP_LENGTH,
-        sendVerificationOTP: ({ email, otp }) => {
-          sender.send({ channel: "email", to: email, code: otp });
-          return Promise.resolve();
+        sendVerificationOTP: async ({ email, otp }, ctx) => {
+          try {
+            await sender.send({ channel: "email", to: email, code: otp });
+          } catch (error) {
+            rememberOtpDeliveryFailure(ctx, error);
+          }
         },
       }),
       phoneNumber({
         otpLength: OTP_LENGTH,
-        sendOTP: ({ phoneNumber: phone, code }) => {
-          sender.send({ channel: "sms", to: phone, code });
+        sendOTP: async ({ phoneNumber: phone, code }, ctx) => {
+          try {
+            await sender.send({ channel: "sms", to: phone, code });
+          } catch (error) {
+            rememberOtpDeliveryFailure(ctx, error);
+          }
         },
         // `signUpOnVerification` is intentionally omitted: verifying a number
         // must never create an account (ADR-0020 §11).
@@ -185,10 +255,10 @@ export function createAuth(options: CreateAuthOptions): AuthLike {
       twoFactor({
         totpOptions: { disable: true },
         otpOptions: {
-          sendOTP: ({ user, otp }) => {
+          sendOTP: async ({ user, otp }) => {
             const phone = (user as { phoneNumber?: string }).phoneNumber;
             if (typeof phone === "string") {
-              sender.send({ channel: "sms", to: phone, code: otp });
+              await sender.send({ channel: "sms", to: phone, code: otp });
             }
           },
         },
