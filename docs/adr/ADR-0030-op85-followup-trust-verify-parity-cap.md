@@ -229,3 +229,25 @@ change to it — is visible.
 Deliverable: the append-only I21 `it` in
 `apps/web/src/test/integration/auth.test.ts`; no production file is touched.
 ADR-0020 §5's enumeration sentence is qualified in place to point here.
+
+### Reviewer sign-off (`t_893c8e7c` / PR #146)
+
+Reviewed round 1 (artifact lens) — **APPROVED**. Independently reproduced on the
+untouched worktree: focused integration 21/21, full integration 32 files / 194
+passed, unit 61 files / 1235 passed, `tsc -p apps/web/tsconfig.json --noEmit` /
+ESLint / Prettier clean; all per-PR CI checks green. The pin was confirmed
+non-vacuous by mutation: forcing the anonymous `send-otp` guard to reject a
+verified number makes I21 fail with `expected 403 to be 200` (mutation reverted).
+
+**Landing decision:** I21 is a _green_ regression pin, and the OP-85 GREEN
+(PR #145 / `69847d8`) had already merged, so no future GREEN PR could carry it —
+it would have been stranded in a draft PR. Consistent with the OP-87
+coverage-pin precedent (card `t_cb2f94bf`, PR #142), and because the change is
+tests + docs only with no production impact and fully green CI, the branch was
+squash-merged directly to `main` as `f4db1e9` (branch deleted).
+
+Two Low documentation items were routed to follow-up card **`t_b43559b3`**
+(`openpic-webapp-backend-coder`, docs/comment only): (1) the `phone-hook.ts`
+docblock still asserts the endpoint "can never be used to enumerate numbers";
+(2) this addendum attributes that exact phrase to ADR-0021 §1, whereas ADR-0021
+§1 says "(no enumeration)" — the quoted phrase is from the source docblock.
