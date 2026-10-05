@@ -244,3 +244,38 @@ it (`APPROVED WITH FINDINGS`, no blocking finding). The issue under review was
   Author) closes it; the `vercel.json` `crons` deferral recorded above stands.
 - **Decision:** no contract or architecture change was introduced by this
   follow-up, so this ADR is amended only with the sign-off above.
+
+## RED coverage pin — authenticated sample-route surface (OP-87 follow-up, card `t_cb2f94bf`)
+
+The sign-off above routed one coverage gap here: nothing exercised the sample
+route's _authenticated_ surface. This card adds
+`apps/web/src/test/integration/internal-cron-route.test.ts` (I5–I7) and pins the
+following decisions.
+
+- **The authenticated surface is pinned at the route module, in the integration
+  project — not in e2e.** `apps/web/e2e/internal-cron.spec.ts` runs against the
+  deployed app, whose real `CRON_SECRET` is generated per-run by the e2e launcher
+  and never reaches the Playwright context, so e2e can only ever present a wrong
+  credential. The route therefore stays covered in-process by importing the real
+  `GET`/`POST` handlers from
+  `@/app/api/v1/internal/cron/sample/route` and calling them with a
+  `new Request(new URL(…, APP_ORIGIN), …)` — the same shape the shipped
+  `GET /api/v1/me` spec (`me-ban-exemption.test.ts`) already uses.
+- **Credentials are read back from the same configuration the route reads.**
+  The spec populates `process.env` via `makeEnv`/`toProcessEnv` in `beforeAll`,
+  then signs and authenticates with `getConfig().internal.apiSecret` and
+  `getConfig().cron.secret`. This proves the route's per-request `getConfig()`
+  thunk resolves the same secrets the caller holds; a hard-coded test constant
+  would not.
+- **The `?limit=` edge contract is no-crash only.** The `sample` job is inert
+  (`run` ignores its clamped `limit`), so the resolved value is not observable in
+  the returned `CronResult`. I7 pins only that `abc`/`-1`/`0`/`999999999999`
+  still reach the handler as `200`, never a `500` from `clampLimit`; the exact
+  clamp arithmetic is already pinned by the framework's own `clampLimit` specs.
+- **These are regression pins, not new behavior.** The route exists on `main`
+  (GREEN `e061771`), so I5–I7 pass on the current tree; the RED evidence is the
+  module-resolution failure the same file produces against a repo without the
+  route (`Cannot find package '@/app/api/v1/internal/cron/sample/route'`). No
+  production code was changed by this card, and the `vercel.json` `crons`
+  deferral and the `src/server/jobs/**` import-boundary rule recorded above are
+  unchanged.
