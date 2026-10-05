@@ -1,4 +1,4 @@
-import type { ObjectId } from "mongodb";
+import { ObjectId } from "mongodb";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { COLLECTIONS } from "@/server/db/collections";
@@ -11,6 +11,7 @@ import {
   markDone,
   markFailed,
 } from "@/server/domain/domain-events";
+import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
 import { fixedClock } from "@/server/runtime/clock";
 import { invalidatePlatformSettings } from "@/server/settings/platform-settings";
 
@@ -56,6 +57,11 @@ const DOMAIN_EVENTS = "domain_events";
 /** A fixed instant so timestamps are exact, not run-dependent. */
 const T0 = "2026-03-01T00:00:00.000Z";
 
+/** The ISO instant `plusMs` after `T0` — used to cross the 30 s TTL window. */
+function at(plusMs: number): string {
+  return new Date(Date.parse(T0) + plusMs).toISOString();
+}
+
 /** The stored outbox document fields these specs inspect. */
 interface StoredEvent {
   readonly _id: ObjectId;
@@ -86,6 +92,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   invalidatePlatformSettings();
+  invalidateNotificationTypeCache();
 });
 
 /** Run `fn` against a fresh throwaway database, always dropping it. */
@@ -284,6 +291,111 @@ describe("claim completion", () => {
 
       const stored = await events.findOne({ _id: claimed._id });
       expect(stored?.dispatch.notifications).toBe("pending");
+    });
+  });
+});
+
+describe("emitDomainEvent — notification-type cache staleness (OP-88 follow-up D1)", () => {
+  it("I5: observes a notification-type change no later than the 30 s window", async () => {
+    await withTestDb(async (test) => {
+      const events = eventsOf(test);
+      const types = test.db.collection(COLLECTIONS.notificationTypes);
+
+      // A disabled type at T0: the writer marks the event skipped and caches the
+      // (empty) enabled set.
+      await types.insertOne(
+        makeNotificationType({ typeKey: "collab.invite.accepted", enabled: false })
+      );
+
+      const first = await emitDomainEvent(makeDomainEventInput(), {
+        db: test.db,
+        clock: fixedClock(T0),
+      });
+      expect(first.id).toBeTruthy();
+      const firstStored = await events.findOne({ _id: new ObjectId(String(first.id)) });
+      expect(firstStored?.dispatch.notifications).toBe("skipped");
+
+      // The operator enables the type behind the cache's back.
+      await types.updateOne({ typeKey: "collab.invite.accepted" }, { $set: { enabled: true } });
+
+      // Inside the accepted staleness window the cached set still wins.
+      const second = await emitDomainEvent(makeDomainEventInput(), {
+        db: test.db,
+        clock: fixedClock(at(10_000)),
+      });
+      const secondStored = await events.findOne({ _id: new ObjectId(String(second.id)) });
+      expect(secondStored?.dispatch.notifications).toBe("skipped");
+
+      // At the 30 s boundary the change is observed.
+      const third = await emitDomainEvent(makeDomainEventInput(), {
+        db: test.db,
+        clock: fixedClock(at(30_000)),
+      });
+      const thirdStored = await events.findOne({ _id: new ObjectId(String(third.id)) });
+      expect(thirdStored?.dispatch.notifications).toBe("pending");
+    });
+  });
+});
+
+describe("claimPendingEvents — missing claimedAt reclaim (OP-88 follow-up D3)", () => {
+  it("I6: reclaims an in_progress claim whose claimedAt is missing", async () => {
+    await withTestDb(async (test) => {
+      const events = eventsOf(test);
+      const raw = test.db.collection(DOMAIN_EVENTS);
+
+      // A crashed consumer's row: flipped in_progress but the lease stamp never
+      // landed, so `claimedAt` is absent entirely.
+      await raw.insertOne({
+        eventKey: "collab.invite.accepted",
+        dispatch: {
+          notifications: "in_progress",
+          analytics: "not_applicable",
+          queue: "not_applicable",
+        },
+        occurredAt: new Date(T0),
+      });
+
+      const claimed = await claimPendingEvents("notifications", 1, {
+        db: test.db,
+        clock: fixedClock(T0),
+        claimerId: "worker_7",
+      });
+
+      expect(claimed).toHaveLength(1);
+      const claimedEvent = claimed[0];
+      if (claimedEvent === undefined) {
+        throw new Error("expected claimPendingEvents to reclaim the missing-claimedAt row");
+      }
+      expect(claimedEvent.claimedAt).toEqual(new Date(T0));
+      expect(claimedEvent.claimedBy).toBe("worker_7");
+
+      const stored = await events.findOne({ _id: claimedEvent._id });
+      expect(stored?.claimedAt).toEqual(new Date(T0));
+      expect(stored?.dispatch.notifications).toBe("in_progress");
+    });
+  });
+
+  it("I7: does not reclaim an in_progress claim with a fresh claimedAt", async () => {
+    await withTestDb(async (test) => {
+      const raw = test.db.collection(DOMAIN_EVENTS);
+
+      await raw.insertOne({
+        eventKey: "collab.invite.accepted",
+        dispatch: {
+          notifications: "in_progress",
+          analytics: "not_applicable",
+          queue: "not_applicable",
+        },
+        occurredAt: new Date(T0),
+        claimedAt: new Date(T0),
+      });
+
+      const claimed = await claimPendingEvents("notifications", 1, {
+        db: test.db,
+        clock: fixedClock(T0),
+      });
+
+      expect(claimed).toHaveLength(0);
     });
   });
 });
