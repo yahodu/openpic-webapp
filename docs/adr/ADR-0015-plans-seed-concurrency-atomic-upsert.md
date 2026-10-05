@@ -249,3 +249,40 @@ Finding 1.
 - full unit: 770 passed (baseline 767 + 3)
 - full integration: 137 passed | 4 failed (baseline 137 passed; no pre-existing regression)
 - `tsc` clean, ESLint 0 errors, Prettier clean
+
+## Addendum — follow-up GREEN `t_84823e61` (2026-10-05)
+
+### Finding 1 — `$literal`-wrap every catalogue field
+
+`catalogueFields(plan)` now returns each catalogue dimension wrapped in
+`$literal` (`name`, `description`, `marketingFeatures`, `tierRank`,
+`selfServe`, `salesAssisted`, `active`, `prices`), and `planUpsert` stamps
+`updatedAt: { $literal: updatedAt }`. Only `version` remains the `$cond`
+expression, unchanged; `entitlements` keeps its existing `$literal`. Every
+catalogue value is therefore opaque to the aggregation expression parser at
+every nesting depth — a `$`-leading scalar, array element or nested object field
+round-trips verbatim, and the `$eq` used for the version condition still
+compares the stored entitlements with the catalogue's.
+
+Wrapping each field individually (rather than `$literal`-ing a single merged
+object) is what the merge of `updatedAt`/`entitlements`/`version` beside the
+catalogue requires: a `$literal` around the whole `$set` operand would itself
+be the `$set` document, not a per-field expression. The four `I3` integration
+specs — the four that were red — are green.
+
+### Finding 2 — E11000 absorption confirmed, no change
+
+The new unit spec `apps/web/src/server/plans/seed-plans.test.ts` passes against
+the shipped `upsertPlan` unchanged: the scripted `updateOne` rejects `{ code:
+11000 }` on the upsert, `seedPlans` re-applies the identical pipeline with no
+`upsert` option (the reconcile's `options` is `{}`), resolves with the
+catalogue, and re-throws a non-duplicate error. No production change was needed
+— the catch path already reconciles against the winner, as §2 requires.
+
+### Verification (GREEN delivery)
+
+- focused unit `seed-plans.test.ts`: 3 passed
+- focused integration `plans-seed.test.ts`: 10 passed (the four `I3` specs now green)
+- full unit: 770 passed (50 files) — no pre-existing regression
+- full integration: 141 passed (25 files) — the 4 `I3` specs went green, no pre-existing regression
+- `tsc` (root, contracts, web) clean; ESLint 0 errors (15 pre-existing warnings); Prettier clean
