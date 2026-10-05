@@ -119,9 +119,11 @@ the read stays bounded.
 
 Authored as **ADR-0046**; **renumbered to ADR-0050 at GREEN integration**
 (card `t_e7d733a0`) after PR #165 (ADR-0045/0046/0048/0049) and the OP-90 ADR-0047
-landed on `main` and occupied 0045–0049. The pins now take the next free
-consecutive numbers: this ADR **0050**, its review sign-off **ADR-0051**, and the
-R3 cap-pin sign-off **ADR-0052**.
+landed on `main` and occupied 0045–0049. The pins then took the lowest free
+numbers on `main`: this ADR **0050**, its review sign-off **ADR-0051**; the OP-90
+`/me` lane (PR #168) subsequently landed **0052**–**0056**, so the R3 cap-pin
+sign-off took the next free number, **ADR-0057**, and the GREEN review sign-off
+**ADR-0058**. Cross-lane allocation is owned by the orchestrator (`t_eb61c823`).
 
 The two RED specs pinning this decision still quote **ADR-0046** in their
 comments and `describe` titles (`apps/web/src/server/db/indexes.test.ts`,

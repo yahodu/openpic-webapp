@@ -1,4 +1,4 @@
-# ADR-0053 — OP-89 indexes/TTLs GREEN review sign-off: device-keyed bounded new-device read
+# ADR-0058 — OP-89 indexes/TTLs GREEN review sign-off: device-keyed bounded new-device read
 
 - **Status:** Accepted (review sign-off) · **Date:** 2026-10-06
 - **Card:** OP-89 `t_e7d733a0` (GREEN follow-up, reviewed) · **PR:** #169 (against `main`) · **Reviewed head:** `e7035db`
@@ -46,7 +46,7 @@ Acceptance mapping:
    the index/TTL declarations and the sighting-write shape are untouched; the
    fix is confined to the read predicate. ✓
 4. **ADRs renumbered** — pins `ADR-0046 → ADR-0050`, review sign-off
-   `ADR-0049 → ADR-0051`, R3 sign-off `ADR-0055 → ADR-0052`, lowest-free-first;
+   `ADR-0049 → ADR-0051`, R3 sign-off `ADR-0055 → ADR-0057`, lowest-free-first;
    `docs/adr/README.md` reconciled to one ascending row per number. ✓
 
 ## Findings (routed, not reworked here)
@@ -59,14 +59,15 @@ Acceptance mapping:
    follow-up card** (cf. ADR-0034, the stale-test-reference precedent). ADR-0050
    §Numbering records the same.
 2. **Low (hotspot) — cross-lane ADR-number collisions remain.** At this lane's
-   integration the pins documents took `0050/0051/0052` (free on `main` after
-   0045–0049). Other in-flight lanes independently hold overlapping numbers on
-   their own branches (`t_ffd7bc07` lane: `0050`; the OP-90 `/me` GREEN lane:
-   `0052`–`0056`). Per the "renumber at integration" convention each later-
-   merging lane re-resolves lowest-free-first against the then-current `main`;
-   the central orchestrator allocation (`t_eb61c823`) owns that reconciliation.
-   This sign-off itself takes `ADR-0053`, the next free number on `main` after
-   this branch's `0050`–`0052`.
+   integration the pins documents took the lowest free numbers on `main`. At that
+   point `main` held 0001–0049, so the pins kept `0050` and their review sign-off
+   `0051`; the OP-90 `/me` lane (PR #168) then landed `0052`–`0056`, so the two
+   OP-89 sign-offs took the next free numbers — R3 sign-off `ADR-0057`, this
+   GREEN sign-off `ADR-0058`. Earlier in-flight overlap (`t_ffd7bc07` lane held a
+   provisional `0050`) is resolved by the "renumber at integration" convention:
+   each later-merging lane re-resolves lowest-free-first against the then-current
+   `main`; the central orchestrator allocation (`t_eb61c823`, and the
+   reconciliation card `t_93d4774b`) owns that.
 3. **Low (observation) — the read predicate is not covered by a matching index.**
    `session_devices_user_created` is `{ userId: 1, createdAt: -1 }`; the new
    `fingerprintHash` equality is filtered in memory after the `userId`-prefixed
@@ -77,15 +78,17 @@ Acceptance mapping:
 
 ## Numbering
 
-Authored after `ADR-0050`, `ADR-0051` and `ADR-0052` (this branch's pins/review
-documents), so it takes the next free consecutive number, **ADR-0053**. See
-`docs/adr/README.md`; the cross-lane allocation is owned by the orchestrator
-(`t_eb61c823`).
+Authored last on this branch, after the pins `ADR-0050`, their review `ADR-0051`
+and the R3 sign-off `ADR-0057`. With `main` carrying `0050`–`0056` after the
+OP-90 `/me` lane's merge (PR #168) and this branch's `0050`/`0051`, it takes the
+next free number, **ADR-0058**. See `docs/adr/README.md`; the cross-lane
+allocation is owned by the orchestrator (`t_eb61c823`).
 
 ## Consequences
 
 - PR #169 squash-merges to `main` carrying PR #166's pins **and** the GREEN fix.
   **PR #166 stays an unmerged RED draft by design** (merging it would delete the
   R1 RED signal).
-- Follow-up cards created: Test Author (stale `ADR-0046` test references in the
-  OP-89 pin specs).
+- Follow-up cards created: Test Author `t_c9c415e6` (stale `ADR-0046` test
+  references in the OP-89 pin specs); Orchestrator `t_93d4774b` (cross-lane ADR
+  number reconciliation).

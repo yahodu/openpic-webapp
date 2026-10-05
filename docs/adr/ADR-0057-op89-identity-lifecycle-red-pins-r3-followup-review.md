@@ -1,9 +1,9 @@
-# ADR-0052 — OP-89 RED-pins R3 follow-up review sign-off: same-device >100 read-cap pin
+# ADR-0057 — OP-89 RED-pins R3 follow-up review sign-off: same-device >100 read-cap pin
 
 - **Status:** Accepted (review sign-off) · **Date:** 2026-10-06
 - **Card:** OP-89 `t_a6da1734` (reviewed) · **PR:** #166 (draft, unmerged by design) · **Reviewed head:** `c7e3e58`
 - **Amends:** ADR-0050 (the RED pins whose cap guard R3 strengthens) and ADR-0051 (the review that routed this pin).
-- **Renumbered:** authored as ADR-0055; renumbered to **ADR-0052** at GREEN integration (card `t_e7d733a0`, see ADR-0050's Numbering note).
+- **Renumbered:** authored as ADR-0055; renumbered to **ADR-0057** at GREEN integration (card `t_e7d733a0`, see ADR-0050's Numbering note).
 
 ## Context
 
@@ -56,7 +56,7 @@ Acceptance mapping:
 - **Low — ADR-numbering collision (resolved at GREEN integration).** `docs/adr/README.md`
   was a cross-lane hotspot; observed claims then extended to `0054`. This sign-off took
   provisional `0055` — above every observed claim — pending central allocation. **Resolved:**
-  the GREEN card renumbered it to **ADR-0052** (pins **ADR-0050**, review sign-off
+  the GREEN card renumbered it to **ADR-0057** (pins **ADR-0050**, review sign-off
   **ADR-0051**), reconciles `docs/adr/README.md` to one ascending row per number, and merges
   `origin/main` first so the allocation is lowest-free-first.
 

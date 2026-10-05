@@ -62,6 +62,21 @@ export const AUTH_ERROR_CODES = [
 export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[number];
 
 /**
+ * Request-shape codes (contract Appendix A.2).
+ *
+ * `unknown_timezone` and `forbidden_field` are contract catalogue codes, but
+ * they are not members of {@link ERROR_CODES} because the server error
+ * catalogue (`@/server/http/catalog`) pins `ERROR_CATALOG` to exactly the base
+ * Appendix A rows the HTTP-pipeline story enumerated. They are appended to the
+ * client-facing enum ({@link API_ERROR_CODES}) and transported from their own
+ * table (both `422`, non-retryable) so both stay exact. Append-only.
+ */
+export const REQUEST_SHAPE_ERROR_CODES = ["unknown_timezone", "forbidden_field"] as const;
+
+/** A member of the closed {@link REQUEST_SHAPE_ERROR_CODES} set. */
+export type RequestShapeErrorCode = (typeof REQUEST_SHAPE_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -119,6 +134,7 @@ export const API_ERROR_CODES = [
   ...ERROR_CODES,
   ...EDGE_ERROR_CODES,
   ...AUTH_ERROR_CODES,
+  ...REQUEST_SHAPE_ERROR_CODES,
   ...PIPELINE_ERROR_CODES,
   ...INTERNAL_ERROR_CODES,
 ] as const;
@@ -131,7 +147,8 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
  * pipeline and internal codes. Edge codes (`csrf_failed`) are emitted by
  * middleware before the pipeline and are never raised as `AppError`s.
  */
-export type AppErrorCode = ErrorCode | AuthErrorCode | PipelineErrorCode | InternalErrorCode;
+export type AppErrorCode =
+  ErrorCode | AuthErrorCode | RequestShapeErrorCode | PipelineErrorCode | InternalErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
