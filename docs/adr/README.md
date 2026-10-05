@@ -81,9 +81,10 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0073](ADR-0073-op92-message-transport-red-review-signoff.md)                      | OP-92 RED review sign-off: pins verified; Novu-adapter coverage gaps, ADR collision, outbox naming       | Accepted |
 | [0074](ADR-0074-op92-message-transport-red-pins-followup.md)                       | OP-92 RED-pins follow-up: memory outbox, workflow upsert, unsubscribe headers, logging, lint, timeout    | Accepted |
 | [0075](ADR-0075-op92-message-transport-and-novu-drift-guard-green.md)              | OP-92 GREEN: `MessageTransport` port, Novu adapter, workflow drift guard, headers, logging and lint      | Accepted |
+| [0076](ADR-0076-op92-green-review-signoff.md)                                      | OP-92 GREEN review sign-off: pins verified; Novu HTTP-plumbing refactor; drift-guard hardening routed    | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
 
-_`0070`/`0071` are reserved for the OP-91 follow-up lane (PR #181, lands ahead); the OP-92 lane holds `0072`–`0074`, GREEN holds `0075`, and `0076` remains reserved for the OP-92 GREEN review sign-off (`t_8930fc35`)._
+_`0070`/`0071` are reserved for the OP-91 follow-up lane (PR #181, lands ahead); the OP-92 lane holds `0072`–`0074` (RED/pins) and `0075`/`0076` (GREEN + review sign-off)._
