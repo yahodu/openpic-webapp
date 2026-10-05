@@ -4,6 +4,7 @@ import type {
   ErrorCode,
   InternalErrorCode,
   PipelineErrorCode,
+  RequestShapeErrorCode,
 } from "@openpic/contracts";
 
 /**
@@ -161,6 +162,29 @@ export const AUTH_ERROR_TRANSPORT: Readonly<Record<AuthErrorCode, ErrorCatalogEn
 };
 
 /**
+ * Transport for the request-shape codes (contract Appendix A.2).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the auth codes: the
+ * HTTP-pipeline story pinned that table to exactly the base Appendix A rows.
+ * The identity story owns these rows and feeds them into the same dispatch
+ * table. Both are `422`, non-retryable.
+ */
+export const REQUEST_SHAPE_ERROR_TRANSPORT: Readonly<
+  Record<RequestShapeErrorCode, ErrorCatalogEntry>
+> = {
+  unknown_timezone: {
+    status: 422,
+    retryable: false,
+    message: "Must be a known IANA time zone.",
+  },
+  forbidden_field: {
+    status: 422,
+    retryable: false,
+    message: "The request contains a field that may not be changed here.",
+  },
+};
+
+/**
  * Transport for the machine-to-machine internal-auth codes (contract §0.3,
  * ADR-0028 §3).
  *
@@ -191,6 +215,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...ERROR_CATALOG,
   ...PIPELINE_ERROR_TRANSPORT,
   ...AUTH_ERROR_TRANSPORT,
+  ...REQUEST_SHAPE_ERROR_TRANSPORT,
   ...INTERNAL_ERROR_TRANSPORT,
 };
 
