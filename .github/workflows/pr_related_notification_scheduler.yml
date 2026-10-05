@@ -14,7 +14,7 @@ jobs:
       checks: read
 
     steps:
-      - name: Check PRs and notify Slack
+      - name: Check PRs and notify Discord
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -117,7 +117,7 @@ jobs:
               readyToMergePRs.push({ pr, approvals });
             }
 
-            // ── Build Slack message ─────────────────────────────────────────
+            // ── Build Discord message ───────────────────────────────────────
             const hasAnything =
               conflictPRs.length > 0 ||
               unresolvedCommentsPRs.length > 0 ||
@@ -125,156 +125,115 @@ jobs:
               readyToMergePRs.length > 0;
 
             if (!hasAnything) {
-              console.log('Nothing to report. No Slack message sent.');
+              console.log('Nothing to report. No Discord message sent.');
               return;
             }
 
-            const blocks = [
+            // Discord limits: 4096 chars/description, 6000 chars total per message.
+            // Keep each section's description short so 5 embeds stay under the total.
+            const MAX_DESC = 1300;
+
+            const esc = (s) => String(s).replace(/([\\\[\]*_`~|>])/g, '\\$1');
+            const prLink = (pr) => `**[#${pr.number} ${esc(pr.title)}](${pr.html_url})**`;
+
+            const buildEmbed = (title, color, entries) => {
+              let desc = '';
+              let shown = 0;
+              for (const entry of entries) {
+                const next = (desc ? '\n\n' : '') + entry;
+                if (desc.length + next.length > MAX_DESC) break;
+                desc += next;
+                shown++;
+              }
+              if (shown === 0) {
+                desc = entries[0].slice(0, MAX_DESC) + '…';
+                shown = 1;
+              }
+              if (shown < entries.length) {
+                desc += `\n\n*…and ${entries.length - shown} more*`;
+              }
+              return { title: `${title} (${entries.length})`, description: desc, color };
+            };
+
+            const now = new Date();
+            const when = now.toLocaleString('en-IN', {
+              timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short',
+            });
+
+            const embeds = [
               {
-                type: 'header',
-                text: { type: 'plain_text', text: '📋 PR Status Report', emoji: true },
+                title: '📋 PR Status Report',
+                description: `**${owner}/${repo}**  •  ${when} IST`,
+                color: 5793266,  // blurple
+                timestamp: now.toISOString(),
               },
-              {
-                type: 'context',
-                elements: [{
-                  type: 'mrkdwn',
-                  text: `*${owner}/${repo}*  •  ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })} IST`,
-                }],
-              },
-              { type: 'divider' },
             ];
 
             // ── Section 1: Merge Conflicts ───────────────────────────────
             if (conflictPRs.length > 0) {
-              blocks.push({
-                type: 'section',
-                text: {
-                  type: 'mrkdwn',
-                  text: `*🔀 PRs with Merge Conflicts (${conflictPRs.length})*`,
-                },
-              });
-
-              for (const { pr } of conflictPRs) {
-                blocks.push({
-                  type: 'section',
-                  text: {
-                    type: 'mrkdwn',
-                    text: [
-                      `*<${pr.html_url}|#${pr.number} ${pr.title}>*`,
-                      `👤 ${pr.user.login}  •  Base: \`${pr.base.ref}\``,
-                      `⚠️ This branch has conflicts with \`${pr.base.ref}\` and must be resolved before merging.`,
-                    ].join('\n'),
-                  },
-                });
-              }
-              blocks.push({ type: 'divider' });
+              embeds.push(buildEmbed('🔀 Merge Conflicts', 15105570, conflictPRs.map(({ pr }) => [
+                prLink(pr),
+                `👤 ${pr.user.login}  •  Base: \`${pr.base.ref}\``,
+                `⚠️ Conflicts with \`${pr.base.ref}\` — resolve before merging`,
+              ].join('\n'))));
             }
 
             // ── Section 2: Unresolved Comments ───────────────────────────
             if (unresolvedCommentsPRs.length > 0) {
-              blocks.push({
-                type: 'section',
-                text: {
-                  type: 'mrkdwn',
-                  text: `*💬 PRs with Unresolved Comments (${unresolvedCommentsPRs.length})*`,
-                },
-              });
-
-              for (const { pr, requestChangesReviewers, unresolvedThreadCount } of unresolvedCommentsPRs) {
-                const lines = [
-                  `*<${pr.html_url}|#${pr.number} ${pr.title}>*`,
-                  `👤 ${pr.user.login}`,
-                ];
-                if (requestChangesReviewers.length > 0) {
-                  lines.push(`🔁 Changes requested by: ${requestChangesReviewers.map(u => `\`${u}\``).join(', ')}`);
-                }
-                if (unresolvedThreadCount > 0) {
-                  lines.push(`💬 ${unresolvedThreadCount} unresolved comment thread(s)`);
-                }
-
-                blocks.push({
-                  type: 'section',
-                  text: { type: 'mrkdwn', text: lines.join('\n') },
-                });
-              }
-              blocks.push({ type: 'divider' });
+              embeds.push(buildEmbed('💬 Unresolved Comments', 16705372,
+                unresolvedCommentsPRs.map(({ pr, requestChangesReviewers, unresolvedThreadCount }) => {
+                  const lines = [prLink(pr), `👤 ${pr.user.login}`];
+                  if (requestChangesReviewers.length > 0) {
+                    lines.push(`🔁 Changes requested by: ${requestChangesReviewers.map(u => `\`${u}\``).join(', ')}`);
+                  }
+                  if (unresolvedThreadCount > 0) {
+                    lines.push(`💬 ${unresolvedThreadCount} unresolved comment thread(s)`);
+                  }
+                  return lines.join('\n');
+                })));
             }
 
             // ── Section 3: Failed Checks ─────────────────────────────────
             if (failedChecksPRs.length > 0) {
-              blocks.push({
-                type: 'section',
-                text: {
-                  type: 'mrkdwn',
-                  text: `*🔴 PRs with Failed Checks (${failedChecksPRs.length})*`,
-                },
-              });
-
-              for (const { pr, failedChecks } of failedChecksPRs) {
-                const checkList = failedChecks.map(c => {
+              embeds.push(buildEmbed('🔴 Failed Checks', 15548997, failedChecksPRs.map(({ pr, failedChecks }) => {
+                const MAX_CHECKS = 5;
+                const checkList = failedChecks.slice(0, MAX_CHECKS).map(c => {
                   const icon =
                     c.conclusion === 'failure'   ? '❌' :
                     c.conclusion === 'timed_out' ? '⏱️' : '🚫';
-                  return `${icon} <${c.html_url}|${c.name}>`;
+                  return `${icon} [${esc(c.name)}](${c.html_url})`;
                 }).join('  ·  ');
-
-                blocks.push({
-                  type: 'section',
-                  text: {
-                    type: 'mrkdwn',
-                    text: [
-                      `*<${pr.html_url}|#${pr.number} ${pr.title}>*`,
-                      `👤 ${pr.user.login}`,
-                      `Failed: ${checkList}`,
-                    ].join('\n'),
-                  },
-                });
-              }
-              blocks.push({ type: 'divider' });
+                const extra = failedChecks.length > MAX_CHECKS
+                  ? `  ·  +${failedChecks.length - MAX_CHECKS} more` : '';
+                return [prLink(pr), `👤 ${pr.user.login}`, `Failed: ${checkList}${extra}`].join('\n');
+              })));
             }
 
             // ── Section 4: Ready to Merge ────────────────────────────────
             if (readyToMergePRs.length > 0) {
-              blocks.push({
-                type: 'section',
-                text: {
-                  type: 'mrkdwn',
-                  text: `*✅ PRs Ready to Merge (${readyToMergePRs.length})*`,
-                },
-              });
-
-              for (const { pr, approvals } of readyToMergePRs) {
-                blocks.push({
-                  type: 'section',
-                  text: {
-                    type: 'mrkdwn',
-                    text: [
-                      `*<${pr.html_url}|#${pr.number} ${pr.title}>*`,
-                      `👤 ${pr.user.login}  •  ✔️ ${approvals} approval(s)  •  All checks passed`,
-                    ].join('\n'),
-                  },
-                });
-              }
-              blocks.push({ type: 'divider' });
+              embeds.push(buildEmbed('✅ Ready to Merge', 5763719, readyToMergePRs.map(({ pr, approvals }) => [
+                prLink(pr),
+                `👤 ${pr.user.login}  •  ✔️ ${approvals} approval(s)  •  All checks passed`,
+              ].join('\n'))));
             }
 
-            // ── Send to Slack ─────────────────────────────────────────────
-            const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+            // ── Send to Discord ───────────────────────────────────────────
+            const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
             const res = await fetch(webhookUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ blocks }),
+              body: JSON.stringify({ embeds }),
             });
 
             if (!res.ok) {
-              throw new Error(`Slack webhook failed: ${res.status} ${await res.text()}`);
+              throw new Error(`Discord webhook failed: ${res.status} ${await res.text()}`);
             }
 
-            console.log('Slack notified:', {
+            console.log('Discord notified:', {
               conflicts: conflictPRs.length,
               unresolvedComments: unresolvedCommentsPRs.length,
               failedChecks: failedChecksPRs.length,
               readyToMerge: readyToMergePRs.length,
             });
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
