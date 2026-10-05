@@ -78,6 +78,16 @@ const APP_ORIGIN = "http://localhost:3000";
 const WRONG_OTP = "000000";
 const EVIL_CALLBACK = "https://evil.example/after";
 
+/**
+ * How many session-authenticated verify attempts I19 is willing to drive before
+ * giving up. This is a *probe bound*, not the cap: the card leaves the cap value
+ * open for the orchestrator/human, and I19 only pins that a cap exists, is a
+ * client error when hit, and is scoped per-user/per-session rather than per
+ * contact. If the decided cap exceeds this bound the constant must be raised —
+ * the spec does not invent the number.
+ */
+const AUTHENTICATED_VERIFY_PROBE_BOUND = 100;
+
 /** Local structural mirrors of the inbox contract. */
 type OtpChannel = "email" | "sms";
 interface CapturedOtp {
@@ -350,6 +360,31 @@ describe("OTP send rate limiting (§0.11 auth.otp)", () => {
       expect(statuses[5]).toBe(429);
     });
   });
+
+  it("I15: the 16th OTP send from one IP across 16 distinct contacts returns 429", async () => {
+    await withAuth(async ({ auth }) => {
+      // One private IP bucket, shared by every request; a fresh contact for
+      // each send so only the `ip` leg of `auth.otp` ({ limit: 15, windowSeconds:
+      // 3600 }) can trip. I2 pins the per-contact 5/h leg; this pins the IP leg,
+      // which no other spec exercises.
+      const sharedIp = makeIdentity().ip;
+      const statuses: number[] = [];
+      for (let attempt = 0; attempt < 16; attempt += 1) {
+        const contact = makeIdentity();
+        const response = await authPost(
+          auth,
+          APP_ORIGIN,
+          "/api/auth/email-otp/send-verification-otp",
+          { email: contact.email, type: "sign-in" },
+          { "x-forwarded-for": sharedIp }
+        );
+        statuses.push(response.status);
+      }
+
+      expect(statuses.slice(0, 15)).toEqual(Array.from({ length: 15 }, () => 200));
+      expect(statuses[15]).toBe(429);
+    });
+  });
 });
 
 describe("OTP verify lockout (§0.11 auth.verify)", () => {
@@ -516,6 +551,50 @@ describe("phone OTP (§1.1 phoneNumber plugin)", () => {
         await database.collection("user").countDocuments({ phoneNumber: target.phone }),
         "signUpOnVerification must stay disabled: an unauthenticated verify must not create a user"
       ).toBe(0);
+    });
+  });
+
+  it("I16: an anonymous verify with a VALID code for an unknown number is a 4xx, never a 5xx", async () => {
+    await withAuth(async ({ auth, database }) => {
+      // Request a code for a number that has no user through the same
+      // authenticated flow I14(b) uses (an anonymous `send-otp` for an unknown
+      // number is refused by I9).
+      const owner = makeIdentity();
+      const { cookie: ownerCookie } = await signInWithEmailOtp(auth, owner);
+
+      const target = makeIdentity();
+      const sent = await authPostWithCookie(
+        auth,
+        "/api/auth/phone-number/send-otp",
+        ownerCookie,
+        { phoneNumber: target.phone },
+        owner
+      );
+      expect(sent.status).toBe(200);
+      const otp = requireOtp("sms", target.phone);
+
+      // Verifying a *valid* code anonymously for a number with no user is the
+      // one path the library answers with an internal 500 ("Failed to update
+      // user", ADR-0021 "Known under-constrained behaviour"). A malformed or
+      // impossible input reaching this endpoint must surface as a client error,
+      // so pin the class and keep I14's observable invariants.
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/phone-number/verify",
+        { phoneNumber: target.phone, code: otp.code },
+        forward(target)
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
+      expect(
+        sessionCookie(response),
+        "an unknown-number verify must not mint a session"
+      ).toBeUndefined();
+      expect(await database.collection("user").countDocuments({ phoneNumber: target.phone })).toBe(
+        0
+      );
     });
   });
 });
@@ -708,6 +787,56 @@ describe("callback URL trust (§1.1 trustedOrigins)", () => {
       expect(sessionCookie(response)).toBeUndefined();
     });
   });
+
+  it("I17: a relative callbackURL is accepted through the handler and mints a session", async () => {
+    await withAuth(async ({ auth }) => {
+      const identity = makeIdentity();
+      const otp = await sendEmailOtp(auth, identity);
+
+      // A relative callbackURL resolves against `baseURL`, which is itself the
+      // trusted deployment origin, so it must be accepted. This is the effective
+      // handler behaviour; the `before`-hook is not assumed to be the only
+      // defence because the instance is *also* given the same `trustedOrigins`.
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/sign-in/email-otp",
+        { email: identity.email, otp: otp.code, callbackURL: "/welcome" },
+        forward(identity)
+      );
+
+      expect(response.status).toBe(200);
+      expect(sessionCookie(response), "a relative callbackURL must be accepted").toBeDefined();
+    });
+  });
+
+  it("I18: an absolute callbackURL on an ALLOWED_ORIGINS origin is accepted — the allowlist is the single source of truth", async () => {
+    await withAuth(async ({ auth }) => {
+      const identity = makeIdentity();
+      const otp = await sendEmailOtp(auth, identity);
+
+      // Paired with I11 (an origin outside the allowlist is a 403), this pins
+      // the allowlist itself as what decides trust: the one configured origin
+      // is accepted while any other absolute origin is not. Better Auth's
+      // native `trustedOrigins` check and our hook consume the same
+      // `ALLOWED_ORIGINS` value and the handler exposes only their combined
+      // outcome, so no spec can attribute the decision to one of the two — the
+      // observable contract is the allowlist, which is exactly what is pinned.
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/sign-in/email-otp",
+        { email: identity.email, otp: otp.code, callbackURL: `${APP_ORIGIN}/welcome` },
+        forward(identity)
+      );
+
+      expect(response.status).toBe(200);
+      expect(
+        sessionCookie(response),
+        "a callbackURL in ALLOWED_ORIGINS must be accepted"
+      ).toBeDefined();
+    });
+  });
 });
 
 describe("OTP logging (security_and_logging_requirements)", () => {
@@ -746,5 +875,53 @@ describe("OTP logging (security_and_logging_requirements)", () => {
     } finally {
       setLogger(previousLogger);
     }
+  });
+});
+
+describe("session-authenticated verify cap (ADR-0021 §1 — product decision)", () => {
+  it("I19: repeated session-authenticated phone verifies are bounded by a per-session cap (value OPEN)", async () => {
+    await withAuth(async ({ auth }) => {
+      const identity = makeIdentity();
+      const cookie = await signUpWithVerifiedPhone(auth, identity);
+
+      // ADR-0021 §1 deliberately does not count an authenticated verify toward
+      // `auth.verify`, so today a session holder can guess codes without any
+      // lockout. Drive the same session until a lockout appears; the exact cap
+      // value is a product decision left OPEN — see the constant comment.
+      const statuses: number[] = [];
+      for (let attempt = 0; attempt < AUTHENTICATED_VERIFY_PROBE_BOUND; attempt += 1) {
+        const response = await authPostWithCookie(
+          auth,
+          "/api/auth/phone-number/verify",
+          cookie,
+          { phoneNumber: identity.phone, code: WRONG_OTP },
+          identity
+        );
+        statuses.push(response.status);
+        expect(response.status, "a wrong code must be a client error, never a 5xx").toBeLessThan(
+          500
+        );
+      }
+
+      const firstLockout = statuses.indexOf(429);
+      expect(
+        firstLockout,
+        `no locked-out response within ${String(AUTHENTICATED_VERIFY_PROBE_BOUND)} session-authenticated attempts — the per-session cap is unbounded`
+      ).toBeGreaterThanOrEqual(0);
+      // Once the cap is hit the lockout is terminal for the rest of the window.
+      expect(statuses.slice(firstLockout).every((status) => status === 429)).toBe(true);
+
+      // Scoping: the budget is per-user/per-session, not per contact. A second,
+      // never-attempted number under the *same* session is already locked out;
+      // a per-contact counter would reset and answer 4xx instead.
+      const second = await authPostWithCookie(
+        auth,
+        "/api/auth/phone-number/verify",
+        cookie,
+        { phoneNumber: makeIdentity().phone, code: WRONG_OTP },
+        identity
+      );
+      expect(second.status, "the cap must be scoped per session/user, not per contact").toBe(429);
+    });
   });
 });

@@ -1,6 +1,13 @@
 import { APIError, getSessionFromCtx } from "better-auth/api";
 
-import { evaluateRateLimit, type RateLimiter } from "@/server/rate-limit";
+import { getTrustedClientIpHeader } from "@/server/config/env";
+import {
+  evaluateRateLimit,
+  hashIdentity,
+  rateLimitKey,
+  resolveClientIp,
+  type RateLimiter,
+} from "@/server/rate-limit";
 
 import { type AuthHookContext, bodyOf } from "./internal";
 
@@ -16,7 +23,10 @@ import { type AuthHookContext, bodyOf } from "./internal";
  * already-authenticated verify (binding a phone, or the enable-flow's one-time
  * code) is not a sign-in credential check, so it is not counted — otherwise it
  * would spend the caller's sign-in budget before the challenge it is meant to
- * protect even begins.
+ * protect even begins. It is instead bounded by a complementary per-user cap
+ * (`AUTHENTICATED_VERIFY_LIMIT` per `AUTHENTICATED_VERIFY_WINDOW_SECONDS`),
+ * consulted with an explicit rule so the frozen class table is untouched
+ * (ADR-0021 §1, ADR-0023 §4).
  *
  * A denied evaluation throws the same 429 envelope a client would observe
  * before this decomposition.
@@ -36,21 +46,21 @@ const OTP_VERIFY_PATHS: ReadonlySet<string> = new Set([
   "/two-factor/verify-otp",
 ]);
 
-/** The client IP the rate limiter buckets on (first `x-forwarded-for` hop). */
-function clientIp(headers: unknown): string | undefined {
-  if (!(headers instanceof Headers)) {
-    return undefined;
-  }
-  const forwarded = headers.get("x-forwarded-for");
-  if (forwarded !== null) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first !== undefined && first !== "") {
-      return first;
-    }
-  }
-  const real = headers.get("x-real-ip");
-  return real === null || real === "" ? undefined : real;
-}
+/**
+ * Verify endpoints that, when a session is present, spend the complementary
+ * per-user cap instead of `auth.verify` (ADR-0021 §1, ADR-0023 §4).
+ *
+ * `/sign-in/email-otp` is excluded: it is the sign-in credential check itself,
+ * so an authenticated call to it is not a "session holder guessing a code".
+ */
+const AUTHENTICATED_VERIFY_PATHS: ReadonlySet<string> = new Set([
+  "/phone-number/verify",
+  "/two-factor/verify-otp",
+]);
+
+/** The authenticated-verify cap budget (ADR-0023 §4 product decision). */
+const AUTHENTICATED_VERIFY_LIMIT = 10;
+const AUTHENTICATED_VERIFY_WINDOW_SECONDS = 600;
 
 /** The contact (email/phone) an OTP endpoint body carries, when present. */
 function contactFromBody(body: Record<string, unknown>): string | undefined {
@@ -82,13 +92,21 @@ export function createRateLimitHook(
 ): (ctx: AuthHookContext) => Promise<void> {
   const { rateLimiter, salt } = deps;
 
+  /** The 429 an OTP rate-limit denial (or a fail-closed limiter fault) throws. */
+  const tooManyRequests = (): APIError =>
+    APIError.from("TOO_MANY_REQUESTS", {
+      message: "Too many requests. Try again later.",
+      code: "too_many_requests",
+    });
+
   /** Enforce one rate-limit class for a request, throwing 429 when denied. */
   const enforceRateLimit = async (
     classKey: "auth.otp" | "auth.verify",
     headers: unknown,
     body: Record<string, unknown>
   ): Promise<void> => {
-    const ip = clientIp(headers);
+    const ip =
+      headers instanceof Headers ? resolveClientIp(headers, getTrustedClientIpHeader()) : undefined;
     const bodyContact = contactFromBody(body);
     // A verify request carries no contact on the two-factor path; the account is
     // identified by the pending challenge, so bucket those by client IP instead.
@@ -103,10 +121,36 @@ export function createRateLimitHook(
       salt,
     });
     if (evaluation.outcome !== "allowed") {
-      throw APIError.from("TOO_MANY_REQUESTS", {
-        message: "Too many requests. Try again later.",
-        code: "too_many_requests",
-      });
+      throw tooManyRequests();
+    }
+  };
+
+  /**
+   * Enforce the complementary per-user cap on session-authenticated verifies
+   * (`phone-number/verify`, `two-factor/verify-otp`).
+   *
+   * `auth.verify` deliberately does not count an authenticated verify
+   * (ADR-0021 §1), so without this a session holder could guess codes without
+   * bound. The budget is one shared, per-user (per-session) counter — rotating
+   * the target contact must not reset it — and is consulted directly with an
+   * explicit rule because the frozen rate-limit class table may not gain a
+   * `user` rule for `auth.verify` (ADR-0023 §4). A denial, or an unavailable
+   * limiter (fail-closed), is the same 429 envelope.
+   */
+  const enforceAuthenticatedVerifyCap = async (userId: string): Promise<void> => {
+    let allowed = false;
+    try {
+      const result = await rateLimiter.limit(
+        rateLimitKey("auth.verify", "user", hashIdentity(userId, salt)),
+        { limit: AUTHENTICATED_VERIFY_LIMIT, windowSeconds: AUTHENTICATED_VERIFY_WINDOW_SECONDS }
+      );
+      allowed = result.success;
+    } catch {
+      // Fail closed: a limiter fault must not reopen the guessing surface.
+      allowed = false;
+    }
+    if (!allowed) {
+      throw tooManyRequests();
     }
   };
 
@@ -120,6 +164,8 @@ export function createRateLimitHook(
       const session = await getSessionFromCtx(ctx);
       if (!session) {
         await enforceRateLimit("auth.verify", ctx.headers, body);
+      } else if (AUTHENTICATED_VERIFY_PATHS.has(path)) {
+        await enforceAuthenticatedVerifyCap(session.user.id);
       }
     }
   };

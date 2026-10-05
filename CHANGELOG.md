@@ -1,3 +1,9 @@
+## [1.7.1](https://github.com/yahodu/openpic-webapp/compare/v1.7.0...v1.7.1) (2026-10-05)
+
+### Bug Fixes
+
+- **auth:** OP-85 client-IP trust model and authenticated verify cap ([#132](https://github.com/yahodu/openpic-webapp/issues/132)) ([15d31ba](https://github.com/yahodu/openpic-webapp/commit/15d31ba3a1e32e5a483e901d7c5ab231149ca6c6))
+
 ## [1.7.0](https://github.com/yahodu/openpic-webapp/compare/v1.6.1...v1.7.0) (2026-10-05)
 
 ### Features
