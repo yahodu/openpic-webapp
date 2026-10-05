@@ -1,4 +1,4 @@
-# ADR-0023 — Auth guards: one pure decision per label, a resolver port, and the per-session 2FA fact
+# ADR-0025 — Auth guards: one pure decision per label, a resolver port, and the per-session 2FA fact
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** OP-86 `t_e0f66f3f` (phase 1-Identity, epic Authentication, RED) · **Implements:** contract §0.3 · **Depends on:** OP-85 (Better Auth config)

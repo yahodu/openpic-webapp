@@ -117,7 +117,7 @@ export function createAuth(options: CreateAuthOptions): AuthLike {
     session: {
       expiresIn: getSessionTtlSeconds(),
       /**
-       * Whether *this session* passed the second factor (ADR-0023 §4).
+       * Whether *this session* passed the second factor (ADR-0025 §4).
        *
        * Better Auth 1.7.7 keeps no per-session 2FA fact, and `user.twoFactorEnabled`
        * alone cannot distinguish an admin session that enrolled 2FA (I8) from a
@@ -178,7 +178,7 @@ export function createAuth(options: CreateAuthOptions): AuthLike {
       // Mobile clients authenticate with `Authorization: Bearer <session token>`
       // (contract §0.3); the plugin converts that header into a session and
       // exposes the token on the sign-in response as `set-auth-token`. The guard
-      // resolver relies on both (ADR-0023 §3).
+      // resolver relies on both (ADR-0025 §3).
       bearer(),
     ],
   });

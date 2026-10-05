@@ -9,7 +9,7 @@ import { defineRoute } from "@/server/http/define-route";
  * `GET /api/v1/me` — the caller's own account (contract §1.2).
  *
  * OP-86 guards the route with the `user` auth label so the deployed HTTP
- * surface exercises the shared guard (E1, ADR-0023 §6). The response body is
+ * surface exercises the shared guard (E1, ADR-0025 §6). The response body is
  * OP-88's contract; the handler here exists only to give the guard a protected
  * target.
  */

@@ -161,7 +161,7 @@ export async function runTwoFactorBeforeHook(
 /**
  * Record that the current session passed the second factor.
  *
- * Better Auth 1.7.7 stores no such session fact (ADR-0023 §4), so the
+ * Better Auth 1.7.7 stores no such session fact (ADR-0025 §4), so the
  * implementation materialises one: on a successful `/two-factor/verify-otp` the
  * session document is marked `twoFactorVerified: true`. `resolvePrincipal` reads
  * that field, which is exactly how I8 (allow) vs I6/I7 (deny) is decided — a

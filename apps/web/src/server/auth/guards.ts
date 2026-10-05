@@ -11,7 +11,7 @@ import { systemClock } from "@/server/runtime/clock";
 
 /**
  * Auth guards — one uniform enforcement point for every auth label (OP-86,
- * contract §0.3, ADR-0023).
+ * contract §0.3, ADR-0025).
  *
  * The story separates three concerns so each is independently testable:
  *
@@ -62,7 +62,7 @@ export interface UserPrincipal {
    *
    * Deliberately per-session: a session minted before 2FA was enabled (I6) or a
    * phone-OTP first-factor sign-in (I7) both carry `twoFactorEnabled` yet never
-   * passed the second factor. See ADR-0023 §4.
+   * passed the second factor. See ADR-0025 §4.
    */
   readonly sessionTwoFactorVerified: boolean;
   readonly banned: boolean;
