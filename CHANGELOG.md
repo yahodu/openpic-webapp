@@ -1,3 +1,9 @@
+## [1.5.1](https://github.com/yahodu/openpic-webapp/compare/v1.5.0...v1.5.1) (2026-10-05)
+
+### Bug Fixes
+
+- **plans:** OP-83 $literal-wrap every catalogue seed field ([#121](https://github.com/yahodu/openpic-webapp/issues/121)) ([05093e8](https://github.com/yahodu/openpic-webapp/commit/05093e8f7e3b238819b0ef9e2f133a326e5415c6))
+
 ## [1.5.0](https://github.com/yahodu/openpic-webapp/compare/v1.4.0...v1.5.0) (2026-10-05)
 
 ### Features
