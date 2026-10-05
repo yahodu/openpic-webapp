@@ -5,7 +5,7 @@ import { memoryMessageTransport } from "@/server/adapters/memory-message-transpo
 import { novuTriggerRequestSchema } from "@/server/adapters/novu/schemas";
 import { novuTransport } from "@/server/adapters/novu/novu-transport";
 import { runWorkflowUpsert } from "@/server/adapters/novu/upsert-workflows";
-import { UpstreamContractError } from "@/server/adapters/transport-error";
+import { TransportError, UpstreamContractError } from "@/server/adapters/transport-error";
 import {
   createLogger,
   memoryTransport,
@@ -530,5 +530,35 @@ describe("novuTransport logging (security_and_logging_requirements)", () => {
       code: "timeout",
     });
     expectNoSensitiveContent(sink.entries);
+  });
+});
+
+/**
+ * §3 — a 2xx body that is not JSON is classified, not a raw `SyntaxError`.
+ *
+ * A gateway that answers `200` with a non-JSON body (e.g. an HTML error page)
+ * makes `response.json()` throw a bare `SyntaxError` today, so the failure
+ * escapes as a non-`TransportError` and the dispatch ledger has no retry
+ * policy. Every other failure path is a classified `TransportError`; a body
+ * that no longer matches the pinned wire contract is a non-retryable
+ * `upstream_contract_violation`, exactly like the shape-mismatch pin (I2).
+ */
+describe("novuTransport response parsing (§3 non-JSON 2xx)", () => {
+  it("I19: a 200 with a non-JSON body rejects with a classified TransportError", async () => {
+    // Arrange
+    server.use(
+      http.post(TRIGGER_URL, () => HttpResponse.text("<html>gateway</html>", { status: 200 }))
+    );
+    const transport = novuTransport({ baseUrl: NOVU_BASE_URL, apiKey: NOVU_API_KEY });
+
+    // Act
+    const send = transport.send(makeOutboundMessage({ channel: "email" }));
+
+    // Assert
+    await expect(send).rejects.toBeInstanceOf(TransportError);
+    await expect(send).rejects.toMatchObject({
+      retryable: false,
+      code: "upstream_contract_violation",
+    });
   });
 });
