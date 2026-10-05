@@ -1,4 +1,4 @@
-# ADR-0057 — OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`
+# ADR-0059 — OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-backend-coder`
 - **Card:** `t_8599578e` (OP-90 follow-up, Medium) · **Deliverable:** branch `OP-90-task-me-indexes`, PR _pending_

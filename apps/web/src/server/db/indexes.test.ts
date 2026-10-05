@@ -188,3 +188,77 @@ describe("index spec lint — plans catalogue uniqueness (OP-83 follow-up)", () 
     ).toBe(true);
   });
 });
+
+/**
+ * OP-89 follow-up pins (ADR-0046) — the identity-lifecycle collections.
+ *
+ * These are **append-only** additions: the existing U1/U2 lints assert the
+ * shape of *whatever* specs exist, so a regression that deletes one of these
+ * declarations (or flips its options) fails nothing today. Each spec below
+ * names a specific index the database must carry and asserts its exact shape,
+ * so deleting it, renaming it, moving it to another collection, or changing
+ * its keys/options turns this suite red.
+ *
+ * The invariants are the delivered contract of PR #162 / ADR-0043:
+ *
+ *   - `sessionDevices` supports the bounded new-device read and is TTL-bounded;
+ *   - `contactChangeFanouts` (raw PII) is TTL-bounded (ADR-0040 §2);
+ *   - `userProfiles.userId` is unique (ADR-0041 §4) and the DSR purge scan is
+ *     backed by a partial `{status, deletionScheduledAt}` index (schema §13.2).
+ */
+describe("index spec pins — OP-89 identity lifecycle (ADR-0046)", () => {
+  /** The declared spec with this exact name, or `undefined`. */
+  function specNamed(name: string): IndexSpec | undefined {
+    return INDEX_SPECS.find((candidate) => candidate.name === name);
+  }
+
+  it("declares the sessionDevices {userId:1, createdAt:-1} index backing the new-device read", () => {
+    const spec = specNamed("session_devices_user_created");
+
+    expect(spec, "missing index declaration 'session_devices_user_created'").toBeDefined();
+    expect(spec?.collection).toBe(COLLECTIONS.sessionDevices);
+    expect(spec?.keys).toEqual([
+      ["userId", 1],
+      ["createdAt", -1],
+    ]);
+  });
+
+  it("bounds sessionDevices growth with a {expireAt:1} TTL that expires immediately", () => {
+    const spec = specNamed("session_devices_expire_at_ttl");
+
+    expect(spec, "missing index declaration 'session_devices_expire_at_ttl'").toBeDefined();
+    expect(spec?.collection).toBe(COLLECTIONS.sessionDevices);
+    expect(spec?.keys).toEqual([["expireAt", 1]]);
+    expect(spec?.expireAfterSeconds).toBe(0);
+  });
+
+  it("TTL-bounds the raw-PII contactChangeFanouts collection", () => {
+    const spec = specNamed("contact_change_fanouts_expire_at_ttl");
+
+    expect(spec, "missing index declaration 'contact_change_fanouts_expire_at_ttl'").toBeDefined();
+    expect(spec?.collection).toBe(COLLECTIONS.contactChangeFanouts);
+    expect(spec?.keys).toEqual([["expireAt", 1]]);
+    expect(spec?.expireAfterSeconds).toBe(0);
+  });
+
+  it("enforces one userProfiles row per user with a unique {userId:1} index", () => {
+    const spec = specNamed("user_profiles_user_id_unique");
+
+    expect(spec, "missing index declaration 'user_profiles_user_id_unique'").toBeDefined();
+    expect(spec?.collection).toBe(COLLECTIONS.userProfiles);
+    expect(spec?.keys).toEqual([["userId", 1]]);
+    expect(spec?.unique).toBe(true);
+  });
+
+  it("backs the DSR purge scan with a partial {status:1, deletionScheduledAt:1} index", () => {
+    const spec = specNamed("user_profiles_deletion_pending");
+
+    expect(spec, "missing index declaration 'user_profiles_deletion_pending'").toBeDefined();
+    expect(spec?.collection).toBe(COLLECTIONS.userProfiles);
+    expect(spec?.keys).toEqual([
+      ["status", 1],
+      ["deletionScheduledAt", 1],
+    ]);
+    expect(spec?.partialFilterExpression).toEqual({ status: "deletion_pending" });
+  });
+});

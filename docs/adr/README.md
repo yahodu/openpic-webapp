@@ -55,11 +55,15 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0047](ADR-0047-op90-me-contract-decisions.md)                                     | OP-90 `/me`: caller `phoneNumber` is raw E.164; foreign `avatarAssetId` is `422 validation_failed`       | Accepted |
 | [0048](ADR-0048-op89-followup-green-idempotency-and-surface-wiring.md)             | OP-89 follow-up GREEN: re-run dedupe for contact.changed / sessions.revoked + section 4–6 surface wiring | Accepted |
 | [0049](ADR-0049-op89-followup-green-review-signoff.md)                             | OP-89 follow-up GREEN review sign-off: dedupe + surfaces verified; two coverage follow-ups routed        | Accepted |
+| [0050](ADR-0050-op89-identity-lifecycle-indexes-ttls-red-pins.md)                  | OP-89 RED pins: identity-lifecycle index/TTL shapes and the bounded new-device read                      | Accepted |
+| [0051](ADR-0051-op89-identity-lifecycle-indexes-ttls-red-pins-review.md)           | OP-89 RED pins review sign-off: pins verified, cap-guard + ADR-numbering findings routed                 | Accepted |
 | [0052](ADR-0052-op90-me-projection-red.md)                                         | OP-90 RED: the full `GET`/`PATCH /me` §1.2 projection, capabilities, and forbidden/unknown fields        | Accepted |
 | [0053](ADR-0053-op90-me-projection-red-review-signoff.md)                          | OP-90 RED review sign-off: pins approved; contract decisions and 2 coverage gaps routed                  | Accepted |
 | [0054](ADR-0054-op90-me-projection-red-followup-review-signoff.md)                 | OP-90 RED follow-up review sign-off: the empty-PATCH 422 and pure-attendee pins land                     | Accepted |
 | [0055](ADR-0055-op90-me-projection-green.md)                                       | OP-90 GREEN: the full `GET`/`PATCH /me` §1.2 projection on top of the OP-89 read slice                   | Accepted |
 | [0056](ADR-0056-op90-me-projection-green-review-signoff.md)                        | OP-90 GREEN review sign-off: §1.2 projection verified; index gap and phone-only decision routed          | Accepted |
-| [0057](ADR-0057-op90-me-indexes.md)                                                | OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`                  | Accepted |
+| [0057](ADR-0057-op89-identity-lifecycle-red-pins-r3-followup-review.md)            | OP-89 RED-pins R3 follow-up review sign-off: same-device >100 read-cap pin verified                      | Accepted |
+| [0058](ADR-0058-op89-identity-lifecycle-indexes-green-review.md)                   | OP-89 indexes/TTLs GREEN review sign-off: device-keyed bounded new-device read verified                  | Accepted |
+| [0059](ADR-0059-op90-me-indexes.md)                                                | OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`                  | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
