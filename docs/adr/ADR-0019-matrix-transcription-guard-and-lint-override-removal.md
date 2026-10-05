@@ -1,4 +1,4 @@
-# ADR-0018 — §4 matrix transcription is guarded by a table-driven spec; the broad test-lint override is removed
+# ADR-0019 — §4 matrix transcription is guarded by a table-driven spec; the broad test-lint override is removed
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** OP-84 follow-up RED (`t_13fc7d18`) · **Relates to:** [ADR-0016](ADR-0016-notification-routing-matrix-as-data.md) (frozen keys, inline-never-snapshot), [ADR-0017](ADR-0017-notification-routing-matrix-green-implementation.md) (the GREEN transcription and its coverage gap)
@@ -61,12 +61,15 @@ template exists for exactly the enabled groups and for no disabled one.
 
 ### 2. The two lint rules are removed by fixing the spec sites, not scoping the override
 
-Instead of narrowing the override, the offending sites use a small `requireType`
-helper that throws when a key is missing, so no `as T` / `!` assertion is needed
+Instead of narrowing the override, the offending sites use a shared `requireType`
+helper, exported from the test factories module
+(`apps/web/src/test/factories/notification.ts`) and reused by both notification
+specs, that throws when a key is missing, so no `as T` / `!` assertion is needed
 at all:
 
 ```ts
-function requireType(key: string): NotificationType {
+// apps/web/src/test/factories/notification.ts
+export function requireType(key: string): NotificationType {
   const type = SEED_NOTIFICATION_TYPES.find((candidate) => candidate.typeKey === key);
   if (type === undefined) throw new Error(`Missing seeded notification type: ${key}`);
   return type;

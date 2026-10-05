@@ -23,6 +23,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0015](ADR-0015-plans-seed-concurrency-atomic-upsert.md)                 | `plans` seed concurrency: atomic conditioned upsert and `{key:1}` unique index                     | Accepted |
 | [0016](ADR-0016-notification-routing-matrix-as-data.md)                  | Notification routing matrix as data: frozen 81 keys, template/group mapping, version-on-change     | Accepted |
 | [0017](ADR-0017-notification-routing-matrix-green-implementation.md)     | Notification routing matrix GREEN: 81-key transcription, derived fields, atomic reconcile          | Accepted |
-| [0018](ADR-0018-matrix-transcription-guard-and-lint-override-removal.md) | §4 matrix transcription guard (table-driven spec); broad test-lint override removed                | Accepted |
+| [0019](ADR-0019-matrix-transcription-guard-and-lint-override-removal.md) | §4 matrix transcription guard (table-driven spec); broad test-lint override removed                | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.

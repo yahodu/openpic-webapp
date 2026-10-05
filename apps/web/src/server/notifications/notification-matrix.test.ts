@@ -7,6 +7,8 @@ import type {
 import { SEED_NOTIFICATION_TYPES } from "@/server/notifications/notification-types.values";
 import { SEED_NOTIFICATION_TEMPLATES } from "@/server/notifications/notification-templates.values";
 
+import { requireType } from "../../test/factories/notification";
+
 /**
  * Table-driven contract — the §4 routing matrix, transcribed key by key.
  *
@@ -649,17 +651,6 @@ type GroupName = "in_app" | "email" | "mobile";
 interface GroupView {
   readonly enabled: boolean;
   readonly optOutAllowed: boolean;
-}
-
-/** The seeded type for a contract key; throws when the seed omits one. */
-function requireType(key: string): NotificationType {
-  const type = SEED_NOTIFICATION_TYPES.find((candidate) => candidate.typeKey === key);
-
-  if (type === undefined) {
-    throw new Error(`Missing seeded notification type: ${key}`);
-  }
-
-  return type;
 }
 
 /** The routing flags for one group of a type; throws when the group is absent. */

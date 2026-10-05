@@ -11,7 +11,7 @@ import {
   SEED_NOTIFICATION_TYPES,
 } from "@/server/notifications/notification-types.values";
 
-import { makeNotificationType } from "../../test/factories/notification";
+import { makeNotificationType, requireType } from "../../test/factories/notification";
 
 /**
  * Unit contract — the `notificationTypes` routing catalogue (schema §19.1,
@@ -156,17 +156,6 @@ const OTP_TYPE_KEYS = ["auth.otp.email.requested", "auth.otp.mobile.requested"] 
 /** Find one channel group on a type, or `undefined` when absent. */
 function groupOf(type: NotificationType, group: ChannelGroup["group"]): ChannelGroup | undefined {
   return type.channelGroups.find((candidate) => candidate.group === group);
-}
-
-/** The seeded type for a contract key; throws when the seed omits one. */
-function requireType(key: string): NotificationType {
-  const type = SEED_NOTIFICATION_TYPES.find((candidate) => candidate.typeKey === key);
-
-  if (type === undefined) {
-    throw new Error(`Missing seeded notification type: ${key}`);
-  }
-
-  return type;
 }
 
 /** Every seeded type's key, sorted. */
