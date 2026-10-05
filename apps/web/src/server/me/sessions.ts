@@ -148,7 +148,7 @@ export function toSessionSummary(
       typeof session.userAgent === "string" ? session.userAgent : null
     ),
     // There is no geo resolver in the codebase yet: the raw IP is never
-    // returned and `ipCountry` stays `null` until one exists (ADR-0062).
+    // returned and `ipCountry` stays `null` until one exists (ADR-0068 §6).
     ipCountry: null,
     createdAt: createdAt ?? "",
     lastActiveAt: asIsoString(session.updatedAt) ?? createdAt ?? "",

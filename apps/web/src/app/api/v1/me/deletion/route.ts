@@ -99,7 +99,7 @@ export const DELETE = defineRoute({
   response: noContentSchema,
   // The caller is `deletion_pending` for the whole cancel window, which the
   // default `user` guard denies; the exemption lets the handler decide whether
-  // the window is still open (ADR-0062).
+  // the window is still open (ADR-0068 §4).
   auth: (ctx, request) =>
     requireAuth("user", { auth: getAuth(), database: getDb(), allowDeletionPending: true })(
       ctx,

@@ -101,7 +101,7 @@ export interface GuardFacts {
    * whether the cancel window is still open.
    *
    * The deletion states are otherwise denied with `403` (contract §0.3); the
-   * cancel window cannot exist without this exemption (ADR-0062).
+   * cancel window cannot exist without this exemption (ADR-0068 §4).
    */
   readonly allowDeletionPending?: boolean;
 }

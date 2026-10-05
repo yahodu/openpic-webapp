@@ -18,7 +18,7 @@ import {
  * Guarded with the `user` label. The list is caller-scoped and active-only
  * (an expired session is not listed), and each item is the §1.3 projection —
  * raw `ipAddress`, `userAgent`, `token` and `userId` are never returned
- * (§0.15); `ipCountry` is `null` until a geo resolver lands (ADR-0062).
+ * (§0.15); `ipCountry` is `null` until a geo resolver lands (ADR-0068 §6).
  */
 export const GET = defineRoute({
   route: "/api/v1/me/sessions",
