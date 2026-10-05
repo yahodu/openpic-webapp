@@ -213,6 +213,39 @@ function asDate(value: unknown): Date | null {
   return null;
 }
 
+/** MongoDB's duplicate-key server error code. */
+const DUPLICATE_KEY = 11000;
+
+/** True when an error is MongoDB's duplicate-key (E11000) refusal. */
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === DUPLICATE_KEY
+  );
+}
+
+/**
+ * Recover the persisted `_id` of an already-emitted domain event by its dedupe
+ * key.
+ *
+ * A repeated `dedupeKey` is caught by the outbox's unique partial index and
+ * returned as `{ deduped: true, id: null }`, so the id is unknown on the
+ * dedupe path. The outbox row itself still holds it, which is what lets a
+ * redelivery re-run the transient side effects the first attempt never got to
+ * commit (ADR-0049 §1).
+ */
+async function eventIdByDedupeKey(db: Db, dedupeKey: string): Promise<string | null> {
+  const stored = await platformRepo(db)
+    .collection(COLLECTIONS.domainEvents)
+    .findOne({ dedupeKey }, { projection: { _id: 1 } });
+  if (stored === null || stored === undefined) {
+    return null;
+  }
+  return asHexString((stored as { _id?: unknown })._id);
+}
+
 /** The 24-hour bucket index a device sighting falls into. */
 function deviceWindowBucket(at: Date): number {
   return Math.floor(at.getTime() / NEW_DEVICE_WINDOW_MS);
@@ -608,19 +641,38 @@ export async function handleContactChanged(
   if (emitted === null) {
     return;
   }
-  if (emitted.id === null) {
+
+  // The emit and the fan-out write are not atomic, so a repeat delivery at the
+  // same instant must still (re-)run the fan-out. On the fresh path the emit
+  // hands back its id; on the deduped path (`id === null`) it is recovered from
+  // the outbox row so the fan-out is keyed by the same event id, making the
+  // insert idempotent instead of silently skipping the replaced-contact target
+  // (ADR-0049 §1).
+  const eventId =
+    emitted.id ??
+    (await eventIdByDedupeKey(db, `auth.contact.changed:${event.userId}:${now.toISOString()}`));
+  if (eventId === null) {
     return;
   }
 
-  await platformRepo(db)
-    .collection(CONTACT_CHANGE_FANOUTS_COLLECTION)
-    .insertOne({
-      eventId: emitted.id,
-      userId: event.userId,
-      previous,
-      current,
-      expireAt: addMilliseconds(now, CONTACT_CHANGE_FANOUT_TTL_MS),
-    });
+  try {
+    await platformRepo(db)
+      .collection(CONTACT_CHANGE_FANOUTS_COLLECTION)
+      .insertOne({
+        eventId,
+        userId: event.userId,
+        previous,
+        current,
+        expireAt: addMilliseconds(now, CONTACT_CHANGE_FANOUT_TTL_MS),
+      });
+  } catch (error) {
+    // A concurrent/redelivered invocation may have already written the row for
+    // this event; the unique `eventId` index turns that into an E11000, which
+    // is the idempotent no-op. Any other failure still surfaces.
+    if (!isDuplicateKeyError(error)) {
+      throw error;
+    }
+  }
 }
 
 /**

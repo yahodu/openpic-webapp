@@ -330,6 +330,17 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+  // contact_change_fanouts — one fan-out per emitted `auth.contact.changed`
+  // event. The unique index makes the fan-out write idempotent under an
+  // at-least-once redelivery: a redelivery after a partial failure re-inserts
+  // the same event id and collides harmlessly instead of losing the
+  // replaced-contact target (ADR-0049 §1).
+  {
+    collection: COLLECTIONS.contactChangeFanouts,
+    name: "contact_change_fanouts_event_id_unique",
+    keys: [["eventId", 1]],
+    unique: true,
+  },
 ];
 
 /** The outcome of a bootstrap run: which indexes were built and which existed. */
