@@ -29,7 +29,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0021](ADR-0021-better-auth-config-green-implementation.md)                      | Better Auth config GREEN: hook-based policy, `__test__` rewrite, SMS-only 2FA flow                 | Accepted |
 | [0022](ADR-0022-better-auth-hook-module-decomposition.md)                        | Better Auth hooks split into focused modules (OP-85 follow-up refactor)                            | Accepted |
 | [0023](ADR-0023-auth-coverage-red-otp-ip-leg-verify-cap.md)                      | Auth coverage RED: OTP IP leg, unknown-number verify 4xx, callbackURL trust, session verify cap    | Accepted |
-| [0024](ADR-0024-client-ip-trust-model.md)                                        | Client-IP trust model for the auth rate-limit IP leg (configurable edge header)                    | Accepted |
+| [0024](ADR-0024-client-ip-trust-model.md)                                        | Client-IP trust model for the auth IP leg (`TRUSTED_CLIENT_IP_HEADER` required in production)      | Accepted |
 | [0025](ADR-0025-auth-guards.md)                                                  | Auth guards: one pure decision per label, resolver port, per-session 2FA fact                      | Accepted |
 | [0026](ADR-0026-op86-ban-exemption-and-2fa-signin-pins.md)                       | OP-86 review-gap pins: `/me` ban exemption and the 2FA sign-in branch                              | Accepted |
 | [0027](ADR-0027-op86-ban-exemption-green.md)                                     | OP-86 follow-up GREEN: wire `/me` `allowBanned`, confirm the 2FA sign-in branch                    | Accepted |

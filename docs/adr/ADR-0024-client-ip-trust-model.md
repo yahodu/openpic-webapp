@@ -1,8 +1,8 @@
 # ADR-0024 — Client-IP trust model for the auth rate-limit IP leg
 
-- **Status:** Accepted · **Date:** 2026-10-05
+- **Status:** Accepted · **Date:** 2026-10-05 · **Amended:** 2026-10-05 (`t_19bf5c17`, decision option a — `TRUSTED_CLIENT_IP_HEADER` is now **required in production**; see "Production policy (option a)" below)
 - **Card:** `t_40c45a13` (OP-85 reviewer round-1 follow-up, GREEN) · **Implements:** the IP-leg finding from `t_c63a267f` · **Depends on:** ADR-0005 (two-tier rate limiting), OP-79 (rate-limit port)
-- **Supersedes / amends:** nothing. Complements ADR-0021/ADR-0023 by fixing the _source_ of the IP identity those legs key on.
+- **Supersedes / amends:** amended by `t_5c873993` (GREEN) on the decision of `t_19bf5c17`; the production leg is now enforced rather than assumed (ADR-0031). Complements ADR-0021/ADR-0023 by fixing the _source_ of the IP identity those legs key on.
 
 ## Context
 
@@ -40,9 +40,12 @@ documented dev fallback:
 - When the header is configured but **absent**, the resolver returns `undefined`
   rather than falling back to the forgeable list: a misconfigured deployment
   loses the IP leg (fail-safe) instead of trusting a client-supplied value.
-- When the knob is **unset** (dev/e2e default), the resolver keeps the previous
-  behaviour — leftmost `x-forwarded-for`, then `x-real-ip`. This preserves every
-  existing spec and keeps the memory/dev path working.
+- When the knob is **unset** in a **non-production** environment
+  (`development`/`test`/`e2e`/`staging`), the resolver keeps the previous
+  behaviour — leftmost `x-forwarded-for`, then `x-real-ip`. This is a
+  **dev/e2e fallback, not a production default**: production config validation
+  now refuses to start unless the knob is set (see "Production policy
+  (option a)" below).
 
 The resolver lives in `apps/web/src/server/rate-limit/client-ip.ts`
 (`resolveClientIp`) and is shared by both IP consumers: the auth
@@ -50,25 +53,50 @@ The resolver lives in `apps/web/src/server/rate-limit/client-ip.ts`
 (`stage.ts`). Neither reads `process.env` directly (the lint rule confines env
 access to `src/server/config`).
 
-### Assumption
+### Production policy (option a) — enforced
 
-The default (knob unset) is only safe where the fronting layer overwrites
-`x-forwarded-for` — the shape of the managed edge (Vercel) and of the local dev
-server. A production deployment behind an **appending** proxy, or with **no**
-proxy, MUST set `TRUSTED_CLIENT_IP_HEADER` to the header its trusted layer
-guarantees; the residual risk otherwise is an evadable/absent IP leg (the
-per-contact leg is unaffected).
+`TRUSTED_CLIENT_IP_HEADER` is **required in production**. Config validation
+(`getConfig()`, `apps/web/src/server/config/env.ts`) refuses to start
+(`ConfigError` naming the **key only**, never its value) when
+`APP_ENV=production` and the knob is unset or blank (whitespace-only fails; a
+padded non-blank value such as `"  x-real-ip  "` is valid). The Node server
+validates the configuration from the instrumentation hook at boot, so a
+misconfigured production process **fails fast at startup** rather than at the
+first request. Non-production environments (`development`/`test`/`e2e`/
+`staging`) keep the knob optional and retain the dev/e2e fallback.
+
+This is the strongest option: there is **no silent degrade**. A production
+deploy cannot start with the forgeable `x-forwarded-for` fallback in place — the
+operator is forced to name the header the trusted edge overwrites, which is the
+only value the client cannot forge. The rejected alternatives were:
+
+- **(b) startup-warning-only.** Rejected: a warning in the logs is not a gate,
+  so a forgotten knob still silently degrades the IP leg — the exact hole the
+  PR #132 review filed.
+- **(c) accept the residual risk.** Rejected: it leaves a production
+  deployment's abuse protection silently weakened, and the fix is a cheap,
+  fail-closed config check.
+
+**Deployment note (deploy-order prerequisite):** set `TRUSTED_CLIENT_IP_HEADER`
+in the **production** environment **before** this change is deployed — the
+production config check otherwise refuses to start. Name the header the deployed
+edge guarantees:
+
+- on **Vercel** the platform sets/overwrites `x-forwarded-for` (and `x-real-ip`);
+- if a **Cloudflare Worker** fronts the app, use `cf-connecting-ip`.
 
 ## Consequences
 
-- No existing observable behaviour changes with the knob unset: all prior
-  integration/unit specs, including the "first hop" pin and I15, stay green.
+- No existing observable behaviour changes with the knob unset in
+  non-production: all prior integration/unit specs, including the "first hop"
+  pin and I15, stay green.
 - The trust boundary is now explicit and configurable instead of hard-coded to
   one proxy layout, as the card requires.
-- Residual risk (documented): a deployment that leaves the knob unset and sits
-  behind an appending/no proxy still trusts the leftmost `x-forwarded-for` and
-  can have its IP leg evaded or disabled. This is a deployment decision, not a
-  code default that can be made universally correct given the pinned test.
+- The **production** leg is now enforced (option a): a production deployment
+  refuses to start unless `TRUSTED_CLIENT_IP_HEADER` names the header the trusted
+  edge overwrites, so the silent-degrade path is closed. The remaining operational
+  obligation is the deploy-order prerequisite above (the value must be present in
+  the production environment before this ships).
 - `.env.example` documents the new variable, so the PR carries an environment
   change.
 

@@ -13,7 +13,7 @@ the client cannot forge; when **unset**, it keeps the historical dev/e2e
 fallback — the leftmost, client-writable `x-forwarded-for`, then `x-real-ip`.
 
 The PR #132 review (finding #1, Medium, security/config) observed that making
-the unforgeable source *opt-in* means a production deploy that forgets the knob
+the unforgeable source _opt-in_ means a production deploy that forgets the knob
 silently degrades to the forgeable fallback — a silent-downgrade hole. The
 orchestrator (`t_19bf5c17`) chose **option (a)**: the knob is **required in
 production**. Config validation must refuse to start when `APP_ENV=production`
@@ -46,13 +46,13 @@ That contract is already pinned by the `t_9d6a765c` specs in
 New `describe("getConfig — production requires TRUSTED_CLIENT_IP_HEADER (ADR-0031)")`
 in `apps/web/src/server/config/env.test.ts`:
 
-| Pin | Case | Expected |
-| --- | --- | --- |
-| P1 | production, knob unset | `ConfigError` naming `TRUSTED_CLIENT_IP_HEADER` |
-| P2 | production, knob `""` / `"   "` | throws naming `TRUSTED_CLIENT_IP_HEADER` |
-| P3 | production, knob `x-real-ip` / `cf-connecting-ip` / `"  x-real-ip  "` | parses (green pin) |
-| P4 | `development`/`test`/`e2e`/`staging`, knob unset | parses (green pin) |
-| P5 | production, knob unset (single failure) | message is exactly `Invalid application configuration: TRUSTED_CLIENT_IP_HEADER` — key names only, no value |
+| Pin | Case                                                                  | Expected                                                                                                    |
+| --- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| P1  | production, knob unset                                                | `ConfigError` naming `TRUSTED_CLIENT_IP_HEADER`                                                             |
+| P2  | production, knob `""` / `"   "`                                       | throws naming `TRUSTED_CLIENT_IP_HEADER`                                                                    |
+| P3  | production, knob `x-real-ip` / `cf-connecting-ip` / `"  x-real-ip  "` | parses (green pin)                                                                                          |
+| P4  | `development`/`test`/`e2e`/`staging`, knob unset                      | parses (green pin)                                                                                          |
+| P5  | production, knob unset (single failure)                               | message is exactly `Invalid application configuration: TRUSTED_CLIENT_IP_HEADER` — key names only, no value |
 
 P1/P2 (and P5, which asserts the refusal) are **RED** on `origin/main` @
 `b232cc6` because `getConfig()` currently **succeeds** with the knob unset in
@@ -95,6 +95,6 @@ weakened.
 ## Assumption
 
 `"  x-real-ip  "` (non-blank after trimming) is treated as **valid** in
-production — the refusal is for *blank* values, not for surrounding whitespace.
+production — the refusal is for _blank_ values, not for surrounding whitespace.
 This matches `getTrustedClientIpHeader()`, which trims and lowercases before
 use.
