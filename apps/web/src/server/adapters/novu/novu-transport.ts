@@ -22,6 +22,7 @@ import {
   classifyTransportFailure,
 } from "../transport-error";
 import { novuTriggerRequestSchema, novuTriggerResponseSchema } from "./schemas";
+import { novuAuthHeaders } from "./novu-http";
 import { workflowIdForChannel } from "./workflow-map";
 
 /** The log event emitted for a successful send. */
@@ -130,11 +131,7 @@ export function novuTransport(options: NovuTransportOptions): MessageTransport {
       try {
         response = await fetch(triggerUrl, {
           method: "POST",
-          headers: {
-            authorization: `ApiKey ${options.apiKey}`,
-            "content-type": "application/json",
-            accept: "application/json",
-          },
+          headers: { ...novuAuthHeaders(options.apiKey), "content-type": "application/json" },
           body: JSON.stringify(validatedRequest.data),
           signal: controller.signal,
         });

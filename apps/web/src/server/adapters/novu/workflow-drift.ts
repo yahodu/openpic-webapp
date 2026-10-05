@@ -8,8 +8,8 @@
  * process exit code, and `scripts/novu/assert-no-drift.ts` is the thin CLI.
  */
 import type { Logger } from "../../logging";
+import { readNovuWorkflowList } from "./novu-http";
 import {
-  novuWorkflowListSchema,
   transportWorkflowListSchema,
   type NovuWorkflowList,
   type TransportWorkflow,
@@ -108,35 +108,23 @@ export interface TransportDriftOptions {
  * @returns The process exit code.
  */
 export async function runTransportDriftCheck(options: TransportDriftOptions): Promise<number> {
-  const url = `${options.baseUrl}/v1/workflows`;
-
   try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        authorization: `ApiKey ${options.apiKey}`,
-        accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      options.logger?.error("Novu workflow list request failed.", {
-        event: WORKFLOW_DRIFT_EVENT,
-        status: response.status,
-      });
+    const read = await readNovuWorkflowList(options);
+    if (!read.ok) {
+      if (read.status === undefined) {
+        options.logger?.error("Novu workflow list response did not match the contract.", {
+          event: WORKFLOW_DRIFT_EVENT,
+        });
+      } else {
+        options.logger?.error("Novu workflow list request failed.", {
+          event: WORKFLOW_DRIFT_EVENT,
+          status: read.status,
+        });
+      }
       return 1;
     }
 
-    const body: unknown = await response.json();
-    const parsed = novuWorkflowListSchema.safeParse(body);
-    if (!parsed.success) {
-      options.logger?.error("Novu workflow list response did not match the contract.", {
-        event: WORKFLOW_DRIFT_EVENT,
-      });
-      return 1;
-    }
-
-    const report = checkTransportWorkflows(toTransportWorkflows(parsed.data));
+    const report = checkTransportWorkflows(toTransportWorkflows(read.workflows));
     if (!report.ok) {
       options.logger?.error("Novu workflow drift detected.", {
         event: WORKFLOW_DRIFT_EVENT,

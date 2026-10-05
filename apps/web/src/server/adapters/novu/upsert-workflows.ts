@@ -7,7 +7,7 @@
  * the engine lives here so it is unit-testable in-process against MSW.
  */
 import type { Logger } from "../../logging";
-import { novuWorkflowListSchema } from "./schemas";
+import { novuAuthHeaders, readNovuWorkflowList } from "./novu-http";
 import { toTransportWorkflows } from "./workflow-drift";
 import { TRANSPORT_WORKFLOW_IDS, channelForWorkflowId } from "./workflow-map";
 
@@ -60,32 +60,25 @@ export function buildTransportWorkflowBodies(): TransportWorkflowCreateBody[] {
  */
 export async function runWorkflowUpsert(options: UpsertWorkflowsOptions): Promise<number> {
   const url = `${options.baseUrl}/v1/workflows`;
-  const headers = {
-    authorization: `ApiKey ${options.apiKey}`,
-    accept: "application/json",
-  };
 
   try {
-    const listResponse = await fetch(url, { method: "GET", headers });
-    if (!listResponse.ok) {
-      options.logger?.error("Novu workflow list request failed.", {
-        event: WORKFLOW_UPSERT_FAILED_EVENT,
-        status: listResponse.status,
-      });
-      return 1;
-    }
-
-    const listBody: unknown = await listResponse.json();
-    const parsed = novuWorkflowListSchema.safeParse(listBody);
-    if (!parsed.success) {
-      options.logger?.error("Novu workflow list response did not match the contract.", {
-        event: WORKFLOW_UPSERT_FAILED_EVENT,
-      });
+    const read = await readNovuWorkflowList(options);
+    if (!read.ok) {
+      if (read.status === undefined) {
+        options.logger?.error("Novu workflow list response did not match the contract.", {
+          event: WORKFLOW_UPSERT_FAILED_EVENT,
+        });
+      } else {
+        options.logger?.error("Novu workflow list request failed.", {
+          event: WORKFLOW_UPSERT_FAILED_EVENT,
+          status: read.status,
+        });
+      }
       return 1;
     }
 
     const existing = new Set(
-      toTransportWorkflows(parsed.data).map((workflow) => workflow.workflowId)
+      toTransportWorkflows(read.workflows).map((workflow) => workflow.workflowId)
     );
 
     for (const body of buildTransportWorkflowBodies()) {
@@ -95,7 +88,7 @@ export async function runWorkflowUpsert(options: UpsertWorkflowsOptions): Promis
 
       const createResponse = await fetch(url, {
         method: "POST",
-        headers: { ...headers, "content-type": "application/json" },
+        headers: { ...novuAuthHeaders(options.apiKey), "content-type": "application/json" },
         body: JSON.stringify(body),
       });
 
