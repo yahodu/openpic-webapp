@@ -257,3 +257,96 @@ describe("seedPlans concurrency", () => {
     });
   });
 });
+
+/**
+ * The stored starter document, narrowed to the catalogue fields these specs
+ * inspect verbatim (ADR-0015 §2 / planUpsert's `$literal`).
+ */
+interface StoredCataloguePlan {
+  readonly name?: string;
+  readonly description?: string;
+  readonly marketingFeatures?: readonly string[];
+  readonly prices?: ReadonlyArray<{ readonly priceKey?: string }>;
+}
+
+/** Read the stored starter plan, typed to the catalogue fields under test. */
+function storedStarterCatalogue(test: TestDb) {
+  return test.db.collection<StoredCataloguePlan>("plans").findOne({ key: "starter" });
+}
+
+/**
+ * The canonical catalogue with the starter plan's fields replaced — the shape a
+ * marketing-copy or pricing edit shipped in a deploy can take.
+ */
+function withStarterFields(overrides: Partial<Plan>): readonly Plan[] {
+  return SEED_PLANS.map((plan) => (plan.key === "starter" ? { ...plan, ...overrides } : plan));
+}
+
+/**
+ * Catalogue round-trip at the database boundary (ADR-0015 §2, `planUpsert`).
+ *
+ * The seed writes each plan's catalogue fields with an aggregation-pipeline
+ * `$set`. In an aggregation expression, a **string value beginning with `$`**
+ * is parsed as a *field path* (and an object key beginning with `$` as an
+ * operator) — so unless the value is wrapped in `$literal`, a legitimate
+ * marketing value such as `"$5 add-on plan"` silently resolves to a missing
+ * field and the value is dropped from the stored document, or a `$`-leading
+ * array element becomes `null`. The catalogue is code-owned data, so every
+ * field it carries must round-trip byte-for-byte; a silent drop is data loss
+ * the operator cannot see.
+ *
+ * Each spec changes exactly one shape (a scalar, an array element, a nested
+ * object field) so a fix that `$literal`-wraps only some catalogue fields is
+ * caught rather than passing on one representative value.
+ */
+describe("seedPlans catalogue round-trip ($-leading values)", () => {
+  it("I3: stores a `description` beginning with `$` verbatim", async () => {
+    await withTestDb(async (test) => {
+      const description = "$5 add-on plan";
+
+      await seedPlans({ db: test.db, plans: withStarterFields({ description }) });
+
+      expect((await storedStarterCatalogue(test))?.description).toBe(description);
+    });
+  });
+
+  it("I3: stores a `name` beginning with `$` verbatim", async () => {
+    await withTestDb(async (test) => {
+      const name = "$5 add-on plan";
+
+      await seedPlans({ db: test.db, plans: withStarterFields({ name }) });
+
+      expect((await storedStarterCatalogue(test))?.name).toBe(name);
+    });
+  });
+
+  it("I3: stores a `marketingFeatures` element beginning with `$` verbatim", async () => {
+    await withTestDb(async (test) => {
+      const feature = "$5 add-on plan";
+      const control = "7 active events / month";
+
+      await seedPlans({
+        db: test.db,
+        plans: withStarterFields({ marketingFeatures: [feature, control] }),
+      });
+
+      expect((await storedStarterCatalogue(test))?.marketingFeatures).toEqual([feature, control]);
+    });
+  });
+
+  it("I3: stores a nested `prices[].priceKey` beginning with `$` verbatim", async () => {
+    await withTestDb(async (test) => {
+      const starter = SEED_PLANS.find((plan) => plan.key === "starter");
+      if (starter === undefined) {
+        throw new Error("SEED_PLANS has no starter plan");
+      }
+
+      const priceKey = "$5-add-on";
+      const prices = starter.prices.map((price) => ({ ...price, priceKey }));
+
+      await seedPlans({ db: test.db, plans: withStarterFields({ prices }) });
+
+      expect((await storedStarterCatalogue(test))?.prices?.[0]?.priceKey).toBe(priceKey);
+    });
+  });
+});
