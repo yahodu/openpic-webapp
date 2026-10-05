@@ -1,9 +1,9 @@
-# ADR-0080 — OP-92 follow-up GREEN review sign-off: inactive-step, duplicate-id and non-JSON 2xx hardening
+# ADR-0084 — OP-92 follow-up GREEN review sign-off: inactive-step, duplicate-id and non-JSON 2xx hardening
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-reviewer`
 - **Card:** `t_3f26ec7d` (dependent GREEN of the RED-pins card `t_c38934da`) · **Deliverable:** branch `OP-92-task-followup-drift-hardening-green`, PR #186
-- **Contract under review:** `docs/adr/ADR-0079-op92-followup-drift-hardening-green.md`
-- **Implements (review stage):** ADR-0076/0077 (OP-92 GREEN + sign-off) · ADR-0078 (follow-up RED pins)
+- **Contract under review:** `docs/adr/ADR-0083-op92-followup-drift-hardening-green.md`
+- **Implements (review stage):** ADR-0076/0077 (OP-92 GREEN + sign-off) · ADR-0082 (follow-up RED pins)
 
 ## Verdict
 
@@ -27,7 +27,7 @@ and no required follow-up at this level.
 - `tsc -b` clean; `eslint .` → **0 errors**, 21 pre-existing security warnings;
   `prettier --check` clean; `next build` clean (13 routes).
 - `git diff 7767751..b9413a5` (the GREEN-only commit) touches **two production
-  modules + ADR-0079 + `docs/adr/README.md` only** — no test, factory, fixture or
+  modules + ADR-0083 + `docs/adr/README.md` only** — no test, factory, fixture or
   MSW handler.
 - No `@ts-ignore`/`@ts-expect-error`, `eslint-disable`, `console.*`, `TODO`/`FIXME`,
   fixture-shaped hardcoding or test-environment conditional in the GREEN diff.
@@ -87,6 +87,8 @@ workflows. Out of this card's scope; carried forward from ADR-0077.
 - **Extract the duplicate scan into a helper.** Rejected: a five-line additive
   `Set` guard is clearer inline than a named indirection, and extraction would
   churn a hot, well-tested function for no readability gain.
-- **Leave ADR-0080 unwritten.** Rejected: `docs/adr/README.md` reserved `0080`
-  for this lane's review sign-off and every prior GREEN review lane records one
-  (0065/0069/0075/0077); writing it keeps the reservation from going stale.
+- **Leave a review sign-off ADR unwritten.** Rejected: `docs/adr/README.md` reserved
+  a sign-off number for this lane and every prior GREEN review lane records one
+  (0065/0069/0075/0077); writing it keeps the reservation from going stale. (At
+  integration the lane renumbered `0078/0079/0080 → 0082/0083/0084` because the
+  OP-91 follow-up payload lane claimed `0078`-`0079`/`0081` on `origin/main` first.)

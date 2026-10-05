@@ -1,4 +1,4 @@
-# ADR-0078 — OP-92 follow-up RED pins: an inactive drift-guard step, a duplicate workflow id, and a classified non-JSON 2xx
+# ADR-0082 — OP-92 follow-up RED pins: an inactive drift-guard step, a duplicate workflow id, and a classified non-JSON 2xx
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Ticket:** OP-92 (phase 1 — Notifications, epic: Transport) · RED stage (follow-up)
@@ -142,10 +142,17 @@ Partial<TransportWorkflow>)` already supports the inactive-step override; its
    default remains the canonical `active: true` `transport-email`. The factory is
    left unchanged so the existing pins keep their meaning.
 5. **ADR numbering.** `origin/main` `e7c3374` (→ `f61a222`, the 1.17.0 release
-   commit on top) is dense `0001`–`0077`; lowest free is **`0078`** for this RED
-   pin ADR. The dependent GREEN card expects `0079` (implementation) and `0080`
-   (review sign-off) — each must re-fetch `origin/main` and take the lowest free
-   at integration.
+   commit on top) is dense `0001`–`0077`; the lowest free at RED time was
+   **`0078`** for this RED pin ADR. The dependent GREEN card expects `0079`
+   (implementation) and `0080` (review sign-off) — each must re-fetch
+   `origin/main` and take the lowest free at integration.
+
+   **Renumbered at integration (GREEN PR #186).** `origin/main` `80fe618` merged
+   the OP-91 follow-up payload lane first, which claimed `0078` (RED), `0079`
+   (GREEN) and `0081` (sign-off) and holds `0080` for OP-93. This lane therefore
+   takes the next free contiguous block: this RED ADR `0078 → 0082`, the GREEN
+   implementation `0079 → 0083` (`ADR-0083-…-green.md`) and the review sign-off
+   `0080 → 0084` (`ADR-0084-…-green-review-signoff.md`).
 
 ## Alternatives considered
 

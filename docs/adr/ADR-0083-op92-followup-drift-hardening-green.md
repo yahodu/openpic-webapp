@@ -1,9 +1,9 @@
-# ADR-0079 — OP-92 follow-up GREEN: reject an inactive step and a duplicate workflow id, and classify a non-JSON 2xx body
+# ADR-0083 — OP-92 follow-up GREEN: reject an inactive step and a duplicate workflow id, and classify a non-JSON 2xx body
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Ticket:** OP-92 (phase 1 — Notifications, epic: Transport) · GREEN stage (follow-up)
 - **Card:** `t_3f26ec7d` (dependent GREEN of the RED-pins card `t_c38934da`) · **Deliverable:** branch `OP-92-task-followup-drift-hardening-green` (extends the RED branch `OP-92-task-followup-drift-hardening-red`, head `7767751`; the RED pins ship inside this GREEN PR)
-- **Implements:** `docs/adr/ADR-0078-op92-followup-drift-hardening-red.md` (RED pins)
+- **Implements:** `docs/adr/ADR-0082-op92-followup-drift-hardening-red.md` (RED pins)
 - **Extends:** `docs/adr/ADR-0076-op92-message-transport-and-novu-drift-guard-green.md` (§3 drift guard, §1 transport error classification)
 - **Supersedes:** none
 
@@ -11,7 +11,7 @@
 
 The OP-92 GREEN review sign-off (`docs/adr/ADR-0077-op92-green-review-signoff.md`)
 left three coverage gaps in the drift guard and the Novu transport. The RED-pins
-card `t_c38934da` turned them into three failing specs (ADR-0078). This ADR
+card `t_c38934da` turned them into three failing specs (ADR-0082). This ADR
 records the minimum production change that turns those pins green against
 `origin/main` `f61a222` + the RED pin commit `7767751`.
 
@@ -83,10 +83,13 @@ boundary (AC1) are untouched.
 2. **Both problem strings name the offending workflow id**, consistent with every
    existing drift message; the pins assert only the id appears / `ok === false`,
    not the exact wording.
-3. **ADR numbering.** `origin/main` `f61a222` is dense `0001`–`0077`; the RED pin
-   ADR is `0078` (shipping in this same PR), so the lowest free for this
-   implementation ADR is `0079`. A review sign-off for this lane would take
-   `0080`, lowest-free-first at integration.
+3. **ADR numbering.** `origin/main` `f61a222` is dense `0001`–`0077`; at GREEN
+   time the RED pin ADR was `0078` (shipping in this same PR), so the lowest free
+   for this implementation ADR was `0079`. At integration `origin/main` had moved
+   to `80fe618`, where the OP-91 follow-up payload lane claimed `0078`-`0079` and
+   `0081` and holds `0080` for OP-93; this lane was renumbered to the next free
+   contiguous block — RED `0082`, this GREEN implementation `0083`, review
+   sign-off `0084`.
 
 ## Alternatives considered
 
