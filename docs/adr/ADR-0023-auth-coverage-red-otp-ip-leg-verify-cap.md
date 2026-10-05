@@ -41,7 +41,10 @@ is in the table), so I15 is **green on delivery** — a coverage pin, not a
 regression detector. It exists so a future edit that drops the IP rule, or that
 keys the IP from the wrong header, fails loudly. That the IP value is
 client-spoofable is the separate Medium finding owned by `t_40c45a13`; I15 pins
-the current contract, it does not bless the trust model.
+the current contract, it does not bless the trust model. The trust model chosen
+by that card is recorded in **ADR-0024** (a configurable edge header that the
+fronting layer overwrites, with the leftmost-`x-forwarded-for` dev fallback the
+existing "first hop" pin requires).
 
 ### 2. Anonymous unknown-number verify must be a client error (I16)
 
@@ -72,7 +75,25 @@ outcome. No spec can attribute the decision to one of the two, so the spec does
 **not** claim to; it pins exactly what is observable — the allowlist's verdict.
 I17/I18 are green on delivery (coverage pins).
 
-### 4. Session-authenticated verify cap exists and is per-session (I19) — value OPEN
+### 4. Session-authenticated verify cap exists and is per-session (I19) — value **RESOLVED: 10 / 600s per user**
+
+> **Resolved 2026-10-05 by decision card `t_f927f323` (amendment to this ADR).**
+> The cap is **10 attempts per rolling 600-second (10-minute) window**, keyed
+> **per authenticated user** (the session's user id) — per-user/per-session,
+> **not per-contact and not per-IP**. One shared budget covers **both**
+> authenticated verify branches (`phone-number/verify` and
+> `two-factor/verify-otp`); rotating the target number must not reset it. Denial
+> is `429` (the existing `too_many_requests` envelope), terminal for the rest of
+> the window, and **fail-closed** when the limiter is unavailable. Only a
+> request with a real session is capped; the unauthenticated/pending-challenge
+> branches keep the `auth.verify` behaviour (I8 depends on it). Because the
+> value is `<= AUTHENTICATED_VERIFY_PROBE_BOUND` (100), no test edit was needed.
+> **Implementation constraint:** `classes.test.ts` freezes the class table
+> (`auth.verify == [{ contact, 10, 600 }]`), so the cap is a direct
+> `rateLimiter.limit(rateLimitKey("auth.verify", "user", hashIdentity(userId, salt)), { limit: 10, windowSeconds: 600 })`
+> consultation, **not** a class-table change. Recorded in ADR-0021 §1 as the
+> complementary counterpart to "`auth.verify` counts only unauthenticated
+> verifies".
 
 I19 signs in, verifies a phone (so a valid session exists), then drives repeated
 wrong `phone-number/verify` codes on that session. It pins:
@@ -102,8 +123,9 @@ session/user-keyed counter on the authenticated verify branch.
   (I16, I19) for the right reasons and **17 pass**, of which **3 are new
   coverage pins** (I15, I17, I18). Full integration: 162 passed / 2 failed of
   164; unit unchanged at 1155 passed.
-- The cap value remains an open decision surfaced in the card handoff, not
-  silently chosen.
+- The cap value was surfaced as an open decision in the card handoff and is now
+  **resolved** (§4, value 10/600s per user) by card `t_f927f323`, implemented in
+  `t_40c45a13`.
 - I19's per-session scoping is a **product decision**, not a library fact: an
   implementation that keys the cap by contact alone fails I19 by design.
 
