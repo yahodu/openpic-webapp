@@ -264,6 +264,72 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["key", 1]],
     unique: true,
   },
+
+  // user_profiles — 1:1 with Better Auth `user`. The unique index is what makes
+  // the `autoProvisioned` precedence rule a safe tie-break rather than a
+  // correctness crutch (schema §13.2; ADR-0041 §4, corrected by ADR-0043).
+  {
+    collection: COLLECTIONS.userProfiles,
+    name: "user_profiles_user_id_unique",
+    keys: [["userId", 1]],
+    unique: true,
+  },
+  // user_profiles — the admin fan-out lists admins by role and status (§13.2).
+  {
+    collection: COLLECTIONS.userProfiles,
+    name: "user_profiles_platform_role_status",
+    keys: [
+      ["platformRole", 1],
+      ["status", 1],
+    ],
+  },
+  // user_profiles — the DSR purge job scans only rows awaiting deletion (§13.2).
+  {
+    collection: COLLECTIONS.userProfiles,
+    name: "user_profiles_deletion_pending",
+    keys: [
+      ["status", 1],
+      ["deletionScheduledAt", 1],
+    ],
+    partialFilterExpression: { status: "deletion_pending" },
+  },
+  // user_profiles — resolve a user's default workspace (§13.2).
+  {
+    collection: COLLECTIONS.userProfiles,
+    name: "user_profiles_primary_tenant",
+    keys: [["primaryTenantId", 1]],
+  },
+
+  // session_devices — the new-device decision reads one user's recent sightings
+  // newest-first; the compound index makes that a bounded, indexed scan (§13.5;
+  // ADR-0041 §2).
+  {
+    collection: COLLECTIONS.sessionDevices,
+    name: "session_devices_user_created",
+    keys: [
+      ["userId", 1],
+      ["createdAt", -1],
+    ],
+  },
+  // session_devices — a sighting only matters inside the 24-hour new-device
+  // window, so the TTL monitor reaps the rest and the collection stays bounded
+  // (§13.5; ADR-0043).
+  {
+    collection: COLLECTIONS.sessionDevices,
+    name: "session_devices_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
+  // contact_change_fanouts — holds the raw previous/current contacts until the
+  // fan-out reads them. The TTL index is what makes ADR-0040 §2's "short-lived,
+  // TTL-bound" privacy justification actually hold (ADR-0043).
+  {
+    collection: COLLECTIONS.contactChangeFanouts,
+    name: "contact_change_fanouts_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
 ];
 
 /** The outcome of a bootstrap run: which indexes were built and which existed. */

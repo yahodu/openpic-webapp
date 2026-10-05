@@ -30,6 +30,16 @@ export const COLLECTIONS = {
   notificationTypes: "notification_types",
   notificationTemplates: "notification_templates",
   domainEvents: "domain_events",
+  /**
+   * App-owned identity collections (schema §13.2, §19.3; ADR-0040, ADR-0041).
+   * They are registered here — rather than only as literals in their owning
+   * module — so `INDEX_SPECS` can declare their indexes without duplicating the
+   * collection names.
+   */
+  userProfiles: "userProfiles",
+  notificationPreferences: "notificationPreferences",
+  sessionDevices: "sessionDevices",
+  contactChangeFanouts: "contactChangeFanouts",
 } as const;
 
 /** The name of any registered collection. */
