@@ -60,6 +60,7 @@ import {
 } from "@/server/notifications/notification-templates";
 import { renderTemplate, type RenderVars } from "@/server/notifications/render-template";
 import {
+  DEFAULT_MOBILE_CANDIDATES,
   resolveChannel,
   type ChannelDecision,
   type ChannelGroupName,
@@ -507,13 +508,12 @@ async function loadTemplates(
 async function loadRecipientContext(db: Db, userId: string): Promise<RecipientContext> {
   const objectId = toObjectId(userId);
 
-  const user = await platformRepo(db).collection(BETTER_AUTH_USER).findOne({ _id: objectId });
-  const profileDoc = await platformRepo(db)
-    .collection(COLLECTIONS.userProfiles)
-    .findOne({ userId: objectId });
-  const prefsDoc = await platformRepo(db)
-    .collection(COLLECTIONS.notificationPreferences)
-    .findOne({ userId: objectId });
+  // The three reads are independent; issue them together.
+  const [user, profileDoc, prefsDoc] = await Promise.all([
+    platformRepo(db).collection(BETTER_AUTH_USER).findOne({ _id: objectId }),
+    platformRepo(db).collection(COLLECTIONS.userProfiles).findOne({ userId: objectId }),
+    platformRepo(db).collection(COLLECTIONS.notificationPreferences).findOne({ userId: objectId }),
+  ]);
 
   const userRecord = isRecord(user) ? user : {};
   const contacts: ResolveContacts = {
@@ -680,7 +680,9 @@ function dispatchBase(
 /** The channel a group would target, used for a skip recorded before candidate selection. */
 function groupChannel(group: ChannelGroup): ResolvedChannel {
   if (group.group !== "mobile") return group.group;
-  return group.candidates?.[0] ?? "sms";
+  // Mirror the resolver's default candidate order so a recorded skip names the
+  // same first candidate `resolveChannel` would have tried.
+  return group.candidates?.[0] ?? DEFAULT_MOBILE_CANDIDATES[0];
 }
 
 /** Persist a skip row and log `notification.skipped`. */
@@ -1018,10 +1020,16 @@ async function processEvent(
   }
 
   const now = clock.now();
-  const settings = await getPlatformSettings({ db, clock });
   const eventId = typeof event.payload.eventId === "string" ? event.payload.eventId : null;
   const actorUserId = event.actorRef.kind === "user" ? event.actorRef.id : null;
   const subjectUserId = event.subjectRef.kind === "user" ? event.subjectRef.id : null;
+
+  // Settings and templates depend only on the type/event, not on recipients, so
+  // fetch them together rather than serially.
+  const [settings, templates] = await Promise.all([
+    getPlatformSettings({ db, clock }),
+    loadTemplates(db, event.eventKey),
+  ]);
 
   const recipients = await resolveRecipients({
     typeRow,
@@ -1035,7 +1043,7 @@ async function processEvent(
   const ctx: EventContext = {
     event,
     typeRow,
-    templates: await loadTemplates(db, event.eventKey),
+    templates,
     eventId,
     tenantId: event.tenantId,
     now,
