@@ -212,6 +212,11 @@ export default tseslint.config(
     ],
     rules: {
       "no-restricted-properties": "off",
+      // Spec authors assert on a port/interface method by extracting the
+      // reference (`expect(repository.listEventRoleMembers).toHaveBeenCalled…`),
+      // which never calls it and so cannot lose `this`. The rule is a known
+      // false positive for that idiom; production code keeps it on.
+      "@typescript-eslint/unbound-method": "off",
       // Spec authors annotate complex array types as `Array<T>` / `readonly T[]`
       // for readability; the stylistic preference must not fail the build.
       "@typescript-eslint/array-type": "off",
