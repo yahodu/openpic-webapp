@@ -19,5 +19,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0011](ADR-0011-heif-avif-ftyp-brand-set.md)                | HEIF/AVIF `ftyp` major-brand set accepted by the upload type guard                                 | Accepted |
 | [0012](ADR-0012-upload-magic-byte-variant-pins.md)          | Upload guard: cover accepted magic-byte variants (BE TIFF, ORF `MMOR`/`IIRS`, unrecognized `ftyp`) | Accepted |
 | [0013](ADR-0013-upload-guards-dotless-extension-pin.md)     | Upload guard: pin the `extensionOf` dotless-name branch                                            | Accepted |
+| [0014](ADR-0014-plans-catalogue-schema-and-seed.md)         | `plans` catalogue schema and seed: unique tierRank, integer money, version-on-change               | Accepted |
+| [0015](ADR-0015-plans-seed-concurrency-atomic-upsert.md)    | `plans` seed concurrency: atomic conditioned upsert and `{key:1}` unique index                     | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.

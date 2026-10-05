@@ -165,3 +165,26 @@ describe("index spec lint — registry integrity", () => {
     }
   });
 });
+
+describe("index spec lint — plans catalogue uniqueness (OP-83 follow-up)", () => {
+  // `plans` is platform-scope and (at RED time) is not yet a member of
+  // `COLLECTIONS`; the literal is owned here so the spec fails loudly until the
+  // registry declares the index, without the test depending on the production
+  // registry's naming (the spec pins the invariant, not the index's name).
+  const plansCollection = "plans" as string;
+
+  it("declares a unique {key:1} index on the plans collection", () => {
+    const hasPlanKeyIndex = INDEX_SPECS.some(
+      (spec) =>
+        spec.collection === plansCollection &&
+        spec.unique === true &&
+        spec.keys.length === 1 &&
+        spec.keys.every(([field, direction]) => field === "key" && direction === 1)
+    );
+
+    expect(
+      hasPlanKeyIndex,
+      "plans must carry a unique {key:1} index so the database enforces one document per plan key (schema §14.1)"
+    ).toBe(true);
+  });
+});

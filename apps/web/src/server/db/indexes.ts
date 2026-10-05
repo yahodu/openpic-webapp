@@ -235,6 +235,16 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+
+  // plans — one document per plan key (§14.1). This is the database backstop
+  // that makes the seed's upsert safe under concurrent deploy instances: even a
+  // racing insert cannot persist a second document for the same key (OP-83).
+  {
+    collection: COLLECTIONS.plans,
+    name: "plans_key_unique",
+    keys: [["key", 1]],
+    unique: true,
+  },
 ];
 
 /** The outcome of a bootstrap run: which indexes were built and which existed. */
