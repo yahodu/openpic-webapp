@@ -166,3 +166,33 @@ spec).
   and one encoding keeps the ±300 s boundary unambiguous.
 - **Let each job clamp its own limit.** Rejected: §10.2's bound must be
   structural, not a rule each of ~25 jobs can forget.
+
+## GREEN implementation notes (OP-87, card `t_723d932e`)
+
+- **Modules landed.** `@/server/auth/internal-hmac` exports
+  `verifyInternalSignature`, `authorizeInternalRequest`, `internalAuthStage`,
+  `InternalAuthCode` and `InternalAuthResult`; `@/server/jobs/cron-job` exports
+  `clampLimit`, `defineCronJob`, `cronResultSchema`, `CronResult`,
+  `CronJobContext`, `CronRunOutcome`, `CronJob` and the run/definition option
+  types. `INTERNAL_ERROR_CODES` was appended to `@openpic/contracts` and
+  `INTERNAL_ERROR_TRANSPORT` (all `401`, non-retryable) to the server catalogue.
+- **Cron exception is GET-only and malformed inputs are coded.** The bearer
+  exemption requires `method === "GET"` under `/api/v1/internal/cron/`;
+  a `CRON_SECRET` bearer on any other method/path is `internal_auth_failed`.
+  A missing or non-numeric `X-Timestamp` is `stale_signature`; a missing or
+  malformed `X-Signature` (no `sha256=`, wrong length, non-hex) is
+  `invalid_signature`. The stage emits exactly one redacting `warn`
+  (`internal.auth.denied`, reason code only) per denial.
+- **Proving-ground route.** `apps/web/src/app/api/v1/internal/cron/sample/route.ts`
+  exports `GET` and `POST`, both behind `internalAuthStage` and running a `sample`
+  job declared with `defineCronJob`. It parses `?limit=` per request.
+- **`vercel.json` is deliberately not added yet.** The sample route is a
+  framework proving-ground that does no work, so scheduling it would burn
+  invocations for nothing. The `crons` list is generated when the first real
+  §10.2 domain job lands in its own story; the entry shape is
+  `{ "path": "/api/v1/internal/cron/<job>", "schedule": "<cron>" }` under the
+  Vercel project root.
+- **Job import boundary registered.** The ESLint config now restricts
+  `apps/web/src/server/jobs/**` from importing `@/server/notifications/**` and
+  `@/server/adapters/**`, enforcing the domainEvents-only rule recorded in the
+  consequences above.
