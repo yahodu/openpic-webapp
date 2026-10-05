@@ -140,7 +140,10 @@ export interface ResolveChannelInput {
 }
 
 /** The `mobile` candidate order when the group does not declare one (design §1.1). */
-const DEFAULT_MOBILE_CANDIDATES: readonly ResolvedChannel[] = ["whatsapp", "sms"];
+export const DEFAULT_MOBILE_CANDIDATES = [
+  "whatsapp",
+  "sms",
+] as const satisfies readonly ResolvedChannel[];
 
 /** `HH:MM` → minutes from midnight. */
 function parseClock(value: string): number {
