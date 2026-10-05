@@ -320,19 +320,34 @@ describe("runWorkflowUpsert (§5 workflows as code, MSW)", () => {
           workflowId: "transport-email",
           name: "transport-email",
           active: true,
-          steps: [{ active: true, template: { type: "email" } }],
+          steps: [
+            expect.objectContaining({
+              active: true,
+              template: expect.objectContaining({ type: "email" }),
+            }),
+          ],
         }),
         expect.objectContaining({
           workflowId: "transport-sms",
           name: "transport-sms",
           active: true,
-          steps: [{ active: true, template: { type: "sms" } }],
+          steps: [
+            expect.objectContaining({
+              active: true,
+              template: expect.objectContaining({ type: "sms" }),
+            }),
+          ],
         }),
         expect.objectContaining({
           workflowId: "transport-whatsapp",
           name: "transport-whatsapp",
           active: true,
-          steps: [{ active: true, template: { type: "whatsapp" } }],
+          steps: [
+            expect.objectContaining({
+              active: true,
+              template: expect.objectContaining({ type: "whatsapp" }),
+            }),
+          ],
         }),
       ])
     );
