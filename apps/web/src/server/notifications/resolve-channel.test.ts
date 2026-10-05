@@ -18,7 +18,7 @@ import {
 
 /**
  * `resolveChannel` — the pure per-(recipient × type × group) routing decision
- * (design §5, contract Appendix F Phase 1; ADR-0078).
+ * (design §5, contract Appendix F Phase 1; ADR-0085).
  *
  * This spec pins the observable contract the fan-out worker depends on:
  * `resolveChannel(input)` returns exactly one of
@@ -37,7 +37,7 @@ import {
  *
  * The scenarios below deliberately isolate one rule each; the module contract
  * (input shape, the added `eventId`, suppression shape, digest bucket key) is
- * recorded in ADR-0078.
+ * recorded in ADR-0085.
  */
 
 /** The three routing channel groups (design §1.1, factory type). */
