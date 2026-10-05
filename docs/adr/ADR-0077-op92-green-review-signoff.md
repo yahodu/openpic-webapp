@@ -1,8 +1,8 @@
-# ADR-0076 — OP-92 GREEN review sign-off and the Novu HTTP-plumbing refactor
+# ADR-0077 — OP-92 GREEN review sign-off and the Novu HTTP-plumbing refactor
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-reviewer`
 - **Card:** `t_8930fc35` (OP-92 MessageTransport port, Novu adapter and workflow drift guard, GREEN) · **Deliverable:** branch `OP-92-task-message-transport-novu-drift`, PR #182
-- **Contract under review:** `docs/adr/ADR-0075-op92-message-transport-and-novu-drift-guard-green.md`
+- **Contract under review:** `docs/adr/ADR-0076-op92-message-transport-and-novu-drift-guard-green.md`
 - **Implements (review stage):** ADR-0072 (RED) · ADR-0073 (RED sign-off) · ADR-0074 (RED pins)
 
 ## Verdict
@@ -55,7 +55,7 @@ three call sites now share it.
 `checkTransportWorkflows` normalizes `TransportWorkflowStep.active` (and
 `transportWorkflowStepSchema` requires it) but never reads it, so a workflow
 whose single step is **disabled** passes the guard even though such a workflow
-delivers nothing. The CLI doc-string and ADR-0075 promise "one **active**
+delivers nothing. The CLI doc-string and ADR-0076 promise "one **active**
 step". Location: `apps/web/src/server/adapters/novu/workflow-drift.ts:56-72`.
 Routing: **Test Author** — pin an inactive-step fixture (RED), then a GREEN card
 adds the check. This is the one finding with real operational weight.
@@ -80,7 +80,7 @@ failure.
 ### Low — the adapter timeout default degrades silently (documented deviation)
 
 `configuredTimeoutMs()` catches `getConfig()` and falls back to `10_000` ms
-(ADR-0075 §1), so a mis-configured process would not fail fast. Behaviour is
+(ADR-0076 §1), so a mis-configured process would not fail fast. Behaviour is
 identical to the pins' expectation when configured. Informational only — no
 change requested; recorded so a future GREEN can decide whether to fail fast in
 production builds.
@@ -88,13 +88,13 @@ production builds.
 ### Low — `getNovuRuntimeConfig()` is an unpinned surface (documented deviation)
 
 The admin-CLI accessor reads `NOVU_BASE_URL`/`NOVU_API_KEY` outside the frozen
-`AppConfig` (ADR-0075 §2). It exists only to make the card-mandated CLIs
+`AppConfig` (ADR-0076 §2). It exists only to make the card-mandated CLIs
 runnable and is not asserted by a spec. Informational.
 
 ### Low — the drift guard has no CI job (documented deviation)
 
 AC2's behaviour is pinned by I5b and `pnpm novu:assert-no-drift` exists, but no
-GitHub Actions job invokes it (ADR-0075 §3): wiring one needs the `NOVU_API_KEY`
+GitHub Actions job invokes it (ADR-0076 §3): wiring one needs the `NOVU_API_KEY`
 secret and would block PRs until production Novu holds the three workflows.
 Ops follow-up, not a code defect.
 

@@ -1,4 +1,4 @@
-# ADR-0075 — OP-92 GREEN: `MessageTransport` port, Novu adapter and the workflow drift guard
+# ADR-0076 — OP-92 GREEN: `MessageTransport` port, Novu adapter and the workflow drift guard
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Ticket:** OP-92 (phase 1 — Notifications, epic: Transport) · GREEN stage
@@ -107,9 +107,11 @@ test was edited. The starting RED state was reproduced on the pins HEAD
 
 ### ADR numbering
 
-Re-fetched `origin/main` (still dense `0001`–`0069`; PR #181 still holds
-`0070`/`0071`). The OP-92 lane holds `0072`–`0074`, so GREEN uses the lowest free
-number, **`0075`**; `0076` remains reserved for the GREEN review sign-off.
+Re-fetched `origin/main` at integration: `0001`–`0071` are landed (the OP-91
+follow-up lane, PR #181, merged and took `0070`/`0071` plus its review sign-off
+`0075`). The OP-92 lane therefore holds the lowest free numbers `0072`–`0074`
+(RED/pins) and this GREEN implementation is **`0076`**; `0077` is the GREEN
+review sign-off.
 
 ## Consequences
 

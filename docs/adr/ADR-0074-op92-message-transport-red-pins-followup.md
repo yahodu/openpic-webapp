@@ -174,7 +174,9 @@ still open and keeps `0070`/`0071`. This branch therefore:
 
 `0070`/`0071` are left **reserved** in `docs/adr/README.md` for PR #181
 (`ADR-0070-op91-followup-deletion-requested-red` + `ADR-0071-op91-…-green`).
-GREEN `t_8930fc35` owns `0075` (implementation) and `0076` (review sign-off).
+GREEN `t_8930fc35` owns the lowest free numbers at integration: `0076`
+(implementation) and `0077` (review sign-off) — `0075` was taken by the OP-91
+follow-up lane's review sign-off, which landed ahead.
 Resolution rule at integration: re-fetch `origin/main`, lowest-free-first; if
 `0070`–`0073` are free, take the lowest. The numbers actually used here are
 `0072`/`0073`/`0074`.

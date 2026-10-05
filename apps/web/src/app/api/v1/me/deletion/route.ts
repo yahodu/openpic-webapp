@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { USER_PROFILES_COLLECTION } from "@/server/auth/identity-hooks";
+import { createIdentityLifecycleSeams } from "@/server/auth/identity-lifecycle";
 import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
@@ -74,6 +75,12 @@ export const POST = defineRoute({
         },
       }
     );
+
+    // Announce the request once through the identity lifecycle seam — the
+    // `handleDeletionRequested` counterpart of the revoke-all emit (ADR-0043
+    // §3, ADR-0070). The route never writes a domain event directly; there is
+    // no database hook for this transition, so there is no double-emit.
+    await createIdentityLifecycleSeams({ db: database }).deletionRequested({ userId });
 
     getLogger().info("account deletion requested", {
       event: "me.deletion.requested",
