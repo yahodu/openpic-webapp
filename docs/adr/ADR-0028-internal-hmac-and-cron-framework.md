@@ -218,3 +218,29 @@ executable and pin one boundary exactly:
   `apps/web/src/server/jobs/**` from importing `@/server/notifications/**` and
   `@/server/adapters/**`, enforcing the domainEvents-only rule recorded in the
   consequences above.
+
+## Reviewer sign-off (OP-87 follow-up GREEN, card `t_954c746b`, PR #139)
+
+Reviewed the follow-up GREEN that landed the five RED pins above and approved
+it (`APPROVED WITH FINDINGS`, no blocking finding). The issue under review was
+`OP-87-feature-internal-hmac-cron-green`, squash-merged to `main` as `e061771`.
+
+- **No production change was required and none was made.** The follow-up
+  commit `acc0e11` touches only `internal-hmac.test.ts`,
+  `test/integration/internal-hmac.test.ts` and this ADR; the four production
+  paths (`internal-hmac.ts`, `cron-job.ts`, `http/catalog.ts`,
+  `contracts/src/errors.ts`) were last modified by the GREEN card `t_723d932e`.
+  All five pins (U4b GET-only cron, I4 single redacting `warn`, U3b malformed
+  signature, U2b unparseable timestamp, U2c `maxSkewSeconds`) were independently
+  reproduced green: unit 59 files / 1227 passed, integration 31 files / 185
+  passed.
+- **Findings recorded here, not acted on in the review lane.** Bearer scheme
+  matching is case-sensitive (`/^Bearer (.+)$/`), the hex must be lowercase, and
+  `constantTimeEquals` short-circuits on a length mismatch. All are Low,
+  non-blocking, and remain as-is until a real M2M client lands.
+- **One coverage gap routed, not deferred.** Nothing pinned the sample route's
+  authenticated happy path (a signed `POST` returning a `CronResult`, and the
+  real `CRON_SECRET` cron `GET`). A RED follow-up card (`t_cb2f94bf`, Test
+  Author) closes it; the `vercel.json` `crons` deferral recorded above stands.
+- **Decision:** no contract or architecture change was introduced by this
+  follow-up, so this ADR is amended only with the sign-off above.
