@@ -42,5 +42,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0034](ADR-0034-op85-adr-0032-test-reference-renumber.md)                        | OP-85 follow-up: stale ADR-0031 test references renumbered to ADR-0032                             | Accepted |
 | [0035](ADR-0035-op85-instrumentation-boot-guard-red-pin.md)                      | Instrumentation production boot guard pinned by a direct spec (RED pins)                           | Accepted |
 | [0036](ADR-0036-op85-instrumentation-boot-guard-review-signoff.md)               | OP-85 follow-up review sign-off: instrumentation boot guard coverage pin lands (PR #151)           | Accepted |
+| [0037](ADR-0037-integration-spec-ci-readiness-budget.md)                         | Integration-spec CI budget: deterministic Mongo readiness + explicit timeout (de-flake)            | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
