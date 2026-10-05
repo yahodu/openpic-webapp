@@ -1,3 +1,9 @@
+## [1.9.0](https://github.com/yahodu/openpic-webapp/compare/v1.8.0...v1.9.0) (2026-10-05)
+
+### Features
+
+- **auth:** OP-86 wire /me ban exemption ([#135](https://github.com/yahodu/openpic-webapp/issues/135)) ([a51bc54](https://github.com/yahodu/openpic-webapp/commit/a51bc548cf56cbd1bec53b3e82d651e175d2bd3b))
+
 ## [1.8.0](https://github.com/yahodu/openpic-webapp/compare/v1.7.1...v1.8.0) (2026-10-05)
 
 ### Features
