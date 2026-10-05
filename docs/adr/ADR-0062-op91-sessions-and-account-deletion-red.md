@@ -1,4 +1,4 @@
-# ADR-0057 — OP-91 RED: sessions & devices and the account-deletion cancel window
+# ADR-0062 — OP-91 RED: sessions & devices and the account-deletion cancel window
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-testcase-writer`
 - **Card:** `t_754b0fc5` (OP-91, phase 1-Identity) · **Stage:** RED (tests only; no production code)
