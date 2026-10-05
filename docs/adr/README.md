@@ -39,5 +39,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0031](ADR-0031-op88-green-review-signoff.md)                                    | OP-88 GREEN review sign-off: outbox ships; per-emit lookup + claim-lease hardening deferred        | Accepted |
 | [0032](ADR-0032-op85-production-trusted-client-ip-required-red.md)               | `TRUSTED_CLIENT_IP_HEADER` required in production (RED pins; ADR-0024 amendment)                   | Accepted |
 | [0033](ADR-0033-op85-production-trusted-client-ip-required-green-signoff.md)     | OP-85 GREEN review sign-off: production-required client-IP header lands; test/coverage follow-ups  | Accepted |
+| [0035](ADR-0035-op85-instrumentation-boot-guard-red-pin.md)                      | Instrumentation production boot guard pinned by a direct spec (RED pins)                           | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
