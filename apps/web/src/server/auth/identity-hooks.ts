@@ -577,6 +577,7 @@ export async function handleContactChanged(
     actorRef: userRef(event.userId),
     subjectRef: userRef(event.userId),
     payload: { emailChanged, phoneChanged },
+    dedupeKey: `auth.contact.changed:${event.userId}:${now.toISOString()}`,
   });
 
   if (emitted === null) {
@@ -628,14 +629,19 @@ export async function handleTwoFactorToggled(
 /**
  * Announce that every session of a user was revoked.
  *
+ * Deduped on the instant (`eventKey:userId:instant`), matching the contact-changed
+ * and 2FA schemes, so a redelivered invocation collapses to one row while a
+ * genuinely new revoke-all at a later instant re-emits (ADR-0043 §1).
+ *
  * @param event - The user and the revoked session ids.
- * @param deps - The database/outbox seams.
+ * @param deps - The database/outbox/clock seams.
  */
 export async function handleSessionsRevoked(
   event: SessionsRevokedEvent,
   deps: IdentityHookDeps
 ): Promise<void> {
   const resolved = resolveDeps(deps);
+  const now = resolved.clock.now();
 
   await safeEmit(resolved, {
     eventKey: "account.sessions.revoked",
@@ -643,5 +649,6 @@ export async function handleSessionsRevoked(
     actorRef: userRef(event.userId),
     subjectRef: userRef(event.userId),
     payload: { revokedCount: event.sessionIds?.length ?? 0 },
+    dedupeKey: `account.sessions.revoked:${event.userId}:${now.toISOString()}`,
   });
 }
