@@ -195,3 +195,57 @@ and bump `version`, whereas the previous `canonicalJson` comparison (order
 insensitive) would not. No RED spec pins reorder-vs-value-change semantics, and
 the priority order of a code-owned catalogue object is stable across deploys,
 so this is left as-is and recorded here as a coverage gap for the test author.
+
+## Addendum — follow-up RED `t_81b62c0f` (reviewer findings on PR #119)
+
+### Finding 1 (`$literal` scope) — RED, four integration specs
+
+`planUpsert` builds `$set` from `{ ...catalogueFields(plan), updatedAt,
+entitlements: { $literal: … }, version: … }`. Only `entitlements` was
+`$literal`-wrapped, so every other catalogue value was evaluated as an
+aggregation expression: a string beginning with `$` is read as a _field path_
+(and an object-array element loses its field).
+
+Reproduced against MongoDB: with `description = "$5 add-on plan"` the stored
+document omitted `description`; a `$`-leading `marketingFeatures` element became
+`null`; a nested `$`-leading `prices[].priceKey` became `undefined`. `seedPlans`
+still resolved — the loss was silent.
+
+Four RED specs are added to `apps/web/src/test/integration/plans-seed.test.ts`
+(`I3`): `description`, `name`, a `marketingFeatures[]` element and a nested
+`prices[].priceKey` must each round-trip verbatim. All four fail with a value
+mismatch (`undefined`/`null` vs the catalogue value); the six pre-existing specs
+still pass.
+
+**GREEN:** `$literal`-wrap every catalogue field. The simplest correct shape is
+to `$literal`-wrap the whole `catalogueFields(plan)` object and merge
+`updatedAt`/`entitlements`/`version` beside it, so the stored document equals
+the catalogue for every field, at every nesting depth.
+
+### Finding 2 (E11000 absorption) — coverage pins, green-on-arrival
+
+New unit spec `apps/web/src/server/plans/seed-plans.test.ts` drives the
+collection handle's `updateOne` through a scripted fake `Db` handed in via the
+`db` seam: the first (upsert) call rejects with `{ code: 11000 }`, the retry
+resolves. The specs assert `seedPlans` resolves with the catalogue, re-applies
+the identical pipeline as a **non-upsert** update (`{ upsert: true }` only on
+the first call), still writes every plan, and re-throws a non-duplicate error.
+
+These specs are **green on arrival**: the shipped `upsertPlan` already absorbs
+`E11000` and reconciles, exactly as §2 requires. The card labelled Finding 2
+"Required RED", but the path is a _coverage gap_, not a defect — the integration
+concurrency specs run in one process and skip `ensureIndexes`, so `runExclusive`
+serialization masks the race and the catch is never reached. Faking red here
+would require asserting behaviour this ADR does not require (e.g. re-upserting
+on the reconcile), so the specs are delivered as honest guards — the same
+disposition this ADR already applies to the "exactly one bump under concurrent
+identical changes" spec. The GREEN child's only implementation work is
+Finding 1.
+
+### Verification (RED delivery)
+
+- focused integration `plans-seed.test.ts`: 6 passed | 4 failed (the four new `I3` specs)
+- focused unit `seed-plans.test.ts`: 3 passed (green guards, per above)
+- full unit: 770 passed (baseline 767 + 3)
+- full integration: 137 passed | 4 failed (baseline 137 passed; no pre-existing regression)
+- `tsc` clean, ESLint 0 errors, Prettier clean
