@@ -925,3 +925,87 @@ describe("session-authenticated verify cap (ADR-0021 §1 — product decision)",
     });
   });
 });
+
+describe("anonymous verify error parity (ADR-0021 §1 — no account-existence oracle)", () => {
+  it("I20: an anonymous verify of an unknown number with a VALID code returns the same error envelope as an existing user's wrong code", async () => {
+    await withAuth(async ({ auth }) => {
+      // The residual oracle this pins: if "valid code, no such account" answers
+      // differently from "wrong code, existing account", a caller can decide
+      // whether a phone number belongs to an OpenPic user without ever holding
+      // a code for it. The two failures must be indistinguishable.
+
+      // (a) An existing, verified user whose wrong code is rejected by the
+      //     library's own verify step (the hook finds the user and lets it pass
+      //     through to Better Auth). A fresh OTP is requested first so the code
+      //     is genuinely wrong — otherwise the library reports "no OTP" instead.
+      const existing = makeIdentity();
+      const existingCookie = await signUpWithVerifiedPhone(auth, existing);
+      const resend = await authPostWithCookie(
+        auth,
+        "/api/auth/phone-number/send-otp",
+        existingCookie,
+        { phoneNumber: existing.phone },
+        existing
+      );
+      expect(resend.status).toBe(200);
+      requireOtp("sms", existing.phone);
+      const wrongCode = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/phone-number/verify",
+        { phoneNumber: existing.phone, code: WRONG_OTP },
+        forward(existing)
+      );
+      const wrongCodeBody = await body(wrongCode);
+
+      // (b) A number with no user, presented with a VALID code. The code is
+      //     requested through the authenticated send-otp flow, because an
+      //     anonymous send-otp for an unknown number is refused (I9/I14(b)).
+      const owner = makeIdentity();
+      const { cookie: ownerCookie } = await signInWithEmailOtp(auth, owner);
+      const target = makeIdentity();
+      const sent = await authPostWithCookie(
+        auth,
+        "/api/auth/phone-number/send-otp",
+        ownerCookie,
+        { phoneNumber: target.phone },
+        owner
+      );
+      expect(sent.status).toBe(200);
+      const otp = requireOtp("sms", target.phone);
+      const unknownNumber = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/phone-number/verify",
+        { phoneNumber: target.phone, code: otp.code },
+        forward(target)
+      );
+      const unknownNumberBody = await body(unknownNumber);
+
+      // Both are ordinary client errors — not a 5xx, and not the rate-limit 429.
+      expect(
+        wrongCode.status,
+        "an existing user's wrong code must be a 4xx"
+      ).toBeGreaterThanOrEqual(400);
+      expect(wrongCode.status).toBeLessThan(500);
+      expect(wrongCode.status).not.toBe(429);
+      expect(
+        unknownNumber.status,
+        "an unknown number's valid code must be a 4xx, never a 5xx"
+      ).toBeGreaterThanOrEqual(400);
+      expect(unknownNumber.status).toBeLessThan(500);
+      expect(unknownNumber.status).not.toBe(429);
+
+      // The parity itself: status, error code and message are indistinguishable.
+      expect(unknownNumber.status).toBe(wrongCode.status);
+      expect(unknownNumberBody.code).toBe(wrongCodeBody.code);
+      expect(unknownNumberBody.message).toBe(wrongCodeBody.message);
+
+      // Non-vacuous: the shared envelope actually carries a code and a message.
+      expect(typeof wrongCodeBody.code).toBe("string");
+      expect(String(wrongCodeBody.code).length).toBeGreaterThan(0);
+      expect(typeof wrongCodeBody.message).toBe("string");
+      expect(String(wrongCodeBody.message).length).toBeGreaterThan(0);
+    });
+  });
+});

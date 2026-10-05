@@ -16,6 +16,8 @@ export type {
 
 export { resolveClientIp } from "./client-ip";
 
+export { AUTHENTICATED_VERIFY_CAP } from "./authenticated-verify";
+
 export {
   RATE_LIMIT_BYPASS_CLASSES,
   RATE_LIMIT_CLASSES,

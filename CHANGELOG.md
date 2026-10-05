@@ -1,3 +1,9 @@
+## [1.10.1](https://github.com/yahodu/openpic-webapp/compare/v1.10.0...v1.10.1) (2026-10-05)
+
+### Bug Fixes
+
+- **auth:** OP-85 close anonymous-verify enumeration oracle + export verify cap constants ([#145](https://github.com/yahodu/openpic-webapp/issues/145)) ([69847d8](https://github.com/yahodu/openpic-webapp/commit/69847d8f19c2022e98b36e07ffec403d2cb30242)), closes [#132](https://github.com/yahodu/openpic-webapp/issues/132)
+
 ## [1.10.0](https://github.com/yahodu/openpic-webapp/compare/v1.9.0...v1.10.0) (2026-10-05)
 
 ### Features

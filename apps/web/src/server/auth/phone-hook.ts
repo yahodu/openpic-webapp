@@ -64,8 +64,9 @@ export async function runPhoneHook(ctx: AuthHookContext): Promise<unknown> {
     // Anonymous verify: only an existing user's number has anything to verify.
     // A number with no user would otherwise fall through to Better Auth's
     // "failed to update user" branch and surface an internal `500` (I16). Fail
-    // with the *same* generic client error a wrong code produces, so the
-    // response does not reveal whether the number has an account.
+    // with the *same* generic client error a wrong code produces
+    // (`400 INVALID_OTP` / "Invalid OTP"), so the response does not reveal
+    // whether the number has an account (I20).
     const value = body.phoneNumber;
     const user =
       typeof value === "string"
@@ -76,8 +77,8 @@ export async function runPhoneHook(ctx: AuthHookContext): Promise<unknown> {
         : undefined;
     if (user === undefined || user === null) {
       throw APIError.from("BAD_REQUEST", {
-        message: "Invalid or unverifiable code.",
-        code: "invalid_code",
+        message: "Invalid OTP",
+        code: "INVALID_OTP",
       });
     }
   }
