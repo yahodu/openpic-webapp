@@ -24,6 +24,11 @@ export const GET = defineRoute({
   // Built per request: `getAuth()`/`getDb()` read validated configuration, so
   // evaluating them at module scope would fail `next build`'s page-data
   // collection (which runs without a configured environment).
-  auth: (ctx, request) => requireAuth("user", { auth: getAuth(), database: getDb() })(ctx, request),
+  //
+  // `allowBanned` because `GET /me` is on the contract §0.3 ban-exemption list
+  // (`GET /me`, `POST /me/data-requests`): a banned user may read the route
+  // that tells them why they are banned.
+  auth: (ctx, request) =>
+    requireAuth("user", { auth: getAuth(), database: getDb(), allowBanned: true })(ctx, request),
   handler: () => ({ body: {} }),
 });
