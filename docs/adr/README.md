@@ -86,6 +86,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0078](ADR-0078-op93-channel-resolution-and-template-renderer-red.md)              | OP-93 RED: `resolveChannel` pure resolver contract and strict template renderer                          | Accepted |
 | [0079](ADR-0079-op93-red-review-signoff.md)                                        | OP-93 RED review sign-off: pins verified; lane wiring and body drift routed                              | Accepted |
 | [0080](ADR-0080-op93-red-pins-followup-review-signoff.md)                          | OP-93 RED-pins follow-up review sign-off: U24–U26 verified RED; no changes routed                        | Accepted |
+| [0081](ADR-0081-op93-channel-resolution-and-template-renderer-green.md)            | OP-93 GREEN: `resolveChannel` + `renderTemplate` implementation and the U18 fixture dispute              | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
