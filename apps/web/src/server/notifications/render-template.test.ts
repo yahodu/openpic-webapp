@@ -64,6 +64,27 @@ describe("renderTemplate — HTML escaping", () => {
     expect(rendered.body).toContain("Rahul &amp; Priya");
   });
 
+  it("U26: escapes interpolated subject values so an injected script tag cannot execute", () => {
+    const template = makeNotificationTemplate({
+      typeKey: "attendee.matches.ready",
+      channel: "email",
+      locale: "en-IN",
+      subjectTemplate: "New photos from {{eventName}}",
+      bodyTemplate: "<p>Hi {{displayName}}, your gallery is ready.</p>",
+      variables: ["eventName", "displayName"],
+    });
+
+    const rendered = renderOne(
+      template,
+      { eventName: "<script>alert('xss')</script> & more", displayName: "Rahul & Priya" },
+      "en-IN"
+    );
+
+    expect(rendered.subject).not.toContain("<script>");
+    expect(rendered.subject).toContain("&lt;script&gt;");
+    expect(rendered.subject).toContain("&amp;");
+  });
+
   it("U23: rejects a triple-stash placeholder instead of emitting unescaped HTML", () => {
     const template = makeNotificationTemplate({
       subjectTemplate: "Hi {{firstName}}",

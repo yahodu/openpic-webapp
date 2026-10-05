@@ -310,6 +310,43 @@ describe("resolveChannel — verified-contact and suppression gates", () => {
     expect(decision).toEqual({ kind: "skip", reason: "suppressed" });
   });
 
+  it("U25: falls through to the next mobile candidate when whatsapp is suppressed", () => {
+    const typeRow = baseType();
+
+    const decision = resolveChannel(
+      makeInput({
+        typeRow,
+        group: groupOf(typeRow, "mobile"),
+        profile: makeProfile({
+          contactCapabilities: { whatsappCapable: true, whatsappCheckedAt: null },
+        }),
+        suppressions: [suppression({ channel: "whatsapp", scope: "all", reason: "hard_bounce" })],
+      })
+    );
+
+    expect(decision).toEqual({ kind: "send", channel: "sms" });
+  });
+
+  it("U25b: skips with suppressed when every mobile candidate is suppressed", () => {
+    const typeRow = baseType();
+
+    const decision = resolveChannel(
+      makeInput({
+        typeRow,
+        group: groupOf(typeRow, "mobile"),
+        profile: makeProfile({
+          contactCapabilities: { whatsappCapable: true, whatsappCheckedAt: null },
+        }),
+        suppressions: [
+          suppression({ channel: "whatsapp", scope: "all", reason: "hard_bounce" }),
+          suppression({ channel: "sms", scope: "all", reason: "hard_bounce" }),
+        ],
+      })
+    );
+
+    expect(decision).toEqual({ kind: "skip", reason: "suppressed" });
+  });
+
   it("U11: a marketing-scoped suppression does not block a transactional email", () => {
     const typeRow = baseType({
       typeKey: "billing.payment.failed",
@@ -401,6 +438,28 @@ describe("resolveChannel — quiet hours", () => {
       until: "2026-10-06T01:30:00.000Z",
       reason: "quiet_hours_deferred",
     });
+  });
+
+  it("U24: sends inside quiet hours when the type opts out via respectQuietHours=false", () => {
+    const typeRow = baseType({ respectQuietHours: false });
+
+    const decision = resolveChannel(
+      makeInput({
+        typeRow,
+        prefs: makePrefs({
+          quietHours: {
+            enabled: true,
+            start: "22:00",
+            end: "07:00",
+            timeZone: "Asia/Kolkata",
+          },
+        }),
+        // 23:30 IST (UTC+05:30) — inside the 22:00–07:00 window, which crosses midnight.
+        now: new Date("2026-10-05T18:00:00.000Z"),
+      })
+    );
+
+    expect(decision).toEqual({ kind: "send", channel: "email" });
   });
 
   it("U16: a critical-severity type bypasses quiet hours and sends immediately", () => {

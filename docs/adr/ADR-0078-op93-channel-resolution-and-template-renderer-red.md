@@ -115,8 +115,8 @@ becomes `{kind:"skip", reason:"throttled"}`.
 - Locale selection: exact `locale` match, else the `en-IN` template, else
   `TemplateRenderError`. It returns `{ subject, body, locale }` where `locale` is
   the one actually used.
-- `{{value}}` interpolation is HTML-escaped (U18): `<`, `>`, `&` become
-  entities.
+- `{{value}}` interpolation is HTML-escaped in **both** `subject` and `body`
+  (U18, U26): `<`, `>`, `&` become entities.
 - A declared `variables[]` value missing at render time throws
   `TemplateRenderError` naming the variable (U19); a **supplied value that was
   never declared** throws (U20) — the inverse guard of the seed schema, so a
@@ -135,6 +135,18 @@ tests are added and marked so the GREEN worker and QA can see they are
 intentional: **U22** (type disabled → `type_disabled`) and **U23** (triple-stash
 rejected).
 
+A review follow-up (card `t_2fc90876`, PR #185 round 1) adds three more pins so
+GREEN cannot ship these behaviours untested:
+
+- **U24** — `respectQuietHours: false` inside an enabled quiet window sends
+  immediately instead of deferring (design §19.1 line 1819, §5).
+- **U25 / U25b** — the `mobile` group falls through to the next eligible
+  candidate when one is suppressed (`whatsapp` → `sms`), and skips with
+  `reason:"suppressed"` when every candidate is suppressed (design §5
+  lines 269–270).
+- **U26** — the rendered `subject` is HTML-escaped exactly like `body` (U18), so
+  an injected value cannot reach a mail subject unescaped.
+
 ## Consequences
 
 - The whole §5 routing decision is exercised offline; a routing bug (wrong
@@ -150,14 +162,18 @@ rejected).
      and the decision union has no "nothing to do" member. The implementer may
      treat it defensively, but no test constrains it.
   2. Per-candidate _fallback_ on suppression for the `mobile` group (design §5:
-     "contact suppressed? → next candidate") is not pinned; only the single-member
-     `email`/final-candidate case (U10) is.
+     "contact suppressed? → next candidate") is now pinned by **U25**: a
+     suppressed `whatsapp` candidate falls through to `sms`, and all candidates
+     suppressed yields `{kind:"skip", reason:"suppressed"}`.
   3. `null` vs absent preference overrides: the stored §19.3 document is sparse
      (`null` is a PATCH verb, not a stored value), so U4 tests **absence**.
   4. The `in_app` decision is only pinned as a `send`; its feed-row write
      (`writeFeedRow`, design §25) is out of scope.
   5. `until` timezone math is pinned for one window (`22:00–07:00`
-     `Asia/Kolkata`, crossing midnight). Non-crossing windows and DST-timezones
+     `Asia/Kolkata`, crossing midnight). **U24** reuses the same window with the
+     per-type switch `respectQuietHours: false` (design §19.1 line 1819) and
+     pins that the resolver **sends** instead of deferring — quiet hours only
+     defer when the type respects them. Non-crossing windows and DST-timezones
      are not pinned.
   6. `handlebars` is currently only a **transitive** dependency in
      `pnpm-lock.yaml`; the GREEN implementation must add it as a direct
