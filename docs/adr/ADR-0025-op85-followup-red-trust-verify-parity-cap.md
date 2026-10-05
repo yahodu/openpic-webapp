@@ -120,3 +120,20 @@ correct; they are coverage pins. The cap **value** (10 / 600s) is deliberately
 - **Assert the cap value in the fail-closed specs.** Rejected: the value is a
   product decision owned by `t_1175689a`; inventing it here would silently ship
   it.
+
+## Reviewer addendum — round 1 (artifact lens)
+
+Reviewed at commit `09a86e3` and reproduced independently: unit **1163 passed /
+58 files**, integration **164 passed + 1 by-design RED (I20)** (`expected
+'invalid_code' to be 'INVALID_OTP'`), tsc/eslint/prettier clean, production code
+untouched, existing test semantics preserved (the `auth.test.ts` change is a pure
+append). Verdict **APPROVED**.
+
+The card's ACCEPTANCE text expected spec 4 to be RED; it is in fact a green
+coverage pin because the fail-closed `try/catch` already shipped in `15d31ba`.
+The reviewer accepts the deviation rather than a fabricated red state: the
+mandated base is post-#132, and a red probe of the cap path would require
+reverting shipped behaviour (forbidden) or probing pre-#132 `920e856` (excluded
+by the card). The reviewer did not request a production edit. Referenced at PR
+#134, which is intentionally a **draft** and must not be merged — the RED specs
+travel to `main` inside the GREEN PR from `t_1175689a` (precedent #127/#128).
