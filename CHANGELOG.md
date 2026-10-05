@@ -1,3 +1,9 @@
+## [1.5.0](https://github.com/yahodu/openpic-webapp/compare/v1.4.0...v1.5.0) (2026-10-05)
+
+### Features
+
+- **plans:** OP-83 harden plans seed with atomic upsert and unique key index ([#119](https://github.com/yahodu/openpic-webapp/issues/119)) ([5cf7a97](https://github.com/yahodu/openpic-webapp/commit/5cf7a970eaf1bdbf8eeff22b090b4f8c4f371b2d))
+
 ## [1.4.0](https://github.com/yahodu/openpic-webapp/compare/v1.3.0...v1.4.0) (2026-10-05)
 
 ### Features
