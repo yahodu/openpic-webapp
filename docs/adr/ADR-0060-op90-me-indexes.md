@@ -1,4 +1,4 @@
-# ADR-0059 — OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`
+# ADR-0060 — OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-backend-coder`
 - **Card:** `t_8599578e` (OP-90 follow-up, Medium) · **Deliverable:** branch `OP-90-task-me-indexes`, PR [#172](https://github.com/yahodu/openpic-webapp/pull/172)
@@ -89,8 +89,9 @@ row names every collection §1.2 reads and every index those reads use.
 ## Consequences
 
 - This ADR was allocated `0057` at authoring time; concurrent `main` merges
-  (PR #169) took `0057`/`0058`, so it was renumbered to **0059** during the merge
-  that brought the branch up to date. No decision content changed.
+  (PR #169) and sibling OP-90 lanes then took `0057`–`0059`, so the orchestrator
+  renumbered it to **0060** (binding allocation on `t_eb61c823`; this lane is
+  second in merge order). No decision content changed.
 - `ensureIndexes` builds three new indexes in one idempotent pass; the
   `index-bootstrap` integration suite (I1) derives its expectation from
   `INDEX_SPECS`, so the new specs are exercised without a test edit.

@@ -103,7 +103,7 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
   // invitations — "my pending invitations": the caller's pending count on the
   // `GET /me` bootstrap and the §1.2 feed read `{ "invitee.userId", status }`
   // newest-first, so the compound index must carry all three keys in this
-  // order (§13.6; ADR-0059).
+  // order (§13.6; ADR-0060).
   {
     collection: COLLECTIONS.invitations,
     name: "invitations_invitee_user_status_created",
@@ -346,7 +346,7 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
 
   // tenant_members — one membership per (tenant, user); the schema §13.4
   // composite identity, and the index behind `GET /tenants/{t}/members`
-  // (ADR-0059).
+  // (ADR-0060).
   {
     collection: COLLECTIONS.tenantMembers,
     name: "tenant_members_tenant_user_unique",
@@ -361,7 +361,7 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
   // deliberately does NOT lead with `tenantId`: `tenantMembers` is a
   // *subject-scoped* join collection (one row per tenant **× user**), not one of
   // the `TENANT_SCOPED_COLLECTIONS` whose documents each belong to a single
-  // tenant — so the U1 prefix lint does not apply (schema §13.4; ADR-0059).
+  // tenant — so the U1 prefix lint does not apply (schema §13.4; ADR-0060).
   {
     collection: COLLECTIONS.tenantMembers,
     name: "tenant_members_user_status",
