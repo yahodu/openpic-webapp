@@ -1,3 +1,9 @@
+## [1.4.0](https://github.com/yahodu/openpic-webapp/compare/v1.3.0...v1.4.0) (2026-10-05)
+
+### Features
+
+- **plans:** OP-83 seed plans catalogue ([#117](https://github.com/yahodu/openpic-webapp/issues/117)) ([8407bb8](https://github.com/yahodu/openpic-webapp/commit/8407bb877fe271199183dfb10e40fd7ee0e3d491))
+
 ## [1.3.0](https://github.com/yahodu/openpic-webapp/compare/v1.2.0...v1.3.0) (2026-10-05)
 
 ### Features
