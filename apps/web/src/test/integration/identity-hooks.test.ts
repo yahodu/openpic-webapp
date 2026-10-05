@@ -1,4 +1,4 @@
-import { ObjectId } from "mongodb";
+import { ObjectId, type Db } from "mongodb";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { createAuth, type AuthLike } from "@/server/auth";
@@ -11,6 +11,7 @@ import {
   handleTwoFactorToggled,
   handleUserCreated,
 } from "@/server/auth/identity-hooks";
+import * as identityLifecycle from "@/server/auth/identity-lifecycle";
 import { otpInbox } from "@/server/auth/otp-inbox";
 import { getRateLimitConfig } from "@/server/config/env";
 import { ensureIndexes } from "@/server/db/indexes";
@@ -924,6 +925,234 @@ describe("handleSessionCreated — unclaimed op_att claim service", () => {
       );
       expect(signedIn.status).toBe(200);
       expect(sessionCookie(signedIn)).toBeDefined();
+    });
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * OP-89 follow-up RED pins (ADR-0043) — append-only extension.
+ *
+ * These pin the two MEDIUM findings of the OP-89 GREEN review (ADR-0042 §4-5)
+ * and the LOW 2FA transition finding (ADR-0042 §6):
+ *
+ *   - re-run idempotency for `handleContactChanged` / `handleSessionsRevoked`
+ *     (currently no `dedupeKey`, so a redelivery emits a second row);
+ *   - the 2FA enable -> disable -> enable re-emit;
+ *   - the section 4-6 + contact-verified *surface* adapters: the Better Auth
+ *     `user.update.after` adapter for contact-verified, and the injectable
+ *     endpoint seam (`createIdentityLifecycleSeams`) the section 4-6 cards call.
+ * ------------------------------------------------------------------------- */
+
+/** The endpoint-facing seam the section 4-6 cards call after their own write. */
+interface LifecycleSeams {
+  contactChanged(event: ContactChangedEvent): Promise<void>;
+  twoFactorToggled(event: TwoFactorToggledEvent): Promise<void>;
+  sessionsRevoked(event: SessionsRevokedEvent): Promise<void>;
+}
+
+/** The wiring `createIdentityLifecycleSeams` accepts (a subset of the handler deps). */
+interface LifecycleSeamWiring {
+  readonly db: Db;
+  readonly clock?: { now(): Date };
+  readonly emit?: (
+    input: unknown,
+    options?: unknown
+  ) => Promise<{ deduped: boolean; id: string | null }>;
+}
+
+/**
+ * The not-yet-implemented factory, read through the module namespace so a
+ * missing export fails each spec with "expected 'function', received
+ * 'undefined'" rather than an import-time module-resolution error.
+ */
+const lifecycleModule = identityLifecycle as unknown as {
+  readonly createIdentityLifecycleSeams?: (wiring: LifecycleSeamWiring) => LifecycleSeams;
+};
+
+/** Build the endpoint-facing seam; asserts the export exists first. */
+function createSeams(wiring: LifecycleSeamWiring): LifecycleSeams {
+  const factory = lifecycleModule.createIdentityLifecycleSeams;
+  expect(typeof factory).toBe("function");
+  if (factory === undefined) {
+    throw new Error("createIdentityLifecycleSeams is not implemented");
+  }
+  return factory(wiring);
+}
+
+describe("re-run idempotency — a redelivered hook emits exactly once (card AC)", () => {
+  it("I8: invoking handleContactChanged twice with identical input emits one auth.contact.changed row", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const clock = fixedClock(T0);
+      const event: ContactChangedEvent = {
+        userId: userId.toHexString(),
+        previous: { email: `old-${userId.toHexString()}@example.com` },
+        current: { email: `new-${userId.toHexString()}@example.com` },
+      };
+
+      await handleContactChanged(event, { db: test.db, clock });
+      await handleContactChanged(event, { db: test.db, clock });
+
+      expect(await eventsByKey(test, "auth.contact.changed")).toHaveLength(1);
+    });
+  });
+
+  it("I8: invoking handleContactChanged twice with identical input leaves one contactChangeFanouts row", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const clock = fixedClock(T0);
+      const event: ContactChangedEvent = {
+        userId: userId.toHexString(),
+        previous: { email: `old-${userId.toHexString()}@example.com` },
+        current: { email: `new-${userId.toHexString()}@example.com` },
+      };
+
+      await handleContactChanged(event, { db: test.db, clock });
+      await handleContactChanged(event, { db: test.db, clock });
+
+      const fanouts = await test.db
+        .collection(CONTACT_CHANGE_FANOUTS_COLLECTION)
+        .countDocuments({});
+      expect(fanouts).toBe(1);
+    });
+  });
+
+  it("I9: invoking handleSessionsRevoked twice with identical input emits one account.sessions.revoked row", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const clock = fixedClock(T0);
+      const event: SessionsRevokedEvent = {
+        userId: userId.toHexString(),
+        sessionIds: ["session-a", "session-b"],
+      };
+
+      await handleSessionsRevoked(event, { db: test.db, clock });
+      await handleSessionsRevoked(event, { db: test.db, clock });
+
+      expect(await eventsByKey(test, "account.sessions.revoked")).toHaveLength(1);
+    });
+  });
+});
+
+describe("section 4-6 surface seam — createIdentityLifecycleSeams (ADR-0043 §3)", () => {
+  it("S8: the contact-changed seam emits the flags event and records one fanout", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const seams = createSeams({ db: test.db, clock: fixedClock(T0) });
+
+      await seams.contactChanged({
+        userId: userId.toHexString(),
+        previous: { email: `old-${userId.toHexString()}@example.com` },
+        current: { email: `new-${userId.toHexString()}@example.com` },
+      });
+
+      expect(await eventsByKey(test, "auth.contact.changed")).toHaveLength(1);
+      expect(await test.db.collection(CONTACT_CHANGE_FANOUTS_COLLECTION).countDocuments({})).toBe(
+        1
+      );
+    });
+  });
+
+  it("S8: the contact-changed seam surfaces a genuinely different change as a second row", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const id = userId.toHexString();
+
+      await createSeams({ db: test.db, clock: fixedClock(T0) }).contactChanged({
+        userId: id,
+        previous: { email: "first@example.com" },
+        current: { email: "second@example.com" },
+      });
+      await createSeams({
+        db: test.db,
+        clock: fixedClock(new Date(T0.getTime() + 3_600_000)),
+      }).contactChanged({
+        userId: id,
+        previous: { email: "second@example.com" },
+        current: { email: "third@example.com" },
+      });
+
+      expect(await eventsByKey(test, "auth.contact.changed")).toHaveLength(2);
+    });
+  });
+
+  it("S8: a broken outbox through the contact-changed seam does not throw and logs", async () => {
+    await withTestDb(async (test) => {
+      const sink = installMemoryLogger();
+      const userId = new ObjectId();
+      const seams = createSeams({
+        db: test.db,
+        clock: fixedClock(T0),
+        emit: () => Promise.reject(new Error("outbox unavailable")),
+      });
+
+      await expect(
+        seams.contactChanged({
+          userId: userId.toHexString(),
+          previous: { email: "old@example.com" },
+          current: { email: "new@example.com" },
+        })
+      ).resolves.toBeUndefined();
+
+      const failure = sink.entries.find((entry) => entry.event === "identity_hook.emit_failed");
+      expect(failure).toBeDefined();
+      expect(failure?.level).toBe("error");
+    });
+  });
+
+  it("S10: the 2FA toggle seam re-emits across enable, disable and enable", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const id = userId.toHexString();
+      const at = (offsetMs: number) =>
+        createSeams({ db: test.db, clock: fixedClock(new Date(T0.getTime() + offsetMs)) });
+
+      await at(0).twoFactorToggled({ userId: id, enabled: true });
+      await at(3_600_000).twoFactorToggled({ userId: id, enabled: false });
+      await at(7_200_000).twoFactorToggled({ userId: id, enabled: true });
+
+      expect(await eventsByKey(test, "auth.2fa.enabled")).toHaveLength(2);
+      expect(await eventsByKey(test, "auth.2fa.disabled")).toHaveLength(1);
+    });
+  });
+
+  it("S9: the sessions-revoked seam emits one account.sessions.revoked row", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const seams = createSeams({ db: test.db, clock: fixedClock(T0) });
+
+      await seams.sessionsRevoked({
+        userId: userId.toHexString(),
+        sessionIds: ["session-a", "session-b"],
+      });
+
+      const revoked = await eventsByKey(test, "account.sessions.revoked");
+      expect(revoked).toHaveLength(1);
+      expect(revoked[0]?.subjectRef).toEqual({ kind: "user", id: userId.toHexString() });
+    });
+  });
+});
+
+describe("section 2 surface — the contact-verified Better Auth adapter (ADR-0043 §3)", () => {
+  it("S11: user.update.after completes the account and emits auth.account.completed once", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      await insertAuthUser(test, userId, { emailVerified: true, phoneNumberVerified: true });
+      await insertProfile(test, userId, { accountCompletedAt: null });
+
+      const hooks = identityLifecycle.createIdentityDatabaseHooks({
+        db: test.db,
+        clock: fixedClock(T0),
+      });
+      const after = hooks.user?.update?.after as unknown as
+        ((user: Record<string, unknown>, context: unknown) => Promise<void>) | undefined;
+      expect(typeof after).toBe("function");
+
+      await after?.({ id: userId.toHexString() }, null);
+
+      const profile = await test.db.collection(USER_PROFILES_COLLECTION).findOne({ userId });
+      expect(profile?.accountCompletedAt).toEqual(T0);
+      expect(await eventsByKey(test, "auth.account.completed")).toHaveLength(1);
     });
   });
 });
