@@ -20,6 +20,8 @@ import { createRateLimiter } from "@/server/rate-limit";
 
 import { assertTrustedCallback } from "./callback-url";
 import { buildCookieOptions } from "./cookies";
+import { createIdentityDatabaseHooks } from "./identity-lifecycle";
+import type { ClaimAttendeeSession, EmitDomainEvent } from "./identity-hooks";
 import { OTP_LENGTH } from "./internal";
 import { memoryOtpSender } from "./otp-sender";
 import { runPhoneHook } from "./phone-hook";
@@ -69,6 +71,18 @@ export interface AuthLike {
 export interface CreateAuthOptions {
   /** The MongoDB database the adapter writes auth collections to. */
   readonly db: Db;
+  /**
+   * The domain-event outbox door the identity lifecycle hooks emit through.
+   * Defaults to `emitDomainEvent`; injectable so a broken outbox can be proven
+   * not to fail a sign-in (ADR-0038 §2).
+   */
+  readonly emit?: EmitDomainEvent;
+  /**
+   * The attendee-session claim seam the session-created hook invokes for an
+   * unclaimed `op_att` cookie. Defaults to a no-op placeholder until the §6.7
+   * claim service lands (ADR-0040 §5).
+   */
+  readonly claim?: ClaimAttendeeSession;
 }
 
 /**
@@ -147,6 +161,11 @@ export function createAuth(options: CreateAuthOptions): AuthLike {
     // Better Auth's own window would compound with it and fire early.
     rateLimit: { enabled: false },
     hooks: { before, after },
+    databaseHooks: createIdentityDatabaseHooks({
+      db: options.db,
+      ...(options.emit === undefined ? {} : { emit: options.emit }),
+      ...(options.claim === undefined ? {} : { claim: options.claim }),
+    }),
     plugins: [
       emailOTP({
         otpLength: OTP_LENGTH,
