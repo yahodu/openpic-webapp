@@ -64,6 +64,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0056](ADR-0056-op90-me-projection-green-review-signoff.md)                        | OP-90 GREEN review sign-off: §1.2 projection verified; index gap and phone-only decision routed          | Accepted |
 | [0057](ADR-0057-op89-identity-lifecycle-red-pins-r3-followup-review.md)            | OP-89 RED-pins R3 follow-up review sign-off: same-device >100 read-cap pin verified                      | Accepted |
 | [0058](ADR-0058-op89-identity-lifecycle-indexes-green-review.md)                   | OP-89 indexes/TTLs GREEN review sign-off: device-keyed bounded new-device read verified                  | Accepted |
+| [0060](ADR-0060-op90-me-indexes.md)                                                | OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`                  | Accepted |
 | [0061](ADR-0061-op90-me-email-phone-only-string-contract.md)                       | OP-90 §1.2 `me` `email` is a non-nullable string; the phone-only `""` path is unreachable/defensive-only | Accepted |
 | [0064](ADR-0064-op89-identity-indexes-test-reference-renumber.md)                  | OP-89 follow-up: stale ADR-0046 test references in the identity pin specs renumbered to ADR-0050         | Accepted |
 
