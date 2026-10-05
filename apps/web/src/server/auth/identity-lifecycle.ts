@@ -8,12 +8,14 @@ import type { Clock } from "@/server/runtime/clock";
 import {
   handleContactChanged,
   handleContactVerified,
+  handleDeletionRequested,
   handleSessionCreated,
   handleSessionsRevoked,
   handleTwoFactorToggled,
   handleUserCreated,
   type ClaimAttendeeSession,
   type ContactChangedEvent,
+  type DeletionRequestedEvent,
   type EmitDomainEvent,
   type IdentityHookDeps,
   type SessionsRevokedEvent,
@@ -129,6 +131,7 @@ export interface IdentityLifecycleSeams {
   contactChanged(event: ContactChangedEvent): Promise<void>;
   twoFactorToggled(event: TwoFactorToggledEvent): Promise<void>;
   sessionsRevoked(event: SessionsRevokedEvent): Promise<void>;
+  deletionRequested(event: DeletionRequestedEvent): Promise<void>;
 }
 
 /**
@@ -148,6 +151,9 @@ export function createIdentityLifecycleSeams(wiring: IdentityHookWiring): Identi
     },
     sessionsRevoked: async (event) => {
       await safeRun("sessions.revoked", () => handleSessionsRevoked(event, deps));
+    },
+    deletionRequested: async (event) => {
+      await safeRun("deletion.requested", () => handleDeletionRequested(event, deps));
     },
   };
 }

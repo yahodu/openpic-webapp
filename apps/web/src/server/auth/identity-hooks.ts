@@ -39,7 +39,8 @@ import { parseLocale } from "./locale";
  *   contact changed  → `auth.contact.changed` (flags only) plus the transient
  *                      `contactChangeFanouts` record holding both contacts;
  *   2FA toggled      → `auth.2fa.enabled` / `auth.2fa.disabled`;
- *   sessions revoked → `account.sessions.revoked`.
+ *   sessions revoked → `account.sessions.revoked`;
+ *   deletion requested → `account.deletion.requested`.
  *
  * Every handler is **idempotent** and **never throws on a notification
  * failure**: a broken outbox logs `identity_hook.emit_failed` at error level and
@@ -162,6 +163,11 @@ export interface TwoFactorToggledEvent {
 export interface SessionsRevokedEvent {
   readonly userId: string;
   readonly sessionIds?: readonly string[];
+}
+
+/** Inputs to the deletion-requested handler. */
+export interface DeletionRequestedEvent {
+  readonly userId: string;
 }
 
 /** Shared seams every handler accepts. */
@@ -735,5 +741,34 @@ export async function handleSessionsRevoked(
     subjectRef: userRef(event.userId),
     payload: { revokedCount: event.sessionIds?.length ?? 0 },
     dedupeKey: `account.sessions.revoked:${event.userId}:${now.toISOString()}`,
+  });
+}
+
+/**
+ * Announce that the account owner requested deletion.
+ *
+ * Deduped on the instant (`eventKey:userId:instant`), matching the
+ * sessions-revoked, contact-changed and 2FA schemes, so a redelivered
+ * invocation collapses to one row while a genuinely new request at a later
+ * instant re-emits (ADR-0043 §1, ADR-0070). The subject and actor are both the
+ * deleting user, the convention every identity emit already uses (`userRef`).
+ *
+ * @param event - The user requesting deletion.
+ * @param deps - The database/outbox/clock seams.
+ */
+export async function handleDeletionRequested(
+  event: DeletionRequestedEvent,
+  deps: IdentityHookDeps
+): Promise<void> {
+  const resolved = resolveDeps(deps);
+  const now = resolved.clock.now();
+
+  await safeEmit(resolved, {
+    eventKey: "account.deletion.requested",
+    tenantId: event.userId,
+    actorRef: userRef(event.userId),
+    subjectRef: userRef(event.userId),
+    payload: {},
+    dedupeKey: `account.deletion.requested:${event.userId}:${now.toISOString()}`,
   });
 }
