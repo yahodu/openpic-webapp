@@ -289,13 +289,13 @@ following decisions.
   `TMPDIR=/root/tmp-mongo → 32 files / 192 passed` (+1 file / +7 tests over the
   GREEN baseline `31 / 185`); the file goes red for the right reason when the
   route is absent (`Cannot find package
-  '@/app/api/v1/internal/cron/sample/route'`); ESLint exit 0 and Prettier clean.
+'@/app/api/v1/internal/cron/sample/route'`); ESLint exit 0 and Prettier clean.
 - **Verdict:** `APPROVED` (LGTM). All four pins present and correct; honesty
   audit clean; three Low non-actionable observations (duplicate `I6` test label,
   reliance on `getConfig()` module caching, a double cast on the error envelope)
   — no rework requested, no new cards.
 - **Landing decision (this ADR is the record):** the OP-87 GREEN PR (#139 /
-  `e061771`) had already merged, so no *future* GREEN PR could carry these pins.
+  `e061771`) had already merged, so no _future_ GREEN PR could carry these pins.
   Because they are green regression pins that require no production change, the
   reviewer landed the branch directly as PR #142, squash-merged to `main` as
   `f994ce0`, rather than stranding them on an unmerged RED branch. The
