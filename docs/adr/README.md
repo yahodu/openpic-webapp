@@ -85,9 +85,10 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0077](ADR-0077-op92-green-review-signoff.md)                                      | OP-92 GREEN review sign-off: pins verified; Novu HTTP-plumbing refactor; drift-guard hardening routed    | Accepted |
 | [0078](ADR-0078-op92-followup-drift-hardening-red.md)                              | OP-92 follow-up RED: inactive drift step, duplicate id, non-JSON 2xx                                     | Accepted |
 | [0079](ADR-0079-op92-followup-drift-hardening-green.md)                            | OP-92 follow-up GREEN: reject an inactive step + duplicate workflow id; classify a non-JSON 2xx body     | Accepted |
+| [0080](ADR-0080-op92-followup-drift-hardening-green-review-signoff.md)             | OP-92 follow-up GREEN review sign-off: three pins verified; no changes requested                         | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
 
-_`0070`/`0071`/`0075` belong to the OP-91 follow-up lane (PR #181, landed); the OP-92 lane holds `0072`–`0074` (RED/pins), `0076`/`0077` (GREEN + review sign-off), `0078` (follow-up RED pins) and `0079` (follow-up GREEN implementation). The dependent OP-92 follow-up GREEN lane reserves `0080` (review sign-off), lowest-free-first at integration._
+_`0070`/`0071`/`0075` belong to the OP-91 follow-up lane (PR #181, landed); the OP-92 lane holds `0072`–`0074` (RED/pins), `0076`/`0077` (GREEN + review sign-off), `0078` (follow-up RED pins), `0079` (follow-up GREEN implementation) and `0080` (follow-up GREEN review sign-off, PR #186, landed)._
