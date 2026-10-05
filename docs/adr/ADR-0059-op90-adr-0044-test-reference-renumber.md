@@ -1,4 +1,4 @@
-# ADR-0057 — OP-90 follow-up: stale ADR-0044 test reference renumbered to ADR-0052
+# ADR-0059 — OP-90 follow-up: stale ADR-0044 test reference renumbered to ADR-0052
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** OP-90 follow-up test-only cleanup (`t_f2b2f2b4`) · **Relates to:** [ADR-0052](ADR-0052-op90-me-projection-red.md) (the RED pins), [ADR-0053](ADR-0053-op90-me-projection-red-review-signoff.md) and [ADR-0054](ADR-0054-op90-me-projection-red-followup-review-signoff.md) (the RED review sign-offs), [ADR-0055](ADR-0055-op90-me-projection-green.md) (the GREEN implementation), [ADR-0056](ADR-0056-op90-me-projection-green-review-signoff.md) (the GREEN review sign-off that filed this finding)

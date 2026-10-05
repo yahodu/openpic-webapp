@@ -1,3 +1,9 @@
+## [1.15.1](https://github.com/yahodu/openpic-webapp/compare/v1.15.0...v1.15.1) (2026-10-05)
+
+### Bug Fixes
+
+- **auth:** OP-89 key the bounded new-device read on the device hash ([#169](https://github.com/yahodu/openpic-webapp/issues/169)) ([04843a3](https://github.com/yahodu/openpic-webapp/commit/04843a3fc26cc4378e895e2b82c53bec93b5fef7)), closes [#166](https://github.com/yahodu/openpic-webapp/issues/166)
+
 ## [1.15.0](https://github.com/yahodu/openpic-webapp/compare/v1.14.0...v1.15.0) (2026-10-05)
 
 ### Features
