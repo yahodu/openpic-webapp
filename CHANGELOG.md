@@ -1,3 +1,9 @@
+## [1.14.0](https://github.com/yahodu/openpic-webapp/compare/v1.13.0...v1.14.0) (2026-10-05)
+
+### Features
+
+- **auth:** OP-89 wire the lifecycle-hook surfaces and re-run dedupe ([#165](https://github.com/yahodu/openpic-webapp/issues/165)) ([3def12a](https://github.com/yahodu/openpic-webapp/commit/3def12a3c6cc36f831acad6cf8b7f1448c92ec63)), closes [#162](https://github.com/yahodu/openpic-webapp/issues/162)
+
 ## [1.13.0](https://github.com/yahodu/openpic-webapp/compare/v1.12.1...v1.13.0) (2026-10-05)
 
 ### Features

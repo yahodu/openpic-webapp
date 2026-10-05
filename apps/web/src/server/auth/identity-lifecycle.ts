@@ -6,11 +6,18 @@ import { getLogger } from "@/server/logging";
 import type { Clock } from "@/server/runtime/clock";
 
 import {
+  handleContactChanged,
+  handleContactVerified,
   handleSessionCreated,
+  handleSessionsRevoked,
+  handleTwoFactorToggled,
   handleUserCreated,
   type ClaimAttendeeSession,
+  type ContactChangedEvent,
   type EmitDomainEvent,
   type IdentityHookDeps,
+  type SessionsRevokedEvent,
+  type TwoFactorToggledEvent,
 } from "./identity-hooks";
 
 /**
@@ -98,6 +105,53 @@ async function safeRun(kind: string, run: () => Promise<void>): Promise<void> {
   }
 }
 
+/** Project the wiring onto the handler deps, dropping absent seams. */
+function toHookDeps(wiring: IdentityHookWiring): IdentityHookDeps {
+  return {
+    db: wiring.db,
+    ...(wiring.emit === undefined ? {} : { emit: wiring.emit }),
+    ...(wiring.claim === undefined ? {} : { claim: wiring.claim }),
+    ...(wiring.clock === undefined ? {} : { clock: wiring.clock }),
+  };
+}
+
+/**
+ * The endpoint-facing seam the section 4-6 cards call after their own write
+ * (ADR-0043 §3).
+ *
+ * Better Auth exposes no `after` hook that carries the transition for a contact
+ * change, a 2FA toggle or a revoke-all, so those surfaces are injected: the
+ * owning endpoint card calls the matching method once, after it has persisted
+ * its own write. Each method delegates to the policy handler and is wrapped in
+ * {@link safeRun}, so a hook failure can never fail the endpoint.
+ */
+export interface IdentityLifecycleSeams {
+  contactChanged(event: ContactChangedEvent): Promise<void>;
+  twoFactorToggled(event: TwoFactorToggledEvent): Promise<void>;
+  sessionsRevoked(event: SessionsRevokedEvent): Promise<void>;
+}
+
+/**
+ * Build the injectable section 4-6 surface seam.
+ *
+ * @param wiring - The database plus optional outbox/claim/clock seams.
+ * @returns The three delegating methods the endpoint cards call.
+ */
+export function createIdentityLifecycleSeams(wiring: IdentityHookWiring): IdentityLifecycleSeams {
+  const deps = toHookDeps(wiring);
+  return {
+    contactChanged: async (event) => {
+      await safeRun("contact.changed", () => handleContactChanged(event, deps));
+    },
+    twoFactorToggled: async (event) => {
+      await safeRun("2fa.toggled", () => handleTwoFactorToggled(event, deps));
+    },
+    sessionsRevoked: async (event) => {
+      await safeRun("sessions.revoked", () => handleSessionsRevoked(event, deps));
+    },
+  };
+}
+
 /**
  * Build the Better Auth `databaseHooks` that run the identity lifecycle.
  *
@@ -107,12 +161,7 @@ async function safeRun(kind: string, run: () => Promise<void>): Promise<void> {
 export function createIdentityDatabaseHooks(
   wiring: IdentityHookWiring
 ): NonNullable<BetterAuthOptions["databaseHooks"]> {
-  const deps: IdentityHookDeps = {
-    db: wiring.db,
-    ...(wiring.emit === undefined ? {} : { emit: wiring.emit }),
-    ...(wiring.claim === undefined ? {} : { claim: wiring.claim }),
-    ...(wiring.clock === undefined ? {} : { clock: wiring.clock }),
-  };
+  const deps = toHookDeps(wiring);
 
   return {
     user: {
@@ -133,6 +182,17 @@ export function createIdentityDatabaseHooks(
               },
               deps
             );
+          });
+        },
+      },
+      update: {
+        after: async (user) => {
+          await safeRun("contact.verified", async () => {
+            const userId = typeof user.id === "string" ? user.id : "";
+            if (!ObjectId.isValid(userId)) {
+              return;
+            }
+            await handleContactVerified({ userId }, deps);
           });
         },
       },
