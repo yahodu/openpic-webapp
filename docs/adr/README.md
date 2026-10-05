@@ -59,5 +59,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0053](ADR-0053-op90-me-projection-red-review-signoff.md)                          | OP-90 RED review sign-off: pins approved; contract decisions and 2 coverage gaps routed                  | Accepted |
 | [0054](ADR-0054-op90-me-projection-red-followup-review-signoff.md)                 | OP-90 RED follow-up review sign-off: the empty-PATCH 422 and pure-attendee pins land                     | Accepted |
 | [0055](ADR-0055-op90-me-projection-green.md)                                       | OP-90 GREEN: the full `GET`/`PATCH /me` §1.2 projection on top of the OP-89 read slice                   | Accepted |
+| [0056](ADR-0056-op90-me-projection-green-review-signoff.md)                        | OP-90 GREEN review sign-off: §1.2 projection verified; index gap and phone-only decision routed          | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
