@@ -27,6 +27,8 @@ export const COLLECTIONS = {
   providerWebhookEvents: "provider_webhook_events",
   idempotencyKeys: "idempotency_keys",
   plans: "plans",
+  notificationTypes: "notification_types",
+  notificationTemplates: "notification_templates",
 } as const;
 
 /** The name of any registered collection. */
