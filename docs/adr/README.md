@@ -24,5 +24,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0016](ADR-0016-notification-routing-matrix-as-data.md)                          | Notification routing matrix as data: frozen 81 keys, template/group mapping, version-on-change     | Accepted |
 | [0017](ADR-0017-notification-routing-matrix-green-implementation.md)             | Notification routing matrix GREEN: 81-key transcription, derived fields, atomic reconcile          | Accepted |
 | [0018](ADR-0018-notification-routing-follow-up-severity-and-mobile-invariant.md) | Notification routing follow-up: `auth.account.completed` severity and enabled-mobile invariant     | Accepted |
+| [0019](ADR-0019-matrix-transcription-guard-and-lint-override-removal.md)         | §4 matrix transcription guard (table-driven spec); broad test-lint override removed                | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.

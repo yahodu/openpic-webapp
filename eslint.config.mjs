@@ -148,12 +148,6 @@ export default tseslint.config(
       // Spec authors annotate complex array types as `Array<T>` / `readonly T[]`
       // for readability; the stylistic preference must not fail the build.
       "@typescript-eslint/array-type": "off",
-      // Spec authors narrow a `find(...)` result with `as T` after
-      // `expect(x).toBeDefined()` and wrap an already-typed string in `String()`
-      // in failure messages. Both are stylistic preferences (not correctness)
-      // that the type-aware test harness does not need to fail the build over.
-      "@typescript-eslint/no-unnecessary-type-conversion": "off",
-      "@typescript-eslint/non-nullable-type-assertion-style": "off",
       // `Response.json()` / Playwright's `response.json()` are typed `any`, so
       // asserting on parsed envelopes trips the unsafe-* rules. That is inherent
       // to testing an HTTP response, not a defect in the spec.

@@ -91,7 +91,7 @@ describe("template variable contract (U7, AC3)", () => {
 
       expect(
         result.success,
-        `${template.typeKey}:${template.channel}:${String(result.error?.message ?? "")}`
+        `${template.typeKey}:${template.channel}:${result.error?.message ?? ""}`
       ).toBe(true);
     }
   });

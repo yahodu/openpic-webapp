@@ -9,7 +9,27 @@
  * produce one.
  */
 import type { ChannelGroup, NotificationType } from "@/server/notifications/notification-types";
+import { SEED_NOTIFICATION_TYPES } from "@/server/notifications/notification-types.values";
 import type { NotificationTemplate } from "@/server/notifications/notification-templates";
+
+/**
+ * Find one seeded notification type by its contract key.
+ *
+ * @param key - The `typeKey` to resolve.
+ * @returns The seeded type.
+ * @throws When the seed omits the key — which is itself a contract violation, so
+ *   a throwing lookup keeps the specs free of `as T` / `!` assertions
+ *   (ADR-0019).
+ */
+export function requireType(key: string): NotificationType {
+  const type = SEED_NOTIFICATION_TYPES.find((candidate) => candidate.typeKey === key);
+
+  if (type === undefined) {
+    throw new Error(`Missing seeded notification type: ${key}`);
+  }
+
+  return type;
+}
 
 /** The three routing channel groups (design §1, §1.1). */
 type GroupName = "in_app" | "email" | "mobile";

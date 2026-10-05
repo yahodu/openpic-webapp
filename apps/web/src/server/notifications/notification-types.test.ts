@@ -11,7 +11,7 @@ import {
   SEED_NOTIFICATION_TYPES,
 } from "@/server/notifications/notification-types.values";
 
-import { makeNotificationType } from "../../test/factories/notification";
+import { makeNotificationType, requireType } from "../../test/factories/notification";
 
 /**
  * Unit contract — the `notificationTypes` routing catalogue (schema §19.1,
@@ -242,24 +242,20 @@ describe("mobile candidate order (U5)", () => {
   });
 
   it("U5: the mobile OTP type is pinned to SMS only and never reroutes to WhatsApp", () => {
-    const otp = SEED_NOTIFICATION_TYPES.find(
-      (type) => type.typeKey === "auth.otp.mobile.requested"
-    );
+    const otp = requireType("auth.otp.mobile.requested");
 
-    expect(otp).toBeDefined();
-    expect(groupOf(otp as NotificationType, "mobile")?.candidates).toEqual(["sms"]);
-    expect(groupOf(otp as NotificationType, "mobile")?.enabled).toBe(true);
+    expect(groupOf(otp, "mobile")?.candidates).toEqual(["sms"]);
+    expect(groupOf(otp, "mobile")?.enabled).toBe(true);
   });
 });
 
 describe("OTP secrecy (U6, design rule 6)", () => {
   it("U6: OTP types disable in_app and never retain the body", () => {
     for (const key of OTP_TYPE_KEYS) {
-      const type = SEED_NOTIFICATION_TYPES.find((candidate) => candidate.typeKey === key);
+      const type = requireType(key);
 
-      expect(type, key).toBeDefined();
-      expect(groupOf(type as NotificationType, "in_app")?.enabled, key).toBe(false);
-      expect((type as NotificationType).retainBody, key).toBe(false);
+      expect(groupOf(type, "in_app")?.enabled, key).toBe(false);
+      expect(type.retainBody, key).toBe(false);
     }
   });
 });
@@ -272,10 +268,7 @@ describe("first-match dedupe (U9)", () => {
    * follow-up. The spec pins both readings so neither can drift.
    */
   it("U9: the first-match notification is deduped once per profile+event on the mobile group", () => {
-    const ready = SEED_NOTIFICATION_TYPES.find((type) => type.typeKey === "attendee.matches.ready");
-
-    expect(ready).toBeDefined();
-    const type = ready as NotificationType;
+    const type = requireType("attendee.matches.ready");
 
     expect(groupOf(type, "mobile")?.enabled).toBe(true);
     expect(type.dedupe.keyTemplate).toContain("{typeKey}");
@@ -284,10 +277,7 @@ describe("first-match dedupe (U9)", () => {
   });
 
   it("U9: the follow-up match type is digest-throttled and never sent on mobile", () => {
-    const next = SEED_NOTIFICATION_TYPES.find((type) => type.typeKey === "attendee.matches.new");
-
-    expect(next).toBeDefined();
-    const type = next as NotificationType;
+    const type = requireType("attendee.matches.new");
 
     expect(groupOf(type, "mobile")?.enabled).toBe(false);
     expect(type.throttle.strategy).toBe("digest");
