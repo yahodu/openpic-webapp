@@ -20,6 +20,8 @@ export const COLLECTIONS = {
   eventImages: "event_images",
   attendeeEventProfiles: "attendee_event_profiles",
   subscriptions: "subscriptions",
+  notificationTypes: "notification_types",
+  notificationTemplates: "notification_templates",
   dispatches: "notification_dispatches",
   accessLinks: "access_links",
   mediaAssets: "media_assets",
