@@ -1,4 +1,4 @@
-# ADR-0036 — Integration-spec CI budget: deterministic Mongo readiness + explicit timeout
+# ADR-0037 — Integration-spec CI budget: deterministic Mongo readiness + explicit timeout
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-testcase-writer`
 - **Card:** `t_f4aacfdb` (OP-85 follow-up, review finding #3) · **Origin:** PR [#147](https://github.com/yahodu/openpic-webapp/pull/147), CI job `test_coverage`
@@ -82,12 +82,13 @@ latency profile but were not red; broadening the helper into
 - **Retry the flaky spec (`retry`)** — rejected: retries hide intermittent
   latency and let a real first-attempt failure through unnoticed.
 
-## Amendment note — ADR renumber 0035 → 0036
+## Amendment note — ADR renumber 0035 → 0036 → 0037
 
 This decision was authored as ADR-0035. While the branch was in review, `main`
-advanced to `859b717` (PR #151) which claimed ADR-0035 for the instrumentation
-boot-guard pin, so this record was renumbered to **ADR-0036** during the merge
-resolution (filename + README row). No decision content changed.
+advanced twice and claimed both numbers: `859b717` (PR #151) took ADR-0035 for
+the instrumentation boot-guard pin, and `ae215ca` (PR #154) took ADR-0036 for
+its review sign-off. The record was therefore renumbered to **ADR-0037** during
+the merge resolutions (filename + README row). No decision content changed.
 
 ## Amendment note — the seed-lock subtlety
 
