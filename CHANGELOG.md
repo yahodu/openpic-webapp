@@ -1,3 +1,9 @@
+## [1.7.0](https://github.com/yahodu/openpic-webapp/compare/v1.6.1...v1.7.0) (2026-10-05)
+
+### Features
+
+- **auth:** OP-85 configure Better Auth with OTP, phone, 2FA and admin ([#128](https://github.com/yahodu/openpic-webapp/issues/128)) ([e05ed3f](https://github.com/yahodu/openpic-webapp/commit/e05ed3fdab9b7623be42fdf53562a12fe536c1fa))
+
 ## [1.6.1](https://github.com/yahodu/openpic-webapp/compare/v1.6.0...v1.6.1) (2026-10-05)
 
 ### Bug Fixes
