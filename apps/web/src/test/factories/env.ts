@@ -55,14 +55,25 @@ export function makeEnv(overrides: EnvInput = {}): EnvInput {
 
 /**
  * Build a valid production environment: `APP_ENV=production`, non-memory
- * providers and 32+ character secrets. Override a single key to make exactly
- * one thing invalid.
+ * providers, 32+ character secrets and a named trusted client-IP header.
+ * Override a single key to make exactly one thing invalid.
+ *
+ * `TRUSTED_CLIENT_IP_HEADER` is required in production (OP-85 follow-up,
+ * ADR-0031): a production deploy must never silently fall back to the
+ * client-writable `x-forwarded-for` list. The default here keeps every
+ * production-env spec valid under that contract; override it to `undefined`
+ * or a blank string to exercise the refusal.
  *
  * @param overrides - Keys to override.
  * @returns A production environment fixture.
  */
 export function makeProductionEnv(overrides: EnvInput = {}): EnvInput {
-  return makeEnv({ APP_ENV: "production", ...NON_MEMORY_PROVIDERS, ...overrides });
+  return makeEnv({
+    APP_ENV: "production",
+    ...NON_MEMORY_PROVIDERS,
+    TRUSTED_CLIENT_IP_HEADER: "x-real-ip",
+    ...overrides,
+  });
 }
 
 /**
