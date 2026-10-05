@@ -1,4 +1,10 @@
-import type { AppErrorCode, ErrorCode, PipelineErrorCode } from "@openpic/contracts";
+import type {
+  AppErrorCode,
+  AuthErrorCode,
+  ErrorCode,
+  InternalErrorCode,
+  PipelineErrorCode,
+} from "@openpic/contracts";
 
 /**
  * The server error catalogue — the executable copy of contract Appendix A.
@@ -114,10 +120,78 @@ export const PIPELINE_ERROR_TRANSPORT: Readonly<Record<PipelineErrorCode, ErrorC
   },
 };
 
-/** Every client-facing code's transport: Appendix A first, then pipeline codes. */
+/**
+ * Transport for the auth-guard codes (contract Appendix A.1).
+ *
+ * Kept out of {@link ERROR_CATALOG} so that table stays the exact base Appendix
+ * A copy the HTTP-pipeline story pinned; the auth story owns these rows and
+ * feeds them into the same dispatch table.
+ */
+export const AUTH_ERROR_TRANSPORT: Readonly<Record<AuthErrorCode, ErrorCatalogEntry>> = {
+  authentication_required: {
+    status: 401,
+    retryable: false,
+    message: "Authentication is required.",
+  },
+  session_expired: {
+    status: 401,
+    retryable: false,
+    message: "Your session has expired. Please sign in again.",
+  },
+  account_incomplete: {
+    status: 403,
+    retryable: false,
+    message: "Your account setup is incomplete.",
+  },
+  admin_2fa_required: {
+    status: 403,
+    retryable: false,
+    message: "Two-factor authentication is required for administrator access.",
+  },
+  account_banned: {
+    status: 423,
+    retryable: false,
+    message: "This account has been suspended for violating the terms of service.",
+  },
+  account_suspended: {
+    status: 423,
+    retryable: false,
+    message: "This account is currently suspended.",
+  },
+};
+
+/**
+ * Transport for the machine-to-machine internal-auth codes (contract §0.3,
+ * ADR-0028 §3).
+ *
+ * Like the auth codes, they are kept out of {@link ERROR_CATALOG} so that table
+ * stays the exact base Appendix A copy; the HMAC story owns these rows and
+ * feeds them into the same dispatch table. All three are `401`, non-retryable.
+ */
+export const INTERNAL_ERROR_TRANSPORT: Readonly<Record<InternalErrorCode, ErrorCatalogEntry>> = {
+  internal_auth_failed: {
+    status: 401,
+    retryable: false,
+    message: "Internal authentication failed.",
+  },
+  invalid_signature: {
+    status: 401,
+    retryable: false,
+    message: "The request signature is invalid.",
+  },
+  stale_signature: {
+    status: 401,
+    retryable: false,
+    message: "The request timestamp is outside the allowed window.",
+  },
+};
+
+/** Every client-facing code's transport: Appendix A first, then pipeline + auth + internal codes. */
 const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...ERROR_CATALOG,
   ...PIPELINE_ERROR_TRANSPORT,
+  ...AUTH_ERROR_TRANSPORT,
+  ...INTERNAL_ERROR_TRANSPORT,
 };
 
 /**

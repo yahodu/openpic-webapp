@@ -40,6 +40,28 @@ export const ERROR_CODES = [
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 /**
+ * Auth-guard codes (contract Appendix A.1).
+ *
+ * They live in their own closed set rather than in {@link ERROR_CODES} because
+ * the server error catalogue (`@/server/http/catalog`) pins `ERROR_CATALOG` to
+ * exactly the base Appendix A rows the HTTP-pipeline story enumerated; the auth
+ * codes are appended to the client-facing enum ({@link API_ERROR_CODES}) and
+ * transported from their own table so both remain exact. Append-only, like
+ * every other code.
+ */
+export const AUTH_ERROR_CODES = [
+  "authentication_required",
+  "session_expired",
+  "account_incomplete",
+  "admin_2fa_required",
+  "account_banned",
+  "account_suspended",
+] as const;
+
+/** A member of the closed {@link AUTH_ERROR_CODES} set. */
+export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -60,6 +82,24 @@ export const PIPELINE_ERROR_CODES = [
 export type PipelineErrorCode = (typeof PIPELINE_ERROR_CODES)[number];
 
 /**
+ * Machine-to-machine auth codes (contract §0.3 `internal`, ADR-0028 §3).
+ *
+ * They live in their own closed set rather than in {@link ERROR_CODES} because
+ * the server error catalogue pins `ERROR_CATALOG` to exactly the base Appendix
+ * A rows; these codes are appended to the client-facing enum
+ * ({@link API_ERROR_CODES}) and transported from their own table (all `401`,
+ * non-retryable) so both remain exact. Append-only, like every other code.
+ */
+export const INTERNAL_ERROR_CODES = [
+  "internal_auth_failed",
+  "invalid_signature",
+  "stale_signature",
+] as const;
+
+/** A member of the closed {@link INTERNAL_ERROR_CODES} set. */
+export type InternalErrorCode = (typeof INTERNAL_ERROR_CODES)[number];
+
+/**
  * Codes the edge gate (middleware) emits before the request reaches the
  * application pipeline.
  *
@@ -74,22 +114,24 @@ export const EDGE_ERROR_CODES = ["csrf_failed"] as const;
 /** A member of the {@link EDGE_ERROR_CODES} set. */
 export type EdgeErrorCode = (typeof EDGE_ERROR_CODES)[number];
 
-/** Every code a client-facing error envelope may carry (business + edge + pipeline). */
+/** Every code a client-facing error envelope may carry (business + edge + auth + pipeline + internal). */
 export const API_ERROR_CODES = [
   ...ERROR_CODES,
   ...EDGE_ERROR_CODES,
+  ...AUTH_ERROR_CODES,
   ...PIPELINE_ERROR_CODES,
+  ...INTERNAL_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 
 /**
- * Codes the server `AppError` may carry: the business catalogue plus the
- * pipeline codes. Edge codes (`csrf_failed`) are emitted by middleware before
- * the pipeline and are never raised as `AppError`s.
+ * Codes the server `AppError` may carry: the business catalogue plus the auth,
+ * pipeline and internal codes. Edge codes (`csrf_failed`) are emitted by
+ * middleware before the pipeline and are never raised as `AppError`s.
  */
-export type AppErrorCode = ErrorCode | PipelineErrorCode;
+export type AppErrorCode = ErrorCode | AuthErrorCode | PipelineErrorCode | InternalErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);

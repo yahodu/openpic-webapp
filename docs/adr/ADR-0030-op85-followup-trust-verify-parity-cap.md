@@ -1,4 +1,4 @@
-# ADR-0025 — OP-85 follow-up RED pins: trusted-header precedence, anonymous-verify error parity, authenticated-cap fail-closed
+# ADR-0030 — OP-85 follow-up: trusted-header precedence, anonymous-verify error parity, authenticated-cap fail-closed
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** `t_9d6a765c` (OP-85 reviewer round-1 follow-up, RED) · **Extends the pins of:** ADR-0023, ADR-0024
