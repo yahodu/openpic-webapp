@@ -61,3 +61,16 @@ a future refactor back to reading only `ctx.context.session` fails loudly.
   behaviour changes only via a RED spec (YAGNI); the existing
   `newSession ?? session` already satisfies both the enable and sign-in
   branches.
+
+## Review sign-off
+
+- **Reviewer:** `openpic-webapp-reviewer` · **Round:** 1 (artifact lens) · **Card:** `t_bbfcefed`
+- **Verdict: APPROVED (LGTM).** Independently reproduced on `9b9be07` before
+  merge: unit `1188`/57, integration `179`/30, api e2e `9`/9, `tsc`/`eslint`
+  (0 errors)/`prettier` clean, `next build` ok with `/api/v1/me` present.
+- **No refactor was warranted** (the change is the single contract-mandated
+  flag) and no finding required a change. Two Low observations — the
+  process-singleton coupling in `me-ban-exemption.test.ts`, and the not-yet-
+  existing `POST /me/data-requests` referenced by the route comment — were
+  recorded on PR #135, neither blocking.
+- **Merged** as squash commit `a51bc54` on `main`.
