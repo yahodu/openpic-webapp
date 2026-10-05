@@ -182,3 +182,53 @@ detail gaps **without changing any existing observable expectation**:
 - **Expose the principal as `ctx.principal` only (object).** Rejected: OP-79
   pinned `ctx.principal` as the rate-limit principal _string_; the typed union
   is exposed through `resolvePrincipal`'s return type instead.
+
+## GREEN implementation (OP-86, commit on `OP-86-task-auth-guards`)
+
+The implementation landed in `@/server/auth/guards` plus four supporting edits.
+Two decisions were forced by the existing RED/GREEN suite and are recorded here.
+
+### A. The auth codes live in `AUTH_ERROR_CODES`, not `ERROR_CODES`
+
+§2 above asked the implementer to add the six codes to the contracts
+`ERROR_CODES` and the server `ERROR_CATALOG`. That instruction collides with the
+already-green `apps/web/src/server/http/errors.test.ts` (U2), which asserts
+`ERROR_CATALOG` contains **exactly** its frozen `APPENDIX_A` list — a list that
+predates Appendix A.1 and omits every auth code. Adding them to `ERROR_CODES`
+would put them in `ERROR_CATALOG` (its type is `Record<ErrorCode, …>`) and break
+that test, which OP-86 must not modify.
+
+Resolution (tests are authoritative): the six codes are a separate contracts
+union `AUTH_ERROR_CODES`, appended to the client-facing `API_ERROR_CODES` (so
+`errorCodeSchema` accepts them) and added to `AppErrorCode`; the server keeps
+them in a new `AUTH_ERROR_TRANSPORT` table that feeds the same dispatch table as
+`ERROR_CATALOG`. `ERROR_CATALOG` therefore stays the exact base Appendix A copy
+the pipeline story pinned, while every auth code still resolves a
+401/403/423 status through `appError`. Code set is append-only either way.
+
+### B. `sessionTwoFactorVerified` is an explicit session field set on the verify path
+
+As anticipated in §4, `user.twoFactorEnabled` cannot answer I6/I7. Better Auth
+1.7.7 keeps no per-session fact, so the implementation adds
+`session.additionalFields.twoFactorVerified` (server-owned, `input: false`) and
+the `after` hook marks the session document on a **successful**
+`/two-factor/verify-otp` (the failed branch leaves an `APIError` on
+`ctx.context.returned`, which the hook ignores). `resolvePrincipal` reads the
+field straight off `get-session`. The sign-in branch of verify-otp (a new session
+minted through `setSessionCookie`) is marked via `ctx.context.newSession`; the
+enable branch (existing session) via `ctx.context.session`.
+
+### C. The `bearer` plugin is required for I2
+
+`resolvePrincipal` only forwards headers to Better Auth; the mobile bearer
+credential is turned into a session by Better Auth's `bearer` plugin, which also
+emits the `set-auth-token` header I2 reads. Without `bearer()` in
+`createAuth` the plugin's own `get-session` never sees the token. It is added to
+the plugin list.
+
+### D. The `/api/v1/me` guard stage is built per request
+
+`getAuth()`/`getDb()` read validated configuration, so evaluating them at module
+scope makes `next build`'s page-data collection fail without a configured
+environment. The route therefore builds `requireAuth("user", …)` inside the
+stage closure; `next build`, `next start` and Playwright all pass.
