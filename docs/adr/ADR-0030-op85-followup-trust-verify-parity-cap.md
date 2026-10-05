@@ -137,3 +137,53 @@ reverting shipped behaviour (forbidden) or probing pre-#132 `920e856` (excluded
 by the card). The reviewer did not request a production edit. Referenced at PR
 #134, which is intentionally a **draft** and must not be merged — the RED specs
 travel to `main` inside the GREEN PR from `t_1175689a` (precedent #127/#128).
+
+## Implementer addendum — GREEN (`t_1175689a`)
+
+Turns the single red spec green and closes the two follow-up work items, on top
+of `main` post-#132 (re-based onto `origin/main` at the time of merge; this ADR
+was renumbered from a transient `ADR-0025` to `ADR-0030` to avoid a collision
+with the independently-landed `ADR-0025-auth-guards`).
+
+### 1. Anonymous-verify error parity (spec I20 → green)
+
+The unknown-number guard in `apps/web/src/server/auth/phone-hook.ts` now throws
+the **same** envelope Better Auth's own verify step produces for an existing
+user's wrong code:
+
+```
+400  { code: "INVALID_OTP", message: "Invalid OTP" }
+```
+
+Previously it threw `400 { code:"invalid_code", message:"Invalid or unverifiable
+code." }`, which was distinguishable from the wrong-code response and thus a
+residual account-existence oracle. The two responses are now byte-identical on
+status, `code` and `message`; the code comment's claim is true. No other
+production path referenced the old `invalid_code` envelope (the unrelated
+two-factor code path is untouched).
+
+### 2. Authenticated-verify cap constants exported (`finding #4`)
+
+The `AUTHENTICATED_VERIFY_LIMIT` / `AUTHENTICATED_VERIFY_WINDOW_SECONDS` magic
+values moved out of `apps/web/src/server/auth/rate-limit-hook.ts` into a single
+exported constant on the rate-limit module:
+
+```
+apps/web/src/server/rate-limit/authenticated-verify.ts
+  export const AUTHENTICATED_VERIFY_CAP = { limit: 10, windowSeconds: 600 } as const;
+```
+
+re-exported from the `@/server/rate-limit` barrel. The frozen
+`RATE_LIMIT_CLASSES` table is untouched (`classes.test.ts` stays frozen); the
+hook now passes `AUTHENTICATED_VERIFY_CAP` straight to `rateLimiter.limit`. The
+value is unchanged, so observable behaviour is unchanged, and the budget is now
+unit-testable on its own.
+
+### 3. Cap fail-closed path (spec set → green)
+
+The `429 too_many_requests` envelope on a limiter fault / spent cap is unchanged
+and remains covered by `rate-limit-hook.test.ts`.
+
+**Verification:** integration I20 green (parity), unit `rate-limit-hook.test.ts`
+
+- `client-ip.test.ts` green, full suite green.
