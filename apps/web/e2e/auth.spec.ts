@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { E2E_BASE_URL } from "./ports";
+
 /**
  * E1 — full email OTP sign-in over a real `next start` server (OP-85, contract
  * §1.1).
@@ -15,8 +17,6 @@ import { expect, test } from "@playwright/test";
  * into a re-run when `reuseExistingServer` keeps the e2e server alive.
  */
 
-const E2E_ORIGIN = "http://127.0.0.1:3000";
-
 test.describe("email OTP sign-in over the API", () => {
   test("E1: send → read the captured code → sign in returns a session cookie", async ({
     request,
@@ -24,7 +24,7 @@ test.describe("email OTP sign-in over the API", () => {
     const email = `e2e-${String(Date.now())}-${Math.random().toString(16).slice(2)}@example.com`;
 
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
-      headers: { origin: E2E_ORIGIN },
+      headers: { origin: E2E_BASE_URL },
       data: { email, type: "sign-in" },
     });
     expect(sent.status()).toBe(200);
@@ -37,7 +37,7 @@ test.describe("email OTP sign-in over the API", () => {
     expect(typeof code).toBe("string");
 
     const signedIn = await request.post("/api/auth/sign-in/email-otp", {
-      headers: { origin: E2E_ORIGIN },
+      headers: { origin: E2E_BASE_URL },
       data: { email, otp: code },
     });
     expect(signedIn.status()).toBe(200);

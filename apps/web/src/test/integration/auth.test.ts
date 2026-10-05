@@ -4,9 +4,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createAuth, type AuthLike } from "@/server/auth";
 import { otpInbox } from "@/server/auth/otp-inbox";
 import { closeMongoClient } from "@/server/db/mongo";
+import {
+  createLogger,
+  getLogger,
+  memoryTransport,
+  setLogger,
+  type MemoryTransport,
+} from "@/server/logging";
 
 import { makeEnv, toProcessEnv } from "../factories/env";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { expectNoSecretsInLogs } from "../helpers/log-assertions";
 import {
   authPost,
   body,
@@ -23,12 +31,23 @@ import {
  * Every spec drives the configured auth instance through its HTTP handler
  * (`auth.handler(request)`) — the library's documented server entry point — and
  * asserts only what a client or a DB reader can observe: HTTP status, the
- * session cookie, the captured OTP channel, and the persisted auth documents.
- * Nothing here reaches into plugin internals, so a legitimate refactor of the
- * config (a hook moved, a plugin version bumped) cannot break a spec while the
- * behaviour is unchanged.
+ * session cookie, the captured OTP channel, the persisted auth documents and
+ * the emitted log entries. Nothing here reaches into plugin internals, so a
+ * legitimate refactor of the config (a hook moved, a plugin version bumped)
+ * cannot break a spec while the behaviour is unchanged.
  *
- * Contract expected of the implementation
+ * ## Test isolation (reviewer round 1, High)
+ *
+ * `withAuth` gives each spec a throwaway database and a fresh auth instance,
+ * but the rate limiter (`createRateLimiter()`) is a **process-wide memoised
+ * singleton**, so `auth.otp`/`auth.verify` counters accumulate across specs
+ * that share a contact or an IP. Every spec therefore mints its own
+ * `makeIdentity()` — a dedicated email, phone number **and** `x-forwarded-for`
+ * IP — so no two specs share a limiter bucket. A spec that must exceed a limit
+ * (I2/I3/I8) does so only on its own private identity.
+ *
+ * ## Contract expected of the implementation
+ *
  *   - `@/server/auth` exports `createAuth({ db }): AuthLike` (plus the
  *     process singleton `auth`), wiring the `emailOTP`, `phoneNumber`,
  *     `twoFactor` and `admin` plugins, `trustedOrigins` from `ALLOWED_ORIGINS`,
@@ -40,20 +59,22 @@ import {
  *     Email OTPs are recorded with channel `email`; phone/SMS OTPs — including
  *     the two-factor one-time code — with channel `sms` (notification §4.1:
  *     `auth.otp.mobile.requested` is pinned to `sms`, never the `mobile` group).
+ *   - An OTP send emits an `info` log with `event: "auth.otp.sent"`,
+ *     `channel` (`email`|`sms`) and a **hashed** `contact` — never the raw
+ *     email/phone and never the generated code (I12).
  *
  * Better Auth route surface exercised (contract §1.1):
  *   POST /api/auth/email-otp/send-verification-otp   { email, type }
  *   POST /api/auth/sign-in/email-otp                 { email, otp, callbackURL? }
  *   POST /api/auth/phone-number/send-otp             { phoneNumber }
- *   POST /api/auth/phone-number/verify               { phoneNumber, otp }
+ *   POST /api/auth/phone-number/verify               { phoneNumber, code }
  *   POST /api/auth/two-factor/enable                 (authenticated)
+ *   POST /api/auth/two-factor/send-otp               (authenticated)
  *   POST /api/auth/two-factor/verify-otp             { code }
+ *   POST /api/auth/two-factor/disable                { code }
  */
 
 const APP_ORIGIN = "http://localhost:3000";
-const EMAIL = "rahul@example.com";
-const OTHER_EMAIL = "ada@example.com";
-const PHONE = "+919876543210";
 const WRONG_OTP = "000000";
 const EVIL_CALLBACK = "https://evil.example/after";
 
@@ -63,6 +84,30 @@ interface CapturedOtp {
   readonly channel: OtpChannel;
   readonly to: string;
   readonly code: string;
+}
+
+/**
+ * A per-spec identity: a dedicated email, phone number and client IP so no two
+ * specs share a rate-limit bucket (see "Test isolation" above).
+ */
+interface Identity {
+  readonly email: string;
+  readonly phone: string;
+  readonly ip: string;
+}
+
+let identitySeq = 0;
+
+/** Mint a unique contact + IP for one spec. */
+function makeIdentity(): Identity {
+  identitySeq += 1;
+  const serial = String(identitySeq).padStart(4, "0");
+  return {
+    email: `op85-spec-${serial}@example.com`,
+    // A real E.164 literal (never a documentation redaction containing `****`).
+    phone: `+91990000${serial}`,
+    ip: `203.0.113.${String(identitySeq)}`,
+  };
 }
 
 beforeAll(() => {
@@ -127,36 +172,48 @@ function cookieHeader(response: Response): string {
   return setCookies(response).map(cookiePair).join("; ");
 }
 
-/** An authenticated POST: forward the session cookie captured at sign-in. */
+/** Headers that pin the request to a spec's private rate-limit IP bucket. */
+function forward(identity: Identity): Record<string, string> {
+  return { "x-forwarded-for": identity.ip };
+}
+
+/** An authenticated POST: forward the session cookie and the spec's IP. */
 function authPostWithCookie(
   auth: AuthLike,
   path: string,
   cookie: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  identity: Identity
 ): Promise<Response> {
-  return authPost(auth, APP_ORIGIN, path, payload, { cookie });
+  return authPost(auth, APP_ORIGIN, path, payload, { cookie, ...forward(identity) });
 }
 
 /** Send an email OTP and return the captured code. */
-async function sendEmailOtp(auth: AuthLike, email: string): Promise<CapturedOtp> {
-  const response = await authPost(auth, APP_ORIGIN, "/api/auth/email-otp/send-verification-otp", {
-    email,
-    type: "sign-in",
-  });
+async function sendEmailOtp(auth: AuthLike, identity: Identity): Promise<CapturedOtp> {
+  const response = await authPost(
+    auth,
+    APP_ORIGIN,
+    "/api/auth/email-otp/send-verification-otp",
+    { email: identity.email, type: "sign-in" },
+    forward(identity)
+  );
   expect(response.status).toBe(200);
-  return requireOtp("email", email);
+  return requireOtp("email", identity.email);
 }
 
 /** Sign in with a valid email OTP; returns the response and the session cookie. */
 async function signInWithEmailOtp(
   auth: AuthLike,
-  email: string
+  identity: Identity
 ): Promise<{ readonly response: Response; readonly cookie: string }> {
-  const otp = await sendEmailOtp(auth, email);
-  const response = await authPost(auth, APP_ORIGIN, "/api/auth/sign-in/email-otp", {
-    email,
-    otp: otp.code,
-  });
+  const otp = await sendEmailOtp(auth, identity);
+  const response = await authPost(
+    auth,
+    APP_ORIGIN,
+    "/api/auth/sign-in/email-otp",
+    { email: identity.email, otp: otp.code },
+    forward(identity)
+  );
   expect(response.status).toBe(200);
   const cookie = sessionCookie(response);
   if (cookie === undefined) {
@@ -166,38 +223,59 @@ async function signInWithEmailOtp(
 }
 
 /** A user with a verified phone, signed in; returns the auth cookie. */
-async function signUpWithVerifiedPhone(auth: AuthLike): Promise<string> {
-  const { cookie } = await signInWithEmailOtp(auth, EMAIL);
+async function signUpWithVerifiedPhone(auth: AuthLike, identity: Identity): Promise<string> {
+  const { cookie } = await signInWithEmailOtp(auth, identity);
 
-  const sent = await authPostWithCookie(auth, "/api/auth/phone-number/send-otp", cookie, {
-    phoneNumber: PHONE,
-  });
+  const sent = await authPostWithCookie(
+    auth,
+    "/api/auth/phone-number/send-otp",
+    cookie,
+    { phoneNumber: identity.phone },
+    identity
+  );
   expect(sent.status).toBe(200);
 
-  const otp = requireOtp("sms", PHONE);
-  const verified = await authPostWithCookie(auth, "/api/auth/phone-number/verify", cookie, {
-    phoneNumber: PHONE,
-    otp: otp.code,
-  });
+  const otp = requireOtp("sms", identity.phone);
+  const verified = await authPostWithCookie(
+    auth,
+    "/api/auth/phone-number/verify",
+    cookie,
+    { phoneNumber: identity.phone, code: otp.code },
+    identity
+  );
   expect(verified.status).toBe(200);
 
   return cookie;
 }
 
 /** A user with 2FA enabled (requires a verified phone first). */
-async function signUpWithTwoFactorEnabled(auth: AuthLike, database: Db): Promise<string> {
-  const cookie = await signUpWithVerifiedPhone(auth);
+async function signUpWithTwoFactorEnabled(
+  auth: AuthLike,
+  database: Db,
+  identity: Identity
+): Promise<string> {
+  const cookie = await signUpWithVerifiedPhone(auth, identity);
 
-  const enabled = await authPostWithCookie(auth, "/api/auth/two-factor/enable", cookie, {});
+  const enabled = await authPostWithCookie(
+    auth,
+    "/api/auth/two-factor/enable",
+    cookie,
+    {},
+    identity
+  );
   expect(enabled.status).toBe(200);
 
-  const otp = requireOtp("sms", PHONE);
-  const confirmed = await authPostWithCookie(auth, "/api/auth/two-factor/verify-otp", cookie, {
-    code: otp.code,
-  });
+  const otp = requireOtp("sms", identity.phone);
+  const confirmed = await authPostWithCookie(
+    auth,
+    "/api/auth/two-factor/verify-otp",
+    cookie,
+    { code: otp.code },
+    identity
+  );
   expect(confirmed.status).toBe(200);
 
-  const user = await database.collection("user").findOne({ email: EMAIL });
+  const user = await database.collection("user").findOne({ email: identity.email });
   expect(user?.twoFactorEnabled).toBe(true);
 
   otpInbox.clear();
@@ -207,16 +285,20 @@ async function signUpWithTwoFactorEnabled(auth: AuthLike, database: Db): Promise
 describe("email OTP sign-in (§1.1)", () => {
   it("I1: send → sign in creates a session and sets an HttpOnly SameSite=Lax cookie", async () => {
     await withAuth(async ({ auth, database }) => {
-      const otp = await sendEmailOtp(auth, EMAIL);
+      const identity = makeIdentity();
+      const otp = await sendEmailOtp(auth, identity);
 
       expect(otp.channel).toBe("email");
-      expect(otp.to).toBe(EMAIL);
+      expect(otp.to).toBe(identity.email);
       expect(otp.code).toMatch(/^\d{6}$/);
 
-      const response = await authPost(auth, APP_ORIGIN, "/api/auth/sign-in/email-otp", {
-        email: EMAIL,
-        otp: otp.code,
-      });
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/sign-in/email-otp",
+        { email: identity.email, otp: otp.code },
+        forward(identity)
+      );
 
       expect(response.status).toBe(200);
 
@@ -230,7 +312,7 @@ describe("email OTP sign-in (§1.1)", () => {
       // APP_ENV=test is not TLS, so the cookie must not be Secure-only.
       expect(hasCookieAttribute(header, "Secure")).toBe(false);
 
-      expect(await database.collection("user").countDocuments({ email: EMAIL })).toBe(1);
+      expect(await database.collection("user").countDocuments({ email: identity.email })).toBe(1);
       expect(await database.collection("session").countDocuments({})).toBeGreaterThan(0);
     });
   });
@@ -239,13 +321,15 @@ describe("email OTP sign-in (§1.1)", () => {
 describe("OTP send rate limiting (§0.11 auth.otp)", () => {
   it("I2: the 6th email OTP send for the same contact within the hour returns 429", async () => {
     await withAuth(async ({ auth }) => {
+      const identity = makeIdentity();
       const statuses: number[] = [];
       for (let i = 0; i < 6; i += 1) {
         const response = await authPost(
           auth,
           APP_ORIGIN,
           "/api/auth/email-otp/send-verification-otp",
-          { email: OTHER_EMAIL, type: "sign-in" }
+          { email: identity.email, type: "sign-in" },
+          forward(identity)
         );
         statuses.push(response.status);
       }
@@ -259,19 +343,29 @@ describe("OTP send rate limiting (§0.11 auth.otp)", () => {
 describe("OTP verify lockout (§0.11 auth.verify)", () => {
   it("I3: ten wrong OTP verifies lock the contact out; the 11th returns 429", async () => {
     await withAuth(async ({ auth }) => {
-      await sendEmailOtp(auth, OTHER_EMAIL);
+      const identity = makeIdentity();
+      await sendEmailOtp(auth, identity);
 
       const statuses: number[] = [];
       for (let i = 0; i < 11; i += 1) {
-        const response = await authPost(auth, APP_ORIGIN, "/api/auth/sign-in/email-otp", {
-          email: OTHER_EMAIL,
-          otp: WRONG_OTP,
-        });
+        const response = await authPost(
+          auth,
+          APP_ORIGIN,
+          "/api/auth/sign-in/email-otp",
+          { email: identity.email, otp: WRONG_OTP },
+          forward(identity)
+        );
         statuses.push(response.status);
         expect(sessionCookie(response), "a wrong OTP must never mint a session").toBeUndefined();
       }
 
-      expect(statuses.slice(0, 10).every((status) => status !== 429)).toBe(true);
+      // Better Auth owns the exact error code for a rejected OTP (400
+      // INVALID_OTP / 403 TOO_MANY_ATTEMPTS), so pin the class: every one of
+      // the first ten is a client error that is *not* the rate-limit response.
+      // A 5xx, or a 429 before the 11th, must fail loudly.
+      expect(
+        statuses.slice(0, 10).every((status) => status >= 400 && status < 500 && status !== 429)
+      ).toBe(true);
       expect(statuses[10]).toBe(429);
     });
   });
@@ -280,53 +374,92 @@ describe("OTP verify lockout (§0.11 auth.verify)", () => {
 describe("phone OTP (§1.1 phoneNumber plugin)", () => {
   it("I4: verifying a phone OTP sets phoneNumberVerified on the user", async () => {
     await withAuth(async ({ auth, database }) => {
-      const cookie = await signUpWithVerifiedPhone(auth);
+      const identity = makeIdentity();
+      const cookie = await signUpWithVerifiedPhone(auth, identity);
 
       // The helper already asserted the verify call succeeded; pin the effect.
-      const user = await database.collection("user").findOne({ email: EMAIL });
-      expect(user?.phoneNumber).toBe(PHONE);
+      const user = await database.collection("user").findOne({ email: identity.email });
+      expect(user?.phoneNumber).toBe(identity.phone);
       expect(user?.phoneNumberVerified).toBe(true);
 
       // The OTP left the server by SMS, never by email.
       expect(cookie.length).toBeGreaterThan(0);
-      expect(otpInbox.list().some((entry) => entry.channel === "email" && entry.to === PHONE)).toBe(
-        false
-      );
+      expect(
+        otpInbox
+          .list()
+          .some((entry: CapturedOtp) => entry.channel === "email" && entry.to === identity.phone)
+      ).toBe(false);
     });
   });
 
   it("I9: a phone OTP for an unknown number is rejected and creates no user", async () => {
     await withAuth(async ({ auth, database }) => {
-      const response = await authPost(auth, APP_ORIGIN, "/api/auth/phone-number/send-otp", {
-        phoneNumber: PHONE,
-      });
+      const identity = makeIdentity();
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/phone-number/send-otp",
+        { phoneNumber: identity.phone },
+        forward(identity)
+      );
 
       expect(response.status).toBe(403);
-      expect(await database.collection("user").countDocuments({ phoneNumber: PHONE })).toBe(0);
+      expect(
+        await database.collection("user").countDocuments({ phoneNumber: identity.phone })
+      ).toBe(0);
       expect(otpInbox.list()).toHaveLength(0);
     });
   });
 
   it("I10: an unauthenticated phone OTP for a user with an unverified phone is rejected", async () => {
     await withAuth(async ({ auth, database }) => {
+      const identity = makeIdentity();
       // A real user document (created by the adapter) whose phone is not yet
       // verified — the state a user is in before I4's verification step.
-      await signInWithEmailOtp(auth, OTHER_EMAIL);
+      await signInWithEmailOtp(auth, identity);
       await database
         .collection("user")
         .updateOne(
-          { email: OTHER_EMAIL },
-          { $set: { phoneNumber: PHONE, phoneNumberVerified: false } }
+          { email: identity.email },
+          { $set: { phoneNumber: identity.phone, phoneNumberVerified: false } }
         );
 
       otpInbox.clear();
 
-      const response = await authPost(auth, APP_ORIGIN, "/api/auth/phone-number/send-otp", {
-        phoneNumber: PHONE,
-      });
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/phone-number/send-otp",
+        { phoneNumber: identity.phone },
+        forward(identity)
+      );
 
       expect(response.status).toBe(403);
       expect(otpInbox.list()).toHaveLength(0);
+    });
+  });
+
+  it("I14: an unauthenticated phone verification creates no user and mints no session", async () => {
+    await withAuth(async ({ auth, database }) => {
+      const identity = makeIdentity();
+
+      // `signUpOnVerification` must stay disabled: a verify with no session and
+      // no pre-existing user for the number must never materialise an account
+      // (otherwise I9's unknown-number rejection would be undone here).
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/phone-number/verify",
+        { phoneNumber: identity.phone, code: WRONG_OTP },
+        forward(identity)
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
+      expect(sessionCookie(response)).toBeUndefined();
+      expect(
+        await database.collection("user").countDocuments({ phoneNumber: identity.phone })
+      ).toBe(0);
     });
   });
 });
@@ -334,42 +467,54 @@ describe("phone OTP (§1.1 phoneNumber plugin)", () => {
 describe("two-factor (§1.1 twoFactor plugin)", () => {
   it("I5: enabling 2FA with a verified phone sets twoFactorEnabled", async () => {
     await withAuth(async ({ auth, database }) => {
-      await signUpWithTwoFactorEnabled(auth, database);
+      const identity = makeIdentity();
+      await signUpWithTwoFactorEnabled(auth, database, identity);
 
-      const user = await database.collection("user").findOne({ email: EMAIL });
+      const user = await database.collection("user").findOne({ email: identity.email });
       expect(user?.twoFactorEnabled).toBe(true);
     });
   });
 
   it("I6: enabling 2FA without a verified phone is rejected", async () => {
     await withAuth(async ({ auth, database }) => {
-      const { cookie } = await signInWithEmailOtp(auth, EMAIL);
+      const identity = makeIdentity();
+      const { cookie } = await signInWithEmailOtp(auth, identity);
 
-      const response = await authPostWithCookie(auth, "/api/auth/two-factor/enable", cookie, {});
+      const response = await authPostWithCookie(
+        auth,
+        "/api/auth/two-factor/enable",
+        cookie,
+        {},
+        identity
+      );
 
       expect(response.status).toBe(403);
 
-      const user = await database.collection("user").findOne({ email: EMAIL });
+      const user = await database.collection("user").findOne({ email: identity.email });
       expect(user?.twoFactorEnabled).not.toBe(true);
     });
   });
 
   it("I7: with 2FA on, email-OTP sign-in is two-factor pending with no session until the SMS OTP is verified", async () => {
     await withAuth(async ({ auth, database }) => {
-      await signUpWithTwoFactorEnabled(auth, database);
+      const identity = makeIdentity();
+      await signUpWithTwoFactorEnabled(auth, database, identity);
 
-      const emailOtp = await sendEmailOtp(auth, EMAIL);
-      const pending = await authPost(auth, APP_ORIGIN, "/api/auth/sign-in/email-otp", {
-        email: EMAIL,
-        otp: emailOtp.code,
-      });
+      const emailOtp = await sendEmailOtp(auth, identity);
+      const pending = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/sign-in/email-otp",
+        { email: identity.email, otp: emailOtp.code },
+        forward(identity)
+      );
 
       expect(pending.status).toBe(200);
       expect(await body(pending)).toMatchObject({ twoFactorRedirect: true });
       expect(sessionCookie(pending), "no session cookie before 2FA is verified").toBeUndefined();
 
       // The one-time code went out by SMS, not email (§4.1 pin).
-      const smsOtp = requireOtp("sms", PHONE);
+      const smsOtp = requireOtp("sms", identity.phone);
       expect(smsOtp.channel).toBe("sms");
 
       const verified = await authPost(
@@ -377,7 +522,7 @@ describe("two-factor (§1.1 twoFactor plugin)", () => {
         APP_ORIGIN,
         "/api/auth/two-factor/verify-otp",
         { code: smsOtp.code },
-        { cookie: cookieHeader(pending) }
+        { cookie: cookieHeader(pending), ...forward(identity) }
       );
 
       expect(verified.status).toBe(200);
@@ -387,13 +532,17 @@ describe("two-factor (§1.1 twoFactor plugin)", () => {
 
   it("I8: ten wrong 2FA codes lock the challenge out; the 11th returns 429", async () => {
     await withAuth(async ({ auth, database }) => {
-      await signUpWithTwoFactorEnabled(auth, database);
+      const identity = makeIdentity();
+      await signUpWithTwoFactorEnabled(auth, database, identity);
 
-      const emailOtp = await sendEmailOtp(auth, EMAIL);
-      const pending = await authPost(auth, APP_ORIGIN, "/api/auth/sign-in/email-otp", {
-        email: EMAIL,
-        otp: emailOtp.code,
-      });
+      const emailOtp = await sendEmailOtp(auth, identity);
+      const pending = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/sign-in/email-otp",
+        { email: identity.email, otp: emailOtp.code },
+        forward(identity)
+      );
       expect(pending.status).toBe(200);
       const pendingCookies = cookieHeader(pending);
 
@@ -404,7 +553,7 @@ describe("two-factor (§1.1 twoFactor plugin)", () => {
           APP_ORIGIN,
           "/api/auth/two-factor/verify-otp",
           { code: WRONG_OTP },
-          { cookie: pendingCookies }
+          { cookie: pendingCookies, ...forward(identity) }
         );
         statuses.push(response.status);
         expect(
@@ -413,8 +562,74 @@ describe("two-factor (§1.1 twoFactor plugin)", () => {
         ).toBeUndefined();
       }
 
-      expect(statuses.slice(0, 10).every((status) => status !== 429)).toBe(true);
+      // As in I3: pin the class, not the library's exact code. Each of the
+      // first ten is a 4xx that is not the rate-limit response; a 5xx must fail.
+      expect(
+        statuses.slice(0, 10).every((status) => status >= 400 && status < 500 && status !== 429)
+      ).toBe(true);
       expect(statuses[10]).toBe(429);
+    });
+  });
+
+  it("I13: disabling 2FA requires a fresh SMS OTP and clears twoFactorEnabled", async () => {
+    await withAuth(async ({ auth, database }) => {
+      const identity = makeIdentity();
+      const cookie = await signUpWithTwoFactorEnabled(auth, database, identity);
+
+      const enabledUser = await database.collection("user").findOne({ email: identity.email });
+      expect(enabledUser?.twoFactorEnabled).toBe(true);
+
+      // No code: rejected, 2FA stays on.
+      const noCode = await authPostWithCookie(
+        auth,
+        "/api/auth/two-factor/disable",
+        cookie,
+        {},
+        identity
+      );
+      expect(noCode.status).toBeGreaterThanOrEqual(400);
+      expect(noCode.status).toBeLessThan(500);
+      expect(
+        (await database.collection("user").findOne({ email: identity.email }))?.twoFactorEnabled
+      ).toBe(true);
+
+      // Wrong code: rejected, 2FA stays on.
+      const wrongCode = await authPostWithCookie(
+        auth,
+        "/api/auth/two-factor/disable",
+        cookie,
+        { code: WRONG_OTP },
+        identity
+      );
+      expect(wrongCode.status).toBeGreaterThanOrEqual(400);
+      expect(wrongCode.status).toBeLessThan(500);
+      expect(
+        (await database.collection("user").findOne({ email: identity.email }))?.twoFactorEnabled
+      ).toBe(true);
+
+      // A fresh SMS code disables it.
+      otpInbox.clear();
+      const sent = await authPostWithCookie(
+        auth,
+        "/api/auth/two-factor/send-otp",
+        cookie,
+        {},
+        identity
+      );
+      expect(sent.status).toBe(200);
+      const otp = requireOtp("sms", identity.phone);
+
+      const disabled = await authPostWithCookie(
+        auth,
+        "/api/auth/two-factor/disable",
+        cookie,
+        { code: otp.code },
+        identity
+      );
+      expect(disabled.status).toBe(200);
+      expect(
+        (await database.collection("user").findOne({ email: identity.email }))?.twoFactorEnabled
+      ).toBe(false);
     });
   });
 });
@@ -422,13 +637,16 @@ describe("two-factor (§1.1 twoFactor plugin)", () => {
 describe("callback URL trust (§1.1 trustedOrigins)", () => {
   it("I11: a sign-in callbackURL outside trustedOrigins is rejected and mints no session", async () => {
     await withAuth(async ({ auth }) => {
-      const otp = await sendEmailOtp(auth, EMAIL);
+      const identity = makeIdentity();
+      const otp = await sendEmailOtp(auth, identity);
 
-      const response = await authPost(auth, APP_ORIGIN, "/api/auth/sign-in/email-otp", {
-        email: EMAIL,
-        otp: otp.code,
-        callbackURL: EVIL_CALLBACK,
-      });
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/sign-in/email-otp",
+        { email: identity.email, otp: otp.code, callbackURL: EVIL_CALLBACK },
+        forward(identity)
+      );
 
       expect(response.status).toBe(403);
       expect(sessionCookie(response)).toBeUndefined();
@@ -436,43 +654,41 @@ describe("callback URL trust (§1.1 trustedOrigins)", () => {
   });
 });
 
-describe("test-only OTP route", () => {
-  it.each(["development", "staging", "production"])(
-    "U2: GET /api/v1/__test__/otp returns 404 when APP_ENV=%s",
-    async (env) => {
-      const previous = process.env.APP_ENV;
-      process.env.APP_ENV = env;
-      try {
-        const { GET } = await import("@/app/api/v1/__test__/otp/route");
-        const response = await GET(
-          new Request(
-            `${APP_ORIGIN}/api/v1/__test__/otp?contact=${encodeURIComponent(EMAIL)}&channel=email`
-          )
-        );
+describe("OTP logging (security_and_logging_requirements)", () => {
+  it("I12: an OTP send logs auth.otp.sent with a hashed contact and channel, never the code", async () => {
+    const previousLogger = getLogger();
+    const sink: MemoryTransport = memoryTransport();
+    setLogger(
+      createLogger({
+        level: "info",
+        transports: [sink],
+        service: "openpic-web",
+        env: "test",
+        version: "test-sha",
+      })
+    );
 
-        expect(response.status).toBe(404);
-      } finally {
-        process.env.APP_ENV = previous;
-      }
-    }
-  );
-
-  it("U2: GET /api/v1/__test__/otp answers 200 in test so the harness can read a code", async () => {
-    const previous = process.env.APP_ENV;
-    process.env.APP_ENV = "test";
     try {
-      otpInbox.record({ channel: "email", to: EMAIL, code: "123456" });
-      const { GET } = await import("@/app/api/v1/__test__/otp/route");
-      const response = await GET(
-        new Request(
-          `${APP_ORIGIN}/api/v1/__test__/otp?contact=${encodeURIComponent(EMAIL)}&channel=email`
-        )
-      );
+      await withAuth(async ({ auth }) => {
+        const identity = makeIdentity();
+        const otp = await sendEmailOtp(auth, identity);
 
-      expect(response.status).toBe(200);
-      expect(await body(response)).toMatchObject({ code: "123456" });
+        const entry = sink.entries.find((candidate) => candidate.event === "auth.otp.sent");
+        expect(entry).toBeDefined();
+        expect(entry?.level).toBe("info");
+        expect(entry?.channel).toBe("email");
+        // The contact is logged in redacted form — present, but never the raw
+        // address (and never the generated code).
+        expect(typeof entry?.contact).toBe("string");
+        expect(String(entry?.contact)).not.toContain(identity.email);
+
+        const serialized = JSON.stringify(sink.entries);
+        expect(serialized).not.toContain(identity.email);
+        expect(serialized).not.toContain(otp.code);
+        expectNoSecretsInLogs(sink);
+      });
     } finally {
-      process.env.APP_ENV = previous;
+      setLogger(previousLogger);
     }
   });
 });

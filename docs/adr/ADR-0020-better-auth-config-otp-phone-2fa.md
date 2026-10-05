@@ -1,4 +1,4 @@
-# ADR-0016 — Better Auth configuration: OTP + phone + 2FA, cookie policy, and the test-only OTP route
+# ADR-0020 — Better Auth configuration: OTP + phone + 2FA, cookie policy, and the test-only OTP route
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** OP-85 `t_4c812e1b` (phase 1-Identity, epic Authentication, RED) · **Depends on:** OP-79 (rate-limit port, ADR-0005), OP-84 (notification routing matrix) · **Contract:** API contract §1.1, §0.2, §0.11; notification §4.1; schema §13.1–§13.2
@@ -111,6 +111,34 @@ and the 11th wrong 2FA code is `429` (I8). This fulfils the §0.11 rows and the
 (`403`) and never mints a session (I11), and the existing CSRF middleware keeps
 reading the same source of truth.
 
+### 9. An OTP send logs `auth.otp.sent` with a redacted contact, never the code
+
+Every delivered one-time code is recorded to the log as `info` with
+`event: "auth.otp.sent"`, a `channel` (`email` or `sms`) and a **hashed**
+`contact` — never the raw email/phone and never the generated code (I12). This
+is the logging half of the notification "never-return" rule: an OTP is as
+sensitive as a password, so it must not survive in a log sink. The existing
+`expectNoSecretsInLogs` helper (`apps/web/src/test/helpers/log-assertions.ts`)
+is reused for the redaction assertion.
+
+### 10. Disabling 2FA requires a fresh OTP
+
+The two-factor disable flow is gated on a freshly-issued one-time code, not on
+a password (the accounts here are passwordless): `two-factor/send-otp` sends an
+SMS code, and `two-factor/disable` with that `code` clears `twoFactorEnabled`
+(I13). A disable request with no code or a wrong code is rejected and leaves 2FA
+enabled. Better Auth's stock `disable` accepts only `password`; the implementer
+supplies the OTP-gated behaviour (a plugin endpoint override or a thin app
+wrapper) so the observable end state holds.
+
+### 11. Phone-number sign-up on verification is disabled
+
+The `phoneNumber` plugin is configured **without** `signUpOnVerification`, so
+verifying a phone number can never create an account; a phone OTP only signs in
+(or completes) an existing user (I9, I10, I14). Without this, the "unknown
+number" rejection (I9) would be undone by a later verify that materialises a
+user for that number.
+
 ## Consequences
 
 - Cookie security, phone/2FA policy and the test-route reachability are now
@@ -119,8 +147,15 @@ reading the same source of truth.
   production-flavoured launcher (`start-production-server.mjs`) so the guard is
   proven against a real production configuration, not a mocked `APP_ENV`.
 - `createAuth({ db })` is injectable, so every integration spec runs against its
-  own throwaway database and a fresh auth instance — no shared state between
-  specs.
+  own throwaway database and a fresh auth instance. **Rate-limit counters are
+  the one exception**: `createRateLimiter()`
+  (`apps/web/src/server/rate-limit/factory.ts`) is a process-wide memoised
+  singleton, so `auth.otp`/`auth.verify` windows accumulate across specs that
+  share a limiter, contact or IP. The specs therefore isolate themselves by
+  using a **dedicated contact and `x-forwarded-for` IP per spec** (see
+  `makeIdentity` in `auth.test.ts`); a spec that must exceed a limit does so on
+  its own private identity. This is a test-isolation strategy, not an assertion
+  that `createAuth` owns per-instance state.
 
 ## Assumptions resolved unilaterally (flagged for the implementer)
 
@@ -137,6 +172,19 @@ reading the same source of truth.
   verified-phone policies, `403` for an untrusted `callbackURL`, `429` for both
   lockouts. Chosen over `400` to match the "authenticated but not permitted"
   §0.3 semantics.
+- **Better Auth owns the exact error code for a rejected credential.** The specs
+  therefore pin the _class_ only: each of the ten wrong OTP/2FA attempts must be
+  a `4xx` that is not `429` (never a `5xx`), and only the 11th is `429`
+  (I3/I8). better-auth 1.7.7 returns `400 INVALID_OTP` / `403 TOO_MANY_ATTEMPTS`
+  for email OTP and `401 INVALID_CODE` / `400 OTP_HAS_EXPIRED` for 2FA, so a
+  single hard-coded code would over-constrain the library.
+- **Phone verification request body uses better-auth's field name `code`** (not
+  `otp`) — `verifyPhoneNumberBodySchema` is `{ phoneNumber, code, ... }`. The
+  two-factor verify body is `{ code }`. Corrected in the rework; the earlier
+  draft used `otp` and would have been unsatisfiable against the library.
+- **Disabling 2FA is OTP-gated with a `code` body field** (§10) even though the
+  stock `two-factor/disable` schema is `{ password? }`; the implementer adds the
+  OTP gate, and the spec pins the observable outcome (`twoFactorEnabled`).
 - **`development` is treated as untrusted** for the test-only route even though
   the route is convenient there; a developer can run with `APP_ENV=test`.
 

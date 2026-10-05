@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { E2E_BASE_URL } from "./ports";
+
 /**
  * E2 — the test-only OTP route is reachable only outside production (OP-85).
  *
@@ -13,12 +15,11 @@ import { expect, test } from "@playwright/test";
  *   - it answers `404` on the production server, so a leaked OTP reader is
  *     never exposed to real users.
  *
- * `playwright.request.newContext` is used for the cross-server control probe
- * because the project's default `request` fixture is pinned to the production
- * base URL.
+ * The e2e server URL comes from the shared `ports` module, so the control probe
+ * cannot drift from `playwright.config.ts`. `playwright.request.newContext` is
+ * used for the cross-server control probe because the project's default
+ * `request` fixture is pinned to the production base URL.
  */
-
-const E2E_ORIGIN = "http://127.0.0.1:3000";
 
 test.describe("test-only OTP route — environment guard", () => {
   test("E2: 200 on the e2e server, 404 under APP_ENV=production", async ({
@@ -26,7 +27,7 @@ test.describe("test-only OTP route — environment guard", () => {
     playwright,
   }) => {
     const e2e = await playwright.request.newContext({
-      baseURL: E2E_ORIGIN,
+      baseURL: E2E_BASE_URL,
       extraHTTPHeaders: { accept: "application/json" },
     });
 
