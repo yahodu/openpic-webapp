@@ -100,6 +100,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0093](ADR-0093-op94-fan-out-green-review-signoff.md)                              | OP-94 GREEN review sign-off: fan-out pins verified; deferral/digest findings routed to OP-96             | Accepted |
 | [0094](ADR-0094-op94-fan-out-polish.md)                                            | OP-94 follow-up polish: narrower `unbound-method` scope, parallel recipient reads, aligned mobile skip   | Accepted |
 | [0095](ADR-0095-op94-fan-out-polish-review-signoff.md)                             | OP-94 polish review sign-off: three items verified; mobile skip-channel pin routed to the Test Author    | Accepted |
+| [0096](ADR-0096-op94-mobile-skip-channel-fallback-not-pinnable.md)                 | OP-94 mobile skip-channel fallback not pinnable without a contract change (STOP + report)                | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
