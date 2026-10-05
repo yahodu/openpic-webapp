@@ -26,6 +26,9 @@ const SECRET_MIN_LENGTH = 32;
 /** Default provider selection when the variable is absent. */
 const DEFAULT_PROVIDER = "memory";
 
+/** Default Novu request timeout (ms) when `NOVU_TIMEOUT_MS` is unset or invalid. */
+const DEFAULT_NOVU_TIMEOUT_MS = 10_000;
+
 /** Public shape returned by `getConfig()`. */
 export interface AppConfig {
   readonly app: {
@@ -45,6 +48,8 @@ export interface AppConfig {
   readonly transport: {
     readonly provider: string;
     readonly unsubscribeSigningSecret: string;
+    /** Novu trigger/workflow API request timeout in milliseconds (OP-92). */
+    readonly timeoutMs: number;
   };
   readonly logging: {
     readonly level: LogLevel;
@@ -183,6 +188,7 @@ interface RawEnv {
   readonly QUEUE_PROVIDER: string | undefined;
   readonly PAYMENT_PROVIDER: string | undefined;
   readonly MESSAGE_TRANSPORT: string | undefined;
+  readonly NOVU_TIMEOUT_MS: string | undefined;
   readonly TRUSTED_CLIENT_IP_HEADER: string | undefined;
 }
 
@@ -224,6 +230,7 @@ const rawSchema = z.object({
   QUEUE_PROVIDER: optionalString,
   PAYMENT_PROVIDER: optionalString,
   MESSAGE_TRANSPORT: optionalString,
+  NOVU_TIMEOUT_MS: optionalString,
   TRUSTED_CLIENT_IP_HEADER: optionalString,
 });
 
@@ -357,6 +364,7 @@ const configSchema = rawSchema
       transport: {
         provider: provider("MESSAGE_TRANSPORT"),
         unsubscribeSigningSecret: raw.UNSUBSCRIBE_SIGNING_SECRET,
+        timeoutMs: positiveInteger(raw.NOVU_TIMEOUT_MS, DEFAULT_NOVU_TIMEOUT_MS),
       },
       logging: {
         level: (raw.LOG_LEVEL ?? "info") as LogLevel,
@@ -442,6 +450,38 @@ const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
  */
 export function getSessionTtlSeconds(): number {
   return positiveInteger(process.env.SESSION_TTL_SECONDS, DEFAULT_SESSION_TTL_SECONDS);
+}
+
+/** Default Novu API origin when `NOVU_BASE_URL` is unset. */
+const DEFAULT_NOVU_BASE_URL = "https://api.novu.co";
+
+/**
+ * Runtime wiring for the Novu transport and the `scripts/novu` admin CLIs
+ * (OP-92, ADR-0072).
+ *
+ * Kept outside the frozen {@link AppConfig} shape because it is operational
+ * wiring (a vendor origin and an API key) rather than a deploy contract. The
+ * adapter itself receives these values as options; this accessor is the single
+ * place they are read from the environment, so no other module touches
+ * `process.env` (the `no-restricted-properties` boundary).
+ */
+export interface NovuRuntimeConfig {
+  /** The Novu API origin (no trailing slash). */
+  readonly baseUrl: string;
+  /** The Novu API key; an empty string means "not configured". */
+  readonly apiKey: string;
+}
+
+/**
+ * Read the Novu origin and API key from the environment.
+ *
+ * @returns The Novu base URL (defaulting to the US origin) and API key.
+ */
+export function getNovuRuntimeConfig(): NovuRuntimeConfig {
+  return {
+    baseUrl: process.env.NOVU_BASE_URL ?? DEFAULT_NOVU_BASE_URL,
+    apiKey: process.env.NOVU_API_KEY ?? "",
+  };
 }
 
 /**

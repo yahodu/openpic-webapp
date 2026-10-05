@@ -1,6 +1,6 @@
 {
   "name": "openpic-webapp",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.18.0",
@@ -17,6 +17,8 @@
     "test:e2e": "playwright test -c apps/web/playwright.config.ts",
     "test:coverage": "vitest run --project unit --project integration --coverage",
     "db:ensure-indexes": "node --experimental-strip-types --import ./scripts/db/register-extensionless.mjs scripts/db/ensure-indexes.ts",
+    "novu:upsert-workflows": "node --experimental-strip-types --import ./scripts/db/register-extensionless.mjs scripts/novu/upsert-workflows.ts",
+    "novu:assert-no-drift": "node --experimental-strip-types --import ./scripts/db/register-extensionless.mjs scripts/novu/assert-no-drift.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p packages/contracts/tsconfig.json --noEmit && tsc -p apps/web/tsconfig.json --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",

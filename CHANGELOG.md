@@ -1,3 +1,9 @@
+## [1.17.0](https://github.com/yahodu/openpic-webapp/compare/v1.16.0...v1.17.0) (2026-10-05)
+
+### Features
+
+- **notifications:** OP-92 message transport port, Novu adapter and workflow drift guard ([#182](https://github.com/yahodu/openpic-webapp/issues/182)) ([e7c3374](https://github.com/yahodu/openpic-webapp/commit/e7c33746ebe4bff9ddf2a8de287bb73b73a10e01))
+
 ## [1.16.0](https://github.com/yahodu/openpic-webapp/compare/v1.15.2...v1.16.0) (2026-10-05)
 
 ### Features
