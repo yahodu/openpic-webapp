@@ -122,4 +122,49 @@ describe("checkTransportWorkflows", () => {
     expect(report.ok).toBe(false);
     expect(report.problems.some((problem) => problem.includes("transport-whatsapp"))).toBe(true);
   });
+
+  it("reports a transport workflow whose single step is inactive", () => {
+    // Arrange: only transport-email differs — its one step is disabled, so the
+    // workflow delivers nothing even though it exists with the right channel.
+    const workflows = makeTransportWorkflowList([
+      makeTransportWorkflow({
+        workflowId: "transport-email",
+        steps: [{ active: false, channel: "email" }],
+      }),
+      makeTransportWorkflow({
+        workflowId: "transport-sms",
+        steps: [{ active: true, channel: "sms" }],
+      }),
+      makeTransportWorkflow({
+        workflowId: "transport-whatsapp",
+        steps: [{ active: true, channel: "whatsapp" }],
+      }),
+    ]);
+
+    // Act
+    const report = checkTransportWorkflows(workflows);
+
+    // Assert
+    expect(report.ok).toBe(false);
+    expect(report.problems.some((problem) => problem.includes("transport-email"))).toBe(true);
+  });
+
+  it("reports a duplicated transport workflow id even when the duplicate is identical", () => {
+    // Arrange: four entries but only three distinct ids. The duplicate is the
+    // canonical, fully valid transport-email workflow, so the report can only
+    // fail once duplicate ids are detected — not because of a bad step.
+    const workflows = makeTransportWorkflowList([
+      ...makeCanonicalTransportWorkflows(),
+      makeTransportWorkflow({
+        workflowId: "transport-email",
+        steps: [{ active: true, channel: "email" }],
+      }),
+    ]);
+
+    // Act
+    const report = checkTransportWorkflows(workflows);
+
+    // Assert
+    expect(report.ok).toBe(false);
+  });
 });

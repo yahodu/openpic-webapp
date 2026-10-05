@@ -1,7 +1,15 @@
-# ADR-0082 — OP-93 U18 fixture-reconciliation review sign-off: escaping pin intact, no production change
+# ADR-0089 — OP-93 U18 fixture-reconciliation review sign-off: escaping pin intact, no production change
 
 - **Status:** Accepted · **Date:** 2026-10-05
-- **Card:** OP-93 fix RED fixture — U18 render-template body assertion (`t_f8edb6f8`), review round 1 (artifact + execution lens) · **Relates to:** [ADR-0081](ADR-0081-op93-channel-resolution-and-template-renderer-green.md) §3 (the dispute report the card resolves), [ADR-0078](ADR-0078-op93-channel-resolution-and-template-renderer-red.md) (the pinned renderer contract)
+- **Card:** OP-93 fix RED fixture — U18 render-template body assertion (`t_f8edb6f8`), review round 1 (artifact + execution lens) · **Relates to:** [ADR-0088](ADR-0088-op93-channel-resolution-and-template-renderer-green.md) §3 (the dispute report the card resolves), [ADR-0085](ADR-0085-op93-channel-resolution-and-template-renderer-red.md) (the pinned renderer contract)
+
+## Renumbered
+
+Authored as **ADR-0082**; renumbered to **ADR-0089** when PR #187 integrated
+`origin/main` on 2026-10-05 (append-only, no content change). `origin/main` had
+already claimed `0078`/`0079`/`0081` (OP-91 follow-up payload lane, PR #183) and
+`0082`–`0084` (OP-92 follow-up lane, PR #186), so the five OP-93 ADRs were
+renumbered `0078`–`0082 → 0085`–`0089`; `0080` is left unused on `main`.
 
 ## Context
 
@@ -28,7 +36,7 @@ Independent evidence (this review, worktree `t_beda070f`, head `4cfd44e`):
   - `render-template.test.ts`: one line — U18 `bodyTemplate`
     `"<p>Hi {{displayName}}, your gallery is ready.</p>"` →
     `"<p>Hi {{displayName}}, your photos from {{eventName}} are ready.</p>"`;
-  - `ADR-0081` §3 updated from "dispute (left RED)" to "resolved test-side".
+  - `ADR-0088` §3 updated from "dispute (left RED)" to "resolved test-side".
     No assertion added, removed, or weakened; **U26 unchanged**; `variables:
 ["eventName","displayName"]` stays consistent with the placeholders now used.
 - `./node_modules/.bin/vitest run --project unit apps/web/src/server/notifications/render-template.test.ts`
@@ -60,7 +68,7 @@ the `"Rahul &amp; Priya"` assertion independently pins `displayName` escaping.
 - **Delete the `&lt;script&gt;` body assertion.** Rejected: it would drop the
   body-escaping pin. Reinterpolating `eventName` keeps the assertion meaningful.
 - **Change the renderer to inject `eventName` into `body`.** Rejected: subject
-  and body are independent Handlebars templates (design §19.2, ADR-0078); that
+  and body are independent Handlebars templates (design §19.2, ADR-0085); that
   would be a behaviour change and a production-code edit outside the card's
   scope.
 - **Open a PR for this branch to carry the review.** Rejected: the branch is the

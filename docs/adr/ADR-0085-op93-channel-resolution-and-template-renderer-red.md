@@ -1,8 +1,16 @@
-# ADR-0078 — OP-93 RED: `resolveChannel` pure resolver contract and strict template renderer
+# ADR-0085 — OP-93 RED: `resolveChannel` pure resolver contract and strict template renderer
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** OP-93 RED (`t_fe5e3429`) · **Relates to:** [ADR-0016](ADR-0016-notification-routing-matrix-as-data.md) (routing matrix as data), [ADR-0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md) (`MessageTransport` port the resolved decision feeds)
 - **Design:** §1.1 (mobile group), §3 (routing principles), §5 (channel resolution), §6 (throttle/digest/dedupe), §19.2–§19.6 (templates, preferences, dispatches, suppressions) · **Contract:** §7.4 (preferences), §7.5 (unsubscribe/suppression), Appendix F Phase 1, §19.5 `SkipReason`
+
+## Renumbered
+
+Authored as **ADR-0078**; renumbered to **ADR-0085** when PR #187 integrated
+`origin/main` on 2026-10-05 (append-only, no content change). `origin/main` had
+already claimed `0078`/`0079`/`0081` (OP-91 follow-up payload lane, PR #183) and
+`0082`–`0084` (OP-92 follow-up lane, PR #186), so the five OP-93 ADRs were
+renumbered `0078`–`0082 → 0085`–`0089`; `0080` is left unused on `main`.
 
 ## Context
 

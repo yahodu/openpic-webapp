@@ -1,12 +1,20 @@
-# ADR-0079 — OP-93 RED review sign-off: pins verified; lane wiring and body drift routed
+# ADR-0086 — OP-93 RED review sign-off: pins verified; lane wiring and body drift routed
 
 - **Status:** Accepted · **Date:** 2026-10-05
-- **Card:** OP-93 RED (`t_fe5e3429`), review round 1 (artifact lens) · **Relates to:** [ADR-0078](ADR-0078-op93-channel-resolution-and-template-renderer-red.md) (the pinned contract), [ADR-0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md) (`MessageTransport` the resolved decision feeds)
+- **Card:** OP-93 RED (`t_fe5e3429`), review round 1 (artifact lens) · **Relates to:** [ADR-0085](ADR-0085-op93-channel-resolution-and-template-renderer-red.md) (the pinned contract), [ADR-0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md) (`MessageTransport` the resolved decision feeds)
+
+## Renumbered
+
+Authored as **ADR-0079**; renumbered to **ADR-0086** when PR #187 integrated
+`origin/main` on 2026-10-05 (append-only, no content change). `origin/main` had
+already claimed `0078`/`0079`/`0081` (OP-91 follow-up payload lane, PR #183) and
+`0082`–`0084` (OP-92 follow-up lane, PR #186), so the five OP-93 ADRs were
+renumbered `0078`–`0082 → 0085`–`0089`; `0080` is left unused on `main`.
 
 ## Context
 
 The OP-93 RED card delivered two failing specs — `resolve-channel.test.ts`
-(U1–U17, U22) and `render-template.test.ts` (U18–U21, U23) — plus ADR-0078
+(U1–U17, U22) and `render-template.test.ts` (U18–U21, U23) — plus ADR-0085
 defining the module contract. This review verifies the pins independently and
 records the findings that feed the next cycle.
 
@@ -39,11 +47,11 @@ Independent evidence (this review, worktree `t_fe5e3429`, head `ffa5e17`):
    point GREEN at a branch created from the final tip of
    `OP-93-task-channel-resolution-and-template-renderer-red` (PR #185, draft).
 2. **Low — GREEN card body drift.** The body omitted `eventId`, used singular
-   `renderTemplate`, and kept `group disabled → no-op`. ADR-0078 and the tests
+   `renderTemplate`, and kept `group disabled → no-op`. ADR-0085 and the tests
    are authoritative; the orchestrator card refreshes the body.
 3. **Low — follow-up RED pins.** `respectQuietHours: false` inside the window
    (design §19.1 line 1819), `mobile` per-candidate suppression fallback
-   (design §5 lines 269–270, ADR-0078 assumption 2), and subject escaping were
+   (design §5 lines 269–270, ADR-0085 assumption 2), and subject escaping were
    unpinned. Routed to the test author (`t_2fc90876`).
 
 The RED branch (PR #185) stays an unmerged draft: its CI is red by design and

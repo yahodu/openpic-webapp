@@ -1,13 +1,21 @@
-# ADR-0081 — OP-93 GREEN: `resolveChannel` + `renderTemplate` implementation and the U18 fixture dispute
+# ADR-0088 — OP-93 GREEN: `resolveChannel` + `renderTemplate` implementation and the U18 fixture dispute
 
 - **Status:** Accepted · **Date:** 2026-10-05
-- **Card:** OP-93 GREEN (`t_beda070f`) · **Implements:** [ADR-0078](ADR-0078-op93-channel-resolution-and-template-renderer-red.md) (the pinned contract) · **Relates to:** [ADR-0016](ADR-0016-notification-routing-matrix-as-data.md) (routing matrix as data), [ADR-0012](ADR-0012-upload-magic-byte-variant-pins.md) (append-only pins pattern), [ADR-0031](ADR-0031-op88-green-review-signoff.md) (precedent: disputed RED defects reconciled test-side)
-- **Branch:** `OP-93-task-channel-resolution-and-template-renderer-green` (base = RED-pins tip `81c40e4`) · **Contract:** `docs/adr/ADR-0078-…-red.md`
+- **Card:** OP-93 GREEN (`t_beda070f`) · **Implements:** [ADR-0085](ADR-0085-op93-channel-resolution-and-template-renderer-red.md) (the pinned contract) · **Relates to:** [ADR-0016](ADR-0016-notification-routing-matrix-as-data.md) (routing matrix as data), [ADR-0012](ADR-0012-upload-magic-byte-variant-pins.md) (append-only pins pattern), [ADR-0031](ADR-0031-op88-green-review-signoff.md) (precedent: disputed RED defects reconciled test-side)
+- **Branch:** `OP-93-task-channel-resolution-and-template-renderer-green` (base = RED-pins tip `81c40e4`) · **Contract:** `docs/adr/ADR-0085-…-red.md`
+
+## Renumbered
+
+Authored as **ADR-0081**; renumbered to **ADR-0088** when PR #187 integrated
+`origin/main` on 2026-10-05 (append-only, no content change). `origin/main` had
+already claimed `0078`/`0079`/`0081` (OP-91 follow-up payload lane, PR #183) and
+`0082`–`0084` (OP-92 follow-up lane, PR #186), so the five OP-93 ADRs were
+renumbered `0078`–`0082 → 0085`–`0089`; `0080` is left unused on `main`.
 
 ## Context
 
 OP-93 GREEN turns the RED pins (`apps/web/src/server/notifications/{resolve-channel,render-template}.test.ts`,
-U1–U26) green with the two pure modules ADR-0078 specifies. This ADR records the
+U1–U26) green with the two pure modules ADR-0085 specifies. This ADR records the
 implementation decisions and one disputed RED fixture that no honest
 implementation can satisfy.
 
@@ -15,7 +23,7 @@ implementation can satisfy.
 
 ### 1. `@/server/notifications/resolve-channel` — pure resolver
 
-Implemented exactly to the ADR-0078 contract: `resolveChannel(input)` returns one
+Implemented exactly to the ADR-0085 contract: `resolveChannel(input)` returns one
 of `{kind:"send"}`, `{kind:"skip"}`, `{kind:"defer"}` or `{kind:"digest"}`.
 Resolution order: `type_disabled` → group preference (transactional forces ON;
 else `byEvent[eventId] ?? byType[typeKey] ?? global ?? "on"`, `off` honoured only
@@ -32,13 +40,13 @@ injected.
   midnight. `respectQuietHours:false` (U24) and `severity:"critical"` (U16)
   short-circuit the defer.
 - `group.enabled === false` is deliberately not special-cased: the decision union
-  has no no-op member and ADR-0078 assumption 1 leaves it unpinned (fan-out
+  has no no-op member and ADR-0085 assumption 1 leaves it unpinned (fan-out
   filters enabled groups upstream).
 
 ### 2. `@/server/notifications/render-template` — strict renderer
 
 Hand-rolled renderer rather than adding `handlebars` as a direct dependency:
-ADR-0078 assumption 6 explicitly permits "an equivalent escaping renderer", and
+ADR-0085 assumption 6 explicitly permits "an equivalent escaping renderer", and
 the required behaviour (HTML-escape subject **and** body, reject triple-stash /
 `{{&`, reject a missing declared value, reject an undeclared supplied value,
 locale fallback to `en-IN`) is a few rules not worth a dependency. Escaping uses
@@ -56,7 +64,7 @@ the Handlebars escape set (`& < > " ' \` =`).
 `bodyTemplate: "<p>Hi {{displayName}}, your gallery is ready.</p>"`, then asserts
 `rendered.body` contains `"&lt;script&gt;"` — but the only value carrying
 `<script>` is `eventName`, which the **body** template never interpolates. The
-subject/body templates are rendered independently (§19.2, ADR-0078 "escaped in
+subject/body templates are rendered independently (§19.2, ADR-0085 "escaped in
 both `subject` and `body`"), so no honest renderer can put the escaped
 `eventName` into `rendered.body`; the sibling U26 uses the _same_ fixture and
 asserts on `rendered.subject`, which passes. U18 is therefore unsatisfiable as
@@ -85,7 +93,7 @@ only and touches no production file.
 ## Alternatives considered
 
 - **Add `handlebars` as a direct dependency.** Rejected: the hand-rolled renderer
-  is smaller and the tests assert behaviour, not the library (ADR-0078 §6).
+  is smaller and the tests assert behaviour, not the library (ADR-0085 §6).
 - **Satisfy U18 by injecting undeclared values into `body`.** Rejected as
   dishonest: it would contradict the U20 undeclared-value guard and the
   independent-template model, i.e. special-casing a fixture.

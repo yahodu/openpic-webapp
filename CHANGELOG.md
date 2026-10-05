@@ -1,3 +1,21 @@
+## [1.18.1](https://github.com/yahodu/openpic-webapp/compare/v1.18.0...v1.18.1) (2026-10-05)
+
+### Bug Fixes
+
+- **novu:** OP-92 reject an inactive step and a duplicate workflow id, classify a non-JSON 2xx ([#186](https://github.com/yahodu/openpic-webapp/issues/186)) ([2b2dff4](https://github.com/yahodu/openpic-webapp/commit/2b2dff4afea9dc4741632ddc37e1ab5655a22459))
+
+## [1.18.0](https://github.com/yahodu/openpic-webapp/compare/v1.17.0...v1.18.0) (2026-10-05)
+
+### Features
+
+- **me:** OP-91 carry scheduledAt/cancelUrl in account.deletion.requested payload ([#183](https://github.com/yahodu/openpic-webapp/issues/183)) ([3970d76](https://github.com/yahodu/openpic-webapp/commit/3970d76342d6643a797cccd17bcb02f9653c1ce8))
+
+## [1.17.0](https://github.com/yahodu/openpic-webapp/compare/v1.16.0...v1.17.0) (2026-10-05)
+
+### Features
+
+- **notifications:** OP-92 message transport port, Novu adapter and workflow drift guard ([#182](https://github.com/yahodu/openpic-webapp/issues/182)) ([e7c3374](https://github.com/yahodu/openpic-webapp/commit/e7c33746ebe4bff9ddf2a8de287bb73b73a10e01))
+
 ## [1.16.0](https://github.com/yahodu/openpic-webapp/compare/v1.15.2...v1.16.0) (2026-10-05)
 
 ### Features

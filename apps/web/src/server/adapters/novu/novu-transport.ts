@@ -145,7 +145,14 @@ export function novuTransport(options: NovuTransportOptions): MessageTransport {
         throw classifyTransportFailure({ status: response.status });
       }
 
-      const body: unknown = await response.json();
+      const body: unknown = await response.json().catch((error: unknown) => {
+        options.logger?.error("Novu trigger response body was not JSON.", {
+          event: UPSTREAM_CONTRACT_VIOLATION_EVENT,
+        });
+        throw new UpstreamContractError("Novu returned a non-JSON response body.", {
+          cause: error,
+        });
+      });
       const parsed = novuTriggerResponseSchema.safeParse(body);
       if (!parsed.success) {
         options.logger?.error("Novu trigger response did not match the contract.", {

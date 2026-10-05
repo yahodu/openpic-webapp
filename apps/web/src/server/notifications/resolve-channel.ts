@@ -1,6 +1,6 @@
 /**
  * `resolveChannel` — the pure per-(recipient × type × group) routing decision
- * (design §5, contract Appendix F Phase 1, ADR-0078).
+ * (design §5, contract Appendix F Phase 1, ADR-0085).
  *
  * The routing matrix is stored as data (`notificationTypes`, OP-84); this module
  * is the code that *reads* it. It is deliberately **pure**: every fact it needs
@@ -8,7 +8,7 @@
  * `eventId`, `throttleState`) is handed in by the caller, so the whole §5
  * decision is exercised offline with zero Mongo, clock or network access.
  *
- * Resolution order (design §5 / ADR-0078):
+ * Resolution order (design §5 / ADR-0085):
  *   type disabled → group preference (transactional forces ON; else
  *   `byEvent[eventId][group] ?? byType[typeKey][group] ?? global[group] ?? "on"`,
  *   `off` honoured only when the group allows opt-out and is not `in_app`) →
@@ -40,7 +40,7 @@ export type SkipReason =
   | "type_disabled"
   | "quiet_hours_deferred";
 
-/** The seven decision shapes the fan-out worker understands (ADR-0078). */
+/** The seven decision shapes the fan-out worker understands (ADR-0085). */
 export type ChannelDecision =
   | { readonly kind: "send"; readonly channel: ResolvedChannel }
   | { readonly kind: "skip"; readonly reason: SkipReason }
@@ -82,7 +82,7 @@ export interface ResolvePreferences {
  * The profile facts the resolver reads (schema §13, contract §1.2 `Me`).
  *
  * Only `contactCapabilities.whatsappCapable` is consulted today; the verified
- * flags live on {@link ResolveContacts} (Better Auth facts, ADR-0078).
+ * flags live on {@link ResolveContacts} (Better Auth facts, ADR-0085).
  */
 export interface ResolveProfile {
   readonly userId: string;
@@ -92,7 +92,7 @@ export interface ResolveProfile {
   };
 }
 
-/** The recipient's contact facts, mirroring the Better Auth user (ADR-0078). */
+/** The recipient's contact facts, mirroring the Better Auth user (ADR-0085). */
 export interface ResolveContacts {
   readonly email: string | null;
   readonly emailVerified: boolean;
@@ -117,14 +117,14 @@ export interface NotificationSuppression {
  * The throttle state the caller has already established upstream (design §6).
  *
  * Dedupe is a passthrough: the unique index has already matched, so the resolver
- * does not re-implement it (ADR-0078).
+ * does not re-implement it (ADR-0085).
  */
 export interface ThrottleState {
   readonly rateLimitExceeded?: boolean;
   readonly deduped?: boolean;
 }
 
-/** The full input to {@link resolveChannel} (ADR-0078). */
+/** The full input to {@link resolveChannel} (ADR-0085). */
 export interface ResolveChannelInput {
   readonly typeRow: NotificationType;
   readonly group: ChannelGroup;

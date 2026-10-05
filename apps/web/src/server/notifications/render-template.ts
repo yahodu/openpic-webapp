@@ -1,6 +1,6 @@
 /**
  * `renderTemplate` — the strict, escaping copy renderer (design §19.2, §8;
- * ADR-0078).
+ * ADR-0085).
  *
  * Templates are first-party copy keyed by `(typeKey, channel, locale)` and
  * rendered **at write time** (design §19.4), so a broken template must fail
