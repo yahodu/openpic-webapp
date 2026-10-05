@@ -187,3 +187,45 @@ and remains covered by `rate-limit-hook.test.ts`.
 **Verification:** integration I20 green (parity), unit `rate-limit-hook.test.ts`
 
 - `client-ip.test.ts` green, full suite green.
+
+## Follow-up addendum — anonymous `send-otp` enumeration nuance (`t_893c8e7c`)
+
+The GREEN above aligned the **anonymous verify** leg (I20). Reviewing it surfaced
+the residual surface on the _other_ phone leg — anonymous
+`POST /phone-number/send-otp` — whose docblock (`phone-hook.ts`) and ADR-0021 §1
+claimed the endpoint "can never be used to enumerate numbers". That claim is
+**overbroad**. This addendum states precisely what the three anonymous
+`send-otp` inputs do on `main`, pinned by spec **I21** (a green coverage pin, not
+a prescribed change — see below).
+
+| Anonymous `send-otp` input                       | Observed on `main`                              | Spec |
+| ------------------------------------------------ | ----------------------------------------------- | ---- |
+| A number with **no user**                        | `403 { code: "phone_not_verified" }`            | I9   |
+| An existing user whose phone is **not verified** | `403 { code: "phone_not_verified" }`            | I10  |
+| An existing user whose phone is **verified**     | `200 { message: "code sent" }` + a real SMS OTP | I21  |
+
+- **Indistinguishable:** the first two rows share status, code and message, so a
+  caller cannot tell an unknown number from an existing-yet-unverified one.
+- **Distinguishable:** the third row is accepted and delivers an OTP. This is a
+  genuine "a verified account exists" oracle on an anonymous endpoint — an
+  anonymous caller who guesses a number learns whether it belongs to a verified
+  OpenPic user. It is bounded only by the `auth.otp` rate limit
+  (5/hour/contact, 15/hour/IP; ADR-0005 / §0.11).
+
+I21 drives a real signed-up user with a verified phone, then calls the endpoint
+**without a session** and pins the observed `200` plus the fact that the process
+OTP inbox gains exactly one `sms` entry for that number — the observable that
+distinguishes it from I9/I10's `403`, which deliver nothing. The status was
+**observed by running the spec against untouched `main`**, never guessed.
+
+**This is deliberately a green coverage pin, not a fabricated red.** The card's
+mandate is to pin the ACTUAL behaviour of `main` and stop; making it red would
+require reverting shipped behaviour (forbidden) and inventing a product
+decision. Whether to accept the oracle (phone sign-in UX, already bounded by the
+`auth.otp` limit) or to make all three responses uniform is a **human product
+decision**; I21 records the current behaviour so that decision — and any future
+change to it — is visible.
+
+Deliverable: the append-only I21 `it` in
+`apps/web/src/test/integration/auth.test.ts`; no production file is touched.
+ADR-0020 §5's enumeration sentence is qualified in place to point here.
