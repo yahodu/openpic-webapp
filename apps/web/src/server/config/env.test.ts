@@ -51,6 +51,9 @@ import { makeEnv, makeProductionEnv, type EnvInput } from "../../test/factories/
  *   QUEUE_PROVIDER               memory | mongo            (default memory)
  *   PAYMENT_PROVIDER             memory | stripe           (default memory)
  *   MESSAGE_TRANSPORT            memory | ses              (default memory)
+ *   TRUSTED_CLIENT_IP_HEADER     trusted edge header name; REQUIRED in
+ *                                production (unset/blank refused — OP-85
+ *                                follow-up, ADR-0031)
  *
  * `memory` is accepted for every provider selector EXCEPT when
  * `APP_ENV=production`.
@@ -413,5 +416,59 @@ describe("getConfig — secret length boundary", () => {
     );
 
     expect(() => getConfig()).toThrow(/MEDIA_SIGNING_SECRET_PREVIOUS/);
+  });
+});
+
+describe("getConfig — production requires TRUSTED_CLIENT_IP_HEADER (ADR-0031)", () => {
+  it("refuses to start when the knob is unset in production, naming the key", async () => {
+    const { getConfig, ConfigError } = await loadEnvConfig(
+      makeProductionEnv({ TRUSTED_CLIENT_IP_HEADER: undefined })
+    );
+
+    expect(() => getConfig()).toThrow(ConfigError);
+    expect(() => getConfig()).toThrow(/TRUSTED_CLIENT_IP_HEADER/);
+  });
+
+  it.each(["", "   "])(
+    "refuses to start when the knob is blank (%j) in production, naming the key",
+    async (blank) => {
+      const { getConfig } = await loadEnvConfig(
+        makeProductionEnv({ TRUSTED_CLIENT_IP_HEADER: blank })
+      );
+
+      expect(() => getConfig()).toThrow(/TRUSTED_CLIENT_IP_HEADER/);
+    }
+  );
+
+  it.each(["x-real-ip", "cf-connecting-ip", "  x-real-ip  "])(
+    "parses a production environment when the knob is the non-blank value %j",
+    async (header) => {
+      const { getConfig } = await loadEnvConfig(
+        makeProductionEnv({ TRUSTED_CLIENT_IP_HEADER: header })
+      );
+
+      expect(getConfig().app.env).toBe("production");
+    }
+  );
+
+  it.each(["development", "test", "e2e", "staging"] as const)(
+    "keeps the knob optional when APP_ENV=%s",
+    async (appEnv) => {
+      const { getConfig } = await loadEnvConfig(
+        makeEnv({ APP_ENV: appEnv, TRUSTED_CLIENT_IP_HEADER: undefined })
+      );
+
+      expect(getConfig().app.env).toBe(appEnv);
+    }
+  );
+
+  it("reports only the key name, never the offending value", async () => {
+    const { getConfig } = await loadEnvConfig(
+      makeProductionEnv({ TRUSTED_CLIENT_IP_HEADER: undefined })
+    );
+
+    const message = captureError(() => getConfig());
+
+    expect(message).toBe("Invalid application configuration: TRUSTED_CLIENT_IP_HEADER");
   });
 });
