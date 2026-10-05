@@ -161,6 +161,14 @@ e2e-observable proof that the code traversed the injected `MessageTransport`
 (the OP-85 `memoryOtpSender` minted no provider id and the legacy route returned
 only `{ code }`), so the spec is RED until the real sender is wired.
 
+**E1 prerequisite (important).** The e2e server boots an empty MongoDB and there
+is no startup catalogue seed today; OP-85's `memoryOtpSender` needed none. Once
+OTP flows through `sendTransactionalNow`, the e2e server must be able to resolve
+`auth.otp.*` and its templates — the GREEN card must either seed the catalogue in
+the e2e launcher (`apps/web/e2e/start-server.mjs`, test infrastructure) or have
+the synchronous path resolve the OTP type from the checked-in seed. Without one
+of these, E1 fails before it can assert anything.
+
 ### Assumptions (ambiguities resolved, none silently guessed)
 
 1. **`sendTransactionalNow` lives in `fan-out.ts`.** Per the operator routing
