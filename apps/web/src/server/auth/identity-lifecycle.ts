@@ -117,7 +117,7 @@ function toHookDeps(wiring: IdentityHookWiring): IdentityHookDeps {
 
 /**
  * The endpoint-facing seam the section 4-6 cards call after their own write
- * (ADR-0043 §3).
+ * (ADR-0045 §3).
  *
  * Better Auth exposes no `after` hook that carries the transition for a contact
  * change, a 2FA toggle or a revoke-all, so those surfaces are injected: the
