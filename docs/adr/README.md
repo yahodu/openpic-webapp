@@ -51,5 +51,9 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0043](ADR-0043-op89-identity-lifecycle-indexes-ttls.md)                         | OP-89 follow-up: declare the identity-lifecycle collections' indexes and TTLs                        | Accepted |
 | [0044](ADR-0044-op89-identity-lifecycle-indexes-ttls-review.md)                  | OP-89 follow-up review sign-off: index/TTL gaps closed, unpinned-spec coverage routed                | Accepted |
 | [0047](ADR-0047-op90-me-contract-decisions.md)                                   | OP-90 `/me`: caller `phoneNumber` is raw E.164; foreign `avatarAssetId` is `422 validation_failed`   | Accepted |
+| [0052](ADR-0052-op90-me-projection-red.md)                                       | OP-90 RED: the full `GET`/`PATCH /me` §1.2 projection, capabilities, and forbidden/unknown fields    | Accepted |
+| [0053](ADR-0053-op90-me-projection-red-review-signoff.md)                        | OP-90 RED review sign-off: pins approved; contract decisions and 2 coverage gaps routed              | Accepted |
+| [0054](ADR-0054-op90-me-projection-red-followup-review-signoff.md)               | OP-90 RED follow-up review sign-off: the empty-PATCH 422 and pure-attendee pins land                 | Accepted |
+| [0055](ADR-0055-op90-me-projection-green.md)                                     | OP-90 GREEN: the full `GET`/`PATCH /me` §1.2 projection on top of the OP-89 read slice               | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
