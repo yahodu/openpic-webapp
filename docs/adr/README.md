@@ -78,6 +78,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0070](ADR-0070-op91-followup-deletion-requested-red.md)                           | OP-91 follow-up RED: pin `account.deletion.requested` emission + I3 count/ADR-reference hygiene          | Accepted |
 | [0071](ADR-0071-op91-followup-deletion-requested-green.md)                         | OP-91 follow-up GREEN: emit `account.deletion.requested` on `POST /me/deletion` via the lifecycle seam   | Accepted |
 | [0075](ADR-0075-op91-followup-deletion-requested-green-review-signoff.md)          | OP-91 follow-up GREEN review sign-off: deletion-requested emission verified; one ref routed              | Accepted |
+| [0076](ADR-0076-op91-followup-deletion-requested-payload-red.md)                   | OP-91 follow-up RED: pin the `account.deletion.requested` payload (`scheduledAt` + `cancelUrl`)          | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
