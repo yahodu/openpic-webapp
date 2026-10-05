@@ -45,7 +45,7 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  * projection; `unreadNotificationCount`/`pendingInvitationCount` are counts
  * scoped to the caller.
  *
- * ## Deliberate non-assertions (see the handoff / ADR-0044)
+ * ## Deliberate non-assertions (see the handoff / ADR-0052)
  *
  * - `phoneNumber` is asserted against the *stored* value (null for an
  *   email-OTP account). Whether a present number is returned raw (E.164) or
