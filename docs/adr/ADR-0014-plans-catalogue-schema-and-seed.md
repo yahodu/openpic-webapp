@@ -117,3 +117,21 @@ satisfy without editing a test.
   card flags several of them as unconfirmed product inputs; the tests pin the
   invariants (integer money, feature gate, unique rank, no vendor leakage,
   version semantics) and leave the numbers to the seed's TODO-marked values.
+
+## Reviewer addendum (2026-10-05, `t_a0789db4`)
+
+OP-83 GREEN was approved as-is (no behaviour change) and squash-merged at
+`8407bb8`. Two follow-ups were **deliberately deferred** to chain `t_9f9bde85`
+(`openpic-webapp-testcase-writer` → GREEN child `openpic-webapp-backend-coder`)
+rather than widened into OP-83:
+
+1. **The seed is check-then-act, not atomic.** `seedPlans` does `findOne` →
+   `insertOne`/`updateOne` with `version: existing.version + 1` computed in app
+   code, so two overlapping seed runs can insert duplicate plan documents or
+   lose a `version` bump. With the `{key: 1}` unique index still absent (below)
+   nothing at the database level backstops that. The follow-up pins concurrent
+   seeding in a RED spec and makes each write an atomic conditioned upsert.
+2. **The `{key: 1}` unique index is still not in `INDEX_SPECS`.** Decision 8's
+   deferral stands for OP-83, but the index is the DB-level half of the
+   concurrency fix and is now explicitly owned by `t_9f9bde85` (coordinate with
+   OP-76 index bootstrap).
