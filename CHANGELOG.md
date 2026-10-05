@@ -1,3 +1,9 @@
+## [1.18.1](https://github.com/yahodu/openpic-webapp/compare/v1.18.0...v1.18.1) (2026-10-05)
+
+### Bug Fixes
+
+- **novu:** OP-92 reject an inactive step and a duplicate workflow id, classify a non-JSON 2xx ([#186](https://github.com/yahodu/openpic-webapp/issues/186)) ([2b2dff4](https://github.com/yahodu/openpic-webapp/commit/2b2dff4afea9dc4741632ddc37e1ab5655a22459))
+
 ## [1.18.0](https://github.com/yahodu/openpic-webapp/compare/v1.17.0...v1.18.0) (2026-10-05)
 
 ### Features
