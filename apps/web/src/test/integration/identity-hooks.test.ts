@@ -1042,6 +1042,27 @@ function seedInWindowSightings(
   return rows;
 }
 
+/**
+ * Build `count` in-window sightings for one user, newest-first, all carrying
+ * the same `fingerprintHash` — the same device seen `count` times.
+ */
+function seedSameDeviceSightings(
+  count: number,
+  opts: { readonly userId: ObjectId; readonly fingerprintHash: string; readonly now: Date }
+): Document[] {
+  const expireAt = new Date(opts.now.getTime() + 6 * 24 * 60 * 60 * 1000);
+  const rows: Document[] = [];
+  for (let i = 0; i < count; i += 1) {
+    rows.push({
+      userId: opts.userId,
+      fingerprintHash: opts.fingerprintHash,
+      createdAt: new Date(opts.now.getTime() - (i + 1) * 60_000),
+      expireAt,
+    });
+  }
+  return rows;
+}
+
 describe("OP-89 new-device read cap (ADR-0046)", () => {
   it("R1: an in-window matching sighting outside the newest 100 still suppresses auth.signin.new_device", async () => {
     await withTestDb(async (test) => {
@@ -1107,6 +1128,51 @@ describe("OP-89 new-device read cap (ADR-0046)", () => {
       );
 
       expect(emitted).toContain("auth.signin.new_device");
+      expect(readSizes, "the sessionDevices read must run exactly once").toHaveLength(1);
+      expect(
+        Math.max(...readSizes),
+        `the new-device read must stay bounded by the ${String(SESSION_DEVICE_READ_CAP)}-sighting cap`
+      ).toBeLessThanOrEqual(SESSION_DEVICE_READ_CAP);
+    });
+  });
+
+  it("R3: more than 100 in-window sightings of the same device suppress auth.signin.new_device while the read stays capped", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const device = {
+        userAgent: "Mozilla/5.0 (SameDeviceRepeat)",
+        ip: "203.0.113.203",
+        acceptLanguage: "en-IN",
+      };
+      const salt = getRateLimitConfig().salt;
+      const matchingHash = hashFingerprint(device, salt);
+
+      // 150 in-window sightings, ALL of the incoming device. The decision must
+      // still see the match and suppress the event, while a device-keyed bounded
+      // read returns only the newest 100 rows. This pin stays green under the
+      // recommended device-keyed fix and fails only if the cap is dropped while
+      // the read stays device-keyed (then all 150 matching rows are returned).
+      await test.db
+        .collection(SESSION_DEVICES_COLLECTION)
+        .insertMany(
+          seedSameDeviceSightings(150, { userId, fingerprintHash: matchingHash, now: T0 })
+        );
+
+      const readSizes: number[] = [];
+      const emitted: string[] = [];
+      await handleSessionCreated(
+        { userId: userId.toHexString(), sessionId: "session-cap-3", device },
+        {
+          db: trackSessionDeviceReads(test.db, (count) => readSizes.push(count)),
+          emit: recordingEmit(emitted),
+          clock: fixedClock(T0),
+        }
+      );
+
+      expect(
+        emitted,
+        "an in-window sighting of the same device must suppress auth.signin.new_device no matter how many sightings the user has"
+      ).not.toContain("auth.signin.new_device");
       expect(readSizes, "the sessionDevices read must run exactly once").toHaveLength(1);
       expect(
         Math.max(...readSizes),

@@ -58,7 +58,7 @@ and the read must **never return more than the 100-sighting cap**. The cap may
 not be a reason to miss an in-window match, and the match may not be found by
 removing the bound (an unbounded read on the sign-in path).
 
-Two append-only specs in `apps/web/src/test/integration/identity-hooks.test.ts`
+Three append-only specs in `apps/web/src/test/integration/identity-hooks.test.ts`
 pin this:
 
 - **R1** (RED today) — seed 149 newer sightings of other devices plus the
@@ -72,6 +72,18 @@ pin this:
   fail (`expected 150 to be less than or equal to 100`), so the pair forces a
   fix that keys the read on the device fingerprint (bounded) instead of widening
   the slice.
+- **R3** (green today, added by follow-up card `t_a6da1734`) — with 150 in-window
+  sightings that are **all the incoming device** (same `fingerprintHash` seen 150
+  times), `handleSessionCreated` must still suppress `auth.signin.new_device`
+  **and** the read must run once and return **≤ 100** rows. R2 alone is vacuous
+  under the recommended device-keyed fix (its 150 _distinct-device_ rows match no
+  `fingerprintHash`, so the read returns 0 and `≤ 100` holds trivially even with
+  the `.limit(100)` removed). R3 restores the guard: under a device-keyed read
+  with the cap dropped, all 150 matching rows are returned and R3 fails with
+  `expected 150 to be less than or equal to 100` — verified by temporarily
+  applying exactly that read shape locally (production file reverted, no
+  production change shipped). R3 passes both against the delivered code and
+  against a device-keyed bounded fix, and is red only against the dropped cap.
 
 A conforming GREEN implementation reads the user's in-window sightings **for the
 incoming device's hash** (e.g. add `fingerprintHash` to the find filter, still
@@ -81,7 +93,7 @@ the read stays bounded.
 ## Consequences
 
 - `indexes.test.ts` gains 5 specs (all green; red-capable), the integration
-  `identity-hooks` suite gains 2 (R1 RED, R2 green). The intended RED state is
+  `identity-hooks` suite gains 3 (R1 RED; R2/R3 green). The intended RED state is
   exactly one failing spec: `R1`.
 - A follow-on GREEN card is required to satisfy R1 without breaking R2; the RED
   branch is a draft PR and is not merged (RED pins ship in the gated GREEN PR).
