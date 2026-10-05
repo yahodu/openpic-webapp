@@ -111,6 +111,38 @@ export default tseslint.config(
     },
   },
   {
+    // Cron jobs write `domainEvents`; the fan-out consumer delivers. A job must
+    // therefore never reach for a notification or delivery adapter directly, so
+    // the `defineCronJob` contract stays free of a notification dependency
+    // (contract §10.2, ADR-0028 §1). The logging boundary from the server rule
+    // above is repeated here because a later matching config object replaces the
+    // whole `no-restricted-imports` setting.
+    files: ["apps/web/src/server/jobs/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/server/logging/**", "@/server/logging/*"],
+              message: "Import only the Logger port from @/server/logging.",
+            },
+            {
+              group: [
+                "**/server/notifications/**",
+                "@/server/notifications/*",
+                "**/server/adapters/**",
+                "@/server/adapters/*",
+              ],
+              message:
+                "Cron jobs write domainEvents; the fan-out consumer delivers notifications, so a job must not import a notification or delivery adapter.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Domain and service code must read time through the injected `Clock`
     // port (OP-72), never the ambient wall clock — that is what makes those
     // layers deterministic in tests.

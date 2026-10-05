@@ -1,3 +1,15 @@
+## [1.10.0](https://github.com/yahodu/openpic-webapp/compare/v1.9.0...v1.10.0) (2026-10-05)
+
+### Features
+
+- **auth:** OP-87 internal HMAC auth and cron job framework ([#139](https://github.com/yahodu/openpic-webapp/issues/139)) ([e061771](https://github.com/yahodu/openpic-webapp/commit/e0617710f61b4fd29af8b8cb08269426a6b00045)), closes [#137](https://github.com/yahodu/openpic-webapp/issues/137)
+
+## [1.9.0](https://github.com/yahodu/openpic-webapp/compare/v1.8.0...v1.9.0) (2026-10-05)
+
+### Features
+
+- **auth:** OP-86 wire /me ban exemption ([#135](https://github.com/yahodu/openpic-webapp/issues/135)) ([a51bc54](https://github.com/yahodu/openpic-webapp/commit/a51bc548cf56cbd1bec53b3e82d651e175d2bd3b))
+
 ## [1.8.0](https://github.com/yahodu/openpic-webapp/compare/v1.7.1...v1.8.0) (2026-10-05)
 
 ### Features
