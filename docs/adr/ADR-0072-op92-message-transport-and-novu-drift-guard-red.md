@@ -1,8 +1,9 @@
-# ADR-0070 — OP-92 RED: `MessageTransport` port, Novu adapter and the workflow drift guard
+# ADR-0072 — OP-92 RED: `MessageTransport` port, Novu adapter and the workflow drift guard
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Ticket:** OP-92 (phase 1 — Notifications, epic: Transport) · RED stage
 - **Supersedes:** none
+- **Renumbered from:** ADR-0070 (central allocation `t_eb61c823`; PR #181 keeps `0070`/`0071`) · **Extended by:** ADR-0074
 
 ## Context
 
@@ -81,8 +82,8 @@ at `error` under event `transport.upstream_contract_violation`.
 
 `novuTransport` accepts `timeoutMs`, wraps each attempt in an `AbortController`,
 and throws `{ retryable: true, code: "timeout" }` on expiry. The tests pin the
-_option_; wiring the option to an environment knob in a factory is deferred (see
-below).
+_option_; ADR-0074 pins the `NOVU_TIMEOUT_MS` → `timeoutMs` wiring through
+`@/server/config` with a factory default of `10_000` ms.
 
 ### Drift guard
 
@@ -122,10 +123,11 @@ wrapper, unit-testable in-process so MSW can intercept Novu.
    Fixtures use `email`/`sms`/`whatsapp` verbatim; the real `chat` → `whatsapp`
    mapping is an adapter detail, not pinned here.
 4. **Timeout source.** I4 pins the adapter `timeoutMs` option; the environment
-   knob and its factory default are deliberately **not** pinned by these tests.
+   knob and its factory default are pinned by ADR-0074 (`NOVU_TIMEOUT_MS`,
+   default `10_000` ms).
 5. **Email unsubscribe headers.** The GREEN card mentions `List-Unsubscribe` /
-   `List-Unsubscribe-Post`; the RED card's test list does not, so no assertion
-   pins them (out of scope for this RED).
+   `List-Unsubscribe-Post`; ADR-0074 pins them at `payload.headers` (was out of
+   scope for this RED).
 
 ## Alternatives considered
 

@@ -75,9 +75,14 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0067](ADR-0067-op91-sessions-and-account-deletion-red.md)                         | OP-91 RED: sessions & devices list/revoke and the account-deletion cancel window                         | Accepted |
 | [0068](ADR-0068-op91-sessions-and-account-deletion-green.md)                       | OP-91 GREEN: the §1.3 sessions surfaces and the §1.4 deletion cancel window                              | Accepted |
 | [0069](ADR-0069-op91-green-review-signoff.md)                                      | OP-91 GREEN review sign-off: §1.3/§1.4 verified; deletion-requested emission and three Low refs routed   | Accepted |
-| [0070](ADR-0070-op92-message-transport-and-novu-drift-guard-red.md)                | OP-92 RED: `MessageTransport` port, Novu adapter and the workflow drift guard                            | Accepted |
-| [0071](ADR-0071-op92-message-transport-red-review-signoff.md)                      | OP-92 RED review sign-off: pins verified; Novu-adapter coverage gaps, ADR-0070 collision, outbox naming  | Accepted |
+| 0070                                                                               | _Reserved_ — OP-91 follow-up lane (PR #181): `ADR-0070-op91-followup-deletion-requested-red`             | Reserved |
+| 0071                                                                               | _Reserved_ — OP-91 follow-up lane (PR #181): `ADR-0071-op91-followup-deletion-requested-green`           | Reserved |
+| [0072](ADR-0072-op92-message-transport-and-novu-drift-guard-red.md)                | OP-92 RED: `MessageTransport` port, Novu adapter and the workflow drift guard                            | Accepted |
+| [0073](ADR-0073-op92-message-transport-red-review-signoff.md)                      | OP-92 RED review sign-off: pins verified; Novu-adapter coverage gaps, ADR collision, outbox naming       | Accepted |
+| [0074](ADR-0074-op92-message-transport-red-pins-followup.md)                       | OP-92 RED-pins follow-up: memory outbox, workflow upsert, unsubscribe headers, logging, lint, timeout    | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
+
+_`0070`/`0071` are reserved for the OP-91 follow-up lane (PR #181, lands ahead); the OP-92 lane holds `0072`–`0074`, and `0075`/`0076` are pre-allocated to the OP-92 GREEN card (`t_8930fc35`)._

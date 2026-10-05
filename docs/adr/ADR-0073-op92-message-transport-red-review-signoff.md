@@ -1,8 +1,9 @@
-# ADR-0071 — OP-92 RED review sign-off and the routing of three RED↔GREEN coherence findings
+# ADR-0073 — OP-92 RED review sign-off and the routing of three RED↔GREEN coherence findings
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-reviewer`
 - **Card:** `t_fd03ff87` (OP-92 MessageTransport port, Novu adapter and workflow drift guard, RED) · **Deliverable:** branch `OP-92-task-message-transport-novu-drift`, commit `f4cecb1`, draft PR (held)
-- **Contract under review:** `docs/adr/ADR-0070-op92-message-transport-and-novu-drift-guard-red.md`
+- **Contract under review:** `docs/adr/ADR-0072-op92-message-transport-and-novu-drift-guard-red.md`
+- **Renumbered from:** ADR-0071 (central allocation `t_eb61c823`, resolving Finding 2)
 
 ## Verdict
 
@@ -41,10 +42,11 @@ to a new orchestrator card that now gates GREEN (`t_8930fc35`).
    are asserted nowhere in the test tree. Under AGENTS.md §2.1 GREEN cannot implement them
    untested. The orchestrator must either add the RED pins (same worktree/branch) or narrow
    GREEN's scope.
-2. **Medium — ADR number collision.** This branch adds `ADR-0070-op92-…`; the open draft PR
+2. **Medium — ADR number collision.** This branch added `ADR-0070-op92-…`; the open draft PR
    #181 (`OP-91-task-followup-deletion-requested-red`) adds a _different_ `ADR-0070-op91-…`.
-   Both are in flight against the same `main`, so one lane must renumber before either
-   merges. Route to the standing central ADR allocation (see `t_eb61c823`).
+   Both were in flight against the same `main`. **Resolved** by the central allocation
+   (`t_eb61c823`): #181 keeps `0070`/`0071`; this lane renumbered `0070 → 0072` and
+   `0071 → 0073`, and ADR-0074 was added for the RED-pins follow-up.
 3. **Low — outbox adapter name collides with the logging port.** GREEN §2 names the outbox
    adapter `memoryTransport`, but `@/server/logging` already exports `memoryTransport` (the
    memory log sink these very specs import). Recommend a distinct name
@@ -68,8 +70,8 @@ to a new orchestrator card that now gates GREEN (`t_8930fc35`).
   numbering) are settled, so no untested production code lands by drift.
 - No test file and no production file was edited by the reviewer; this ADR and its README row
   are the only changes made at review time.
-- The reviewer's own sign-off ADR number (0071) is provisional pending the central
-  allocation in Finding 2.
+- The reviewer's own sign-off ADR number was provisional; it is renumbered
+  `0071 → 0073` by the central allocation (`t_eb61c823`).
 
 ## Alternatives
 
