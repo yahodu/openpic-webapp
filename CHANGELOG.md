@@ -1,3 +1,9 @@
+## [1.15.2](https://github.com/yahodu/openpic-webapp/compare/v1.15.1...v1.15.2) (2026-10-05)
+
+### Bug Fixes
+
+- **auth:** OP-89 recover the contact-change fan-out after a partial insert failure ([#177](https://github.com/yahodu/openpic-webapp/issues/177)) ([33c45dd](https://github.com/yahodu/openpic-webapp/commit/33c45dd951a862948595ccb98321f1b34ae78798))
+
 ## [1.15.1](https://github.com/yahodu/openpic-webapp/compare/v1.15.0...v1.15.1) (2026-10-05)
 
 ### Bug Fixes
