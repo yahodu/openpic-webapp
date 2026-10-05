@@ -139,6 +139,19 @@ verifying a phone number can never create an account; a phone OTP only signs in
 number" rejection (I9) would be undone by a later verify that materialises a
 user for that number.
 
+I14 pins this flag directly. It obtains a **valid** SMS code for a second,
+distinct number — requested by a signed-in caller, because an unauthenticated
+`send-otp` for an unknown number is itself refused (I9) — and then calls
+`phone-number/verify` for that number **without** a session. With
+`signUpOnVerification` disabled the verify cannot materialise an account, so
+I9's rejection is not undone; the spec asserts both observable consequences (no
+session cookie, zero `user` documents for the number). Enabling
+`signUpOnVerification` would create the account and hand back a session, turning
+I14 red. A verify carrying a _wrong_ code can never create a user under either
+configuration, so it cannot pin the flag; the valid-code path is therefore the
+real guard, and the wrong-code path is retained only as a rejection
+smoke-check.
+
 ## Consequences
 
 - Cookie security, phone/2FA policy and the test-route reachability are now

@@ -453,24 +453,68 @@ describe("phone OTP (§1.1 phoneNumber plugin)", () => {
 
   it("I14: an unauthenticated phone verification creates no user and mints no session", async () => {
     await withAuth(async ({ auth, database }) => {
-      const identity = makeIdentity();
+      // (a) A *wrong* code for an unknown number is rejected outright. This is
+      //     kept from the original spec, but on its own it is vacuous: a wrong
+      //     code can never materialise an account under *either*
+      //     `signUpOnVerification` setting, so it cannot detect a regression in
+      //     that flag. The valid-code path below is what actually pins it.
+      const wrongNumber = makeIdentity();
+      const wrong = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/phone-number/verify",
+        { phoneNumber: wrongNumber.phone, code: WRONG_OTP },
+        forward(wrongNumber)
+      );
 
-      // `signUpOnVerification` must stay disabled: a verify with no session and
-      // no pre-existing user for the number must never materialise an account
-      // (otherwise I9's unknown-number rejection would be undone here).
+      expect(wrong.status).toBeGreaterThanOrEqual(400);
+      expect(wrong.status).toBeLessThan(500);
+      expect(sessionCookie(wrong)).toBeUndefined();
+      expect(
+        await database.collection("user").countDocuments({ phoneNumber: wrongNumber.phone })
+      ).toBe(0);
+
+      // (b) The real guard. `signUpOnVerification` must stay disabled: verifying
+      //     a *valid* code with no session and no pre-existing user for the
+      //     number must never materialise an account nor mint a session
+      //     (otherwise I9's unknown-number rejection would be undone here).
+      //
+      // An unauthenticated `send-otp` for an unknown number is refused (I9), so
+      // the code for the second number is requested by a real, signed-in caller
+      // (the same authorised flow `signUpWithVerifiedPhone` uses). The verify
+      // then drops that session: this is exactly the request that, with
+      // `signUpOnVerification` enabled, would create a user for `target.phone`
+      // and hand back a session — so both assertions below fail loudly on that
+      // regression, where the wrong-code path above cannot.
+      const owner = makeIdentity();
+      const { cookie: ownerCookie } = await signInWithEmailOtp(auth, owner);
+
+      const target = makeIdentity();
+      const sent = await authPostWithCookie(
+        auth,
+        "/api/auth/phone-number/send-otp",
+        ownerCookie,
+        { phoneNumber: target.phone },
+        owner
+      );
+      expect(sent.status).toBe(200);
+      const otp = requireOtp("sms", target.phone);
+
       const response = await authPost(
         auth,
         APP_ORIGIN,
         "/api/auth/phone-number/verify",
-        { phoneNumber: identity.phone, code: WRONG_OTP },
-        forward(identity)
+        { phoneNumber: target.phone, code: otp.code },
+        forward(target)
       );
 
-      expect(response.status).toBeGreaterThanOrEqual(400);
-      expect(response.status).toBeLessThan(500);
-      expect(sessionCookie(response)).toBeUndefined();
       expect(
-        await database.collection("user").countDocuments({ phoneNumber: identity.phone })
+        sessionCookie(response),
+        "signUpOnVerification must stay disabled: an unauthenticated verify must not mint a session"
+      ).toBeUndefined();
+      expect(
+        await database.collection("user").countDocuments({ phoneNumber: target.phone }),
+        "signUpOnVerification must stay disabled: an unauthenticated verify must not create a user"
       ).toBe(0);
     });
   });
