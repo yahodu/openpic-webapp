@@ -66,6 +66,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0058](ADR-0058-op89-identity-lifecycle-indexes-green-review.md)                   | OP-89 indexes/TTLs GREEN review sign-off: device-keyed bounded new-device read verified                  | Accepted |
 | [0060](ADR-0060-op90-me-indexes.md)                                                | OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`                  | Accepted |
 | [0061](ADR-0061-op90-me-email-phone-only-string-contract.md)                       | OP-90 §1.2 `me` `email` is a non-nullable string; the phone-only `""` path is unreachable/defensive-only | Accepted |
-| [0062](ADR-0062-op91-sessions-and-account-deletion-red.md)                          | OP-91 RED: sessions & devices list/revoke and the account-deletion cancel window                         | Accepted |
+| [0062](ADR-0062-op91-sessions-and-account-deletion-red.md)                         | OP-91 RED: sessions & devices list/revoke and the account-deletion cancel window                         | Accepted |
+| [0063](ADR-0063-op91-sessions-and-account-deletion-green.md)                       | OP-91 GREEN: the §1.3 sessions surfaces and the §1.4 deletion cancel window                              | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
