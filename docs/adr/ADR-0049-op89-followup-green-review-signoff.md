@@ -1,14 +1,14 @@
-# ADR-0048 — OP-89 follow-up GREEN review sign-off: re-run dedupe and the sections 4–6 / contact-verified surfaces verified working, with two coverage follow-ups
+# ADR-0049 — OP-89 follow-up GREEN review sign-off: re-run dedupe and the sections 4–6 / contact-verified surfaces verified working, with two coverage follow-ups
 
 - **Status:** Accepted (GREEN review sign-off) · **Date:** 2026-10-06
-- **Card:** OP-89 `t_42a91a52` (GREEN follow-up review) · **Verifies:** ADR-0047, ADR-0045
+- **Card:** OP-89 `t_42a91a52` (GREEN follow-up review) · **Verifies:** ADR-0048, ADR-0045
 - **Branch / PR:** `OP-89-task-identity-lifecycle-hooks-followup-green` → `main` (PR #165)
 - **Reviewed head:** `bb28fc3` (pre-sign-off; this ADR is the only commit added after it)
 - **Reviewer:** `openpic-webapp-reviewer`, round 1, artifact lens
 
 ## Context
 
-The GREEN follow-up card `t_42a91a52` (ADR-0047) implemented the three pins
+The GREEN follow-up card `t_42a91a52` (ADR-0048) implemented the three pins
 ADR-0045 fixed for the OP-89 GREEN-review findings 4–6 and handed them to
 review. This ADR records the independent verification and the two non-blocking
 coverage follow-ups routed onward. It does not reship ADR-0045's contract, only
@@ -83,7 +83,7 @@ resolveDeps(deps).clock.now()`), collapsed by the pre-existing
    affect the pinned happy path.
 2. **Low — stale ADR reference in the pin file header.** The comment header of
    `apps/web/src/test/integration/identity-hooks.test.ts` still cites
-   `ADR-0043`, but the RED pins ADR was renumbered to `ADR-0045` (ADR-0047 §
+   `ADR-0043`, but the RED pins ADR was renumbered to `ADR-0045` (ADR-0048 §
    "ADR numbering"). Test files are immutable to the Implementer, so this is a
    Test Author follow-up (comment-only, no behavioural impact).
 

@@ -1,4 +1,4 @@
-# ADR-0047 — OP-89 follow-up GREEN: re-run dedupe for contact.changed / sessions.revoked and the sections 4–6 / contact-verified surface adapters
+# ADR-0048 — OP-89 follow-up GREEN: re-run dedupe for contact.changed / sessions.revoked and the sections 4–6 / contact-verified surface adapters
 
 - **Status:** Accepted (GREEN implementation) · **Date:** 2026-10-06
 - **Card:** OP-89 `t_42a91a52` (phase 1-Identity, epic Authentication, GREEN follow-up) · **Implements:** ADR-0045 (pins), ADR-0043 (`t_5e541eaa` indexes — numbering only) · **Amends:** ADR-0041 (refreshes its "Coverage gaps")
@@ -87,6 +87,13 @@ indexes PR. This is a rename only — no decision content changed. The comment
 header inside `apps/web/src/test/integration/identity-hooks.test.ts` still cites
 "ADR-0043" from the RED commit; it is not corrected here because test files are
 immutable to the implementer (AGENTS.md §2.1) — flagged for the next cycle.
+
+Separately, on the merge-order review of PR #165 the orchestrator (`t_eb61c823`)
+allocated `ADR-0047` to the OP-90 `/me` contract decisions (`main`). This card's
+GREEN ADR was therefore renumbered **0047 → 0048** and the GREEN review sign-off
+**0048 → 0049**, keeping one row per number in the `docs/adr/README.md` table
+(0045, 0046, 0047, 0048, 0049). Again a rename only — no decision content
+changed.
 
 ## Consequences
 
