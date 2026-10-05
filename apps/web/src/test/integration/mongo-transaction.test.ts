@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { closeMongoClient, getDb } from "../../server/db/mongo";
 import { withTransaction } from "../../server/db/transaction";
-import { makeEnv, toProcessEnv } from "../factories/env";
+import { MONGO_READY_HOOK_TIMEOUT_MS, setupMongoTestEnv } from "../helpers/db";
 
 /**
  * Integration contract — `src/server/db/transaction.ts`.
@@ -24,16 +24,9 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  */
 const TEST_DB_COLLECTION = "accounts";
 
-beforeAll(() => {
-  const uri = process.env.MONGO_TEST_URI;
-  if (!uri) {
-    throw new Error(
-      "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
-    );
-  }
-
-  Object.assign(process.env, toProcessEnv(makeEnv({ APP_ENV: "test", MONGODB_URI: uri })));
-});
+beforeAll(async () => {
+  await setupMongoTestEnv();
+}, MONGO_READY_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
   await closeMongoClient();

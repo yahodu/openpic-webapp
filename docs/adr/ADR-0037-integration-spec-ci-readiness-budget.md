@@ -96,3 +96,42 @@ the merge resolutions (filename + README row). No decision content changed.
 I1's two awaited seed calls are ordered, not racing. The latency is therefore
 connection + round-trip volume, confirming that a readiness/budget fix (not a
 concurrency fix) is the correct remedy.
+
+## Amendment note — shared readiness guard across sibling suites (t_d025a82c)
+
+The "scoped to this file" limitation in the Decision above was intentional for
+the original card, but the reviewer filed it as a Low latent-flake risk: every
+integration suite shares the same cold-connect profile, because each Vitest
+worker builds its own lazily-connected `MongoClient` singleton. This note
+records the follow-up that lifted the guard out of the single file. **The
+decision above is unchanged** — a deterministic ping probe plus an explicit
+budget, with no assertion relaxed.
+
+- **Shared helper.** `apps/web/src/test/helpers/db.ts` now owns
+  `requireMongoTestUri()`, `applyMongoTestEnv()`, `waitForMongoReady()` and
+  `setupMongoTestEnv()`, plus the `MONGO_READY_HOOK_TIMEOUT_MS` hook budget.
+  Every database-backed integration suite calls `setupMongoTestEnv()` (or
+  `waitForMongoReady()`) from its `beforeAll`, so TCP connect, handshake,
+  replica-set discovery and primary election are paid in a hook — never inside
+  a timed spec.
+- **Replica-set probe in `global-setup.ts`.** After
+  `MongoMemoryReplSet.create()` the setup pings the set until a primary
+  answers, and fails loudly after 30 s. The probe is a real `ping`, not a
+  fixed sleep, and ensures workers start only against an elected primary.
+- **`notification-seed.test.ts` drops its file-local duplicate** and consumes
+  the shared helper. Its explicit 30 s per-test budget and the
+  `MONGODB_SERVER_SELECTION_TIMEOUT_MS` override are retained — the seed still
+  issues hundreds of sequential round trips, so the budget is still warranted.
+- **`health-ready-unavailable.test.ts` deliberately does not call the shared
+  helper.** It points `MONGODB_URI` at a sentinel and stubs the readiness probe,
+  so it must never open a real connection. `check-env`, the internal-HMAC and
+  the internal-cron suites likewise do not touch the driver and are untouched.
+- **No assertion in any spec changed.** `notification-seed`'s 81-type and
+  version-bump assertions are byte-identical to the pre-hardening spec.
+- **Verified:** integration suite 33 files / 201 passed
+  (`TMPDIR=/root/tmp-mongo`), run twice; `tsc` (root + contracts + web),
+  `eslint` and `prettier --check` clean.
+- **TDD shape:** this is test-only hardening with no production behaviour to
+  drive, so the deliverable is the harness change itself, verified GREEN. The
+  readiness wait is exercised by every suite's `beforeAll` on each run; the
+  fail-loud timeout path is not separately spec'd (see card out-of-scope).

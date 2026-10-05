@@ -12,8 +12,12 @@ import {
   requestHash,
   type IdempotencyStore,
 } from "../../server/idempotency";
-import { makeEnv, toProcessEnv } from "../factories/env";
-import { createTestDb, type TestDb } from "../helpers/db";
+import {
+  MONGO_READY_HOOK_TIMEOUT_MS,
+  createTestDb,
+  setupMongoTestEnv,
+  type TestDb,
+} from "../helpers/db";
 
 /**
  * Integration contract — the idempotency stage inside the `defineRoute`
@@ -41,16 +45,9 @@ const IDEMPOTENCY_REPLAYED_HEADER = "idempotency-replayed";
 const ROUTE = "/api/v1/things";
 const URL = `http://localhost${ROUTE}`;
 
-beforeAll(() => {
-  const uri = process.env.MONGO_TEST_URI;
-  if (!uri) {
-    throw new Error(
-      "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
-    );
-  }
-
-  Object.assign(process.env, toProcessEnv(makeEnv({ APP_ENV: "test", MONGODB_URI: uri })));
-});
+beforeAll(async () => {
+  await setupMongoTestEnv();
+}, MONGO_READY_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
   await closeMongoClient();

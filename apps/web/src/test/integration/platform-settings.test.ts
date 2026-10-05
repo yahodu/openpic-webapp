@@ -8,8 +8,12 @@ import {
   seedPlatformSettings,
 } from "@/server/settings/platform-settings";
 
-import { makeEnv, toProcessEnv } from "../factories/env";
-import { createTestDb, type TestDb } from "../helpers/db";
+import {
+  MONGO_READY_HOOK_TIMEOUT_MS,
+  createTestDb,
+  setupMongoTestEnv,
+  type TestDb,
+} from "../helpers/db";
 
 /**
  * Integration contract — the `platformSettings` singleton against a real
@@ -29,16 +33,9 @@ import { createTestDb, type TestDb } from "../helpers/db";
  *   invalidatePlatformSettings(): void
  */
 
-beforeAll(() => {
-  const uri = process.env.MONGO_TEST_URI;
-  if (!uri) {
-    throw new Error(
-      "MONGO_TEST_URI is not set — the integration globalSetup must start a MongoMemoryReplSet"
-    );
-  }
-
-  Object.assign(process.env, toProcessEnv(makeEnv({ APP_ENV: "test", MONGODB_URI: uri })));
-});
+beforeAll(async () => {
+  await setupMongoTestEnv();
+}, MONGO_READY_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
   await closeMongoClient();
