@@ -1,3 +1,9 @@
+## [1.18.0](https://github.com/yahodu/openpic-webapp/compare/v1.17.0...v1.18.0) (2026-10-05)
+
+### Features
+
+- **me:** OP-91 carry scheduledAt/cancelUrl in account.deletion.requested payload ([#183](https://github.com/yahodu/openpic-webapp/issues/183)) ([3970d76](https://github.com/yahodu/openpic-webapp/commit/3970d76342d6643a797cccd17bcb02f9653c1ce8))
+
 ## [1.17.0](https://github.com/yahodu/openpic-webapp/compare/v1.16.0...v1.17.0) (2026-10-05)
 
 ### Features
