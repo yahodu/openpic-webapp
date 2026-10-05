@@ -64,10 +64,12 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0056](ADR-0056-op90-me-projection-green-review-signoff.md)                        | OP-90 GREEN review sign-off: §1.2 projection verified; index gap and phone-only decision routed          | Accepted |
 | [0057](ADR-0057-op89-identity-lifecycle-red-pins-r3-followup-review.md)            | OP-89 RED-pins R3 follow-up review sign-off: same-device >100 read-cap pin verified                      | Accepted |
 | [0058](ADR-0058-op89-identity-lifecycle-indexes-green-review.md)                   | OP-89 indexes/TTLs GREEN review sign-off: device-keyed bounded new-device read verified                  | Accepted |
+| [0060](ADR-0060-op90-me-indexes.md)                                                | OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`                  | Accepted |
+| [0061](ADR-0061-op90-me-email-phone-only-string-contract.md)                       | OP-90 §1.2 `me` `email` is a non-nullable string; the phone-only `""` path is unreachable/defensive-only | Accepted |
 | [0062](ADR-0062-op89-followup-green-coverage-pins.md)                              | OP-89 follow-up coverage pins: contact-change fan-out on a partial failure; stale ADR reference fixed    | Accepted |
 | [0063](ADR-0063-op89-followup-coverage-pins-review-signoff.md)                     | OP-89 coverage-pins review sign-off: partial-failure pin RED for the right reason; two Low refs routed   | Accepted |
 | [0064](ADR-0064-op89-followup-green-partial-failure-recovery.md)                   | OP-89 follow-up GREEN: recover the contact-change fan-out after a partial insert failure                 | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
-_0059–0061 are reserved for the three OP-90 lanes that merge ahead of this one (binding allocation on `t_eb61c823` / `t_93d4774b`); their rows land when those PRs merge._
+_`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._

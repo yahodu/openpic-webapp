@@ -100,6 +100,19 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+  // invitations — "my pending invitations": the caller's pending count on the
+  // `GET /me` bootstrap and the §1.2 feed read `{ "invitee.userId", status }`
+  // newest-first, so the compound index must carry all three keys in this
+  // order (§13.6; ADR-0060).
+  {
+    collection: COLLECTIONS.invitations,
+    name: "invitations_invitee_user_status_created",
+    keys: [
+      ["invitee.userId", 1],
+      ["status", 1],
+      ["createdAt", -1],
+    ],
+  },
 
   // audit_logs — 400-day retention, swept by the TTL monitor (§22).
   {
@@ -329,6 +342,32 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     name: "contact_change_fanouts_expire_at_ttl",
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
+  },
+  // tenant_members — one membership per (tenant, user); the schema §13.4
+  // composite identity, and the index behind `GET /tenants/{t}/members`
+  // (ADR-0060).
+  {
+    collection: COLLECTIONS.tenantMembers,
+    name: "tenant_members_tenant_user_unique",
+    keys: [
+      ["tenantId", 1],
+      ["userId", 1],
+    ],
+    unique: true,
+  },
+  // tenant_members — the workspace switcher and the caller's membership load on
+  // the `GET /me` bootstrap both read `{ userId, status: "active" }`. This index
+  // deliberately does NOT lead with `tenantId`: `tenantMembers` is a
+  // *subject-scoped* join collection (one row per tenant **× user**), not one of
+  // the `TENANT_SCOPED_COLLECTIONS` whose documents each belong to a single
+  // tenant — so the U1 prefix lint does not apply (schema §13.4; ADR-0060).
+  {
+    collection: COLLECTIONS.tenantMembers,
+    name: "tenant_members_user_status",
+    keys: [
+      ["userId", 1],
+      ["status", 1],
+    ],
   },
   // contact_change_fanouts — one fan-out per emitted `auth.contact.changed`
   // event. The unique index makes the fan-out write idempotent under an
