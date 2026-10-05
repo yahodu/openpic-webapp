@@ -60,6 +60,26 @@ export async function runPhoneHook(ctx: AuthHookContext): Promise<unknown> {
       // set.
       return { context: { body: { ...body, updatePhoneNumber: true } } };
     }
+
+    // Anonymous verify: only an existing user's number has anything to verify.
+    // A number with no user would otherwise fall through to Better Auth's
+    // "failed to update user" branch and surface an internal `500` (I16). Fail
+    // with the *same* generic client error a wrong code produces, so the
+    // response does not reveal whether the number has an account.
+    const value = body.phoneNumber;
+    const user =
+      typeof value === "string"
+        ? await ctx.context.adapter.findOne<{ phoneNumber?: string }>({
+            model: "user",
+            where: [{ field: "phoneNumber", value }],
+          })
+        : undefined;
+    if (user === undefined || user === null) {
+      throw APIError.from("BAD_REQUEST", {
+        message: "Invalid or unverifiable code.",
+        code: "invalid_code",
+      });
+    }
   }
 
   return undefined;
