@@ -192,9 +192,10 @@ and remains covered by `rate-limit-hook.test.ts`.
 
 The GREEN above aligned the **anonymous verify** leg (I20). Reviewing it surfaced
 the residual surface on the _other_ phone leg — anonymous
-`POST /phone-number/send-otp` — whose docblock (`phone-hook.ts`) and ADR-0021 §1
-claimed the endpoint "can never be used to enumerate numbers". That claim is
-**overbroad**. This addendum states precisely what the three anonymous
+`POST /phone-number/send-otp` — whose docblock (`phone-hook.ts`) claimed the
+endpoint "can never be used to enumerate numbers", and whose ADR-0021 §1 said
+"unknown and unverified numbers get the same `403` (no enumeration)". That claim
+is **overbroad**. This addendum states precisely what the three anonymous
 `send-otp` inputs do on `main`, pinned by spec **I21** (a green coverage pin, not
 a prescribed change — see below).
 
@@ -248,6 +249,7 @@ squash-merged directly to `main` as `f4db1e9` (branch deleted).
 
 Two Low documentation items were routed to follow-up card **`t_b43559b3`**
 (`openpic-webapp-backend-coder`, docs/comment only): (1) the `phone-hook.ts`
-docblock still asserts the endpoint "can never be used to enumerate numbers";
-(2) this addendum attributes that exact phrase to ADR-0021 §1, whereas ADR-0021
-§1 says "(no enumeration)" — the quoted phrase is from the source docblock.
+docblock still asserted the endpoint "can never be used to enumerate numbers";
+(2) this addendum attributed that exact phrase to ADR-0021 §1, whereas ADR-0021
+§1 says "(no enumeration)" — the quoted phrase is from the source docblock. Both
+are corrected by `t_b43559b3`.
