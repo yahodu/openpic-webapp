@@ -276,3 +276,72 @@ describe("internal auth codes are part of the client-facing contract", () => {
     }
   );
 });
+
+describe("internal request authorization — the cron exception is GET-only (U4b)", () => {
+  it("U4b: rejects the CRON_SECRET bearer on a non-GET cron request", () => {
+    const result = authorizeInternalRequest({
+      method: "POST",
+      path: "/api/v1/internal/cron/sample",
+      authorization: `Bearer ${CRON_SECRET}`,
+      signature: null,
+      timestamp: null,
+      body: "",
+      now: BASE_INSTANT,
+      internalApiSecret: SECRET,
+      cronSecret: CRON_SECRET,
+    });
+
+    expectDenied(result, "internal_auth_failed");
+  });
+});
+
+describe("internal HMAC malformed inputs (U3b/U2b/U2c)", () => {
+  it.each(["deadbeef", "sha256=", "sha256=zzzz"])(
+    "U3b: rejects the malformed signature %j as invalid_signature",
+    (signature) => {
+      const result = verifyInternalSignature({
+        secret: SECRET,
+        body: BODY,
+        signature,
+        timestamp: timestampHeader(BASE_INSTANT),
+        now: BASE_INSTANT,
+      });
+
+      expectDenied(result, "invalid_signature");
+    }
+  );
+
+  it("U2b: rejects a non-numeric timestamp as stale_signature", () => {
+    const result = verifyInternalSignature({
+      secret: SECRET,
+      body: BODY,
+      signature: signatureHeader(SECRET, BODY),
+      timestamp: "not-a-number",
+      now: BASE_INSTANT,
+    });
+
+    expectDenied(result, "stale_signature");
+  });
+
+  it("U2c: honours a maxSkewSeconds override at its exact boundary", () => {
+    const withinOverride = verifyInternalSignature({
+      secret: SECRET,
+      body: BODY,
+      signature: signatureHeader(SECRET, BODY),
+      timestamp: timestampHeader(new Date(BASE_INSTANT.getTime() - 60_000)),
+      now: BASE_INSTANT,
+      maxSkewSeconds: 60,
+    });
+    expect(withinOverride).toEqual({ ok: true });
+
+    const pastOverride = verifyInternalSignature({
+      secret: SECRET,
+      body: BODY,
+      signature: signatureHeader(SECRET, BODY),
+      timestamp: timestampHeader(new Date(BASE_INSTANT.getTime() - 61_000)),
+      now: BASE_INSTANT,
+      maxSkewSeconds: 60,
+    });
+    expectDenied(pastOverride, "stale_signature");
+  });
+});

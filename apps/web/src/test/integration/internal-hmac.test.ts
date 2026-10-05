@@ -8,7 +8,13 @@ import { isoDateTimeSchema } from "@openpic/contracts";
 import { internalAuthStage } from "@/server/auth/internal-hmac";
 import { defineRoute } from "@/server/http/define-route";
 import { defineCronJob } from "@/server/jobs/cron-job";
-import { createLogger, memoryTransport } from "@/server/logging";
+import {
+  createLogger,
+  getLogger,
+  memoryTransport,
+  setLogger,
+  type MemoryTransport,
+} from "@/server/logging";
 import { fixedClock } from "@/server/runtime/clock";
 
 import { makeEnv, toProcessEnv } from "../factories/env";
@@ -212,5 +218,50 @@ describe("cron job framework (I3)", () => {
     expect(entry).toBeDefined();
     expect(entry?.level).toBe("info");
     expect(entry).toMatchObject({ job: "sample", scanned: 12, affected: 4, hasMore: true });
+  });
+});
+
+describe("internal auth denial logging (security_and_logging_requirements)", () => {
+  it("I4: logs exactly one warn on denial without echoing the secret or the signature", async () => {
+    const previous = getLogger();
+    const sink: MemoryTransport = memoryTransport();
+    setLogger(
+      createLogger({
+        level: "info",
+        transports: [sink],
+        service: "openpic-web",
+        env: "test",
+        version: "test-sha",
+      })
+    );
+
+    try {
+      const route = internalRoute();
+      const body = JSON.stringify({ ping: true });
+      const signature = signatureHeader(body);
+      const request = new Request(new URL(ROUTE, APP_ORIGIN), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer not-the-internal-secret`,
+          "content-type": "application/json",
+          "x-signature": signature,
+          "x-timestamp": timestampHeader(NOW),
+        },
+        body,
+      });
+
+      const response = await route(request);
+      expect(response.status).toBe(401);
+
+      const warnings = sink.entries.filter((candidate) => candidate.level === "warn");
+      expect(warnings).toHaveLength(1);
+
+      const serialized = JSON.stringify(sink.entries);
+      expect(serialized).not.toContain(INTERNAL_SECRET);
+      expect(serialized).not.toContain(signature);
+      expect(serialized).not.toContain(signature.replace("sha256=", ""));
+    } finally {
+      setLogger(previous);
+    }
   });
 });

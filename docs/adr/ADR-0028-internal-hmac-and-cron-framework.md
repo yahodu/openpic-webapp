@@ -166,3 +166,25 @@ spec).
   and one encoding keeps the ±300 s boundary unambiguous.
 - **Let each job clamp its own limit.** Rejected: §10.2's bound must be
   structural, not a rule each of ~25 jobs can forget.
+
+## Review follow-up (RED round 2, OP-87)
+
+The OP-87 RED review (card `t_50e5932b`, PR #137) approved the contract but
+found five coverage gaps; follow-up card `t_83c3867e` adds the pins below. None
+of them change the recorded contract — they make already-decided rules
+executable and pin one boundary exactly:
+
+- The cron exception in §1 is **GET-only**: a `CRON_SECRET` bearer on a
+  `POST /api/v1/internal/cron/**` is `internal_auth_failed` (U4b), so the
+  unsigned-body exemption can never be replayed against a mutating cron route.
+- §1's "logs one `warn` line (never the secret or the signature)" is pinned by
+  I4: a denial through `internalAuthStage` emits exactly one `warn` entry, and
+  neither `INTERNAL_API_SECRET` nor the `X-Signature` hex appears in the
+  captured fields.
+- §1's "never throws; every failure is a stable code" is pinned for malformed
+  `X-Signature` shapes (no `sha256=` prefix, empty hex, non-hex) → the crypto
+  path returns `invalid_signature` without raising (U3b).
+- An unparseable `X-Timestamp` (`"not-a-number"`) is `stale_signature`, never a
+  throw (U2b).
+- The `maxSkewSeconds` override already present in both signatures is exercised
+  at its exact boundary: 60 s ok, 61 s stale (U2c).
