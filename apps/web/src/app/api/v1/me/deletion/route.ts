@@ -64,6 +64,7 @@ export const POST = defineRoute({
     const settings = await getPlatformSettings({ db: database });
     const now = new Date();
     const scheduledAt = computeDeletionScheduledAt(now, settings);
+    const scheduledIso = scheduledAt.toISOString();
 
     await database.collection(USER_PROFILES_COLLECTION).updateOne(
       { userId: objectId },
@@ -80,15 +81,18 @@ export const POST = defineRoute({
     // `handleDeletionRequested` counterpart of the revoke-all emit (ADR-0043
     // §3, ADR-0070). The route never writes a domain event directly; there is
     // no database hook for this transition, so there is no double-emit.
-    await createIdentityLifecycleSeams({ db: database }).deletionRequested({ userId });
+    await createIdentityLifecycleSeams({ db: database }).deletionRequested({
+      userId,
+      scheduledAt: scheduledIso,
+      cancelUrl: DELETION_PATH,
+    });
 
     getLogger().info("account deletion requested", {
       event: "me.deletion.requested",
       userId,
-      scheduledAt: scheduledAt.toISOString(),
+      scheduledAt: scheduledIso,
     });
 
-    const scheduledIso = scheduledAt.toISOString();
     return {
       status: 202,
       body: {

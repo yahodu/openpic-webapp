@@ -168,6 +168,10 @@ export interface SessionsRevokedEvent {
 /** Inputs to the deletion-requested handler. */
 export interface DeletionRequestedEvent {
   readonly userId: string;
+  /** The §1.4 cancel-window instant, as the ISO-8601 UTC string the 202 body reports. */
+  readonly scheduledAt: string;
+  /** The absolute path that cancels the window (`DELETION_PATH`), for deep-linking. */
+  readonly cancelUrl: string;
 }
 
 /** Shared seams every handler accepts. */
@@ -768,7 +772,7 @@ export async function handleDeletionRequested(
     tenantId: event.userId,
     actorRef: userRef(event.userId),
     subjectRef: userRef(event.userId),
-    payload: {},
+    payload: { scheduledAt: event.scheduledAt, cancelUrl: event.cancelUrl },
     dedupeKey: `account.deletion.requested:${event.userId}:${now.toISOString()}`,
   });
 }
