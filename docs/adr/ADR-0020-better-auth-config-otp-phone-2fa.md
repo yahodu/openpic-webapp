@@ -82,8 +82,12 @@ email OTPs use `email`; phone and two-factor one-time codes use `sms` — never
 - Unauthenticated `phone-number/send-otp` for an unknown number is rejected
   (`403`) and creates no user (I9).
 - Unauthenticated `phone-number/send-otp` for an existing user whose phone is
-  not verified is rejected with the _same_ `403` (I10) so the endpoint cannot be
-  used to enumerate numbers.
+  not verified is rejected with the _same_ `403` (I10). Those two inputs are
+  therefore indistinguishable, but this is **not** "the endpoint cannot be used
+  to enumerate numbers": a known **verified** number is accepted (`200`,
+  `{ message: "code sent" }`, a real SMS OTP), which an anonymous caller can
+  observe to tell "a verified account exists" from "does not". See the
+  follow-up addendum in ADR-0030 (spec I21).
 - The authenticated verification flow (`send-otp` → `verify`) is what turns an
   unverified phone into a verified one (I4).
 

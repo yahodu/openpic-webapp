@@ -597,6 +597,47 @@ describe("phone OTP (§1.1 phoneNumber plugin)", () => {
       );
     });
   });
+
+  it("I21: an anonymous send-otp for a known VERIFIED number is accepted and really sends an SMS OTP", async () => {
+    await withAuth(async ({ auth }) => {
+      // The third input to the anonymous `send-otp` guard (I9/I10 cover the
+      // other two). An unknown number and an existing user's *unverified*
+      // number are refused with the same `403 phone_not_verified`; a known,
+      // *verified* number is the one input that passes, so its outcome must be
+      // pinned rather than inferred from code. On `main` the guard lets the
+      // request through to Better Auth's phone plugin: `200` and a genuine SMS
+      // OTP is delivered. That acceptance is what an anonymous caller can
+      // observe to tell "a verified account exists" from "does not" — a
+      // residual enumeration oracle on this endpoint (ADR-0030 follow-up
+      // addendum qualifies the earlier "cannot enumerate" claim). This is a
+      // green coverage pin: the card pins the ACTUAL behaviour of `main`, it
+      // does not prescribe a change (the product decision is human-owned).
+      const identity = makeIdentity();
+      await signUpWithVerifiedPhone(auth, identity);
+
+      otpInbox.clear();
+
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/phone-number/send-otp",
+        { phoneNumber: identity.phone },
+        forward(identity)
+      );
+
+      // Pin the ACTUAL status of `main` (observed by running the spec first,
+      // never guessed): the verified-number guard passes the request through.
+      expect(response.status).toBe(200);
+
+      // An OTP really left the server by SMS — the observable that
+      // distinguishes this 200 from I9/I10's 403, which deliver nothing.
+      const sent = otpInbox
+        .list()
+        .filter((entry: CapturedOtp) => entry.channel === "sms" && entry.to === identity.phone);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.code).toMatch(/^\d{6}$/);
+    });
+  });
 });
 
 describe("two-factor (§1.1 twoFactor plugin)", () => {
