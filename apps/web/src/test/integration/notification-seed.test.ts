@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { NotificationSeverity } from "@/server/notifications/notification-types";
 import type { NotificationType } from "@/server/notifications/notification-types";
@@ -34,7 +34,73 @@ import { createTestDb, type TestDb } from "../helpers/db";
  *     mutated set to simulate a matrix change shipped in a deploy.
  */
 
-beforeAll(() => {
+/**
+ * CI budget for the integration specs in this file.
+ *
+ * The seed reconciles each of the 81 contract types (and each template) with
+ * its own atomic aggregation upsert, so I1 issues hundreds of sequential round
+ * trips against the replica set. On a loaded CI runner, a cold replica set plus
+ * that many round trips can exceed Vitest's default 5_000ms test budget — the
+ * intermittent timeout that reddened an unrelated PR (OP-85 follow-up). The
+ * budget below is an explicit ceiling for a slow-but-correct run, not a licence
+ * for a hang: {@link waitForMongoReady} keeps a cold connection out of every
+ * timed spec, and no assertion is relaxed.
+ */
+const INTEGRATION_TEST_TIMEOUT_MS = 30_000;
+
+/** How long {@link waitForMongoReady} keeps retrying before the suite gives up. */
+const MONGO_READY_TIMEOUT_MS = 30_000;
+
+/** Delay between readiness probes; short enough to react promptly to a late primary. */
+const MONGO_READY_RETRY_MS = 250;
+
+// Raise the test/hook budget for this file only. `vi.setConfig` is scoped to the
+// file, so the default 5s budget is replaced without touching any spec body.
+vi.setConfig({
+  testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
+  hookTimeout: MONGO_READY_TIMEOUT_MS + 5_000,
+});
+
+/**
+ * Deterministically wait until the shared MongoDB client can reach a writable
+ * replica-set primary.
+ *
+ * `MongoMemoryReplSet.create()` resolves once the set is *initiated*, not once
+ * a primary has been elected, and the shared client connects lazily on first
+ * use. Without this wait the first spec to touch the driver pays TCP connect,
+ * handshake, replica-set discovery and primary election inside its own test
+ * budget. Waiting here — inside the hook's own budget — removes that cold-start
+ * cost from every timed spec, so a run is never lost to a cold connection.
+ *
+ * The wait is a genuine readiness check, not a fixed sleep: it probes the real
+ * driver until it answers, and fails loudly if the server never becomes ready.
+ */
+async function waitForMongoReady(): Promise<void> {
+  const { getMongoClient } = await import("@/server/db/mongo");
+  const client = getMongoClient();
+  const deadline = Date.now() + MONGO_READY_TIMEOUT_MS;
+  let lastError: unknown;
+
+  for (;;) {
+    try {
+      await client.db("admin").command({ ping: 1 });
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `MongoDB replica set did not become ready within ${String(MONGO_READY_TIMEOUT_MS)}ms`,
+        { cause: lastError }
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, MONGO_READY_RETRY_MS));
+  }
+}
+
+beforeAll(async () => {
   const uri = process.env.MONGO_TEST_URI;
   if (!uri) {
     throw new Error(
@@ -42,7 +108,21 @@ beforeAll(() => {
     );
   }
 
-  Object.assign(process.env, toProcessEnv(makeEnv({ APP_ENV: "test", MONGODB_URI: uri })));
+  Object.assign(
+    process.env,
+    toProcessEnv(
+      makeEnv({
+        APP_ENV: "test",
+        MONGODB_URI: uri,
+        // Give the client the suite's full budget to select a primary on a
+        // busy runner rather than throwing after the production-default 5s
+        // server-selection window.
+        MONGODB_SERVER_SELECTION_TIMEOUT_MS: String(INTEGRATION_TEST_TIMEOUT_MS),
+      })
+    )
+  );
+
+  await waitForMongoReady();
 });
 
 afterAll(async () => {
