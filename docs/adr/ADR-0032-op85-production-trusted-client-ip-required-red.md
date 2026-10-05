@@ -1,4 +1,9 @@
-# ADR-0031 — `TRUSTED_CLIENT_IP_HEADER` is required in production (RED pins)
+# ADR-0032 — `TRUSTED_CLIENT_IP_HEADER` is required in production (RED pins)
+
+> _Renumbered from ADR-0031 while landing: main claimed ADR-0031 for the OP-88
+> outbox reviewer sign-off (PR #144) before this ADR merged. The RED-authored
+> test label in `env.test.ts` still reads `(ADR-0031)`; a Test-Author follow-up
+> renumbers it to ADR-0032. Behaviour is unchanged._
 
 - **Status:** Accepted (RED) · **Date:** 2026-10-05
 - **Card:** `t_cdbfa50e` (OP-85 follow-up RED) · **Decision by:** `t_19bf5c17` (orchestrator, option a) · **GREEN:** `t_5c873993` · **Depends on:** ADR-0024 (client-IP trust model), ADR-0005 (two-tier rate limiting)

@@ -236,6 +236,25 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     expireAfterSeconds: 0,
   },
 
+  // domain_events — the outbox's optional dedupeKey is what makes a repeated
+  // emit collapse to one document; the unique partial index is the mechanism,
+  // not an application-level check (ADR-0029 §7).
+  {
+    collection: COLLECTIONS.domainEvents,
+    name: "domain_events_dedupe_unique",
+    keys: [["dedupeKey", 1]],
+    unique: true,
+    partialFilterExpression: { dedupeKey: { $type: "string" } },
+  },
+  // domain_events — retention via the TTL monitor, window derived from
+  // platformSettings.retention.domainEventDays (schema §22).
+  {
+    collection: COLLECTIONS.domainEvents,
+    name: "domain_events_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
   // plans — one document per plan key (§14.1). This is the database backstop
   // that makes the seed's upsert safe under concurrent deploy instances: even a
   // racing insert cannot persist a second document for the same key (OP-83).

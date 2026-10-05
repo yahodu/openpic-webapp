@@ -34,7 +34,9 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0026](ADR-0026-op86-ban-exemption-and-2fa-signin-pins.md)                       | OP-86 review-gap pins: `/me` ban exemption and the 2FA sign-in branch                              | Accepted |
 | [0027](ADR-0027-op86-ban-exemption-green.md)                                     | OP-86 follow-up GREEN: wire `/me` `allowBanned`, confirm the 2FA sign-in branch                    | Accepted |
 | [0028](ADR-0028-internal-hmac-and-cron-framework.md)                             | Internal HMAC auth and the bounded cron job framework                                              | Accepted |
+| [0029](ADR-0029-domain-events-outbox.md)                                         | Domain-event outbox: one `emitDomainEvent` write point, per-consumer flags, atomic claims          | Accepted |
 | [0030](ADR-0030-op85-followup-trust-verify-parity-cap.md)                        | OP-85 follow-up: trusted-header precedence, anonymous-verify error parity, cap fail-closed         | Accepted |
-| [0031](ADR-0031-op85-production-trusted-client-ip-required-red.md)               | `TRUSTED_CLIENT_IP_HEADER` required in production (RED pins; ADR-0024 amendment)                   | Accepted |
+| [0031](ADR-0031-op88-green-review-signoff.md)                                    | OP-88 GREEN review sign-off: outbox ships; per-emit lookup + claim-lease hardening deferred        | Accepted |
+| [0032](ADR-0032-op85-production-trusted-client-ip-required-red.md)               | `TRUSTED_CLIENT_IP_HEADER` required in production (RED pins; ADR-0024 amendment)                   | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.

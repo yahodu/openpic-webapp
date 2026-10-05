@@ -1,3 +1,9 @@
+## [1.11.0](https://github.com/yahodu/openpic-webapp/compare/v1.10.1...v1.11.0) (2026-10-05)
+
+### Features
+
+- **domain-events:** OP-88 domain-events outbox and emitDomainEvent ([#144](https://github.com/yahodu/openpic-webapp/issues/144)) ([272ef25](https://github.com/yahodu/openpic-webapp/commit/272ef254caf05766926c22275e0ae76fcfc59448))
+
 ## [1.10.1](https://github.com/yahodu/openpic-webapp/compare/v1.10.0...v1.10.1) (2026-10-05)
 
 ### Bug Fixes

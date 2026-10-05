@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Amended:** 2026-10-05 (`t_19bf5c17`, decision option a — `TRUSTED_CLIENT_IP_HEADER` is now **required in production**; see "Production policy (option a)" below)
 - **Card:** `t_40c45a13` (OP-85 reviewer round-1 follow-up, GREEN) · **Implements:** the IP-leg finding from `t_c63a267f` · **Depends on:** ADR-0005 (two-tier rate limiting), OP-79 (rate-limit port)
-- **Supersedes / amends:** amended by `t_5c873993` (GREEN) on the decision of `t_19bf5c17`; the production leg is now enforced rather than assumed (ADR-0031). Complements ADR-0021/ADR-0023 by fixing the _source_ of the IP identity those legs key on.
+- **Supersedes / amends:** amended by `t_5c873993` (GREEN) on the decision of `t_19bf5c17`; the production leg is now enforced rather than assumed (ADR-0032). Complements ADR-0021/ADR-0023 by fixing the _source_ of the IP identity those legs key on.
 
 ## Context
 

@@ -272,7 +272,7 @@ const configSchema = rawSchema
     // Production must never silently degrade the auth IP leg to the
     // client-writable `x-forwarded-for` fallback: the unforgeable edge header
     // the trusted fronting layer overwrites must be named explicitly
-    // (OP-85 follow-up, ADR-0024/ADR-0031). The key is named, never its value.
+    // (OP-85 follow-up, ADR-0024/ADR-0032). The key is named, never its value.
     if (raw.APP_ENV === "production") {
       const trustedClientIpHeader = raw.TRUSTED_CLIENT_IP_HEADER;
       if (trustedClientIpHeader === undefined || trustedClientIpHeader.trim() === "") {
