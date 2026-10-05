@@ -1,4 +1,4 @@
-# ADR-0043 — OP-89 follow-up RED pins: re-run idempotency, 2FA transition re-emit and the section 4–6 / contact-verified surface adapters
+# ADR-0045 — OP-89 follow-up RED pins: re-run idempotency, 2FA transition re-emit and the section 4–6 / contact-verified surface adapters
 
 - **Status:** Accepted (RED pins) · **Date:** 2026-10-06
 - **Card:** OP-89 `t_7ce3d03c` (phase 1-Identity, epic Authentication, RED follow-up) · **Amends:** ADR-0040, ADR-0041 (extends the module contract; does not supersede them)

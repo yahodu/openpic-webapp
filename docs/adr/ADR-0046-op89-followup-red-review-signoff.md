@@ -1,14 +1,14 @@
-# ADR-0044 — OP-89 follow-up RED review sign-off: idempotency pins, 2FA transition and section 4–6 seams verified RED for the right reason
+# ADR-0046 — OP-89 follow-up RED review sign-off: idempotency pins, 2FA transition and section 4–6 seams verified RED for the right reason
 
 - **Status:** Accepted (RED review sign-off) · **Date:** 2026-10-06
-- **Card:** OP-89 `t_7ce3d03c` (RED follow-up review) · **Verifies:** ADR-0043
+- **Card:** OP-89 `t_7ce3d03c` (RED follow-up review) · **Verifies:** ADR-0045
 - **Branch / PR:** `OP-89-task-identity-lifecycle-hooks-followup-red` (draft #163)
 - **Reviewed head:** `6966364` (pre-sign-off; this ADR is the only commit added after it)
 - **Reviewer:** `openpic-webapp-reviewer`, round 1, artifact lens
 
 ## Context
 
-The RED follow-up card `t_7ce3d03c` (ADR-0043) appended nine specs to
+The RED follow-up card `t_7ce3d03c` (ADR-0045) appended nine specs to
 `apps/web/src/test/integration/identity-hooks.test.ts` to pin the three OP-89
 GREEN-review findings (ADR-0042 findings 4–6). The card was handed to review.
 The RED PR is a _pin_, not a shippable change, so the review question is not
@@ -58,7 +58,7 @@ Independently reproduced on the exact head `6966364` in worktree
 Approve. The nine pins are additive (the six approved blocks and the two
 approved RED files are untouched; only the test file's import header gained
 `type Db` and the `identity-lifecycle` namespace import), they fail only for the
-unimplemented behaviour, and the contract ADR-0043 records is implementable
+unimplemented behaviour, and the contract ADR-0045 records is implementable
 without any behavioural change to the existing handlers. No change request.
 
 ## Consequences
@@ -72,5 +72,5 @@ without any behavioural change to the existing handlers. No change request.
 
 - **Merge the RED PR.** Rejected: RED CI is intentionally red (the specs must
   fail before GREEN); RED pins are always shipped by their GREEN PR.
-- **A content-derived dedupe key.** Rejected by ADR-0043 for the same privacy
+- **A content-derived dedupe key.** Rejected by ADR-0045 for the same privacy
   reason ADR-0040 §2 forbids contact material in the append-only outbox.
