@@ -1,3 +1,9 @@
+## [1.19.0](https://github.com/yahodu/openpic-webapp/compare/v1.18.1...v1.19.0) (2026-10-05)
+
+### Features
+
+- **notifications:** OP-94 notification fan-out consumer ([#189](https://github.com/yahodu/openpic-webapp/issues/189)) ([a095da1](https://github.com/yahodu/openpic-webapp/commit/a095da128a994ae9fddb02081e5be22621400c32)), closes [#187](https://github.com/yahodu/openpic-webapp/issues/187) [#187](https://github.com/yahodu/openpic-webapp/issues/187) [#188](https://github.com/yahodu/openpic-webapp/issues/188)
+
 ## [1.18.1](https://github.com/yahodu/openpic-webapp/compare/v1.18.0...v1.18.1) (2026-10-05)
 
 ### Bug Fixes
