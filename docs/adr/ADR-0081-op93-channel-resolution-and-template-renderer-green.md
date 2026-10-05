@@ -49,7 +49,7 @@ the Handlebars escape set (`& < > " ' \` =`).
 - Locale: exact match, else `en-IN`, else `TemplateRenderError` (U21).
 - `TemplateRenderError` is exported.
 
-### 3. Dispute — U18 fixture is internally inconsistent (left RED)
+### 3. Dispute — U18 fixture was internally inconsistent (resolved test-side)
 
 `render-template.test.ts` **U18** builds
 `subjectTemplate: "New photos from {{eventName}}"`,
@@ -63,20 +63,24 @@ asserts on `rendered.subject`, which passes. U18 is therefore unsatisfiable as
 written; the body-escaping behaviour it _names_ is nevertheless genuinely covered
 by its `"Rahul &amp; Priya"` assertion (and my `displayName` escaping does that).
 
-Proposed correction (Test Author, append-only): add `{{eventName}}` to
-`bodyTemplate`, e.g.
-`"<p>Hi {{displayName}}, your photos from {{eventName}} are ready.</p>"`, so all
-three body assertions hold without weakening the escaping pin. Routed to
-`openpic-webapp-testcase-writer` as a blocking parent of this card; U18 stays RED
-until the fixture is reconciled — no test was edited by the implementer.
+Correction applied (Test Author, `t_f8edb6f8`, append-only): `U18`'s
+`bodyTemplate` now interpolates `{{eventName}}`
+(`"<p>Hi {{displayName}}, your photos from {{eventName}} are ready.</p>"`), so all
+three body assertions hold without deleting or loosening any of them. The
+`variables: ["eventName", "displayName"]` declaration stays consistent with the
+placeholders actually used, and `U26` (same fixture, subject assertions) is
+untouched. The implementer never edited a test — the reconciliation is test-side
+only and touches no production file.
 
 ## Consequences
 
-- The whole §5 routing decision is exercised offline; 26 of 27 new assertions
-  pass (`vitest --project unit` = 1 failed | 76 passed files, 1420 passed).
+- The whole §5 routing decision is exercised offline; all 27 OP-93 assertions now
+  pass (`vitest --project unit` both OP-93 specs = 27 passed).
 - The renderer fails loudly on broken copy as required.
-- One disputed RED fixture is surfaced rather than worked around; the GREEN lane
-  is blocked on the test-side reconciliation (ADR-0031 precedent).
+- One disputed RED fixture was surfaced rather than worked around, then
+  reconciled test-side without weakening the escaping pin (ADR-0031 precedent);
+  U18 still pins HTML-escaping of body interpolation and U26 of subject
+  interpolation, on the same malicious fixture.
 
 ## Alternatives considered
 
