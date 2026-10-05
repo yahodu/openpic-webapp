@@ -1,7 +1,7 @@
-# ADR-0061 — OP-89 follow-up GREEN: recover the contact-change fan-out after a partial insert failure
+# ADR-0064 — OP-89 follow-up GREEN: recover the contact-change fan-out after a partial insert failure
 
 - **Status:** Accepted (GREEN implementation) · **Date:** 2026-10-05
-- **Card:** OP-89 `t_4f3ad9e7` (phase 1-Identity, epic Authentication, GREEN follow-up) · **Implements:** ADR-0059 (the partial-failure pin), ADR-0049 §1 (finding 1) · **Amends:** ADR-0040 §2 (fan-out recovery), ADR-0048 §1 (replaces its "return before the fan-out insert" idempotency)
+- **Card:** OP-89 `t_4f3ad9e7` (phase 1-Identity, epic Authentication, GREEN follow-up) · **Implements:** ADR-0062 (the partial-failure pin), ADR-0049 §1 (finding 1) · **Amends:** ADR-0040 §2 (fan-out recovery), ADR-0048 §1 (replaces its "return before the fan-out insert" idempotency)
 - **Contract:** API contract §1.1 (hook table), §7.7 (domain events); schema §13.2, §13.6; ADR-0029 (outbox), ADR-0040 §2 (fan-out / privacy), ADR-0043 (indexes/TTLs)
 - **PR / branch:** `OP-89-task-identity-lifecycle-hooks-followup-green-pins` (built on the reviewed RED pins `OP-89-task-identity-lifecycle-hooks-followup-pins`, `fa020aa`; non-draft GREEN PR ships the pins with the fix)
 
@@ -19,7 +19,7 @@ When the emit commits but the fan-out `insertOne` throws, the handler fails with
 the emit already persisted. An at-least-once redelivery of the **same** event at
 the **same** instant then finds the emit deduped (`emitted.id === null`), returns
 **before** the fan-out insert, and the replaced contact's alert target is lost
-permanently. The reviewed pin `I10` (ADR-0059) encodes the partial failure
+permanently. The reviewed pin `I10` (ADR-0062) encodes the partial failure
 explicitly: a `Db` whose first `contactChangeFanouts.insertOne` rejects, then a
 same-instant redelivery against a healthy `db`, asserting one event row **and**
 one fan-out row. `I8` pins that a healthy double invocation also leaves exactly
@@ -60,11 +60,13 @@ This lane provisionally held `ADR-0050` (pins) / `ADR-0051` (pins review
 sign-off) against a `main` that ended at ADR-0049. By the time the GREEN PR
 landed, `main` had the OP-90 `/me` lane's **0052–0056** and the OP-89
 indexes/TTLs lane's **0050/0051/0057/0058** (PR #169, `04843a3`), so 0050/0051
-collided. Per the orchestrator reconciliation card `t_93d4774b` (reviewer comment
-on the `t_ffd7bc07` lane: lowest free number is now **0059**), the pins ADR was
-renumbered **0050 → 0059**, its review sign-off **0051 → 0060**, and this GREEN
-implementation ADR is **0061**, with the `docs/adr/README.md` rows updated to one
-row per number (`0001`–`0061`). Rename only — no decision content changed.
+collided. Per the binding allocation on `t_eb61c823` / `t_93d4774b`, this lane is
+**last in merge order** — the three OP-90 lanes land first at **0059–0061** — so
+the pins ADR was renumbered **0050 → 0062**, its review sign-off **0051 → 0063**,
+and this GREEN implementation ADR is **0064**, with the `docs/adr/README.md` rows
+updated to one row per number (`0001`–`0058`, then 0062–0064; 0059–0061 are
+reserved for the OP-90 lanes that merge ahead of this one). Rename only — no
+decision content changed.
 
 ## Consequences
 
@@ -79,7 +81,7 @@ row per number (`0001`–`0061`). Rename only — no decision content changed.
   it) — only the post-redelivery end state is pinned.
 - A regression that restores the `emitted.id === null` early return, or drops the
   `eventId` unique index, breaks `I10`/`I8`.
-- The `docs/adr/README.md` table is reconciled to 0001–0061 with no duplicates.
+- The `docs/adr/README.md` table is reconciled with one row per number and no duplicates.
 
 ## Alternatives considered
 

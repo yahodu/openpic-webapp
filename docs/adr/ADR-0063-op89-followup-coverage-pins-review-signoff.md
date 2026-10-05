@@ -1,17 +1,17 @@
-# ADR-0060 — OP-89 follow-up coverage-pins review sign-off: the partial-failure pin is RED for the right reason, with two Low references routed
+# ADR-0063 — OP-89 follow-up coverage-pins review sign-off: the partial-failure pin is RED for the right reason, with two Low references routed
 
 - **Status:** Accepted (RED review sign-off) · **Date:** 2026-10-05
-- **Card:** OP-89 `t_ffd7bc07` (coverage-pin review) · **Verifies:** ADR-0059, ADR-0049 (finding 1)
+- **Card:** OP-89 `t_ffd7bc07` (coverage-pin review) · **Verifies:** ADR-0062, ADR-0049 (finding 1)
 - **Branch / PR:** `OP-89-task-identity-lifecycle-hooks-followup-pins` (draft PR #170, intentionally RED)
 - **Reviewed head:** `fa020aa` · **Reviewer:** `openpic-webapp-reviewer`, round 1, artifact lens
-- **Numbering:** provisionally `ADR-0050`/`ADR-0051` when reviewed; renumbered to `ADR-0059`/`ADR-0060`
-  at integration against `main` (PR #169 landed 0050–0058), per the orchestrator reconciliation
-  card `t_93d4774b`.
+- **Numbering:** provisionally `ADR-0050`/`ADR-0051` when reviewed; renumbered to `ADR-0062`/`ADR-0063`
+  at integration against `main` (per the binding allocation on `t_eb61c823` / `t_93d4774b`, this
+  lane is last in merge order after the OP-90 lanes take 0059–0061).
 
 ## Context
 
 The composition root routed the two Low findings of the OP-89 follow-up GREEN review
-(ADR-0049) to the Test-Author card `t_ffd7bc07` (ADR-0059): pin the contact-change
+(ADR-0049) to the Test-Author card `t_ffd7bc07` (ADR-0062): pin the contact-change
 fan-out on a partial failure, and correct the stale `ADR-0043` reference in the pin-file
 header. This ADR records the independent review of that RED pin. It does not reship the
 pin contract; it records the verdict and the routing.
@@ -65,7 +65,7 @@ The header now cites `ADR-0045`, which is correct against `origin/main@9365d9c`
   Owned by the test-docs follow-up `t_c9c415e6`; flagged on that card.
 - **ADR-number collision.** This lane provisionally held `ADR-0050`, overlapping PR #169's
   landed 0050–0053; fanned into the orchestrator reconciliation card `t_93d4774b`, and
-  renumbered to `ADR-0059`/`ADR-0060` at integration when the GREEN card landed.
+  renumbered to `ADR-0062`/`ADR-0063` at integration when the GREEN card landed.
 
 ## Consequences
 
