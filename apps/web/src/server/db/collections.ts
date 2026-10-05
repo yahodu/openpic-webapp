@@ -40,6 +40,12 @@ export const COLLECTIONS = {
   notificationPreferences: "notificationPreferences",
   sessionDevices: "sessionDevices",
   contactChangeFanouts: "contactChangeFanouts",
+  /**
+   * Workspace memberships (schema §13.4) read by `GET /me` and the tenant
+   * member screens. Registered here so `INDEX_SPECS` can declare its indexes
+   * without duplicating the collection name (ADR-0057).
+   */
+  tenantMembers: "tenantMembers",
 } as const;
 
 /** The name of any registered collection. */
