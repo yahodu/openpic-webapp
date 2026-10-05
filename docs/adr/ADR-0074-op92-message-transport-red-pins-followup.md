@@ -118,18 +118,37 @@ domain, service, route and job module depends on the vendor-neutral
 
 The pin is a behavioural guard spec
 (`apps/web/src/test/unit/eslint/novu-import-boundary.test.ts`) that drives the
-**real** flat config through the ESLint API (`new ESLint({ cwd }).lintText(...)`)
-on synthetic sources: a Novu import from a service, route or domain module must
+**real** flat config: for each probed path it resolves the config with
+`ESLint.calculateConfigForFile(path)` and then executes the resolved
+`no-restricted-imports` rule over synthetic source (`Linter.verify` configured
+with only that rule). A Novu import from a service, route or domain module must
 be reported; the same import inside the adapter or `scripts/novu` must not be.
-It is RED until the boundary exists and needs no source-text snapshot of the
-config.
+
+The spec is RED today (RED review round 2): for every probed **non-exempt** path
+the resolved options carry only the pre-existing logging/notification patterns,
+so a Novu import produces `[]` and the assertion fails with
+`expected [] to include 'no-restricted-imports'` — i.e. because the boundary is
+absent, not because of a parsing error. It needs no source-text snapshot of the
+config. The two exemption assertions (adapter and `scripts/novu`) are
+intentionally green before GREEN: they pin that the exemption must not overreach.
+
+> **Why resolve-then-lint, not `lintText`.** The config sets
+> `parserOptions.projectService: true`. `lintText` on a synthetic path that is
+> not a member of any TS project yields only a parsing error (`ruleId === null`)
+> and type-aware rules cannot run without parser services, so the boundary could
+> never be reported. Resolving the config first (which works for virtual paths)
+> and running only the syntactic `no-restricted-imports` rule sidesteps both: the
+> rule is a core, non-type-aware rule, and its per-path options are exactly what
+> `eslint.config.mjs` produces.
 
 > **Implementation caveat.** Flat config _replaces_ a rule's options when a later
 > matching config object sets the same rule. The existing `apps/web/src/app/**`,
 > `apps/web/src/server/**` and `apps/web/src/server/jobs/**` blocks already set
 > `no-restricted-imports` (logging/notification boundaries), so the Novu patterns
 > must be merged into those blocks (or registered so they are not overwritten) —
-> not merely added in a standalone early object.
+> not merely added in a standalone early object. The adapter and `scripts/novu`
+> exemptions must be registered so the exempt paths resolve to options without
+> the Novu patterns.
 
 ### `security_and_logging_requirements`
 
@@ -173,13 +192,25 @@ Resolution rule at integration: re-fetch `origin/main`, lowest-free-first; if
 | AC1      | `apps/web/src/test/unit/eslint/novu-import-boundary.test.ts`        | the flat config bans Novu imports outside adapter + `scripts/novu`                                                                              |
 
 Every new spec fails **only** because the pinned module/field/rule is absent —
-never from an accidental import or compile error. Reproduce:
+never from an accidental import or compile error. Reproduce (RED review round 2,
+HEAD `bdbd8a6` + the guard-spec fix):
 
-- `pnpm test:unit` — the three pre-existing OP-92 unit files plus the new
-  import-boundary spec fail as suites (the pinned adapters and the lint boundary
-  do not exist yet).
-- `TMPDIR=/root/tmp-mongo pnpm test:int` — the two pre-existing OP-92 integration
-  files fail as suites, now with the added I6–I18.
+- `pnpm test:unit` → exit 1; **5 failed files / 70 passed (75)**; **7 failed
+  tests / 1359 passed (1366)**. Only the intended reasons:
+  - 3 files (pre-existing OP-92) fail at import with `Cannot find package`
+    (`@/server/adapters/transport-error`, `…/novu/workflow-drift`,
+    `…/novu/workflow-map`) — the pinned modules do not exist yet;
+  - `env.test.ts` fails 4 (3 timeout pins + the exact-shape expectation) on the
+    absent `getConfig().transport.timeoutMs`;
+  - `novu-import-boundary.test.ts` fails 3 with
+    `expected [] to include 'no-restricted-imports'` — the boundary is absent,
+    and the rule **ran** (it resolves to the real per-path options), so this is
+    no longer a parsing error.
+- `TMPDIR=/root/tmp-mongo pnpm test:int` → exit 1; **2 failed files / 36 passed
+  (38)**; **262 tests passed (262)**. `novu-transport.test.ts` and
+  `novu-workflow-drift.test.ts` fail at import with `Cannot find package
+'@/server/adapters/memory-message-transport'` / `'@/server/adapters/novu/
+workflow-drift'` — the pinned modules do not exist yet.
 
 ## Consequences
 
@@ -211,6 +242,28 @@ never from an accidental import or compile error. Reproduce:
 5. **`timeoutMs` lives at `transport.timeoutMs`.** No separate `novu` config
    group is introduced; the transport group already owns
    `provider`/`unsubscribeSigningSecret`.
+6. **Adapter-default timeout — explicit waiver (RED review round 2, Low).** No
+   spec exercises `novuTransport({ … })` _without_ a `timeoutMs` option to prove
+   the default equals `getConfig().transport.timeoutMs`. The card scoped the
+   timeout pin to `env.test.ts`, which pins the config value (default `10_000`,
+   override, invalid fallback); the existing I4/I18 pins exercise an explicit
+   `timeoutMs`. Wiring the omitting path would need env manipulation before the
+   cached `getConfig()` runs and is deferred — a follow-up pin if the adapter
+   default ever needs its own guarantee. GREEN must still default the option to
+   `getConfig().transport.timeoutMs` (per §4 above).
+
+## Revision — RED review round 2
+
+The round-1 RED review found the AC1 guard spec was RED for the wrong reason:
+under `parserOptions.projectService: true`, `lintText` on a synthetic non-project
+path returned only `Parsing error … was not found by the project service`
+(`ruleId === null`), so the boundary could never be reported and GREEN could not
+turn AC1 green. Fixed by resolving the real config (`calculateConfigForFile`) and
+running the resolved `no-restricted-imports` rule directly (see the AC1 section).
+The spec now fails with `expected [] to include 'no-restricted-imports'` because
+the Novu patterns are absent — the correct RED — and reports the import once the
+patterns are merged. All other round-1 findings were verified good and are
+unchanged.
 
 ## Alternatives considered
 
@@ -223,6 +276,7 @@ never from an accidental import or compile error. Reproduce:
   engine lives in `src/server` and the CLI is a thin wrapper.
 - **Pin AC1 by snapshotting `eslint.config.mjs`.** Rejected: a source-text
   snapshot breaks on harmless refactors and does not prove the rule fires. The
-  guard spec drives the real config through the ESLint API.
+  guard spec resolves the real config for each path and runs the real
+  `no-restricted-imports` rule over synthetic source.
 - **Name the outbox `memoryTransport` and alias the import.** Rejected: two
   same-named ports across two modules is a permanent footgun (finding 3).
