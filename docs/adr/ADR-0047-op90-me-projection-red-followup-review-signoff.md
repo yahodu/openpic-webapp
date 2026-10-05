@@ -1,4 +1,10 @@
-# ADR-0046 — OP-90 RED follow-up review sign-off: the empty-PATCH 422 and pure-attendee pins land
+# ADR-0047 — OP-90 RED follow-up review sign-off: the empty-PATCH 422 and pure-attendee pins land
+
+> **Numbering note.** ADR-0046 is reserved for the OP-90 contract-decisions record landing on
+> `main` (card `t_44552eee`, `ADR-0046-op90-me-contract-decisions.md`). This reviewer sign-off
+> takes the next free number in the RED lineage, 0047. The ADR numbers on this branch diverge
+> from `main` (which already carries ADR-0043/0044 for OP-89) and are reconciled when the GREEN
+> PR rebases/renumbers — the established pipeline behaviour.
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-reviewer`
 - **Card:** `t_fa8f43f5` (OP-90 RED pin follow-up, parent `t_572f5d3b`) · **Deliverable:** branch `OP-90-task-get-patch-me-red`, commit `6e2fb3e`, draft PR [#164](https://github.com/yahodu/openpic-webapp/pull/164)
