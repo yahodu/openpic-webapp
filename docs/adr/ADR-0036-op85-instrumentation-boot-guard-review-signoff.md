@@ -51,7 +51,7 @@ sole conflict was the ADR README table, resolved by keeping rows 0034 then 0035.
 
 - **Low · informational, no action required — ADR-0035 numbering note.** ADR-0035
   carries a forward-looking note that ADR-0034 was "not landed on main yet" and
-  to renumber "if that card merges first." PR #150 has since landed, and 0035 *is*
+  to renumber "if that card merges first." PR #150 has since landed, and 0035 _is_
   the next free number after 0034, so the note's conditional is already satisfied
   and no renumber is required — the note reads as historical prose only.
 - **Low · flake, tracked separately — `notification-seed.test.ts` I1.** The first
