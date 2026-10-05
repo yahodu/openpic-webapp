@@ -31,7 +31,9 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  *       the documented fields and none of the never-return fields;
  *   I2  revoking a foreign (or unknown) session id is `404 not_found`, and the
  *       owner's session survives;
- *   I3  revoke-all with `keepCurrent` leaves exactly the current session;
+ *   I3  revoke-all leaves the current session when `keepCurrent` is true and
+ *       nothing when false, and emits `account.sessions.revoked` through the
+ *       lifecycle seam;
  *   I4  a `confirmEmail` that does not match is `422 confirmation_mismatch`;
  *   I5  request → cancel returns the profile to `active` with
  *       `deletionScheduledAt: null`, and the schedule is computed from
@@ -48,6 +50,12 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  *   @/app/api/v1/me/sessions:revoke-all/route      POST { keepCurrent: boolean } -> 204
  *   @/app/api/v1/me/deletion/route                 POST { reason?, confirmEmail } -> 202
  *                                                  DELETE -> 204 | 409 deletion_already_executed
+ *
+ * `POST /me/sessions:revoke-all` revokes through the identity lifecycle seam
+ * (`createIdentityLifecycleSeams().sessionsRevoked`, ADR-0043 §3), which emits
+ * one `account.sessions.revoked` row into the `domainEvents` outbox. The spec
+ * asserts that observable row, so a route that deletes session documents
+ * directly (bypassing the emit) fails I3.
  *
  * The list item is `{ id, current, deviceLabel, ipCountry, createdAt,
  * lastActiveAt, expiresAt }`. Raw `ipAddress`, `userAgent`, the session `token`
@@ -79,6 +87,8 @@ const DELETION_PATH = "/api/v1/me/deletion";
 const SESSION_COLLECTION = "session";
 const USER_PROFILES_COLLECTION = "userProfiles";
 const PLATFORM_SETTINGS_COLLECTION = "platformSettings";
+/** The transactional outbox (schema §18.3) the lifecycle hooks write to. */
+const DOMAIN_EVENTS_COLLECTION = "domain_events";
 
 /** The deletion grace window used to prove the setting is read, not hard-coded. */
 const SEEDED_GRACE_DAYS = 7;
@@ -111,7 +121,6 @@ interface CapturedOtp {
 
 interface Identity {
   readonly email: string;
-  readonly phone: string;
   readonly ip: string;
 }
 
@@ -140,7 +149,6 @@ function makeIdentity(): Identity {
   const serial = String(identitySeq).padStart(4, "0");
   return {
     email: `op91-sessions-${serial}@example.com`,
-    phone: `+919****0000${serial}`,
     ip: `203.0.113.${String(identitySeq + 40)}`,
   };
 }
@@ -411,8 +419,11 @@ describe("sessions & devices (contract §1.3)", () => {
     const keepCookie = await signInWithEmailOtp(identity);
     const revokeCookie = await signInWithEmailOtp(identity);
 
-    const revokeId = (await sessionIds(revokeCookie))[0];
+    // Select revokeCookie's *own* session via `current`: §1.3 fixes no list
+    // order, so indexing [0] could pick keepCookie's session and invalidate it.
+    const revokeId = (await listSessions(revokeCookie)).find((session) => session.current)?.id;
     expect(revokeId).toBeDefined();
+    expect(await sessionIds(keepCookie)).toContain(revokeId);
 
     const response = await sessionDelete(deleteSessionRequest(keepCookie, revokeId ?? ""));
     expect(response.status).toBe(204);
@@ -428,6 +439,7 @@ describe("sessions & devices (contract §1.3)", () => {
     const currentCookie = await signInWithEmailOtp(identity);
     const otherCookie = await signInWithEmailOtp(identity);
     await signInWithEmailOtp(identity);
+    const user = await findUser(identity);
 
     expect(await sessionIds(currentCookie)).toHaveLength(3);
 
@@ -440,6 +452,29 @@ describe("sessions & devices (contract §1.3)", () => {
 
     // A revoked session can no longer authenticate.
     const revoked = await sessionsGet(sessionsRequest(otherCookie));
+    expect(revoked.status).toBe(401);
+
+    // The revocation is emitted through the lifecycle seam (ADR-0040 §4 /
+    // ADR-0048 §6): the endpoint revokes via Better Auth, not by deleting rows.
+    const emitted = await database.collection(DOMAIN_EVENTS_COLLECTION).findOne({
+      eventKey: "account.sessions.revoked",
+      "subjectRef.id": String(user._id),
+    });
+    expect(emitted).not.toBeNull();
+  });
+
+  it("I3: revoke-all with keepCurrent false revokes every session", async () => {
+    const identity = makeIdentity();
+    const currentCookie = await signInWithEmailOtp(identity);
+    await signInWithEmailOtp(identity);
+
+    expect(await sessionIds(currentCookie)).toHaveLength(2);
+
+    const response = await revokeAll(revokeAllRequest(currentCookie, false));
+    expect(response.status).toBe(204);
+
+    // Nothing survives — not even the caller's own session.
+    const revoked = await sessionsGet(sessionsRequest(currentCookie));
     expect(revoked.status).toBe(401);
   });
 });

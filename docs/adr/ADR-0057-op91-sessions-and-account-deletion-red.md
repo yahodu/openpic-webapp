@@ -93,6 +93,34 @@ yet members of `API_ERROR_CODES` / `ERROR_CATALOG`. The implementer appends them
 in their own append-only set + transport table, matching the `unknown_timezone`
 / `forbidden_field` precedent.
 
+### 6. Review round 2 amendments (t_754b0fc5, 2026-10-05)
+
+The round-1 reviewer reproduced the RED claims and required one spec fix plus
+three follow-ups, all inside `me-sessions-and-deletion.test.ts`. They are pinned
+here so the GREEN implementer inherits the final contract:
+
+1. **Order-independent self-revoke (required).** I2 selected
+   `(await sessionIds(revokeCookie))[0]`, but §1.3 fixes no list order, so an
+   oldest-first result would pick _keepCookie_'s session and make the next
+   `listSessions(keepCookie)` assertion fail for the wrong reason. The spec now
+   selects `(await listSessions(revokeCookie)).find((s) => s.current)?.id` and
+   additionally asserts the id is visible to `keepCookie` before deletion.
+2. **`account.sessions.revoked` is pinned as an observable outcome.** The
+   emission is OP-89's `handleSessionsRevoked` hook (ADR-0040 §4), reached
+   through the injectable seam `createIdentityLifecycleSeams().sessionsRevoked`
+   (ADR-0043 §3); the OP-91 route must not emit directly. I3 therefore asserts
+   that a `domain_events` row with `eventKey: "account.sessions.revoked"` and
+   `subjectRef.id` equal to the caller's user id exists after revoke-all — a
+   route that deletes session documents itself, bypassing the seam, fails.
+   Severity was downgraded to Low–Medium because the primary end-to-end pin
+   lives in OP-89's RED-pins card (`t_eb12bb8a`); the assertion here is the
+   cheapest way to keep the two lanes honest at the OP-91 boundary.
+3. **`keepCurrent: false` is now covered.** A second I3 spec signs in twice,
+   revokes all with `keepCurrent: false`, and asserts neither session can
+   authenticate (401) — i.e. the caller's own session is revoked too.
+4. **The dead phone fixture is gone.** `makeIdentity().phone` carried an
+   invalid `+919****0000…` value and was read nowhere; the field was dropped.
+
 ## Consequences
 
 - The RED suite is 2 unit files (`sessions.test.ts`, `deletion.test.ts`), 1
