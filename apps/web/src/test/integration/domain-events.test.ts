@@ -1,6 +1,7 @@
 import type { ObjectId } from "mongodb";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
 import { closeMongoClient } from "@/server/db/mongo";
 import { withTransaction } from "@/server/db/transaction";
@@ -15,6 +16,7 @@ import { invalidatePlatformSettings } from "@/server/settings/platform-settings"
 
 import { makeDomainEventInput } from "../factories/domain-event";
 import { makeEnv, toProcessEnv } from "../factories/env";
+import { makeNotificationType } from "../factories/notification";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 /**
@@ -64,6 +66,7 @@ interface StoredEvent {
     readonly queue: string;
   };
   readonly claimedAt?: Date | null;
+  readonly claimedBy?: string;
 }
 
 beforeAll(() => {
@@ -98,6 +101,21 @@ async function withTestDb(fn: (test: TestDb) => Promise<void>): Promise<void> {
 /** The outbox collection handle for a test database. */
 function eventsOf(test: TestDb) {
   return test.db.collection<StoredEvent>(DOMAIN_EVENTS);
+}
+
+/**
+ * Seed the enabled notification type the emitted `collab.invite.accepted` event
+ * needs so its `dispatch.notifications` flag is claimable.
+ *
+ * The writer marks `notifications` "skipped" when no enabled type row exists for
+ * the eventKey (unit spec U4) and a "skipped" flag is never claimable, so the
+ * notifications-consumer specs below must seed this row — otherwise there is
+ * nothing for the consumer to claim.
+ */
+async function seedEnabledNotificationType(test: TestDb): Promise<void> {
+  await test.db
+    .collection(COLLECTIONS.notificationTypes)
+    .insertOne(makeNotificationType({ typeKey: "collab.invite.accepted", enabled: true }));
 }
 
 describe("emitDomainEvent — transactional write", () => {
@@ -141,6 +159,7 @@ describe("claimPendingEvents — concurrent consumers", () => {
   it("I3: two concurrent claimers over ten events claim each event exactly once", async () => {
     await withTestDb(async (test) => {
       const events = eventsOf(test);
+      await seedEnabledNotificationType(test);
 
       await Promise.all(
         Array.from({ length: 10 }, (_unused, index) =>
@@ -176,6 +195,7 @@ describe("claimPendingEvents — concurrent consumers", () => {
 describe("claimPendingEvents — stale lease recovery", () => {
   it("I4: a claim older than five minutes is reclaimed, a fresh one is not", async () => {
     await withTestDb(async (test) => {
+      await seedEnabledNotificationType(test);
       await emitDomainEvent(makeDomainEventInput(), { db: test.db, clock: fixedClock(T0) });
 
       const claimedAt = new Date("2026-06-01T00:00:00.000Z");
@@ -202,19 +222,42 @@ describe("claimPendingEvents — stale lease recovery", () => {
   });
 });
 
+describe("claimPendingEvents — attribution", () => {
+  it("records the claimer id on the event it claims", async () => {
+    await withTestDb(async (test) => {
+      await seedEnabledNotificationType(test);
+      await emitDomainEvent(makeDomainEventInput(), { db: test.db, clock: fixedClock(T0) });
+
+      await claimPendingEvents("notifications", 1, {
+        db: test.db,
+        clock: fixedClock(T0),
+        claimerId: "worker_7",
+      });
+
+      const stored = await eventsOf(test).findOne({});
+      expect(stored?.claimedBy).toBe("worker_7");
+    });
+  });
+});
+
 describe("claim completion", () => {
   it("marks a claimed event done for its consumer", async () => {
     await withTestDb(async (test) => {
       const events = eventsOf(test);
+      await seedEnabledNotificationType(test);
       await emitDomainEvent(makeDomainEventInput(), { db: test.db, clock: fixedClock(T0) });
 
-      const [claimed] = await claimPendingEvents("notifications", 10, {
+      const claimedEvents = await claimPendingEvents("notifications", 10, {
         db: test.db,
         clock: fixedClock(T0),
       });
-      expect(claimed).toBeDefined();
+      expect(claimedEvents).toHaveLength(1);
+      const claimed = claimedEvents[0];
+      if (claimed === undefined) {
+        throw new Error("expected claimPendingEvents to claim one event");
+      }
 
-      await markDone(claimed._id, "notifications", { db: test.db });
+      await markDone(String(claimed._id), "notifications", { db: test.db });
 
       const stored = await events.findOne({ _id: claimed._id });
       expect(stored?.dispatch.notifications).toBe("done");
@@ -224,13 +267,18 @@ describe("claim completion", () => {
   it("returns a failed claim to pending so the consumer can retry", async () => {
     await withTestDb(async (test) => {
       const events = eventsOf(test);
+      await seedEnabledNotificationType(test);
       await emitDomainEvent(makeDomainEventInput(), { db: test.db, clock: fixedClock(T0) });
 
-      const [claimed] = await claimPendingEvents("notifications", 10, {
+      const claimedEvents = await claimPendingEvents("notifications", 10, {
         db: test.db,
         clock: fixedClock(T0),
       });
-      expect(claimed).toBeDefined();
+      expect(claimedEvents).toHaveLength(1);
+      const claimed = claimedEvents[0];
+      if (claimed === undefined) {
+        throw new Error("expected claimPendingEvents to claim one event");
+      }
 
       await markFailed(claimed._id, "notifications", { db: test.db });
 

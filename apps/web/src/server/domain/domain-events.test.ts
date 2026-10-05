@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { COLLECTIONS } from "@/server/db/collections";
-import { emitDomainEvent } from "@/server/domain/domain-events";
+import { emitDomainEvent, claimPendingEvents } from "@/server/domain/domain-events";
 import { createLogger, memoryTransport, setLogger, type MemoryTransport } from "@/server/logging";
 import { fixedClock } from "@/server/runtime/clock";
 import {
@@ -105,6 +105,27 @@ function installMemoryLogger(): MemoryTransport {
   return sink;
 }
 
+/**
+ * Build a recording fake whose `domain_events` handle replaces named driver
+ * methods.
+ *
+ * `emitDomainEvent` and `claimPendingEvents` reach the driver only through
+ * `db.collection("domain_events")`, so overriding one method there lets a spec
+ * drive a driver failure or a malformed stored row without a replica set.
+ *
+ * @param overrides - Driver methods to replace on the `domain_events` handle.
+ * @returns The fake, with its `calls`, `seed` and `lastCall` helpers.
+ */
+function fakeDbWithDomainEvents(overrides: Record<string, unknown>): FakeMongo {
+  const fake = makeFakeMongo();
+  const baseCollection = (fake.db.collection as (name: string) => unknown).bind(fake.db);
+  (fake.db as unknown as { collection: (name: string) => unknown }).collection = (name: string) => {
+    const handle = baseCollection(name) as Record<string, unknown>;
+    return name === DOMAIN_EVENTS ? { ...handle, ...overrides } : handle;
+  };
+  return fake;
+}
+
 beforeEach(() => {
   // The settings read path is cached process-wide; clear it so each spec's
   // fake `platformSettings` document is the one the writer sees.
@@ -193,6 +214,30 @@ describe("emitDomainEvent — payload deep scan", () => {
       phoneNumber: "placeholder",
       tokenCount: 2,
     });
+  });
+
+  it("rejects a payload carrying a forbidden key inside an array element", async () => {
+    const fake = makeFakeMongo();
+
+    await expect(
+      emitDomainEvent(
+        makeDomainEventInput({ payload: { recipients: [{ id: "u_1" }, { email: "leak" }] } }),
+        { db: fake.db, clock: fixedClock(T0) }
+      )
+    ).rejects.toMatchObject({ code: "forbidden_payload_field" });
+
+    expect(fake.calls.some((call) => call.method === "insertOne")).toBe(false);
+  });
+
+  it("accepts a payload whose array elements are all resolvable identifiers", async () => {
+    const fake = makeFakeMongo();
+
+    await emitDomainEvent(
+      makeDomainEventInput({ payload: { recipients: [{ id: "u_1" }, { id: "u_2" }] } }),
+      { db: fake.db, clock: fixedClock(T0) }
+    );
+
+    expect(insertedEvent(fake).payload).toEqual({ recipients: [{ id: "u_1" }, { id: "u_2" }] });
   });
 });
 
@@ -299,5 +344,41 @@ describe("emitDomainEvent — logging", () => {
     const entry = sink.entries.find((candidate) => candidate.event === "domain_event.emitted");
     expect(entry).toBeDefined();
     expect(entry?.subjectRef).toEqual({ kind: "invitation", id: "inv_1" });
+  });
+});
+
+describe("emitDomainEvent — input validation", () => {
+  it("rejects an input that fails the structural schema", async () => {
+    const fake = makeFakeMongo();
+
+    await expect(
+      emitDomainEvent(makeDomainEventInput({ tenantId: "" }), {
+        db: fake.db,
+        clock: fixedClock(T0),
+      })
+    ).rejects.toMatchObject({ code: "invalid_domain_event" });
+
+    expect(fake.calls.some((call) => call.method === "insertOne")).toBe(false);
+  });
+});
+
+describe("claimPendingEvents — driver failures and malformed rows", () => {
+  it("propagates a non-duplicate insert failure instead of reporting a dedupe", async () => {
+    const writeError = new Error("primary stepped down");
+    const fake = fakeDbWithDomainEvents({ insertOne: () => Promise.reject(writeError) });
+
+    await expect(
+      emitDomainEvent(makeDomainEventInput(), { db: fake.db, clock: fixedClock(T0) })
+    ).rejects.toBe(writeError);
+  });
+
+  it("rejects a claimed row that is not a stored domain event", async () => {
+    const fake = fakeDbWithDomainEvents({
+      findOneAndUpdate: () => Promise.resolve({ eventKey: "collab.invite.accepted" }),
+    });
+
+    await expect(
+      claimPendingEvents("notifications", 1, { db: fake.db, clock: fixedClock(T0) })
+    ).rejects.toThrow(/ObjectId/);
   });
 });

@@ -156,3 +156,37 @@ weakening any rule:
 The claim predicate remains exactly `dispatch[consumer]: "pending"` or a stale
 `in_progress` — `"skipped"`, `"done"` and `"not_applicable"` are never claimed,
 per §18.3's "Replayable = `{dispatch.notifications: "pending"}`".
+
+## Spec reconciliation (t_c93c6765, Test Author)
+
+The OP-88 GREEN implementer surfaced two defects in the RED specs that made unit
+U4 and the claim integration specs mutually unsatisfiable; the Test Author
+reconciled them test-side, without weakening U4 (the pinned source of truth for
+`dispatch.notifications`):
+
+1. **Integration claim specs now seed an enabled notification type.** A
+   `collab.invite.accepted` event emitted with **no** `notificationTypes` row has
+   `dispatch.notifications === "skipped"` (U4), and a `skipped` flag is by design
+   never claimable. The integration suite emitted exactly such events and then
+   claimed the `"notifications"` consumer, so it could never observe a claim. The
+   fix (`seedEnabledNotificationType(test)` before each emit in the claim specs)
+   makes the emitted rows `pending` — which matches production, where a
+   catalogue key has a type row — instead of changing the claim predicate or U4's
+   semantics.
+2. **The destructured claim is guarded for `noUncheckedIndexedAccess`.**
+   `tsconfig.base.json` sets `noUncheckedIndexedAccess: true`, so
+   `const [claimed] = await claimPendingEvents(...)` types `claimed` as
+   `DomainEventDocument | undefined` and `claimed._id` failed `tsc`. The specs
+   now assert `toHaveLength(1)` and narrow with an explicit guard; the return
+   type stays `readonly DomainEventDocument[]` (calling with nothing claimable
+   legitimately returns `[]`).
+
+Further additions closed the `pnpm test:coverage` gate (CI `test_coverage`;
+`apps/web/src/server/domain/**` carries a 90 % line/branch threshold, and
+`domain-events.ts` is the only file in that glob). They pin real boundary
+behaviour, not internals: the deep payload scan **into arrays** (accept an array
+of identifiers, reject one carrying a forbidden key), a structurally invalid
+input → `invalid_domain_event`, a non-duplicate insert failure propagates
+(instead of being reported as `{deduped: true}`), a claimed row without an
+`ObjectId` `_id` is refused loudly, `claimerId` is recorded as `claimedBy`, and
+completion accepts the event id as a hex **string** as well as an `ObjectId`.
