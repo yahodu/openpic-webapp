@@ -49,7 +49,7 @@ describe("renderTemplate — HTML escaping", () => {
       channel: "email",
       locale: "en-IN",
       subjectTemplate: "New photos from {{eventName}}",
-      bodyTemplate: "<p>Hi {{displayName}}, your gallery is ready.</p>",
+      bodyTemplate: "<p>Hi {{displayName}}, your photos from {{eventName}} are ready.</p>",
       variables: ["eventName", "displayName"],
     });
 
