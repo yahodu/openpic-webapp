@@ -56,15 +56,39 @@ export const mobileCandidateSchema = z.enum(["whatsapp", "sms"]);
  *
  * `candidates` + `strategy` are only meaningful on a `mobile` group (the
  * single-member `in_app`/`email` groups have exactly one code path); they are
- * optional so a disabled group can omit them.
+ * optional so a disabled group can omit them. An **enabled** `mobile` group is
+ * an exception the refinement below enforces: it must declare at least one
+ * `candidates` provider and `strategy: "first_eligible"`, otherwise the resolver
+ * would have no route to attempt. The seed's `build()` always populates both, so
+ * this is the reusable gate for an admin template/type editor.
  */
-export const channelGroupSchema = z.object({
-  group: notificationChannelSchema,
-  enabled: z.boolean(),
-  optOutAllowed: z.boolean(),
-  candidates: z.array(mobileCandidateSchema).min(1).optional(),
-  strategy: z.enum(["first_eligible"]).optional(),
-});
+export const channelGroupSchema = z
+  .object({
+    group: notificationChannelSchema,
+    enabled: z.boolean(),
+    optOutAllowed: z.boolean(),
+    candidates: z.array(mobileCandidateSchema).min(1).optional(),
+    strategy: z.enum(["first_eligible"]).optional(),
+  })
+  .superRefine((group, ctx) => {
+    if (group.group !== "mobile" || !group.enabled) return;
+
+    if (group.candidates === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["candidates"],
+        message: "an enabled mobile group must declare at least one candidate",
+      });
+    }
+
+    if (group.strategy === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["strategy"],
+        message: 'an enabled mobile group must declare strategy "first_eligible"',
+      });
+    }
+  });
 
 /** How overflow is handled (design §6). */
 export const throttleStrategySchema = z.enum(["none", "rate_limit", "digest", "coalesce"]);

@@ -227,7 +227,9 @@ const TYPE_SPECS: readonly TypeSpec[] = [
     audiences: ACCOUNT_HOLDERS,
     channels: [true, true, false],
     transactional: true,
-    severity: "important",
+    // §4.1 fixes every authentication type to `critical` (ADR-0017 §1), so this
+    // type bypasses quiet hours like the rest of the category.
+    severity: "critical",
     optOutAllowed: false,
     throttle: NO_THROTTLE,
   },
