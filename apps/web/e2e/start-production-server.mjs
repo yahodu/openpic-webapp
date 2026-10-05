@@ -43,6 +43,14 @@ process.env.PAYMENT_PROVIDER = "stripe";
 process.env.MESSAGE_TRANSPORT = "ses";
 process.env.LOG_TRANSPORTS = "stdout";
 
+// Production now requires the trusted client-IP header to be named
+// (ADR-0024/ADR-0031), so the auth IP leg keys on an edge header the trusted
+// fronting layer overwrites rather than the client-writable `x-forwarded-for`.
+// This standalone server sits behind no proxy, so name `x-real-ip`; requests
+// that do not carry it lose the IP leg (fail-safe), which is what the E2 guard
+// spec exercises.
+process.env.TRUSTED_CLIENT_IP_HEADER = "x-real-ip";
+
 let stopping = false;
 const shutdown = async () => {
   if (stopping) {
