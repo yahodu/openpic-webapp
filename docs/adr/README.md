@@ -96,6 +96,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0089](ADR-0089-op93-u18-fixture-reconciliation-review-signoff.md)                 | OP-93 U18 fixture-reconciliation review sign-off: escaping pin intact, no production change              | Accepted |
 | [0090](ADR-0090-op94-notification-fan-out-red.md)                                  | OP-94 RED: notification fan-out consumer contract (outbox → feed + dispatches)                           | Accepted |
 | [0091](ADR-0091-op94-fan-out-red-review-signoff.md)                                | OP-94 RED review sign-off: fan-out pins verified after fixture correction; no production change          | Accepted |
+| [0092](ADR-0092-op94-notification-fan-out-green.md)                                | OP-94 GREEN: notification fan-out consumer implementation (outbox → feed + dispatches)                   | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
@@ -103,4 +104,4 @@ _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_e
 
 _`0080` is now unused: the OP-93 lane that would have held it was renumbered `0078`–`0082 → 0085`–`0089` at integration because `origin/main` claimed `0078`/`0079`/`0081` (OP-91 payload) and `0082`–`0084` (OP-92 follow-up) first. The OP-91 payload review sign-off took `0081` to avoid the earlier collision (see ADR-0081)._
 
-_`0070`/`0071`/`0075` belong to the OP-91 follow-up lane (PR #181, landed); the OP-92 lane holds `0072`–`0074` (RED/pins), `0076`/`0077` (GREEN + review sign-off), `0082` (follow-up RED pins), `0083` (follow-up GREEN implementation) and `0084` (follow-up GREEN review sign-off, PR #186, landed). The OP-92 follow-up lane was renumbered `0078`–`0080 → 0082`–`0084` at integration because the OP-91 payload lane claimed `0078`/`0079`/`0081` on `origin/main` first. The OP-93 lane holds `0085`–`0089` (PR #187), renumbered from `0078`–`0082` for the same reason._
+_`0070`/`0071`/`0075` belong to the OP-91 follow-up lane (PR #181, landed); the OP-92 lane holds `0072`–`0074` (RED/pins), `0076`/`0077` (GREEN + review sign-off), `0082` (follow-up RED pins), `0083` (follow-up GREEN implementation) and `0084` (follow-up GREEN review sign-off, PR #186, landed). The OP-92 follow-up lane was renumbered `0078`–`0080 → 0082`–`0084` at integration because the OP-91 payload lane claimed `0078`/`0079`/`0081` on `origin/main` first. The OP-93 lane holds `0085`–`0089` (PR #187), renumbered from `0078`–`0082` for the same reason. The OP-94 fan-out lane holds `0090` (RED), `0091` (RED review sign-off) and `0092` (GREEN); it is stacked on the unmerged OP-93 PR #187 and ships its pins inside the OP-94 GREEN PR._
