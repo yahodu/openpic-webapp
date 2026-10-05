@@ -1,4 +1,4 @@
-# ADR-0022 — Auth coverage RED: OTP IP leg, unknown-number verify 4xx, callbackURL trust matrix, session-authenticated verify cap
+# ADR-0023 — Auth coverage RED: OTP IP leg, unknown-number verify 4xx, callbackURL trust matrix, session-authenticated verify cap
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** `t_27242306` (OP-85 reviewer round-1 follow-up, RED) · **Amends:** nothing. **Extends the pins of:** ADR-0020, ADR-0021
