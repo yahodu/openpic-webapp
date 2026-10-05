@@ -113,3 +113,43 @@ Cross-reference: ADR-0029 (§Consequences) for the single-lease decision.
   land the RED suite that is otherwise gated behind the GREEN PR.
 - **Fix the cache in the review** — rejected: it would change a staleness
   observable the reviewer must not decide unilaterally.
+
+## 6. Reviewer sign-off (OP-88 outbox-hardening follow-up, `t_3f795c26`)
+
+Approved by `openpic-webapp-reviewer` (round 1, artifact lens) and squash-merged
+to `main` as `c25fa42` (PR #152). **The Decision above is unchanged.**
+
+- **Verified on the exact head SHA** `52f11dd751fff6f2b18ec6413a29483b86388e7b`
+  in a detached git worktree, never on the moving branch; the artifact was
+  self-resolved (`git ls-remote`, `git cat-file -p`, `gh pr view`) before any
+  claim was trusted.
+- **RED was authentic.** At the RED head `60abd3a` the module
+  `@/server/notifications/notification-type-cache` did not exist, so the specs
+  failed `module-missing`; independently reproduced. The new module first
+  appears at the GREEN commit `cef05f6`. The one spec edit between the two RED
+  commits was a pre-GREEN correction of the overridden-TTL boundary
+  (`advance(501)` not `advance(1)`) while the module was still absent — not a
+  weakened assertion.
+- **D1/D3/D2 all reproduced as pinned.** One bounded `find` per 30 000 ms window,
+  clock read once per call, strict-`<` expiry, `invalidateNotificationTypeCache`
+  forces a re-read, `{ db, clock }` forwarded from `emitDomainEvent`;
+  `notifications` is `pending` iff the enabled set has the `eventKey`. The
+  stale branch reclaims an `in_progress` row with a missing `claimedAt` while a
+  fresh `claimedAt` stays non-reclaimable, and the existing 5-minute `I4` spec
+  is unchanged. No per-consumer lease was added; the single top-level
+  `claimedAt`/`claimedBy` is intact.
+- **Independently reproduced:** unit 63 files / 1282 passed; integration 33
+  files / 204 passed (`TMPDIR=/root/tmp-mongo`); coverage exit 0 (statements
+  93.8%, branches 86.18%, functions 95%, lines 93.97%; `notification-type-cache.ts`
+  100% lines / 92.3% branches); `tsc` (root + contracts + web) clean; `eslint`
+  0 errors / 20 pre-existing warnings; `prettier --check .` clean; `next build`
+  exit 0. All 11 PR checks green.
+- **Honesty audit clean.** No test-environment conditionals, no fixture-shaped
+  hardcoding, no `@ts-ignore`/`eslint-disable`, no `process.env` in the changed
+  production files, no new dependencies.
+- **Open findings (informational, Low, no action required):** (1) the
+  process-wide cache is not keyed by the `db` handle — correct today given a
+  single handle and platform-scoped data, mirrors `getPlatformSettings`; (2) no
+  production caller of `invalidateNotificationTypeCache()` yet, because no
+  notification-type mutation route exists — pin the invalidation when an
+  operator-toggle route lands.
