@@ -26,7 +26,7 @@ import { makeEnv, makeProductionEnv, type EnvInput } from "../../test/factories/
  *   storage:   { provider }
  *   queue:     { provider }
  *   payments:  { provider }
- *   transport: { provider, unsubscribeSigningSecret }
+ *   transport: { provider, unsubscribeSigningSecret, timeoutMs }
  *   logging:   { level, transports, pretty }
  *   media:     { signingSecretCurrent, signingSecretPrevious? }
  *
@@ -51,6 +51,7 @@ import { makeEnv, makeProductionEnv, type EnvInput } from "../../test/factories/
  *   QUEUE_PROVIDER               memory | mongo            (default memory)
  *   PAYMENT_PROVIDER             memory | stripe           (default memory)
  *   MESSAGE_TRANSPORT            memory | ses              (default memory)
+ *   NOVU_TIMEOUT_MS              positive integer ms       (default 10000)
  *   TRUSTED_CLIENT_IP_HEADER     trusted edge header name; REQUIRED in
  *                                production (unset/blank refused — OP-85
  *                                follow-up, ADR-0032)
@@ -130,6 +131,7 @@ describe("getConfig — valid environment", () => {
       transport: {
         provider: "memory",
         unsubscribeSigningSecret: env.UNSUBSCRIBE_SIGNING_SECRET,
+        timeoutMs: 10_000,
       },
       logging: { level: "debug", transports: ["stdout"], pretty: false },
       media: {
@@ -470,5 +472,25 @@ describe("getConfig — production requires TRUSTED_CLIENT_IP_HEADER (ADR-0032)"
     const message = captureError(() => getConfig());
 
     expect(message).toBe("Invalid application configuration: TRUSTED_CLIENT_IP_HEADER");
+  });
+});
+
+describe("getConfig — Novu transport timeout (OP-92, ADR-0074)", () => {
+  it("defaults transport.timeoutMs to 10000 when NOVU_TIMEOUT_MS is unset", async () => {
+    const { getConfig } = await loadEnvConfig(makeEnv({ NOVU_TIMEOUT_MS: undefined }));
+
+    expect(getConfig().transport.timeoutMs).toBe(10_000);
+  });
+
+  it("coerces NOVU_TIMEOUT_MS into the transport timeout in milliseconds", async () => {
+    const { getConfig } = await loadEnvConfig(makeEnv({ NOVU_TIMEOUT_MS: "2500" }));
+
+    expect(getConfig().transport.timeoutMs).toBe(2500);
+  });
+
+  it("falls back to the 10000 ms default for a non-positive or non-numeric NOVU_TIMEOUT_MS", async () => {
+    const { getConfig } = await loadEnvConfig(makeEnv({ NOVU_TIMEOUT_MS: "not-a-number" }));
+
+    expect(getConfig().transport.timeoutMs).toBe(10_000);
   });
 });
