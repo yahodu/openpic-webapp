@@ -83,9 +83,14 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0075](ADR-0075-op91-followup-deletion-requested-green-review-signoff.md)          | OP-91 follow-up GREEN review sign-off: deletion-requested emission verified; one ref routed              | Accepted |
 | [0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md)              | OP-92 GREEN: `MessageTransport` port, Novu adapter, workflow drift guard, headers, logging and lint      | Accepted |
 | [0077](ADR-0077-op92-green-review-signoff.md)                                      | OP-92 GREEN review sign-off: pins verified; Novu HTTP-plumbing refactor; drift-guard hardening routed    | Accepted |
+| [0078](ADR-0078-op91-followup-deletion-requested-payload-red.md)                   | OP-91 follow-up RED: pin the `account.deletion.requested` payload (`scheduledAt` + `cancelUrl`)          | Accepted |
+| [0079](ADR-0079-op91-followup-deletion-requested-payload-green.md)                 | OP-91 follow-up GREEN: carry `scheduledAt` + `cancelUrl` in the `account.deletion.requested` payload     | Accepted |
+| [0081](ADR-0081-op91-followup-deletion-requested-payload-review-signoff.md)        | OP-91 follow-up payload review sign-off: payload verified RED→GREEN; ADR drift routed                    | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
+
+_`0080` is held by the unmerged OP-93 lane; the OP-91 payload review sign-off takes `0081` to avoid the collision (see ADR-0081)._
 
 _`0070`/`0071`/`0075` belong to the OP-91 follow-up lane (PR #181, landed); the OP-92 lane holds `0072`–`0074` (RED/pins) and `0076`/`0077` (GREEN + review sign-off)._

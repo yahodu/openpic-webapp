@@ -41,7 +41,11 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  *   I6  cancelling once the purge window has elapsed is `409
  *       deletion_already_executed`;
  *   I7  a matching `confirmEmail` emits exactly one `account.deletion.requested`
- *       row through the lifecycle seam (§1.4).
+ *       row through the lifecycle seam (§1.4);
+ *   I8  that row carries the §1.4 payload — `scheduledAt` (the exact ISO
+ *       instant the 202 body reports as both `scheduledAt` and `cancelUntil`)
+ *       and `cancelUrl` (`/api/v1/me/deletion`), so the notification consumer
+ *       can deep-link the cancel window (§4.2).
  *
  * ## Contract expected of the implementation
  *
@@ -606,5 +610,45 @@ describe("account deletion (contract §1.4)", () => {
       "subjectRef.id": String(user._id),
     });
     expect(emitted).toBe(1);
+  });
+
+  it("I8: the account.deletion.requested row carries scheduledAt and cancelUrl", async () => {
+    const identity = makeIdentity();
+    const cookie = await signInWithEmailOtp(identity);
+
+    const requested = await deletionPost(deletionRequest(cookie, { confirmEmail: identity.email }));
+    expect(requested.status).toBe(202);
+    const responseBody = await body(requested);
+    const scheduledAt = responseBody.scheduledAt;
+    const cancelUntil = responseBody.cancelUntil;
+
+    // The 202 body is the source of truth for the cancel window (§1.4).
+    expect(typeof scheduledAt).toBe("string");
+    expect(scheduledAt).toBe(cancelUntil);
+
+    const user = await findUser(identity);
+
+    // Read the emitted row and pin its payload. The single row must carry the
+    // SAME ISO instant the 202 body reports (`scheduledAt === cancelUntil`) and
+    // the absolute cancel path, so a notification consumer can deep-link the
+    // window without re-deriving either from the profile. A row left with the
+    // current `payload: {}` fails the first assertion; a row carrying the
+    // instant as a `Date` or a different field name fails the equality ones.
+    const rows = await database
+      .collection(DOMAIN_EVENTS_COLLECTION)
+      .find({ eventKey: "account.deletion.requested", "subjectRef.id": String(user._id) })
+      .toArray();
+    expect(rows).toHaveLength(1);
+
+    const payload = (rows[0]?.payload ?? {}) as {
+      readonly scheduledAt?: unknown;
+      readonly cancelUrl?: unknown;
+    };
+
+    expect(typeof payload.scheduledAt).toBe("string");
+    expect(Number.isNaN(Date.parse(String(payload.scheduledAt)))).toBe(false);
+    expect(payload.scheduledAt).toBe(scheduledAt);
+    expect(payload.scheduledAt).toBe(cancelUntil);
+    expect(payload.cancelUrl).toBe(DELETION_PATH);
   });
 });
