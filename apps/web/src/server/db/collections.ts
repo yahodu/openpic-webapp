@@ -29,6 +29,7 @@ export const COLLECTIONS = {
   plans: "plans",
   notificationTypes: "notification_types",
   notificationTemplates: "notification_templates",
+  domainEvents: "domain_events",
 } as const;
 
 /** The name of any registered collection. */
