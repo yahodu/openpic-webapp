@@ -93,17 +93,27 @@ function runExclusive<T>(lockKey: string, task: () => Promise<T>): Promise<T> {
   return result;
 }
 
-/** The catalogue fields that are refreshed on every run, independently of `version`. */
+/**
+ * The catalogue fields that are refreshed on every run, independently of
+ * `version`, each wrapped in `$literal`.
+ *
+ * In an aggregation-pipeline `$set` a raw value is evaluated as an expression:
+ * a string beginning with `$` is read as a field path and a `$`-leading object
+ * key as an operator, so a legitimate catalogue value such as `"$5 add-on
+ * plan"` would silently resolve to a missing field and be dropped from the
+ * stored document. `$literal` keeps every catalogue value opaque, so the stored
+ * document equals the catalogue byte-for-byte at every nesting depth.
+ */
 function catalogueFields(plan: Plan): Record<string, unknown> {
   return {
-    name: plan.name,
-    description: plan.description,
-    marketingFeatures: plan.marketingFeatures,
-    tierRank: plan.tierRank,
-    selfServe: plan.selfServe,
-    salesAssisted: plan.salesAssisted,
-    active: plan.active,
-    prices: plan.prices,
+    name: { $literal: plan.name },
+    description: { $literal: plan.description },
+    marketingFeatures: { $literal: plan.marketingFeatures },
+    tierRank: { $literal: plan.tierRank },
+    selfServe: { $literal: plan.selfServe },
+    salesAssisted: { $literal: plan.salesAssisted },
+    active: { $literal: plan.active },
+    prices: { $literal: plan.prices },
   };
 }
 
@@ -126,8 +136,10 @@ function catalogueFields(plan: Plan): Record<string, unknown> {
  * @returns The update pipeline for `updateOne({ key }, …, { upsert: true })`.
  */
 function planUpsert(plan: Plan, updatedAt: Date): Document[] {
-  // Entitlement keys are dotted (`events.active`), which an aggregation
-  // expression would read as a field path — `$literal` keeps the catalogue
+  // The catalogue values are `$literal`-wrapped (see {@link catalogueFields}),
+  // so a `$`-leading catalogue string is not parsed as a field path. The
+  // entitlement keys are dotted (`events.active`), which an aggregation
+  // expression would also read as a field path — `$literal` keeps the catalogue
   // object an opaque value in both the `$set` and the `$eq` comparison.
   const entitlements = { $literal: plan.entitlements };
 
@@ -135,7 +147,7 @@ function planUpsert(plan: Plan, updatedAt: Date): Document[] {
     {
       $set: {
         ...catalogueFields(plan),
-        updatedAt,
+        updatedAt: { $literal: updatedAt },
         entitlements,
         version: {
           $cond: [
