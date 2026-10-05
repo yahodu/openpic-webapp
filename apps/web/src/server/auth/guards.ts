@@ -293,7 +293,17 @@ function credentialHeaders(request: Request): Headers {
   return headers;
 }
 
-/** Load the profile fields from `userProfiles`, defaulting the missing profile. */
+/**
+ * Load the profile fields from `userProfiles`, defaulting the missing profile.
+ *
+ * When more than one row exists for the same user, the read prefers an
+ * **explicitly managed** profile over an **auto-provisioned default** (the row
+ * the identity-lifecycle hook writes carries `autoProvisioned: true`). In
+ * production `userProfiles.userId` is unique (schema §13.2) so there is exactly
+ * one row; the precedence rule makes the read deterministic when a fixture — or
+ * a pre-unique-index deployment — holds a default alongside an explicit profile,
+ * and prevents a lazily-created default from ever shadowing a real one.
+ */
 async function loadProfile(database: Db, userId: string): Promise<UserProfileDocument> {
   let objectId: ObjectId;
   try {
@@ -301,10 +311,12 @@ async function loadProfile(database: Db, userId: string): Promise<UserProfileDoc
   } catch {
     return {};
   }
-  const profile = await database
+  const rows = await database
     .collection<UserProfileDocument>(USER_PROFILES_COLLECTION)
-    .findOne({ userId: objectId } as never);
-  return profile ?? {};
+    .find({ userId: objectId } as never)
+    .sort({ autoProvisioned: 1, _id: -1 })
+    .toArray();
+  return rows[0] ?? {};
 }
 
 /**
