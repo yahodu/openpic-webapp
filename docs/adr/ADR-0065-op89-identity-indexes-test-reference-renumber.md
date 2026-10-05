@@ -1,4 +1,4 @@
-# ADR-0064 — OP-89 follow-up: stale ADR-0046 test references in the identity pin specs renumbered to ADR-0050
+# ADR-0065 — OP-89 follow-up: stale ADR-0046 test references in the identity pin specs renumbered to ADR-0050
 
 - **Status:** Accepted · **Date:** 2026-10-06
 - **Card:** OP-89 follow-up test-only cleanup (`t_c9c415e6`, Test Author) · **Relates to:** [ADR-0050](ADR-0050-op89-identity-lifecycle-indexes-ttls-red-pins.md) (the pins ADR, renumbered from ADR-0046), [ADR-0058](ADR-0058-op89-identity-lifecycle-indexes-green-review.md) (the GREEN review sign-off that filed this finding), [ADR-0034](ADR-0034-op85-adr-0032-test-reference-renumber.md) (the stale-test-reference precedent)
@@ -55,11 +55,19 @@ This ADR was first authored as **ADR-0059** (the lowest free number on
 `origin/main` when the run began: `0001`–`0058` contiguous, `0059`+ free). The
 orchestrator (`t_eb61c823`) then re-allocated the OP-89/OP-90 follow-up lane
 numbers, binding **0059** to `t_f2b2f2b4` (PR #171, the OP-90 stale-ADR-0044
-test-reference renumber) and **0060**–**0063** to the sibling lanes; this lane
-was assigned the next free number, **0064**. The record was renamed
-`ADR-0059-*` → `ADR-0064-*` and the `docs/adr/README.md` row updated to 0064. The
-decision content is unchanged by the renumber. Central cross-lane ADR allocation
-remains owned by the orchestrator card `t_eb61c823`.
+test-reference renumber) and **0060**–`0063` to the sibling lanes, initially
+assigning this lane **0064**. The record was renamed `ADR-0059-*` → `ADR-0064-*`
+accordingly.
+
+At merge time that assignment had been overtaken: PR #177 (`t_4f3ad9e7`, the
+OP-89 partial-failure-recovery GREEN) merged first and took the contiguous
+**0062**–**0064** block (coverage pins 0062, review sign-off 0063, recovery
+GREEN 0064), so `main` carried `0001`–`0064` densely. This record therefore
+re-resolved to the lowest free number on the merged tree, **0065**; the file was
+renamed `ADR-0064-*` → `ADR-0065-*` and the `docs/adr/README.md` row set to
+0065, ascending after 0064. The decision content is unchanged by either
+renumber. Central cross-lane ADR allocation remains owned by the orchestrator
+card `t_eb61c823`.
 
 ## Consequences
 
@@ -70,7 +78,7 @@ remains owned by the orchestrator card `t_eb61c823`.
   green (this is a GREEN, comment-only PR — no RED state).
 - Two further stale citations remain in **production** comments and are out of
   scope for this test-author card (production files are immutable here):
-  `apps/web/src/server/auth/identity-hooks.ts:659` cites `(ADR-0043 §1)` and
+  `apps/web/src/server/auth/identity-hooks.ts:719` cites `(ADR-0043 §1)` and
   `apps/web/src/server/auth/identity-lifecycle.ts:120` cites `(ADR-0043 §3)`.
   Both should resolve to ADR-0045 on inspection; they are flagged for a
   production-lane follow-up rather than edited here.

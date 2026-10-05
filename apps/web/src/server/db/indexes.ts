@@ -343,7 +343,6 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
-
   // tenant_members — one membership per (tenant, user); the schema §13.4
   // composite identity, and the index behind `GET /tenants/{t}/members`
   // (ADR-0060).
@@ -369,6 +368,17 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["userId", 1],
       ["status", 1],
     ],
+  },
+  // contact_change_fanouts — one fan-out per emitted `auth.contact.changed`
+  // event. The unique index makes the fan-out write idempotent under an
+  // at-least-once redelivery: a redelivery after a partial failure re-inserts
+  // the same event id and collides harmlessly instead of losing the
+  // replaced-contact target (ADR-0049 §1).
+  {
+    collection: COLLECTIONS.contactChangeFanouts,
+    name: "contact_change_fanouts_event_id_unique",
+    keys: [["eventId", 1]],
+    unique: true,
   },
 ];
 
