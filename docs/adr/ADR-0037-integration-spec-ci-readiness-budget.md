@@ -185,3 +185,24 @@ assertion relaxed; only the location of the shared loop moved.
   (`TMPDIR=/root/tmp-mongo`); unit 64 files / 1284 passed (was 63 / 1278; +6 new
   helper specs); `tsc` (root + contracts + web) clean; `eslint` 0 errors / 20
   pre-existing warnings; `prettier --check .` clean.
+
+## Reviewer sign-off — shared readiness loop (OP-85 follow-up, t_14ee02fe)
+
+Approved by `openpic-webapp-reviewer` (round 1, artifact lens) and squash-merged
+to `main` as `32d0f3f` (PR #157). **The Decision above is unchanged.**
+
+- **Behaviour-preserving, both call sites.** `waitForMongoReady` keeps its
+  `timeoutMs` override and its exact "did not become ready" message;
+  `waitForPrimary` keeps its private `serverSelectionTimeoutMS = 2_000` client,
+  its `try/finally` close and its exact "did not elect a primary" message. Same
+  `ping`-thunk loop, same deadline check position, same `{ cause }` on the thrown
+  error; still a real ping, never a fixed sleep.
+- **No integration spec or assertion touched; no production code changed.**
+  `MONGO_READY_TIMEOUT_MS` remains re-exported from `helpers/db.ts`, so no
+  consumer breaks; no import cycle (`poll-ready.ts` imports nothing).
+- **Independently reproduced by the reviewer:** integration 33 files / 201 passed
+  twice (`TMPDIR=/root/tmp-mongo`); unit 64 files / 1284 passed; `tsc`
+  (root + contracts + web), `eslint apps/web/src/test` and `prettier --check .`
+  clean; all CI checks green on head `3e2ad2a`.
+- **Prior Low finding closed.** The earlier note that the fail-loud timeout path
+  had no spec is now covered by `poll-ready.test.ts`. No open findings.
