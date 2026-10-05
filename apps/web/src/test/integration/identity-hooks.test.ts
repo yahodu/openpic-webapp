@@ -4,8 +4,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createAuth, type AuthLike } from "@/server/auth";
 import { NEW_DEVICE_WINDOW_MS, hashFingerprint } from "@/server/auth/device-fingerprint";
 import {
+  handleContactChanged,
   handleContactVerified,
+  handleSessionsRevoked,
   handleSessionCreated,
+  handleTwoFactorToggled,
   handleUserCreated,
 } from "@/server/auth/identity-hooks";
 import { otpInbox } from "@/server/auth/otp-inbox";
@@ -72,6 +75,15 @@ const USER_PROFILES_COLLECTION = "userProfiles";
 const NOTIFICATION_PREFERENCES_COLLECTION = "notificationPreferences";
 const INVITATIONS_COLLECTION = "invitations";
 const DOMAIN_EVENTS_COLLECTION = "domain_events";
+/**
+ * The transient fan-out record for `auth.contact.changed` (ADR-0040 §3).
+ *
+ * The append-only outbox may not carry contact values, but a security alert
+ * must reach the contact that was just replaced, so the raw old/new contacts
+ * live in this short-lived collection (a `contactChangeFanouts` doc) that the
+ * notification fan-out reads once. It is not a domain-event payload.
+ */
+const CONTACT_CHANGE_FANOUTS_COLLECTION = "contactChangeFanouts";
 
 /** A fixed instant so `accountCompletedAt` / dedupe buckets are deterministic. */
 const T0 = new Date("2026-03-01T00:00:00.000Z");
@@ -86,11 +98,18 @@ const NEW_DEVICE_WINDOW = 24 * 60 * 60 * 1000;
 
 /** The stored outbox fields these specs inspect. */
 interface StoredEvent {
+  readonly _id: ObjectId;
   readonly eventKey: string;
   readonly subjectRef: { readonly kind: string; readonly id: string };
   readonly payload: Record<string, unknown>;
   readonly occurredAt: Date;
   readonly dedupeKey?: string;
+}
+
+/** One side of a contact change — a resolvable email and/or phone number. */
+interface ContactRef {
+  readonly email?: string | null;
+  readonly phoneNumber?: string | null;
 }
 
 /** Plain inputs the lifecycle handlers accept. */
@@ -114,7 +133,48 @@ interface SessionCreatedEvent {
     readonly ip?: string | null;
     readonly acceptLanguage?: string | null;
   };
+  /**
+   * The raw, unclaimed `op_att` cookie value when the session-created request
+   * carried one (contract §1.5). The session-created handler hands it to the
+   * attendee-session claim seam without blocking the sign-in.
+   */
+  readonly attendeeSessionToken?: string | null;
 }
+
+/**
+ * `handleContactChanged` input — the contact that was replaced and the one that
+ * replaced it. The previous contact is *input* because it is gone from the
+ * stored user once the change commits.
+ */
+interface ContactChangedEvent {
+  readonly userId: string;
+  readonly previous: ContactRef;
+  readonly current: ContactRef;
+}
+
+/** `handleTwoFactorToggled` input — the resulting 2FA state. */
+interface TwoFactorToggledEvent {
+  readonly userId: string;
+  readonly enabled: boolean;
+}
+
+/** `handleSessionsRevoked` input — the user whose sessions were all revoked. */
+interface SessionsRevokedEvent {
+  readonly userId: string;
+  readonly sessionIds?: readonly string[];
+}
+
+/** The transient `auth.contact.changed` fan-out record (ADR-0040 §3). */
+interface ContactChangeFanout {
+  readonly eventId: string;
+  readonly userId: string;
+  readonly previous: ContactRef;
+  readonly current: ContactRef;
+  readonly expireAt: Date;
+}
+
+/** The injected attendee-session claim seam the session-created hook calls. */
+type ClaimAttendeeSession = (input: { userId: string; token: string }) => Promise<unknown>;
 
 beforeAll(async () => {
   await setupMongoTestEnv({
@@ -535,6 +595,335 @@ describe("identity hooks are wired into the configured auth surface", () => {
         1
       );
       expect(await eventsByKey(test, "account.welcome")).toHaveLength(1);
+    });
+  });
+});
+
+describe("handleContactChanged — fanned out to the old and the new contact", () => {
+  it("S4: an email change emits one auth.contact.changed row whose payload carries flags only", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const previousEmail = `old-${userId.toHexString()}@example.com`;
+      const currentEmail = `new-${userId.toHexString()}@example.com`;
+
+      await handleContactChanged(
+        {
+          userId: userId.toHexString(),
+          previous: { email: previousEmail, phoneNumber: null },
+          current: { email: currentEmail, phoneNumber: null },
+        } satisfies ContactChangedEvent,
+        { db: test.db, clock: fixedClock(T0) }
+      );
+
+      const changed = await eventsByKey(test, "auth.contact.changed");
+      expect(changed).toHaveLength(1);
+
+      // The payload carries change flags and nothing else: neither the previous
+      // nor the new raw contact may reach the append-only outbox (ADR-0040 §3).
+      const payload = changed[0]?.payload ?? {};
+      expect(payload).toEqual({ emailChanged: true, phoneChanged: false });
+      expect(JSON.stringify(payload)).not.toContain(previousEmail);
+      expect(JSON.stringify(payload)).not.toContain(currentEmail);
+    });
+  });
+
+  it("S4: the transient fan-out record references both the old and the new contact", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const previousEmail = `old-${userId.toHexString()}@example.com`;
+      const currentEmail = `new-${userId.toHexString()}@example.com`;
+
+      await handleContactChanged(
+        {
+          userId: userId.toHexString(),
+          previous: { email: previousEmail },
+          current: { email: currentEmail },
+        },
+        { db: test.db, clock: fixedClock(T0) }
+      );
+
+      const changed = await eventsByKey(test, "auth.contact.changed");
+      expect(changed).toHaveLength(1);
+
+      const fanouts = await test.db
+        .collection<ContactChangeFanout>(CONTACT_CHANGE_FANOUTS_COLLECTION)
+        .find({})
+        .toArray();
+      expect(fanouts).toHaveLength(1);
+
+      const fanout = fanouts[0];
+      expect(fanout?.userId).toBe(userId.toHexString());
+      // The record is resolvable back to the event the fan-out consumer claims.
+      expect(fanout?.eventId).toBe(String(changed[0]?._id));
+      // Both recipients: a hijacker must not be able to silently lock the owner
+      // out of the old address, so the old contact is a fan-out target too.
+      expect(fanout?.previous.email).toBe(previousEmail);
+      expect(fanout?.current.email).toBe(currentEmail);
+      expect(fanout?.expireAt).toBeInstanceOf(Date);
+    });
+  });
+
+  it("S4: a phone change sets the phone flag and fans out to both numbers", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const previousPhone = "+919000000001";
+      const currentPhone = "+919000000002";
+
+      await handleContactChanged(
+        {
+          userId: userId.toHexString(),
+          previous: { phoneNumber: previousPhone },
+          current: { phoneNumber: currentPhone },
+        },
+        { db: test.db, clock: fixedClock(T0) }
+      );
+
+      const changed = await eventsByKey(test, "auth.contact.changed");
+      expect(changed).toHaveLength(1);
+      expect(changed[0]?.payload).toEqual({ emailChanged: false, phoneChanged: true });
+      expect(JSON.stringify(changed[0]?.payload)).not.toContain(previousPhone);
+
+      const fanout = await test.db
+        .collection<ContactChangeFanout>(CONTACT_CHANGE_FANOUTS_COLLECTION)
+        .findOne({});
+      expect(fanout?.previous.phoneNumber).toBe(previousPhone);
+      expect(fanout?.current.phoneNumber).toBe(currentPhone);
+    });
+  });
+});
+
+describe("handleTwoFactorToggled — enabled and disabled are distinct security events", () => {
+  it("S5: enabling 2FA emits auth.2fa.enabled and not auth.2fa.disabled", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+
+      await handleTwoFactorToggled(
+        { userId: userId.toHexString(), enabled: true } satisfies TwoFactorToggledEvent,
+        { db: test.db, clock: fixedClock(T0) }
+      );
+
+      const enabled = await eventsByKey(test, "auth.2fa.enabled");
+      expect(enabled).toHaveLength(1);
+      expect(enabled[0]?.subjectRef).toEqual({ kind: "user", id: userId.toHexString() });
+      expect(await eventsByKey(test, "auth.2fa.disabled")).toHaveLength(0);
+    });
+  });
+
+  it("S5: disabling 2FA emits auth.2fa.disabled and not auth.2fa.enabled", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+
+      await handleTwoFactorToggled(
+        { userId: userId.toHexString(), enabled: false },
+        { db: test.db, clock: fixedClock(T0) }
+      );
+
+      const disabled = await eventsByKey(test, "auth.2fa.disabled");
+      expect(disabled).toHaveLength(1);
+      expect(disabled[0]?.subjectRef).toEqual({ kind: "user", id: userId.toHexString() });
+      expect(await eventsByKey(test, "auth.2fa.enabled")).toHaveLength(0);
+    });
+  });
+
+  it("S5: re-running the same toggle dedupes to a single event", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const event: TwoFactorToggledEvent = { userId: userId.toHexString(), enabled: true };
+
+      await handleTwoFactorToggled(event, { db: test.db, clock: fixedClock(T0) });
+      await handleTwoFactorToggled(event, { db: test.db, clock: fixedClock(T0) });
+
+      expect(await eventsByKey(test, "auth.2fa.enabled")).toHaveLength(1);
+    });
+  });
+});
+
+describe("handleSessionsRevoked — revocation notice", () => {
+  it("S6: revoking all sessions emits one account.sessions.revoked event", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+
+      await handleSessionsRevoked(
+        {
+          userId: userId.toHexString(),
+          sessionIds: ["session-a", "session-b"],
+        } satisfies SessionsRevokedEvent,
+        { db: test.db, clock: fixedClock(T0) }
+      );
+
+      const revoked = await eventsByKey(test, "account.sessions.revoked");
+      expect(revoked).toHaveLength(1);
+      expect(revoked[0]?.subjectRef).toEqual({ kind: "user", id: userId.toHexString() });
+    });
+  });
+});
+
+describe("handleSessionCreated — unclaimed op_att claim service", () => {
+  it("S7: an unclaimed op_att token invokes the claim seam with that token", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      await insertAuthUser(test, userId);
+      await insertProfile(test, userId);
+
+      const claims: { userId: string; token: string }[] = [];
+      const claim: ClaimAttendeeSession = (input) => {
+        claims.push(input);
+        return Promise.resolve();
+      };
+
+      await handleSessionCreated(
+        {
+          userId: userId.toHexString(),
+          sessionId: "session-claim",
+          device: {},
+          attendeeSessionToken: "opat_9f2c",
+        },
+        { db: test.db, clock: fixedClock(T0), claim }
+      );
+
+      expect(claims).toEqual([{ userId: userId.toHexString(), token: "opat_9f2c" }]);
+    });
+  });
+
+  it("S7: no unclaimed op_att token means the claim seam is never invoked", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      await insertAuthUser(test, userId);
+      await insertProfile(test, userId);
+
+      let claimCalls = 0;
+      await handleSessionCreated(
+        {
+          userId: userId.toHexString(),
+          sessionId: "session-no-claim",
+          device: {},
+          attendeeSessionToken: null,
+        },
+        {
+          db: test.db,
+          clock: fixedClock(T0),
+          claim: () => {
+            claimCalls += 1;
+            return Promise.resolve();
+          },
+        }
+      );
+
+      expect(claimCalls).toBe(0);
+    });
+  });
+
+  it("S7: a rejected claim does not fail the hook and logs identity_hook.claim_failed", async () => {
+    await withTestDb(async (test) => {
+      const sink = installMemoryLogger();
+      const userId = new ObjectId();
+      await insertAuthUser(test, userId);
+      await insertProfile(test, userId);
+
+      let claimCalls = 0;
+      // The claim service being down must never turn a successful sign-in into a
+      // failure: the handler swallows the rejection and records it.
+      await expect(
+        handleSessionCreated(
+          {
+            userId: userId.toHexString(),
+            sessionId: "session-claim-rejected",
+            device: {},
+            attendeeSessionToken: "opat_reject",
+          },
+          {
+            db: test.db,
+            clock: fixedClock(T0),
+            claim: () => {
+              claimCalls += 1;
+              return Promise.reject(new Error("claim service unavailable"));
+            },
+          }
+        )
+      ).resolves.toBeUndefined();
+
+      expect(claimCalls).toBe(1);
+      const failure = sink.entries.find((entry) => entry.event === "identity_hook.claim_failed");
+      expect(failure).toBeDefined();
+      expect(failure?.level).toBe("error");
+    });
+  });
+
+  it("S7: a sign-in carrying an unclaimed op_att cookie invokes the injected claim seam", async () => {
+    await withTestDb(async (test) => {
+      const claims: { userId: string; token: string }[] = [];
+      const auth: AuthLike = createAuth({
+        db: test.db,
+        emit: () => Promise.resolve({ deduped: false, id: null }),
+        claim: (input: { userId: string; token: string }) => {
+          claims.push(input);
+          return Promise.resolve();
+        },
+      });
+      const email = `op89-claim-${uniqueSuffix()}@example.com`;
+      const ip = `192.0.2.${String((Date.now() % 200) + 10)}`;
+
+      const sent = await authPost(
+        auth,
+        "http://localhost:3000",
+        "/api/auth/email-otp/send-verification-otp",
+        { email, type: "sign-in" },
+        { "x-forwarded-for": ip }
+      );
+      expect(sent.status).toBe(200);
+      const otp = otpInbox.take("email", email) as { code: string } | undefined;
+      if (otp === undefined) {
+        throw new Error("expected an email OTP to be captured");
+      }
+
+      const signedIn = await authPost(
+        auth,
+        "http://localhost:3000",
+        "/api/auth/sign-in/email-otp",
+        { email, otp: otp.code },
+        { "x-forwarded-for": ip, cookie: "op_att=opat_cookie_9f2c" }
+      );
+      expect(signedIn.status).toBe(200);
+      expect(sessionCookie(signedIn)).toBeDefined();
+
+      expect(claims).toHaveLength(1);
+      expect(claims[0]).toMatchObject({ token: "opat_cookie_9f2c" });
+      expect(typeof claims[0]?.userId).toBe("string");
+    });
+  });
+
+  it("S7: a rejected claim through the auth surface still signs the user in", async () => {
+    await withTestDb(async (test) => {
+      const auth: AuthLike = createAuth({
+        db: test.db,
+        emit: () => Promise.resolve({ deduped: false, id: null }),
+        claim: () => Promise.reject(new Error("claim service unavailable")),
+      });
+      const email = `op89-claim-fail-${uniqueSuffix()}@example.com`;
+      const ip = `198.51.100.${String((Date.now() % 200) + 10)}`;
+
+      const sent = await authPost(
+        auth,
+        "http://localhost:3000",
+        "/api/auth/email-otp/send-verification-otp",
+        { email, type: "sign-in" },
+        { "x-forwarded-for": ip }
+      );
+      expect(sent.status).toBe(200);
+      const otp = otpInbox.take("email", email) as { code: string } | undefined;
+      if (otp === undefined) {
+        throw new Error("expected an email OTP to be captured");
+      }
+
+      const signedIn = await authPost(
+        auth,
+        "http://localhost:3000",
+        "/api/auth/sign-in/email-otp",
+        { email, otp: otp.code },
+        { "x-forwarded-for": ip, cookie: "op_att=opat_cookie_rejected" }
+      );
+      expect(signedIn.status).toBe(200);
+      expect(sessionCookie(signedIn)).toBeDefined();
     });
   });
 });
