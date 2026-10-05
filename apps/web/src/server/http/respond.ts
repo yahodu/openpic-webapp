@@ -38,6 +38,35 @@ export function jsonResponse(
   });
 }
 
+/** The HTTP statuses that must not carry a response body (RFC 9110 §6.4.1). */
+const NO_CONTENT_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
+
+/**
+ * True when `status` forbids a response body.
+ *
+ * @param status - The HTTP status the handler chose.
+ */
+export function isNoContentStatus(status: number): boolean {
+  return NO_CONTENT_STATUSES.has(status);
+}
+
+/**
+ * Build a bodyless response for a null-body status (`204`/`205`/`304`).
+ *
+ * The `Response` constructor refuses a body on these statuses, so the pipeline
+ * serves `null` with the default security headers instead of a serialized
+ * envelope.
+ *
+ * @param status - The null-body status to serve.
+ * @param extraHeaders - Extra headers merged over the security defaults.
+ */
+export function emptyResponse(status: number, extraHeaders: Record<string, string> = {}): Response {
+  return new Response(null, {
+    status,
+    headers: { ...SECURITY_HEADERS, ...extraHeaders },
+  });
+}
+
 /**
  * Read and validate the request body against `schema`.
  *

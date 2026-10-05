@@ -65,6 +65,8 @@ export interface UserPrincipal {
    * passed the second factor. See ADR-0025 §4.
    */
   readonly sessionTwoFactorVerified: boolean;
+  /** The `session` document id (hex) backing this request, or `null`. */
+  readonly sessionId?: string | null;
   readonly banned: boolean;
   readonly banReason: string | null;
   readonly banExpires: Date | null;
@@ -93,6 +95,15 @@ export interface GuardFacts {
    * read why they are banned (contract §0.3).
    */
   readonly allowBanned?: boolean;
+  /**
+   * Set by the §1.4 deletion-cancel route so a caller whose profile is
+   * `deletion_pending` (or `deleted`) can reach the handler that decides
+   * whether the cancel window is still open.
+   *
+   * The deletion states are otherwise denied with `403` (contract §0.3); the
+   * cancel window cannot exist without this exemption (ADR-0062).
+   */
+  readonly allowDeletionPending?: boolean;
 }
 
 /** The decision the pure table returns. */
@@ -174,7 +185,10 @@ export function evaluateAuth(label: GuardLabel, facts: GuardFacts): AuthDecision
     };
   }
 
-  if (user.status === "deletion_pending" || user.status === "deleted") {
+  if (
+    facts.allowDeletionPending !== true &&
+    (user.status === "deletion_pending" || user.status === "deleted")
+  ) {
     return forbidden();
   }
 
@@ -371,6 +385,7 @@ export async function resolvePrincipal(
     phoneNumberVerified: asBoolean(user.phoneNumberVerified),
     twoFactorEnabled: asBoolean(user.twoFactorEnabled),
     sessionTwoFactorVerified: asBoolean(session.twoFactorVerified),
+    sessionId: asString(session.id) ?? asString(session.sessionId),
     banned: asBoolean(user.banned),
     banReason: asString(user.banReason),
     banExpires: asDate(user.banExpires),
@@ -393,6 +408,8 @@ export interface RequireAuthOptions {
   readonly database: Db;
   /** Set on the ban-exempt routes (`GET /me`, `POST /me/data-requests`). */
   readonly allowBanned?: boolean;
+  /** Set on the §1.4 deletion-cancel route (see {@link GuardFacts}). */
+  readonly allowDeletionPending?: boolean;
   /** Attendee-session port; defaults to the OP-129 stub. */
   readonly attendeeResolver?: AttendeeSessionResolver;
 }
@@ -431,6 +448,7 @@ export function requireAuth(label: AuthLabel, options: RequireAuthOptions): Rout
       principal,
       now: systemClock.now(),
       ...(options.allowBanned === true ? { allowBanned: true } : {}),
+      ...(options.allowDeletionPending === true ? { allowDeletionPending: true } : {}),
     });
 
     if (!decision.allowed) {
@@ -446,7 +464,12 @@ export function requireAuth(label: AuthLabel, options: RequireAuthOptions): Rout
     }
 
     if (principal !== null && principal.kind === "user") {
-      Object.assign(ctx, { principal: principal.userId });
+      Object.assign(ctx, {
+        principal: principal.userId,
+        ...(principal.sessionId === null || principal.sessionId === undefined
+          ? {}
+          : { sessionId: principal.sessionId }),
+      });
     }
 
     return undefined;
