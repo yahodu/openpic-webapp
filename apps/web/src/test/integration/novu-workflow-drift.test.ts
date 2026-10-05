@@ -95,4 +95,39 @@ describe("runTransportDriftCheck (MSW)", () => {
     expect(entry).toBeDefined();
     expect(entry?.level).toBe("error");
   });
+
+  it("I5c: exits 1 and logs at error when a transport workflow's step is inactive", async () => {
+    // Arrange: the three workflows exist with matching channels, but
+    // transport-email's only step is disabled, so it would deliver nothing.
+    const inactive = makeTransportWorkflowList([
+      makeTransportWorkflow({
+        workflowId: "transport-email",
+        steps: [{ active: false, channel: "email" }],
+      }),
+      makeTransportWorkflow({
+        workflowId: "transport-sms",
+        steps: [{ active: true, channel: "sms" }],
+      }),
+      makeTransportWorkflow({
+        workflowId: "transport-whatsapp",
+        steps: [{ active: true, channel: "whatsapp" }],
+      }),
+    ]);
+    server.use(http.get(WORKFLOWS_URL, () => HttpResponse.json(makeNovuWorkflowList(inactive))));
+
+    const { logger, sink } = installLogger();
+
+    // Act
+    const exitCode = await runTransportDriftCheck({
+      baseUrl: NOVU_BASE_URL,
+      apiKey: NOVU_API_KEY,
+      logger,
+    });
+
+    // Assert
+    expect(exitCode).toBe(1);
+    const entry = sink.entries.find((logged) => logged.event === "transport.workflow_drift");
+    expect(entry).toBeDefined();
+    expect(entry?.level).toBe("error");
+  });
 });

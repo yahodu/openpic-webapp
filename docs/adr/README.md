@@ -86,6 +86,9 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0078](ADR-0078-op91-followup-deletion-requested-payload-red.md)                   | OP-91 follow-up RED: pin the `account.deletion.requested` payload (`scheduledAt` + `cancelUrl`)          | Accepted |
 | [0079](ADR-0079-op91-followup-deletion-requested-payload-green.md)                 | OP-91 follow-up GREEN: carry `scheduledAt` + `cancelUrl` in the `account.deletion.requested` payload     | Accepted |
 | [0081](ADR-0081-op91-followup-deletion-requested-payload-review-signoff.md)        | OP-91 follow-up payload review sign-off: payload verified RED→GREEN; ADR drift routed                    | Accepted |
+| [0082](ADR-0082-op92-followup-drift-hardening-red.md)                              | OP-92 follow-up RED: inactive drift step, duplicate id, non-JSON 2xx                                     | Accepted |
+| [0083](ADR-0083-op92-followup-drift-hardening-green.md)                            | OP-92 follow-up GREEN: reject an inactive step + duplicate workflow id; classify a non-JSON 2xx body     | Accepted |
+| [0084](ADR-0084-op92-followup-drift-hardening-green-review-signoff.md)             | OP-92 follow-up GREEN review sign-off: three pins verified; no changes requested                         | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
@@ -93,4 +96,4 @@ _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_e
 
 _`0080` is held by the unmerged OP-93 lane; the OP-91 payload review sign-off takes `0081` to avoid the collision (see ADR-0081)._
 
-_`0070`/`0071`/`0075` belong to the OP-91 follow-up lane (PR #181, landed); the OP-92 lane holds `0072`–`0074` (RED/pins) and `0076`/`0077` (GREEN + review sign-off)._
+_`0070`/`0071`/`0075` belong to the OP-91 follow-up lane (PR #181, landed); the OP-92 lane holds `0072`–`0074` (RED/pins), `0076`/`0077` (GREEN + review sign-off), `0082` (follow-up RED pins), `0083` (follow-up GREEN implementation) and `0084` (follow-up GREEN review sign-off, PR #186, landed). The OP-92 follow-up lane was renumbered `0078`–`0080 → 0082`–`0084` at integration because the OP-91 payload lane claimed `0078`/`0079`/`0081` on `origin/main` first._

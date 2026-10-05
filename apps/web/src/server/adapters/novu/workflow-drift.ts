@@ -37,13 +37,23 @@ export function checkTransportWorkflows(
 ): WorkflowDriftReport {
   const problems: string[] = [];
   const byId = new Map<string, TransportWorkflow>();
+  const duplicates = new Set<string>();
   const expected = new Set<string>(TRANSPORT_WORKFLOW_IDS);
 
   for (const workflow of workflows) {
+    if (byId.has(workflow.workflowId)) {
+      duplicates.add(workflow.workflowId);
+    }
     byId.set(workflow.workflowId, workflow);
     if (!expected.has(workflow.workflowId)) {
       problems.push(`unexpected workflow '${workflow.workflowId}' is not a transport workflow`);
     }
+  }
+
+  for (const workflowId of duplicates) {
+    problems.push(
+      `transport workflow '${workflowId}' appears more than once; the set must have exactly one entry`
+    );
   }
 
   for (const workflowId of TRANSPORT_WORKFLOW_IDS) {
@@ -68,6 +78,12 @@ export function checkTransportWorkflows(
     if (expectedChannel !== undefined && step.channel !== expectedChannel) {
       problems.push(
         `transport workflow '${workflowId}' step channel '${step.channel}' does not match '${expectedChannel}'`
+      );
+    }
+
+    if (!step.active) {
+      problems.push(
+        `transport workflow '${workflowId}' step is not active; it would deliver nothing`
       );
     }
   }
