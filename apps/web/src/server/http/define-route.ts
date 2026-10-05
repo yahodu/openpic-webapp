@@ -11,7 +11,13 @@ import {
 } from "@/server/runtime/request-context";
 
 import { serializeResponse } from "./serialize-response";
-import { jsonResponse, parseJsonBody, errorResponse } from "./respond";
+import {
+  emptyResponse,
+  isNoContentStatus,
+  jsonResponse,
+  parseJsonBody,
+  errorResponse,
+} from "./respond";
 
 /**
  * `defineRoute` — the shared HTTP pipeline (architecture §3).
@@ -44,6 +50,12 @@ export type RouteStageContext = RequestContext;
 export interface HandlerContext<TBody = unknown> extends RequestContext {
   /** The schema-parsed request body (or `undefined` when no schema is declared). */
   readonly body: TBody;
+  /**
+   * The inbound request. Exposed so a dynamic route can read values that are
+   * not part of the matched template (e.g. a path segment), which the pipeline
+   * does not otherwise surface to the handler.
+   */
+  readonly request: Request;
 }
 
 /**
@@ -326,11 +338,22 @@ export function defineRoute<TBody = unknown, TResponse = unknown>(
         }
 
         const body = await resolveBody();
-        const handlerContext: HandlerContext<TBody> = { ...context, body: body as TBody };
+        const handlerContext: HandlerContext<TBody> = { ...context, body: body as TBody, request };
 
         const result = await options.handler(handlerContext);
         const status = result.status ?? 200;
         const env = resolveAppEnv(options.env);
+
+        // A null-body status (`204`/`205`/`304`) must not carry a body: the
+        // `Response` constructor refuses one, so short-circuit before the
+        // serializer and serve an empty response with the security headers.
+        if (isNoContentStatus(status)) {
+          return emptyResponse(status, {
+            ...stageHeaders,
+            ...(result.headers ?? {}),
+            [REQUEST_ID_HEADER]: requestId,
+          });
+        }
 
         const serialized = serializeResponse({
           schema: options.response,

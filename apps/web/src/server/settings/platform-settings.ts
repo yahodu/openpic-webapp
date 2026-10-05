@@ -227,6 +227,19 @@ const notificationsSchema = z.object({
   maxDigestEmailsPerDay: z.number().int().positive(),
 });
 
+/**
+ * `account` — account-lifecycle tunables (contract §1.4, ADR-0008).
+ *
+ * `deletionGraceDays` is the cancel window between a deletion request and the
+ * `account-deletion-purge` cron: the request sets
+ * `deletionScheduledAt = now + deletionGraceDays`, and the user may cancel
+ * until that instant. It is a runtime tunable, never a hard-coded constant
+ * (CONVENTIONS §6).
+ */
+const accountSchema = z.object({
+  deletionGraceDays: z.number().int().positive(),
+});
+
 /** The full `platformSettings` singleton document (schema §20.4). */
 export const platformSettingsSchema = z.object({
   _id: z.literal(SINGLETON_ID),
@@ -236,6 +249,7 @@ export const platformSettingsSchema = z.object({
   pipeline: pipelineSchema,
   upload: uploadSchema,
   notifications: notificationsSchema,
+  account: accountSchema,
   updatedAt: z.string(),
   updatedByUserId: z.string().nullable(),
 });
@@ -302,6 +316,9 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettingsValues = {
     digestQuietMinutes: 15,
     digestHardFlushHours: 6,
     maxDigestEmailsPerDay: 3,
+  },
+  account: {
+    deletionGraceDays: 14,
   },
 };
 

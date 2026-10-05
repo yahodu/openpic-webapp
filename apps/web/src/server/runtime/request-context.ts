@@ -30,6 +30,8 @@ export interface RequestContext {
   readonly startedAt: Date;
   /** The authenticated principal, when known. */
   readonly principal?: string;
+  /** The `session` id (hex) backing the request, when known. */
+  readonly sessionId?: string;
   /** The tenant scope, when known. */
   readonly tenantId?: string;
 }

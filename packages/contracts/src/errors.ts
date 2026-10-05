@@ -77,6 +77,22 @@ export const REQUEST_SHAPE_ERROR_CODES = ["unknown_timezone", "forbidden_field"]
 export type RequestShapeErrorCode = (typeof REQUEST_SHAPE_ERROR_CODES)[number];
 
 /**
+ * Account-lifecycle codes (contract §1.3–§1.4, Appendix A.2).
+ *
+ * `confirmation_mismatch` (`422`, the `confirmEmail` guard on a deletion
+ * request) and `deletion_already_executed` (`409`, a cancel after the purge
+ * window elapsed) are named by the contract but are not members of
+ * {@link ERROR_CODES}, which the server error catalogue pins to exactly the
+ * base Appendix A rows. They are appended to the client-facing enum
+ * ({@link API_ERROR_CODES}) and transported from their own table so both stay
+ * exact. Append-only.
+ */
+export const ACCOUNT_ERROR_CODES = ["confirmation_mismatch", "deletion_already_executed"] as const;
+
+/** A member of the closed {@link ACCOUNT_ERROR_CODES} set. */
+export type AccountErrorCode = (typeof ACCOUNT_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -137,6 +153,7 @@ export const API_ERROR_CODES = [
   ...REQUEST_SHAPE_ERROR_CODES,
   ...PIPELINE_ERROR_CODES,
   ...INTERNAL_ERROR_CODES,
+  ...ACCOUNT_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -148,7 +165,12 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
  * middleware before the pipeline and are never raised as `AppError`s.
  */
 export type AppErrorCode =
-  ErrorCode | AuthErrorCode | RequestShapeErrorCode | PipelineErrorCode | InternalErrorCode;
+  | ErrorCode
+  | AuthErrorCode
+  | RequestShapeErrorCode
+  | PipelineErrorCode
+  | InternalErrorCode
+  | AccountErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
