@@ -184,8 +184,9 @@ describe("getEnabledNotificationTypeKeys — the TTL window", () => {
     expect([...second]).toEqual(["a.enabled"]);
     expect(notificationTypeReads(fake)).toBe(1);
 
-    // At/after the overridden window: re-read and observe the new state.
-    time.advance(1);
+    // Past the overridden window (cursor T0+2501 > expiresAt T0+2500): re-read
+    // and observe the new state.
+    time.advance(501);
     const third = await getEnabledNotificationTypeKeys({ db: fake.db, clock: time.clock, ttlMs });
     expect([...third]).toEqual(["b.enabled"]);
     expect(notificationTypeReads(fake)).toBe(2);
