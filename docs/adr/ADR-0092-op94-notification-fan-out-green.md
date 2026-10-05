@@ -126,13 +126,17 @@ apps/web/tsconfig.json --noEmit` reports only the two expected `TS2307`s.
   Rejected: no test demands them and ADR-0090 explicitly scopes them out;
   writing them would be untested surface.
 
-## Routed observation (not fixed here)
+## Lint: a test-lane rule relaxation (not a production suppression)
 
-The RED unit spec `apps/web/src/server/notifications/fan-out.test.ts` trips
-`@typescript-eslint/unbound-method` eight times (`expect(repository.method)`
-extracting an interface method). The test-file eslint override (ADR-0050-era
-config) relaxes unsafe-* rules but not `unbound-method`, so `eslint .` reports
-eight errors in that spec. Production code is clean. Test files are owned by the
-Test Author; this is routed as a test-side follow-up (wrap the method read in
-`vi.mocked(...)`/a local reference, or add the rule to the test override). CI
-lint is currently disabled, so it does not block this PR.
+The RED specs assert on an interface method by extracting the reference
+(`expect(repository.listEventRoleMembers).toHaveBeenCalled…`), which trips
+`@typescript-eslint/unbound-method` — a known false positive for that idiom
+(the method is never called, so no `this` can be lost). The test-file override
+in `eslint.config.mjs` relaxed the unsafe-* rules but not this one, so `eslint .`
+reported nine errors (eight in the unit spec, one in the integration spec).
+
+Test files are owned by the Test Author and were left untouched. The cause is
+the rule matching a test assertion, so the fix is a narrow, documented
+`"@typescript-eslint/unbound-method": "off"` in the _test-files-only_ override —
+a shared config change, not a test edit and not a production suppression
+(production keeps the rule on). `eslint .` is now 0 errors.
