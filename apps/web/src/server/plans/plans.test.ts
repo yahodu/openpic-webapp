@@ -81,13 +81,16 @@ describe("entitlementSchema feature gate", () => {
 });
 
 describe("planCatalogueSchema tierRank uniqueness", () => {
-  it("U3: rejects two plans that share a tierRank", () => {
+  it("U3: rejects two plans that share a tierRank at the offending tierRank path", () => {
     const catalogue = [
       makePlan({ key: "starter", tierRank: 1 }),
       makePlan({ key: "professional", tierRank: 1 }),
     ];
 
-    expect(planCatalogueSchema.safeParse(catalogue).success).toBe(false);
+    // The issue path is asserted, not just failure: the second plan (index 1)
+    // must be named, so an unrelated schema failure cannot masquerade as "the
+    // duplicate tierRank was caught" (U1/U2 assert their paths the same way).
+    expect(issuePaths(planCatalogueSchema.safeParse(catalogue))).toContain("1.tierRank");
   });
 
   it("U3: accepts a catalogue with distinct tierRanks", () => {
