@@ -39,7 +39,9 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  *       `deletionScheduledAt: null`, and the schedule is computed from
  *       `platformSettings.account.deletionGraceDays`;
  *   I6  cancelling once the purge window has elapsed is `409
- *       deletion_already_executed`.
+ *       deletion_already_executed`;
+ *   I7  a matching `confirmEmail` emits exactly one `account.deletion.requested`
+ *       row through the lifecycle seam (§1.4).
  *
  * ## Contract expected of the implementation
  *
@@ -66,7 +68,7 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  * (ADR-0008 names the additive `account` section), never hard-coded; the body is
  * `{ status: "deletion_pending", scheduledAt, cancelUntil, cancelUrl }`.
  *
- * ## Deliberate assumptions (see ADR-0057)
+ * ## Deliberate assumptions (see ADR-0067)
  *
  * - "The purge has started" is modelled as a `deletion_pending` profile whose
  *   `deletionScheduledAt` is in the past — the exact predicate the
@@ -456,11 +458,14 @@ describe("sessions & devices (contract §1.3)", () => {
 
     // The revocation is emitted through the lifecycle seam (ADR-0040 §4 /
     // ADR-0048 §6): the endpoint revokes via Better Auth, not by deleting rows.
-    const emitted = await database.collection(DOMAIN_EVENTS_COLLECTION).findOne({
+    // The contract says EXACTLY ONE row per revoke-all, so assert the count — a
+    // `not.toBeNull()` check would silently pass a double-emit (e.g. a future
+    // `session.delete` database hook firing alongside the explicit seam).
+    const emitted = await database.collection(DOMAIN_EVENTS_COLLECTION).countDocuments({
       eventKey: "account.sessions.revoked",
       "subjectRef.id": String(user._id),
     });
-    expect(emitted).not.toBeNull();
+    expect(emitted).toBe(1);
   });
 
   it("I3: revoke-all with keepCurrent false revokes every session", async () => {
@@ -580,5 +585,26 @@ describe("account deletion (contract §1.4)", () => {
     // The profile stays pending — a refused cancel never resurrects it.
     const profile = await findProfile(user._id);
     expect(profile?.status).toBe("deletion_pending");
+  });
+
+  it("I7: requesting deletion emits exactly one account.deletion.requested row", async () => {
+    const identity = makeIdentity();
+    const cookie = await signInWithEmailOtp(identity);
+
+    const requested = await deletionPost(deletionRequest(cookie, { confirmEmail: identity.email }));
+    expect(requested.status).toBe(202);
+
+    const user = await findUser(identity);
+
+    // §1.4 requires the request to announce itself: the route emits through the
+    // lifecycle seam (the `handleDeletionRequested` counterpart of the I3
+    // `handleSessionsRevoked` emit), giving EXACTLY ONE outbox row subject to
+    // the deleting user. A route that only flips the profile to
+    // `deletion_pending` (zero rows) or double-emits (count 2) fails here.
+    const emitted = await database.collection(DOMAIN_EVENTS_COLLECTION).countDocuments({
+      eventKey: "account.deletion.requested",
+      "subjectRef.id": String(user._id),
+    });
+    expect(emitted).toBe(1);
   });
 });
