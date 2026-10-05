@@ -88,6 +88,11 @@ export default tseslint.config(
               group: ["**/server/logging/**", "@/server/logging/*"],
               message: "Import only the Logger port from @/server/logging.",
             },
+            {
+              group: ["novu", "@novu/*"],
+              message:
+                "Import Novu only inside the Novu adapter (src/server/adapters/novu) or the scripts/novu admin CLI; elsewhere depend on the MessageTransport port.",
+            },
           ],
         },
       ],
@@ -96,6 +101,31 @@ export default tseslint.config(
   {
     // Same logging boundary for the rest of the server tree.
     files: ["apps/web/src/server/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/server/logging/**", "@/server/logging/*"],
+              message: "Import only the Logger port from @/server/logging.",
+            },
+            {
+              group: ["novu", "@novu/*"],
+              message:
+                "Import Novu only inside the Novu adapter (src/server/adapters/novu) or the scripts/novu admin CLI; elsewhere depend on the MessageTransport port.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The Novu adapter is the one module allowed to import the vendor SDK.
+    // Flat config replaces a rule's options when a later matching object sets
+    // the same rule, so this restores the logging boundary *without* the Novu
+    // patterns for the adapter (and only the adapter).
+    files: ["apps/web/src/server/adapters/novu/**"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -136,6 +166,11 @@ export default tseslint.config(
               ],
               message:
                 "Cron jobs write domainEvents; the fan-out consumer delivers notifications, so a job must not import a notification or delivery adapter.",
+            },
+            {
+              group: ["novu", "@novu/*"],
+              message:
+                "Import Novu only inside the Novu adapter (src/server/adapters/novu) or the scripts/novu admin CLI; elsewhere depend on the MessageTransport port.",
             },
           ],
         },
