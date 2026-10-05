@@ -1,3 +1,9 @@
+## [1.6.1](https://github.com/yahodu/openpic-webapp/compare/v1.6.0...v1.6.1) (2026-10-05)
+
+### Bug Fixes
+
+- **notifications:** OP-84 reconcile auth.account.completed severity and tighten enabled-mobile schema ([#125](https://github.com/yahodu/openpic-webapp/issues/125)) ([604779f](https://github.com/yahodu/openpic-webapp/commit/604779f63e201610db205b378747a2871a38ebbc))
+
 ## [1.6.0](https://github.com/yahodu/openpic-webapp/compare/v1.5.1...v1.6.0) (2026-10-05)
 
 ### Features
