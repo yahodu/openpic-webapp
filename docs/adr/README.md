@@ -64,9 +64,17 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0056](ADR-0056-op90-me-projection-green-review-signoff.md)                        | OP-90 GREEN review sign-off: §1.2 projection verified; index gap and phone-only decision routed          | Accepted |
 | [0057](ADR-0057-op89-identity-lifecycle-red-pins-r3-followup-review.md)            | OP-89 RED-pins R3 follow-up review sign-off: same-device >100 read-cap pin verified                      | Accepted |
 | [0058](ADR-0058-op89-identity-lifecycle-indexes-green-review.md)                   | OP-89 indexes/TTLs GREEN review sign-off: device-keyed bounded new-device read verified                  | Accepted |
+| [0059](ADR-0059-op90-adr-0044-test-reference-renumber.md)                          | OP-90 follow-up: stale ADR-0044 test reference renumbered to ADR-0052                                    | Accepted |
 | [0060](ADR-0060-op90-me-indexes.md)                                                | OP-90 follow-up: declare the `tenantMembers` and `invitations` indexes behind `GET /me`                  | Accepted |
 | [0061](ADR-0061-op90-me-email-phone-only-string-contract.md)                       | OP-90 §1.2 `me` `email` is a non-nullable string; the phone-only `""` path is unreachable/defensive-only | Accepted |
-| [0062](ADR-0062-op91-sessions-and-account-deletion-red.md)                         | OP-91 RED: sessions & devices list/revoke and the account-deletion cancel window                         | Accepted |
-| [0063](ADR-0063-op91-sessions-and-account-deletion-green.md)                       | OP-91 GREEN: the §1.3 sessions surfaces and the §1.4 deletion cancel window                              | Accepted |
+| [0062](ADR-0062-op89-followup-green-coverage-pins.md)                              | OP-89 follow-up coverage pins: contact-change fan-out on a partial failure; stale ADR reference fixed    | Accepted |
+| [0063](ADR-0063-op89-followup-coverage-pins-review-signoff.md)                     | OP-89 coverage-pins review sign-off: partial-failure pin RED for the right reason; two Low refs routed   | Accepted |
+| [0064](ADR-0064-op89-followup-green-partial-failure-recovery.md)                   | OP-89 follow-up GREEN: recover the contact-change fan-out after a partial insert failure                 | Accepted |
+| [0065](ADR-0065-op89-followup-green-partial-failure-recovery-review-signoff.md)    | OP-89 follow-up GREEN review sign-off: fan-out recovery verified RED→GREEN; three Low references routed  | Accepted |
+| [0066](ADR-0066-op89-identity-indexes-test-reference-renumber.md)                  | OP-89 follow-up: stale ADR-0046 test references in the identity pin specs renumbered to ADR-0050         | Accepted |
+| [0067](ADR-0067-op91-sessions-and-account-deletion-red.md)                         | OP-91 RED: sessions & devices list/revoke and the account-deletion cancel window                         | Accepted |
+| [0068](ADR-0068-op91-sessions-and-account-deletion-green.md)                       | OP-91 GREEN: the §1.3 sessions surfaces and the §1.4 deletion cancel window                              | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
+
+_`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._

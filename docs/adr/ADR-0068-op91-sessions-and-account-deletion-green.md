@@ -1,8 +1,8 @@
-# ADR-0063 — OP-91 GREEN: sessions & devices and the account-deletion cancel window
+# ADR-0068 — OP-91 GREEN: sessions & devices and the account-deletion cancel window
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-backend-coder`
 - **Card:** `t_19486cb2` (OP-91, phase 1-Identity) · **Stage:** GREEN
-- **RED contract:** ADR-0062 (sessions & devices and the account-deletion cancel
+- **RED contract:** ADR-0067 (sessions & devices and the account-deletion cancel
   window; renumbered from ADR-0057 on merge — see Consequences)
 - **Contract:** API contract §1.3 (Sessions & devices), §1.4 (Account
   deletion), §0.15 (never-return), Appendix A.2
@@ -88,7 +88,7 @@ returning the raw IP.
 
 - ADR numbering: the RED ADR arrived as `ADR-0057-op91-…`, which collided with
   the OP-89 `ADR-0057-…` already on `main`. The merge renumbered the OP-91 RED
-  ADR to **ADR-0062**; the one RED integration comment that cites
+  ADR to **ADR-0067**; the one RED integration comment that cites
   "ADR-0057" now points at OP-89's sign-off and should be renumbered in a
   follow-up test-reference card (test files are out of this implementer's scope).
 - `account.deletion.requested` (contract §1.4) is **not** emitted yet: no test

@@ -931,7 +931,7 @@ describe("handleSessionCreated — unclaimed op_att claim service", () => {
 });
 
 /* ------------------------------------------------------------------------- *
- * OP-89 follow-up RED pins (ADR-0043) — append-only extension.
+ * OP-89 follow-up RED pins (ADR-0045) — append-only extension.
  *
  * These pin the two MEDIUM findings of the OP-89 GREEN review (ADR-0042 §4-5)
  * and the LOW 2FA transition finding (ADR-0042 §6):
@@ -1035,7 +1035,7 @@ describe("re-run idempotency — a redelivered hook emits exactly once (card AC)
   });
 });
 
-describe("section 4-6 surface seam — createIdentityLifecycleSeams (ADR-0043 §3)", () => {
+describe("section 4-6 surface seam — createIdentityLifecycleSeams (ADR-0045 §3)", () => {
   it("S8: the contact-changed seam emits the flags event and records one fanout", async () => {
     await withTestDb(async (test) => {
       const userId = new ObjectId();
@@ -1134,7 +1134,7 @@ describe("section 4-6 surface seam — createIdentityLifecycleSeams (ADR-0043 §
   });
 });
 
-describe("section 2 surface — the contact-verified Better Auth adapter (ADR-0043 §3)", () => {
+describe("section 2 surface — the contact-verified Better Auth adapter (ADR-0045 §3)", () => {
   it("S11: user.update.after completes the account and emits auth.account.completed once", async () => {
     await withTestDb(async (test) => {
       const userId = new ObjectId();
@@ -1159,7 +1159,7 @@ describe("section 2 surface — the contact-verified Better Auth adapter (ADR-00
 });
 
 /* ------------------------------------------------------------------------- *
- * OP-89 follow-up pins (ADR-0046) — the bounded new-device read.
+ * OP-89 follow-up pins (ADR-0050) — the bounded new-device read.
  *
  * `handleSessionCreated` decides "new device" from the user's `sessionDevices`
  * sightings, filtered to the 24-hour window and capped at the newest 100 rows
@@ -1181,7 +1181,7 @@ describe("section 2 surface — the contact-verified Better Auth adapter (ADR-00
 /** The app-owned per-session device sightings collection (schema §13.5). */
 const SESSION_DEVICES_COLLECTION = "sessionDevices";
 
-/** The documented cap on the new-device read (ADR-0043 §2, ADR-0046). */
+/** The documented cap on the new-device read (ADR-0043 §2, ADR-0050). */
 const SESSION_DEVICE_READ_CAP = 100;
 
 /**
@@ -1292,7 +1292,7 @@ function seedSameDeviceSightings(
   return rows;
 }
 
-describe("OP-89 new-device read cap (ADR-0046)", () => {
+describe("OP-89 new-device read cap (ADR-0050)", () => {
   it("R1: an in-window matching sighting outside the newest 100 still suppresses auth.signin.new_device", async () => {
     await withTestDb(async (test) => {
       const userId = new ObjectId();
@@ -1407,6 +1407,102 @@ describe("OP-89 new-device read cap (ADR-0046)", () => {
         Math.max(...readSizes),
         `the new-device read must stay bounded by the ${String(SESSION_DEVICE_READ_CAP)}-sighting cap`
       ).toBeLessThanOrEqual(SESSION_DEVICE_READ_CAP);
+    });
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * OP-89 follow-up GREEN coverage pin (ADR-0045 §1) — append-only extension.
+ *
+ * `handleContactChanged` performs two writes that are **not atomic**: it
+ * emits `auth.contact.changed` and then inserts the transient
+ * `contactChangeFanouts` row the security alert reads. The emit is deduped on
+ * `auth.contact.changed:${userId}:${instant}`, and the handler returns
+ * *before* the fan-out insert whenever that emit dedupes (`emitted.id ===
+ * null`). So when the emit commits but the fan-out insert fails, an
+ * at-least-once redelivery at the same instant finds the emit already deduped,
+ * short-circuits, and never re-runs the insert — the security alert's target
+ * for the replaced contact is permanently lost.
+ *
+ * This spec pins the honest outcome: a redelivery after that partial failure
+ * must not silently leave zero fan-out rows. It is RED against the current
+ * handler (count 0), which is the defect the pin exists to expose.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * A `Db` whose first `contactChangeFanouts.insertOne` rejects.
+ *
+ * Wraps `base` so only that single write fails: the outbox emit and every
+ * other collection pass through the real driver. This models the partial
+ * failure `handleContactChanged` is exposed to — the emit has committed but
+ * the fan-out insert has not.
+ */
+function contactFanoutInsertFailingDb(base: Db): Db {
+  let failNextFanoutInsert = true;
+  return new Proxy(base, {
+    get(target, property, receiver): unknown {
+      if (property !== "collection") {
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return (name: string): unknown => {
+        const collection = target.collection(name);
+        if (name !== CONTACT_CHANGE_FANOUTS_COLLECTION) {
+          return collection;
+        }
+        return new Proxy(collection, {
+          get(fanoutTarget, fanoutProperty): unknown {
+            if (fanoutProperty === "insertOne" && failNextFanoutInsert) {
+              failNextFanoutInsert = false;
+              return () => Promise.reject(new Error("contactChangeFanouts insert unavailable"));
+            }
+            const value: unknown = Reflect.get(fanoutTarget, fanoutProperty);
+            return typeof value === "function"
+              ? (value as (...args: unknown[]) => unknown).bind(fanoutTarget)
+              : value;
+          },
+        });
+      };
+    },
+  });
+}
+
+describe("handleContactChanged — the fan-out survives a partial failure (ADR-0045 §1)", () => {
+  it("I10: a retry after a failed fan-out insert still records one fan-out row for the alert", async () => {
+    await withTestDb(async (test) => {
+      const userId = new ObjectId();
+      const clock = fixedClock(T0);
+      const event: ContactChangedEvent = {
+        userId: userId.toHexString(),
+        previous: { email: `old-${userId.toHexString()}@example.com` },
+        current: { email: `new-${userId.toHexString()}@example.com` },
+      };
+
+      // Healthy outbox (the real emit) behind a db whose first
+      // `contactChangeFanouts.insertOne` rejects: the emit commits, the
+      // fan-out insert does not. The handler may throw here; the partial
+      // failure itself is not the defect — losing the fan-out is.
+      await handleContactChanged(event, { db: contactFanoutInsertFailingDb(test.db), clock }).catch(
+        () => undefined
+      );
+
+      // At-least-once delivery redelivers the same change at the same instant.
+      await handleContactChanged(event, { db: test.db, clock });
+
+      // The emit dedupe held: exactly one event row.
+      expect(await eventsByKey(test, "auth.contact.changed")).toHaveLength(1);
+
+      // The security alert must not lose its target. Whatever the handler does
+      // with the deduped emit, the redelivery has to leave a usable fan-out
+      // record behind — not silently return with zero rows.
+      const fanouts = await test.db
+        .collection<ContactChangeFanout>(CONTACT_CHANGE_FANOUTS_COLLECTION)
+        .find({})
+        .toArray();
+      expect(fanouts).toHaveLength(1);
+      expect(fanouts[0]?.userId).toBe(userId.toHexString());
+      expect(fanouts[0]?.previous.email).toBe(event.previous.email);
+      expect(fanouts[0]?.current.email).toBe(event.current.email);
     });
   });
 });
