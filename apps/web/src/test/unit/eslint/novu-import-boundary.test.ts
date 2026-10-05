@@ -1,4 +1,4 @@
-import { ESLint, type Linter } from "eslint";
+import { ESLint, Linter } from "eslint";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -15,22 +15,50 @@ import { describe, expect, it } from "vitest";
  *
  * `eslint.config.mjs` must therefore register a `no-restricted-imports` boundary
  * for the `@novu/*` packages and the bare `novu` package. This spec drives the
- * real flat config through the ESLint API on synthetic sources, so it fails
- * when the boundary is missing and passes when it is present — without a
- * snapshot of the config file's text.
+ * repository's **real** flat config: for each probed path it resolves the config
+ * with `ESLint.calculateConfigForFile(path)` and then executes the resolved
+ * `no-restricted-imports` rule over synthetic source. That keeps the check
+ * behavioural — it runs the real rule with the per-path options the real config
+ * produces — without requiring a synthetic file to exist in a TypeScript
+ * project. (Under `parserOptions.projectService: true`, `lintText` on a
+ * non-project path yields only a parsing error, and the type-aware rules cannot
+ * run without parser services; resolving the config first and running just the
+ * syntactic boundary rule sidesteps both, and no `eslint.config.mjs` source text
+ * is snapshotted.)
+ *
+ * The spec is RED until the boundary exists — today the resolved options carry
+ * no Novu pattern for any probed path, so a Novu import is not reported.
  */
 
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
 
-/** Lint a synthetic source file against the repository's real flat config. */
-async function lintSynthetic(filePath: string, code: string): Promise<Linter.LintMessage[]> {
+/**
+ * Report the rule ids that flag `code` when linted as `filePath` under the
+ * repository's real ESLint configuration.
+ *
+ * @param filePath - Repo-relative path whose resolved config governs the lint.
+ * @param code - Synthetic source to lint.
+ * @returns The ids of the rules that reported a problem (parsing/other
+ *   rule-less messages are excluded).
+ */
+async function reportedRuleIds(filePath: string, code: string): Promise<string[]> {
   const eslint = new ESLint({ cwd: repoRoot });
-  const results = await eslint.lintText(code, { filePath: `${repoRoot}${filePath}` });
-  return results[0]?.messages ?? [];
-}
+  const config = await eslint.calculateConfigForFile(`${repoRoot}${filePath}`);
+  const boundary = config?.rules?.["no-restricted-imports"];
 
-/** The ids of the rules that flagged the synthetic source. */
-function reportedRuleIds(messages: readonly Linter.LintMessage[]): string[] {
+  const linter = new Linter({ configType: "flat" });
+  const messages = linter.verify(
+    code,
+    [
+      {
+        files: ["**/*.ts"],
+        languageOptions: { parser: config?.languageOptions?.parser },
+        rules: boundary === undefined ? {} : { "no-restricted-imports": boundary },
+      },
+    ],
+    `${repoRoot}${filePath}`
+  );
+
   return messages
     .map((message) => message.ruleId)
     .filter((ruleId): ruleId is string => ruleId !== null);
@@ -39,56 +67,56 @@ function reportedRuleIds(messages: readonly Linter.LintMessage[]): string[] {
 describe("Novu SDK import boundary (AC1)", () => {
   it("reports a scoped Novu SDK import from a server service module", async () => {
     // Act
-    const messages = await lintSynthetic(
+    const ruleIds = await reportedRuleIds(
       "apps/web/src/server/services/notification-sender.ts",
       'import { Novu } from "@novu/node";\n'
     );
 
     // Assert
-    expect(reportedRuleIds(messages)).toContain("no-restricted-imports");
+    expect(ruleIds).toContain("no-restricted-imports");
   });
 
   it("reports the bare novu package import from a route handler", async () => {
     // Act
-    const messages = await lintSynthetic(
+    const ruleIds = await reportedRuleIds(
       "apps/web/src/app/api/v1/notifications/route.ts",
       'import Novu from "novu";\n'
     );
 
     // Assert
-    expect(reportedRuleIds(messages)).toContain("no-restricted-imports");
+    expect(ruleIds).toContain("no-restricted-imports");
   });
 
   it("reports a scoped Novu SDK import from a domain module", async () => {
     // Act
-    const messages = await lintSynthetic(
+    const ruleIds = await reportedRuleIds(
       "apps/web/src/server/domain/notification.ts",
       'import { Workflow } from "@novu/api";\n'
     );
 
     // Assert
-    expect(reportedRuleIds(messages)).toContain("no-restricted-imports");
+    expect(ruleIds).toContain("no-restricted-imports");
   });
 
   it("does not report a Novu SDK import inside the Novu adapter", async () => {
     // Act
-    const messages = await lintSynthetic(
+    const ruleIds = await reportedRuleIds(
       "apps/web/src/server/adapters/novu/novu-transport.ts",
       'import { Novu } from "@novu/node";\n'
     );
 
     // Assert
-    expect(reportedRuleIds(messages)).not.toContain("no-restricted-imports");
+    expect(ruleIds).not.toContain("no-restricted-imports");
   });
 
   it("does not report a Novu SDK import inside the scripts/novu admin CLI", async () => {
     // Act
-    const messages = await lintSynthetic(
+    const ruleIds = await reportedRuleIds(
       "scripts/novu/upsert-workflows.ts",
       'import { Novu } from "@novu/node";\n'
     );
 
     // Assert
-    expect(reportedRuleIds(messages)).not.toContain("no-restricted-imports");
+    expect(ruleIds).not.toContain("no-restricted-imports");
   });
 });
