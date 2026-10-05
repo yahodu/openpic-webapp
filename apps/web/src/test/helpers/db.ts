@@ -6,6 +6,10 @@ import { getMongoClient } from "@/server/db/mongo";
 
 import { makeEnv, toProcessEnv, type EnvInput } from "../factories/env";
 
+import { MONGO_READY_RETRY_MS, MONGO_READY_TIMEOUT_MS, pollReady } from "./poll-ready";
+
+export { MONGO_READY_TIMEOUT_MS };
+
 /**
  * Test database utility (OP-75, §6), plus the shared MongoDB readiness guard.
  *
@@ -25,9 +29,6 @@ export interface TestDb {
   cleanup(): Promise<void>;
 }
 
-/** How long {@link waitForMongoReady} keeps retrying before it gives up, in ms. */
-export const MONGO_READY_TIMEOUT_MS = 30_000;
-
 /**
  * Hook budget for a `beforeAll` that awaits {@link setupMongoTestEnv}.
  *
@@ -35,9 +36,6 @@ export const MONGO_READY_TIMEOUT_MS = 30_000;
  * never itself race Vitest's hook timeout and fail for the wrong reason.
  */
 export const MONGO_READY_HOOK_TIMEOUT_MS = MONGO_READY_TIMEOUT_MS + 5_000;
-
-/** Delay between readiness probes; short enough to react promptly to a late primary. */
-const MONGO_READY_RETRY_MS = 250;
 
 /**
  * Read the connection string the integration `globalSetup` published.
@@ -90,27 +88,14 @@ export function applyMongoTestEnv(overrides: EnvInput = {}): string {
  * @throws If no primary answers a ping before the budget is exhausted.
  */
 export async function waitForMongoReady(options: { timeoutMs?: number } = {}): Promise<void> {
-  const timeoutMs = options.timeoutMs ?? MONGO_READY_TIMEOUT_MS;
   const client = getMongoClient();
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown;
-
-  for (;;) {
-    try {
-      await client.db("admin").command({ ping: 1 });
-      return;
-    } catch (error) {
-      lastError = error;
-    }
-
-    if (Date.now() >= deadline) {
-      throw new Error(`MongoDB replica set did not become ready within ${String(timeoutMs)}ms`, {
-        cause: lastError,
-      });
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, MONGO_READY_RETRY_MS));
-  }
+  await pollReady({
+    ping: () => client.db("admin").command({ ping: 1 }),
+    timeoutMs: options.timeoutMs ?? MONGO_READY_TIMEOUT_MS,
+    retryMs: MONGO_READY_RETRY_MS,
+    timeoutMessage: (timeoutMs) =>
+      `MongoDB replica set did not become ready within ${String(timeoutMs)}ms`,
+  });
 }
 
 /**

@@ -156,3 +156,32 @@ above is unchanged.**
   `MONGO_READY_TIMEOUT_MS` / `MONGO_READY_RETRY_MS` constants that also live in
   `helpers/db.ts`; extracting a shared low-level poll helper would remove the
   drift risk. Non-blocking, tracked as a follow-up card.
+
+## Amendment note — one shared readiness loop (OP-85 follow-up, t_14ee02fe)
+
+The reviewer's Low follow-up above is now closed. **The decision above is
+unchanged** — still a deterministic ping probe with an explicit budget, no
+assertion relaxed; only the location of the shared loop moved.
+
+- **Single source of truth.** `apps/web/src/test/helpers/poll-ready.ts` now owns
+  `pollReady()` and the `MONGO_READY_TIMEOUT_MS = 30_000` /
+  `MONGO_READY_RETRY_MS = 250` constants. The module imports nothing, so it is
+  safe to load in the setup process (which runs before `MONGODB_URI` exists).
+  Both `waitForMongoReady` (`helpers/db.ts`) and `waitForPrimary`
+  (`integration/global-setup.ts`) became thin wrappers that supply their own
+  ping thunk and keep their exact error strings and budgets, so a future budget
+  change is made in exactly one place.
+- **The private probe client is preserved.** `global-setup.ts` keeps its short
+  `serverSelectionTimeoutMS = 2_000` client; only the retry loop was shared.
+- **New unit contract.** `apps/web/src/test/helpers/poll-ready.test.ts` pins the
+  loop's observable behaviour: immediate resolve on first success with no timer,
+  retry-until-success, the configured retry delay between probes, the fail-loud
+  message plus `cause` on budget exhaustion, and the shared constant values. It
+  was written RED first (`Cannot find module './poll-ready'`) before the helper
+  existed.
+- **No assertion changed.** No integration spec was edited; every driver-touching
+  suite still routes through `setupMongoTestEnv()` / `waitForMongoReady()`.
+- **Verified:** integration suite 33 files / 201 passed on two consecutive runs
+  (`TMPDIR=/root/tmp-mongo`); unit 64 files / 1284 passed (was 63 / 1278; +6 new
+  helper specs); `tsc` (root + contracts + web) clean; `eslint` 0 errors / 20
+  pre-existing warnings; `prettier --check .` clean.

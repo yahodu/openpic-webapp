@@ -1,6 +1,8 @@
 import { MongoClient } from "mongodb";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
 
+import { MONGO_READY_RETRY_MS, MONGO_READY_TIMEOUT_MS, pollReady } from "../helpers/poll-ready";
+
 /**
  * Integration globalSetup: boots a single-node MongoDB replica set so that
  * multi-document transactions work exactly as in production, and publishes the
@@ -12,12 +14,6 @@ import { MongoMemoryReplSet } from "mongodb-memory-server";
  * replica-set discovery / primary election inside a timed spec. See ADR-0037.
  */
 let replSet: MongoMemoryReplSet | undefined;
-
-/** How long the setup probe waits for an elected primary, in ms. */
-const MONGO_READY_TIMEOUT_MS = 30_000;
-
-/** Delay between readiness probes, in ms. */
-const MONGO_READY_RETRY_MS = 250;
 
 /** Per-attempt server-selection window; short so a failed probe retries promptly. */
 const PROBE_SERVER_SELECTION_TIMEOUT_MS = 2_000;
@@ -33,27 +29,15 @@ async function waitForPrimary(uri: string): Promise<void> {
   const client = new MongoClient(uri, {
     serverSelectionTimeoutMS: PROBE_SERVER_SELECTION_TIMEOUT_MS,
   });
-  const deadline = Date.now() + MONGO_READY_TIMEOUT_MS;
-  let lastError: unknown;
 
   try {
-    for (;;) {
-      try {
-        await client.db("admin").command({ ping: 1 });
-        return;
-      } catch (error) {
-        lastError = error;
-      }
-
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `MongoDB replica set did not elect a primary within ${String(MONGO_READY_TIMEOUT_MS)}ms`,
-          { cause: lastError }
-        );
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, MONGO_READY_RETRY_MS));
-    }
+    await pollReady({
+      ping: () => client.db("admin").command({ ping: 1 }),
+      timeoutMs: MONGO_READY_TIMEOUT_MS,
+      retryMs: MONGO_READY_RETRY_MS,
+      timeoutMessage: (timeoutMs) =>
+        `MongoDB replica set did not elect a primary within ${String(timeoutMs)}ms`,
+    });
   } finally {
     await client.close();
   }
