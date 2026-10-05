@@ -1,3 +1,9 @@
+## [1.8.0](https://github.com/yahodu/openpic-webapp/compare/v1.7.1...v1.8.0) (2026-10-05)
+
+### Features
+
+- **auth:** OP-86 auth guards for every auth label ([#133](https://github.com/yahodu/openpic-webapp/issues/133)) ([c2d96dc](https://github.com/yahodu/openpic-webapp/commit/c2d96dceb0f23315a7896be70f1a8838d2977683))
+
 ## [1.7.1](https://github.com/yahodu/openpic-webapp/compare/v1.7.0...v1.7.1) (2026-10-05)
 
 ### Bug Fixes
