@@ -279,3 +279,25 @@ following decisions.
   production code was changed by this card, and the `vercel.json` `crons`
   deferral and the `src/server/jobs/**` import-boundary rule recorded above are
   unchanged.
+
+## Reviewer sign-off — authenticated sample-route coverage pin (OP-87 follow-up, card `t_cb2f94bf`)
+
+- **Reviewed:** commit `a0dcb99` on `OP-87-task-internal-cron-route-coverage-red`
+  (base `origin/main` `28acbee`). Diff = the new integration spec + this ADR; no
+  production code.
+- **Verified independently:** unit `59 files / 1227 passed`; integration
+  `TMPDIR=/root/tmp-mongo → 32 files / 192 passed` (+1 file / +7 tests over the
+  GREEN baseline `31 / 185`); the file goes red for the right reason when the
+  route is absent (`Cannot find package
+'@/app/api/v1/internal/cron/sample/route'`); ESLint exit 0 and Prettier clean.
+- **Verdict:** `APPROVED` (LGTM). All four pins present and correct; honesty
+  audit clean; three Low non-actionable observations (duplicate `I6` test label,
+  reliance on `getConfig()` module caching, a double cast on the error envelope)
+  — no rework requested, no new cards.
+- **Landing decision (this ADR is the record):** the OP-87 GREEN PR (#139 /
+  `e061771`) had already merged, so no _future_ GREEN PR could carry these pins.
+  Because they are green regression pins that require no production change, the
+  reviewer landed the branch directly as PR #142, squash-merged to `main` as
+  `f994ce0`, rather than stranding them on an unmerged RED branch. The
+  `vercel.json` `crons` deferral and the `src/server/jobs/**` import-boundary rule
+  above are unchanged.
