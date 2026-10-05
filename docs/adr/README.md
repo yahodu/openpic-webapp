@@ -94,6 +94,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0087](ADR-0087-op93-red-pins-followup-review-signoff.md)                          | OP-93 RED-pins follow-up review sign-off: U24–U26 verified RED; no changes routed                        | Accepted |
 | [0088](ADR-0088-op93-channel-resolution-and-template-renderer-green.md)            | OP-93 GREEN: `resolveChannel` + `renderTemplate` implementation and the U18 fixture dispute              | Accepted |
 | [0089](ADR-0089-op93-u18-fixture-reconciliation-review-signoff.md)                 | OP-93 U18 fixture-reconciliation review sign-off: escaping pin intact, no production change              | Accepted |
+| [0090](ADR-0090-op94-notification-fan-out-red.md)                                  | OP-94 RED: notification fan-out consumer contract (outbox → feed + dispatches)                           | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
