@@ -135,3 +135,24 @@ budget, with no assertion relaxed.
   drive, so the deliverable is the harness change itself, verified GREEN. The
   readiness wait is exercised by every suite's `beforeAll` on each run; the
   fail-loud timeout path is not separately spec'd (see card out-of-scope).
+
+## Amendment note — reviewer sign-off on the shared readiness guard (t_d025a82c)
+
+Reviewed and approved (round 1, artifact lens) on 2026-10-05 by
+`openpic-webapp-reviewer`; squash-merged as `13004aa` (PR #155). **The decision
+above is unchanged.**
+
+- **No assertion drift.** Every `expect(...)` line in all 18 changed integration
+  specs was diffed against `origin/main` and is byte-identical; the change set is
+  imports plus `beforeAll`/`afterAll` hooks only.
+- **Coverage of the finding.** Exactly the 18 integration specs that touch the
+  driver route through `setupMongoTestEnv()`/`waitForMongoReady()`; the 15
+  non-driver suites are intentionally untouched. `mongo-replset.test.ts` keeps its
+  private client and is covered by the `global-setup.ts` primary-election probe.
+- **Independently reproduced.** Integration suite 33 files / 201 passed on two
+  consecutive runs (`TMPDIR=/root/tmp-mongo`); `tsc` (root + contracts + web),
+  `eslint` and `prettier --check` clean; all CI checks green on head `90dd83b`.
+- **Low follow-up filed.** `global-setup.ts` duplicates the retry loop and the
+  `MONGO_READY_TIMEOUT_MS` / `MONGO_READY_RETRY_MS` constants that also live in
+  `helpers/db.ts`; extracting a shared low-level poll helper would remove the
+  drift risk. Non-blocking, tracked as a follow-up card.
