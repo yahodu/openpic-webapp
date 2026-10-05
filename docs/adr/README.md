@@ -48,5 +48,6 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0040](ADR-0040-op89-identity-lifecycle-hooks-red-followup.md)                   | OP-89 RED follow-up: sections 4–6 hooks, the contact-change fan-out record and the op_att claim seam | Accepted |
 | [0041](ADR-0041-op89-identity-lifecycle-hooks-green.md)                          | OP-89 GREEN: module contract, profile-precedence read, account-scope ids, `GET /me` slice            | Accepted |
 | [0042](ADR-0042-op89-identity-lifecycle-hooks-green-review.md)                   | OP-89 GREEN review sign-off: index/TTL gaps, unwired sections 4–6, idempotency routing               | Accepted |
+| [0043](ADR-0043-op89-identity-lifecycle-indexes-ttls.md)                         | OP-89 follow-up: declare the identity-lifecycle collections' indexes and TTLs                        | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.

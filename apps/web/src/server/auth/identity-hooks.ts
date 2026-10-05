@@ -2,6 +2,7 @@ import type { Db, Document } from "mongodb";
 import { ObjectId } from "mongodb";
 
 import { getRateLimitConfig } from "@/server/config/env";
+import { COLLECTIONS } from "@/server/db/collections";
 import {
   emitDomainEvent,
   type DomainEventInput,
@@ -46,25 +47,44 @@ import { parseLocale } from "./locale";
  * reach a domain-event payload (the append-only outbox has a 180-day TTL).
  *
  * The stored auth collections are Better Auth-owned (`user`, `session`) and the
- * outbox is `domain_events`. The three app collections below are camelCase and
- * deliberately not part of `COLLECTIONS` (schema §13.2, §19.3, §13.6).
+ * outbox is `domain_events`. The app-owned collections are registered in
+ * `COLLECTIONS` (schema §13.2, §19.3, §13.6) so their indexes can be declared in
+ * `INDEX_SPECS` without duplicating the names.
  */
 
 /** The Better Auth-owned user collection (schema §13.1). */
 const USER_COLLECTION = "user";
 /** App-owned profile, keyed 1:1 by `userId` (schema §13.2). */
-export const USER_PROFILES_COLLECTION = "userProfiles";
+export const USER_PROFILES_COLLECTION = COLLECTIONS.userProfiles;
 /** App-owned notification preferences, keyed 1:1 by `userId` (schema §19.3). */
-export const NOTIFICATION_PREFERENCES_COLLECTION = "notificationPreferences";
+export const NOTIFICATION_PREFERENCES_COLLECTION = COLLECTIONS.notificationPreferences;
 /** Unified invitations collection (schema §13.6). */
-export const INVITATIONS_COLLECTION = "invitations";
+export const INVITATIONS_COLLECTION = COLLECTIONS.invitations;
 /** Per-session device sightings backing the 24-hour new-device decision. */
-export const SESSION_DEVICES_COLLECTION = "sessionDevices";
+export const SESSION_DEVICES_COLLECTION = COLLECTIONS.sessionDevices;
 /** Transient `auth.contact.changed` fan-out records (ADR-0040 §2). */
-export const CONTACT_CHANGE_FANOUTS_COLLECTION = "contactChangeFanouts";
+export const CONTACT_CHANGE_FANOUTS_COLLECTION = COLLECTIONS.contactChangeFanouts;
 
 /** How long a transient contact-change fan-out record is kept, in ms. */
 const CONTACT_CHANGE_FANOUT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * How long a device sighting is retained, in ms.
+ *
+ * Comfortably longer than {@link NEW_DEVICE_WINDOW_MS} so a sighting is never
+ * reaped while it can still suppress a duplicate `auth.signin.new_device`; the
+ * TTL index (`session_devices_expire_at_ttl`) then keeps the collection bounded
+ * for the long tail of inactive users (ADR-0043).
+ */
+const SESSION_DEVICE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * How many recent sightings the new-device read considers, newest-first.
+ *
+ * The decision only needs the newest in-window sighting per fingerprint, so a
+ * bounded, indexed read replaces the former unbounded `find({userId})` (ADR-0043).
+ */
+const SESSION_DEVICE_READ_LIMIT = 100;
 
 /** The default time zone when the client supplies no hint (contract §1.1). */
 const DEFAULT_TIME_ZONE = "Asia/Kolkata";
@@ -476,7 +496,9 @@ export async function handleSessionCreated(
 
   const sightings = await platformRepo(db)
     .collection(SESSION_DEVICES_COLLECTION)
-    .find({ userId })
+    .find({ userId, createdAt: { $gt: new Date(now.getTime() - NEW_DEVICE_WINDOW_MS) } })
+    .sort({ createdAt: -1 })
+    .limit(SESSION_DEVICE_READ_LIMIT)
     .toArray();
   const prior: PriorDeviceSighting[] = [];
   for (const raw of sightings) {
@@ -501,11 +523,14 @@ export async function handleSessionCreated(
     });
   }
 
-  await platformRepo(db).collection(SESSION_DEVICES_COLLECTION).insertOne({
-    userId,
-    fingerprintHash: deviceHash,
-    createdAt: now,
-  });
+  await platformRepo(db)
+    .collection(SESSION_DEVICES_COLLECTION)
+    .insertOne({
+      userId,
+      fingerprintHash: deviceHash,
+      createdAt: now,
+      expireAt: addMilliseconds(now, SESSION_DEVICE_TTL_MS),
+    });
 
   const profile = (await platformRepo(db)
     .collection(USER_PROFILES_COLLECTION)
