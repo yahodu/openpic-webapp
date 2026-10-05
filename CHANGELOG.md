@@ -1,3 +1,10 @@
+## [1.16.0](https://github.com/yahodu/openpic-webapp/compare/v1.15.2...v1.16.0) (2026-10-05)
+
+### Features
+
+- **me:** OP-91 emit account.deletion.requested on POST /me/deletion ([#181](https://github.com/yahodu/openpic-webapp/issues/181)) ([681891a](https://github.com/yahodu/openpic-webapp/commit/681891a316acf8f4526b4208ae8ac7f6b103a599))
+- **me:** OP-91 sessions management and account deletion cancel window ([#176](https://github.com/yahodu/openpic-webapp/issues/176)) ([844060a](https://github.com/yahodu/openpic-webapp/commit/844060ad337208b91ab81b0a9d25ea4523600a86))
+
 ## [1.15.2](https://github.com/yahodu/openpic-webapp/compare/v1.15.1...v1.15.2) (2026-10-05)
 
 ### Bug Fixes
