@@ -1,3 +1,9 @@
+## [1.12.1](https://github.com/yahodu/openpic-webapp/compare/v1.12.0...v1.12.1) (2026-10-05)
+
+### Performance Improvements
+
+- **domain-events:** OP-88 follow-up cache the notification-type lookup + harden the stale-lease filter ([#152](https://github.com/yahodu/openpic-webapp/issues/152)) ([c25fa42](https://github.com/yahodu/openpic-webapp/commit/c25fa42d3df0d6ae7d1eb9ea1ee9a6161a35c33b))
+
 ## [1.12.0](https://github.com/yahodu/openpic-webapp/compare/v1.11.0...v1.12.0) (2026-10-05)
 
 ### Features
