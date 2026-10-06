@@ -1,13 +1,13 @@
-# ADR-0095 — OP-94 §1 follow-up GREEN: the notification-fanout cron route, the recipient/transport wiring and the `after()` opportunistic trigger
+# ADR-0105 — OP-94 §1 follow-up GREEN: the notification-fanout cron route, the recipient/transport wiring and the `after()` opportunistic trigger
 
 - **Status:** Accepted · **Date:** 2026-10-06 · **Author:** `openpic-webapp-backend-coder`
-- **Card:** `t_205e5ae7` (OP-94 §1 follow-up GREEN) · **RED:** `t_1a77ec00` (ADR-0094) · **Orchestrator hygiene:** `t_a4ec4d74`
+- **Card:** `t_205e5ae7` (OP-94 §1 follow-up GREEN) · **RED:** `t_1a77ec00` (ADR-0104) · **Orchestrator hygiene:** `t_a4ec4d74`
 - **Branch:** `OP-94-task-fanout-cron-route-green` (base = the RED branch tip `81402e1`, base `origin/main` `2c42fe1`)
-- **Relates to:** [ADR-0094](ADR-0094-op94-followup-fanout-cron-route-red.md) (the pinned contract), [ADR-0090](ADR-0090-op94-notification-fan-out-red.md) / [ADR-0092](ADR-0092-op94-notification-fan-out-green.md) (the fan-out consumer), [ADR-0028](ADR-0028-internal-hmac-and-cron-framework.md) (cron framework + internal HMAC), [ADR-0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md) (`MessageTransport`), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox)
+- **Relates to:** [ADR-0104](ADR-0104-op94-followup-fanout-cron-route-red.md) (the pinned contract), [ADR-0090](ADR-0090-op94-notification-fan-out-red.md) / [ADR-0092](ADR-0092-op94-notification-fan-out-green.md) (the fan-out consumer), [ADR-0028](ADR-0028-internal-hmac-and-cron-framework.md) (cron framework + internal HMAC), [ADR-0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md) (`MessageTransport`), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox)
 
 ## Context
 
-ADR-0094 pinned the OP-94 §1 follow-up: the
+ADR-0104 pinned the OP-94 §1 follow-up: the
 `/api/v1/internal/cron/notification-fanout` route, the `FanOutSummary →
 CronRunOutcome` mapper, and the opportunistic `after()` trigger in
 `emitDomainEvent`. This GREEN card implements exactly those pins (three spec
@@ -41,7 +41,7 @@ and `POST` are exported; no helper is exported from the route module.
 
 ### 3. Two credential legs, matching the pinned contract (I1–I9)
 
-ADR-0094's contract splits the two verbs: `GET` is the Vercel Cron leg and
+ADR-0104's contract splits the two verbs: `GET` is the Vercel Cron leg and
 accepts **only** the `CRON_SECRET` bearer; `POST` is the signed manual/QStash
 leg and requires `Bearer <INTERNAL_API_SECRET>` plus a valid HMAC. The route's
 auth stage is therefore built per request: for a `GET` it passes the cron
@@ -58,29 +58,30 @@ the internal secret is simply the wrong credential, which the route's pinned
 contract reports as `internal_auth_failed`. No shared framework behaviour was
 changed; the divergence is confined to this route's per-request stage wiring.
 
-### 4. Transport selection: a covered service facade over an adapter-free registry
+### 4. Transport selection reuses the config-driven factory
 
 `@/server/services/notification-transport` exports
-`getNotificationTransport(): MessageTransport`; it reads
-`getConfig().transport.provider` and delegates to
-`selectNotificationTransport(provider)` in
-`@/server/notifications/notification-transport`. The registry is the only module
-that names the vendor adapter: `memory` (development/test/e2e) →
-`memoryMessageTransport()`; anything else (staging/production sets a non-memory
-provider, enforced by `getConfig()`) → `novuTransport(...)` from
-`getNovuRuntimeConfig()`. The route and the trigger import only the service, so
-neither imports `@/server/adapters/**` or Novu (the route-handler import
-boundary in `eslint.config.mjs`).
+`getNotificationTransport(): MessageTransport` and delegates to the existing
+`getMessageTransport()` factory (`@/server/adapters/message-transport-provider`,
+OP-95 / ADR-0096): `memory` (development/test/e2e) →
+`memoryMessageTransport()`; any other provider (staging/production sets a
+non-memory provider, enforced by `getConfig()`) → `novuTransport(...)` from
+`getNovuRuntimeConfig()`. The fan-out cron therefore drains through the **same**
+provider selection the synchronous OTP path already uses, instead of a second
+factory.
 
-Why the split. `eslint.config.mjs` restricts any `server/**` specifier whose
-path contains a `novu` segment to the Novu adapter folder, so one module outside
-it must be explicitly exempted to compose the vendor adapter; the registry
-carries that single, documented exemption. It is deliberately **not** under
-`services/**`: that path carries a 90 % coverage gate
-(`vitest.config.ts` → `coverage.thresholds`), and the `novu` branch is never
-executed by the existing suite. The adapter-free service facade, which the route
-pins do execute, stays in `services/**` and is fully covered. No threshold was
-lowered and no test was written to make this pass.
+Why the routing. The route may not import `@/server/adapters/**`, so it depends
+on the adapter-free service; the service re-exposes the factory.
+`eslint.config.mjs` restricts any `server/**` specifier whose path contains a
+`novu` segment to the Novu adapter folder, so the factory carries the single,
+documented exemption that lets it name the vendor adapter. The factory stays
+outside `services/**`, which has a 90 % coverage gate
+(`vitest.config.ts` → `coverage.thresholds`) that its never-executed non-memory
+branch would miss; the thin service facade, which the route pins do execute,
+stays in `services/**` and is fully covered. No threshold was lowered and no
+test was written to make this pass. OP-95's factory originally raised for a
+non-memory provider (Novu unwired); OP-94 §1 requires the Novu leg, so the throw
+is replaced by the adapter — one provider for both paths.
 
 ### 5. The concrete `RecipientRepository`
 
@@ -144,11 +145,11 @@ failure so it can never surface as an unhandled rejection. A non-`pending`
   suite reaches them: the integration route spec executes the `memory` branch of
   the transport registry and the route/job wiring, but it seeds no catalogue
   type, so the consumer claims and marks rows `done` with **no** recipients —
-  `repos/notification-recipients.ts` and the `novu` branch of
-  `notifications/notification-transport.ts` (plus `fan-out-trigger.ts`) have no
+  `repos/notification-recipients.ts` and the non-memory branch of
+  `adapters/message-transport-provider.ts` (plus `fan-out-trigger.ts`) have no
   direct pin. Their behaviour is a request for the Test Author's next cycle; no
   threshold was lowered and no test was written here.
-- **`after()` is pinned by scheduling, not execution** (ADR-0094): the unit spec
+- **`after()` is pinned by scheduling, not execution** (ADR-0104): the unit spec
   asserts the callback is registered and never invokes it. Actual draining is
   covered by the route pins.
 
@@ -172,7 +173,7 @@ failure so it can never surface as an unhandled rejection. A non-`pending`
   opportunistic run. Regressing either (wrong secret, dropped batch, wrong
   mapping, unconditional trigger) fails a named pin.
 - `GET` on the cron route is a cron-secret-only leg; a valid internal bearer on
-  it is `internal_auth_failed`, which is the contract ADR-0094 pinned even
+  it is `internal_auth_failed`, which is the contract ADR-0104 pinned even
   though the generic stage would have reported `stale_signature`.
 - The recipient repository and the vendor-selection branch are production seams
   with no direct pin yet (see the coverage gap above); they are intentionally
@@ -180,11 +181,14 @@ failure so it can never surface as an unhandled rejection. A non-`pending`
 
 ## Alternatives considered
 
-- **Put the whole transport provider (branch included) in `services/`.**
-  Rejected: the `services/**` 90 % coverage gate cannot be met by the
-  never-executed `novu` branch without writing a test (out of this card's scope)
-  or lowering the threshold (gaming coverage). The service facade stays in
-  `services/`; the branchy registry sits in `notifications/` (global gate only).
+- **Put a second, self-contained transport provider in `services/`.**
+  Rejected: OP-95 already landed `getMessageTransport()`; two provider
+  selections for the same `MESSAGE_TRANSPORT` value would drift. The service
+  facade re-exposes the one factory. The factory (not the facade) holds the
+  branchy vendor selection and the one Novu-import exemption, because the
+  `services/**` 90 % coverage gate cannot be met by a never-executed non-memory
+  branch without writing a test (out of scope) or lowering the threshold
+  (gaming coverage).
 - **Change `authorizeInternalRequest` to return `internal_auth_failed` for a
   non-cron bearer on a cron `GET`.** Rejected: it would alter the frozen OP-87
   framework contract (and its `U4`-family pins) for one route's policy; the

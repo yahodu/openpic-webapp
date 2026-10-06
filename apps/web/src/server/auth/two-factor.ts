@@ -58,7 +58,7 @@ async function issueTwoFactorCode(
     value: `${code}:0`,
     expiresAt: new Date(Date.now() + OTP_TTL_MS),
   });
-  sender.send({ channel: "sms", to: phone, code });
+  await sender.send({ channel: "sms", to: phone, code });
 }
 
 /**

@@ -30,7 +30,9 @@ function parseChannel(value: string | null): OtpChannel | undefined {
  *
  * @param request - The inbound request (`?contact=&channel=`).
  * @returns `404` outside the allow-listed environments, otherwise `200` with
- *   `{ code }` (`null` when nothing is pending for the contact).
+ *   `{ code, providerMessageId }` (`null` when nothing is pending for the
+ *   contact). `providerMessageId` is the transport receipt id — the e2e proof
+ *   that the code travelled through the injected `MessageTransport` (OP-95).
  */
 export function GET(request: Request): Response {
   if (!isTestOtpRouteEnabled(getAppEnv())) {
@@ -48,5 +50,11 @@ export function GET(request: Request): Response {
           .reverse()
           .find((entry) => entry.channel === channel && entry.to === contact);
 
-  return Response.json({ code: captured?.code ?? null }, { status: 200 });
+  return Response.json(
+    {
+      code: captured?.code ?? null,
+      providerMessageId: captured?.providerMessageId ?? null,
+    },
+    { status: 200 }
+  );
 }

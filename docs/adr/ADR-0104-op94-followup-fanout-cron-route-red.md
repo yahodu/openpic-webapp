@@ -1,8 +1,8 @@
-# ADR-0094 — OP-94 §1 follow-up RED: the notification-fanout cron route and the `after()` opportunistic trigger
+# ADR-0104 — OP-94 §1 follow-up RED: the notification-fanout cron route and the `after()` opportunistic trigger
 
 - **Status:** Accepted · **Date:** 2026-10-05 · **Author:** `openpic-webapp-testcase-writer`
-- **Card:** `t_1a77ec00` (OP-94 §1 follow-up RED) · **GREEN:** `t_205e5ae7` (`openpic-webapp-backend-coder`) · **Orchestrator hygiene:** `t_a4ec4d74`
-- **Branch:** `OP-94-task-fanout-cron-route-red` (base `origin/main` `2c42fe1`)
+- **Card:** `t_1a77ec00` (OP-94 §1 follow-up RED) · **GREEN:** `t_205e5ae7` · **Orchestrator hygiene:** `t_a4ec4d74`
+- **Branch:** `OP-94-task-fanout-cron-route-red` (base `origin/main` `2c42fe1`); renumbered `0094 → 0104` at merge because `origin/main` claimed `0094` for the OP-94 fan-out-polish lane
 - **Relates to:** [ADR-0090](ADR-0090-op94-notification-fan-out-red.md) (fan-out contract), [ADR-0092](ADR-0092-op94-notification-fan-out-green.md) (green impl, §1 de-scoped), [ADR-0093](ADR-0093-op94-fan-out-green-review-signoff.md) (review sign-off, §1 Low finding), [ADR-0028](ADR-0028-internal-hmac-and-cron-framework.md) (cron framework + internal HMAC), [ADR-0029](ADR-0029-domain-events-outbox.md) (outbox)
 
 ## Context

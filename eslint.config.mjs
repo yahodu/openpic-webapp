@@ -141,12 +141,14 @@ export default tseslint.config(
     },
   },
   {
-    // The notification-transport registry is the composition root that must
-    // name the vendor adapter it selects (OP-94 §1 follow-up, ADR-0095). The
-    // service the route depends on stays adapter-free; this registry is the one
+    // The config-driven transport factory is the composition root that must
+    // name the vendor adapter it selects (OP-94 §1 follow-up, ADR-0105). The
+    // service the route depends on stays adapter-free; this factory is the one
     // deliberate seam allowed to import the Novu adapter, with the logging
-    // boundary preserved.
-    files: ["apps/web/src/server/notifications/notification-transport.ts"],
+    // boundary preserved. (OP-95 introduced this factory for the synchronous OTP
+    // path; OP-94 wires its non-memory branch to Novu so both paths share one
+    // provider selection.)
+    files: ["apps/web/src/server/adapters/message-transport-provider.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -233,11 +235,6 @@ export default tseslint.config(
     ],
     rules: {
       "no-restricted-properties": "off",
-      // Spec authors assert on a port/interface method by extracting the
-      // reference (`expect(repository.listEventRoleMembers).toHaveBeenCalled…`),
-      // which never calls it and so cannot lose `this`. The rule is a known
-      // false positive for that idiom; production code keeps it on.
-      "@typescript-eslint/unbound-method": "off",
       // Spec authors annotate complex array types as `Array<T>` / `readonly T[]`
       // for readability; the stylistic preference must not fail the build.
       "@typescript-eslint/array-type": "off",
@@ -249,6 +246,21 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-call": "off",
       "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-unsafe-argument": "off",
+    },
+  },
+  {
+    // False-positive exemption for the OP-94 fan-out specs only. They build a
+    // partial `RecipientRepository` double and assert with
+    // `expect(repository.listEventRoleMembers).toHaveBeenCalled…`, which extracts
+    // the method reference without calling it and so can never lose `this`.
+    // Scoped to these two files so `@typescript-eslint/unbound-method` keeps
+    // guarding every other spec.
+    files: [
+      "apps/web/src/server/notifications/fan-out.test.ts",
+      "apps/web/src/test/integration/notification-fan-out.test.ts",
+    ],
+    rules: {
+      "@typescript-eslint/unbound-method": "off",
     },
   },
   {
