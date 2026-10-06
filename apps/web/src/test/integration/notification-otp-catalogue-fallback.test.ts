@@ -8,12 +8,13 @@ import { closeMongoClient } from "@/server/db/mongo";
 import { createLogger, getLogger, memoryTransport, setLogger } from "@/server/logging";
 import { sendTransactionalNow } from "@/server/notifications/fan-out";
 import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
+import { SEED_NOTIFICATION_TYPES } from "@/server/notifications/notification-types.values";
 
 import { MONGO_READY_HOOK_TIMEOUT_MS, createTestDb, setupMongoTestEnv } from "../helpers/db";
 
 /**
  * Integration / contract — the seed-catalogue fallback guard (OP-95 follow-up
- * RED, finding F2; ADR-0100).
+ * RED, finding F2; ADR-0102).
  *
  * `sendTransactionalNow` does `storedType ?? seededTypeRow(...)`: when the
  * stored `notificationTypes` catalogue has no row for the requested `typeKey`
@@ -103,6 +104,60 @@ describe("sendTransactionalNow — seed-catalogue fallback guard (F2)", () => {
       ).rejects.toThrow();
 
       // Nothing was delivered and no ledger row was written for the phantom send.
+      expect(transport.outbox).toHaveLength(0);
+      const dispatches = await test.db.collection(COLLECTIONS.dispatches).countDocuments({});
+      expect(dispatches).toBe(0);
+    } finally {
+      await test.cleanup();
+    }
+  });
+
+  /**
+   * F2c (OP-95 follow-up coverage pin, ADR-0104) — the *template-group*
+   * production guard. F2 leaves the catalogue fully empty, so the type-row
+   * guard (`COLLECTIONS.notificationTypes`) throws first and the template guard
+   * (`COLLECTIONS.notificationTemplates`) is never reached. This spec stores a
+   * schema-valid `notificationTypes` row — so the type-row guard is skipped —
+   * but stores **no** `notificationTemplates` row for the resolved
+   * `channelGroup`, isolating the second guard site.
+   *
+   * Settled behaviour (ADR-0103 F2): production rejects before the dispatch
+   * insert and before any transport hand-off — no orphan ledger row, no phantom
+   * send.
+   */
+  it("F2c: production refuses the seeded template group when the type row is stored but its template group is not", async () => {
+    const transport = memoryMessageTransport();
+    const test = createTestDb("openpic_notification_catalogue_prod_templates");
+    try {
+      await ensureIndexes(test.db);
+
+      // A schema-valid type row is stored, so the type-row guard is skipped and
+      // the template-group guard is the branch actually exercised.
+      const storedType = SEED_NOTIFICATION_TYPES.find(
+        (type) => type.typeKey === "auth.otp.email.requested"
+      );
+      if (storedType === undefined) {
+        throw new Error("seed is missing auth.otp.email.requested");
+      }
+      await test.db.collection(COLLECTIONS.notificationTypes).insertOne({ ...storedType });
+
+      // `notificationTemplates` is deliberately left empty; APP_ENV is
+      // `production`.
+      stubProductionEnv();
+
+      await expect(
+        sendTransactionalNow({
+          db: test.db,
+          transport,
+          typeKey: "auth.otp.email.requested",
+          channel: "email",
+          destination: "catalogue-prod-templates@example.com",
+          payload: { code: "123456" },
+          userId: new ObjectId().toHexString(),
+        })
+      ).rejects.toThrow();
+
+      // The rejection is pre-insert and pre-hand-off: nothing delivered, no row.
       expect(transport.outbox).toHaveLength(0);
       const dispatches = await test.db.collection(COLLECTIONS.dispatches).countDocuments({});
       expect(dispatches).toBe(0);
