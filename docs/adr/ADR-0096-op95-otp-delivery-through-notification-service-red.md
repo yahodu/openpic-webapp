@@ -1,4 +1,4 @@
-# ADR-0094 — OP-95 RED: OTP delivery through the synchronous NotificationService entry point
+# ADR-0096 — OP-95 RED: OTP delivery through the synchronous NotificationService entry point
 
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** OP-95 RED (`t_3bd2a7b4`), GREEN card `t_0e8a6a84` (assignee `openpic-webapp-backend-coder`)

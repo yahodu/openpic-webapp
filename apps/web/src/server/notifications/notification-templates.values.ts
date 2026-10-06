@@ -43,7 +43,7 @@ const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
  * synchronous sender renders it at send time and the dispatch ledger keeps
  * metadata only (`retainBody: false`). This is the only place an auth secret is
  * intentionally interpolated into first-party copy, and it is exactly what
- * OP-95 ADR-0094 assumption 2 requires.
+ * OP-95 ADR-0096 assumption 2 requires.
  */
 const OTP_CODE_TYPE_KEYS: ReadonlySet<string> = new Set([
   "auth.otp.email.requested",

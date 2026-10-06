@@ -123,7 +123,7 @@ export interface CreateAuthOptions {
   readonly claim?: ClaimAttendeeSession;
   /**
    * The outbound message transport the OTP sender hands rendered messages to.
-   * Defaults to the configured provider (ADR-0094); injectable so a spec can
+   * Defaults to the configured provider (ADR-0096); injectable so a spec can
    * drive delivery with an in-memory outbox.
    */
   readonly transport?: MessageTransport;

@@ -25,7 +25,7 @@
  * Deliberately out of scope here (ADR-0090 "Out of scope"): the cron route and
  * the `after()` opportunistic trigger. The synchronous transactional entry
  * point {@link sendTransactionalNow} is *not* out of scope — OP-94 card §6 was
- * routed to OP-95, so it lives here alongside the async run (ADR-0094).
+ * routed to OP-95, so it lives here alongside the async run (ADR-0096).
  */
 
 import { createHash } from "node:crypto";
@@ -1110,7 +1110,7 @@ export async function runNotificationFanOut(options: FanOutRunOptions): Promise<
 }
 
 /* -------------------------------------------------------------------------- */
-/* Synchronous transactional path (OP-95, ADR-0094)                           */
+/* Synchronous transactional path (OP-95, ADR-0096)                           */
 /* -------------------------------------------------------------------------- */
 
 /** A Better Auth OTP channel — the two destinations an auth secret may travel. */
@@ -1173,7 +1173,7 @@ export interface DispatchRecordInput {
   readonly expireAt: Date;
 }
 
-/** The synchronous send input (ADR-0094). */
+/** The synchronous send input (ADR-0096). */
 export interface TransactionalSendInput {
   readonly db?: Db;
   readonly transport: MessageTransport;
@@ -1307,7 +1307,7 @@ function seededTemplates(typeKey: string): Map<string, readonly NotificationTemp
 }
 
 /**
- * Send one transactional message synchronously (design §5/§8.2; ADR-0094).
+ * Send one transactional message synchronously (design §5/§8.2; ADR-0096).
  *
  * The synchronous sibling of {@link runNotificationFanOut}: resolve → render →
  * persist one metadata-only dispatch row → hand the rendered message to the

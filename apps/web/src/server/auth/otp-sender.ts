@@ -13,7 +13,7 @@ import { platformRepo } from "@/server/repos";
 import { otpInbox, type OtpChannel, type OtpInbox } from "./otp-inbox";
 
 /**
- * The OTP sending port (OP-85; real sender OP-95, ADR-0020/ADR-0094).
+ * The OTP sending port (OP-85; real sender OP-95, ADR-0020/ADR-0096).
  *
  * `createAuth` never talks to an SMS/email vendor directly: every delivered
  * one-time code goes through an {@link OtpSender}. OP-85 shipped a memory
@@ -110,7 +110,7 @@ const BETTER_AUTH_USER = "user";
 
 /**
  * Resolve the account id owning a destination, else `null` (an email OTP may be
- * requested before an account exists, ADR-0094 assumption 4).
+ * requested before an account exists, ADR-0096 assumption 4).
  */
 async function resolveUserId(db: Db, channel: OtpChannel, to: string): Promise<string | null> {
   const query = channel === "email" ? { email: to } : { phoneNumber: to };
@@ -126,7 +126,7 @@ async function resolveUserId(db: Db, channel: OtpChannel, to: string): Promise<s
 
 /**
  * Build the real {@link OtpSender}: Better Auth's OTP callbacks route every code
- * through the synchronous `NotificationService` path (OP-95, ADR-0094).
+ * through the synchronous `NotificationService` path (OP-95, ADR-0096).
  *
  * The code is a template variable rendered at send time; it is never stored on
  * the dispatch ledger (`retainBody: false`) and never logged. A classified

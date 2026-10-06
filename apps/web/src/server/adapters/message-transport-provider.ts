@@ -1,5 +1,5 @@
 /**
- * The config-driven `MessageTransport` factory (OP-95, design §8.2, ADR-0094).
+ * The config-driven `MessageTransport` factory (OP-95, design §8.2, ADR-0096).
  *
  * `createAuth` needs a transport to hand rendered OTP messages to. The
  * vendor-neutral `MessageTransport` port is the only contract callers know
