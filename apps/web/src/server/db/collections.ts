@@ -46,6 +46,12 @@ export const COLLECTIONS = {
    * without duplicating the collection name (ADR-0060).
    */
   tenantMembers: "tenantMembers",
+  /**
+   * Digest aggregation buckets (schema §12/§19.6, ADR-0100). One open bucket per
+   * `{ userId, bucketKey }` accumulates a digest type's occurrences until the
+   * `notification-digest-flush` cron drains it.
+   */
+  notificationDigests: "notificationDigests",
 } as const;
 
 /** The name of any registered collection. */

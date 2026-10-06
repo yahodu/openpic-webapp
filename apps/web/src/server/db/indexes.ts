@@ -152,6 +152,51 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+  // notification_dispatches — the quiet-hours release sweep selects
+  // `{ status: "deferred", until <= now }`; the partial index scopes it to the
+  // deferred rows only (ADR-0100 §Quiet-hours deferral; ADR-0104). `dispatches`
+  // is tenant-scoped, so the compound index leads with `tenantId` (§21 P3).
+  {
+    collection: COLLECTIONS.dispatches,
+    name: "dispatches_status_until_deferred",
+    keys: [
+      ["tenantId", 1],
+      ["status", 1],
+      ["until", 1],
+    ],
+    partialFilterExpression: { status: "deferred" },
+  },
+
+  // notificationDigests — one open bucket per (user, bucketKey); a flushed
+  // bucket leaves the partial index and frees the key (schema §19.6, ADR-0100).
+  {
+    collection: COLLECTIONS.notificationDigests,
+    name: "notification_digests_user_bucket_open_unique",
+    keys: [
+      ["userId", 1],
+      ["bucketKey", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { status: "open" },
+  },
+  // notificationDigests — the flush cron reads open buckets whose flushAt has
+  // passed, in flushAt order (schema §19.6, ADR-0100).
+  {
+    collection: COLLECTIONS.notificationDigests,
+    name: "notification_digests_status_flush_at_open",
+    keys: [
+      ["status", 1],
+      ["flushAt", 1],
+    ],
+    partialFilterExpression: { status: "open" },
+  },
+  // notificationDigests — retention via the TTL monitor (§22).
+  {
+    collection: COLLECTIONS.notificationDigests,
+    name: "notification_digests_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
 
   // subscriptions — one live subscription per tenant (cancelled rows excluded).
   {
