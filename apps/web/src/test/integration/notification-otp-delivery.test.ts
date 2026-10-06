@@ -324,7 +324,7 @@ describe("OTP delivery through the NotificationService (OP-95)", () => {
   });
 
   /**
-   * F1 (OP-95 follow-up RED, ADR-0100) — the synchronous copy is well-formed.
+   * F1 (OP-95 follow-up RED, ADR-0102) — the synchronous copy is well-formed.
    *
    * `auth.otp.email.requested` declares `code` **and** `actionUrl`; the sync
    * sender passed only `{ code }`, and `renderVarsFor` defaults every missing
@@ -396,7 +396,7 @@ describe("OTP delivery through the NotificationService (OP-95)", () => {
   });
 
   /**
-   * F5 (OP-95 follow-up RED, ADR-0100) — the phone-path 503 surface.
+   * F5 (OP-95 follow-up RED, ADR-0102) — the phone-path 503 surface.
    *
    * I3 pins the retryable `upstream_unavailable` surface for the email OTP
    * endpoint; this pins the same contract for `POST /api/auth/phone-number/send-otp`.

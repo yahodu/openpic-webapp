@@ -1,13 +1,13 @@
-# ADR-0105 — OP-94 §1 follow-up GREEN: the notification-fanout cron route, the recipient/transport wiring and the `after()` opportunistic trigger
+# ADR-0106 — OP-94 §1 follow-up GREEN: the notification-fanout cron route, the recipient/transport wiring and the `after()` opportunistic trigger
 
 - **Status:** Accepted · **Date:** 2026-10-06 · **Author:** `openpic-webapp-backend-coder`
-- **Card:** `t_205e5ae7` (OP-94 §1 follow-up GREEN) · **RED:** `t_1a77ec00` (ADR-0104) · **Orchestrator hygiene:** `t_a4ec4d74`
+- **Card:** `t_205e5ae7` (OP-94 §1 follow-up GREEN) · **RED:** `t_1a77ec00` (ADR-0105) · **Orchestrator hygiene:** `t_a4ec4d74`
 - **Branch:** `OP-94-task-fanout-cron-route-green` (base = the RED branch tip `81402e1`, base `origin/main` `2c42fe1`)
-- **Relates to:** [ADR-0104](ADR-0104-op94-followup-fanout-cron-route-red.md) (the pinned contract), [ADR-0090](ADR-0090-op94-notification-fan-out-red.md) / [ADR-0092](ADR-0092-op94-notification-fan-out-green.md) (the fan-out consumer), [ADR-0028](ADR-0028-internal-hmac-and-cron-framework.md) (cron framework + internal HMAC), [ADR-0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md) (`MessageTransport`), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox)
+- **Relates to:** [ADR-0105](ADR-0105-op94-followup-fanout-cron-route-red.md) (the pinned contract), [ADR-0090](ADR-0090-op94-notification-fan-out-red.md) / [ADR-0092](ADR-0092-op94-notification-fan-out-green.md) (the fan-out consumer), [ADR-0028](ADR-0028-internal-hmac-and-cron-framework.md) (cron framework + internal HMAC), [ADR-0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md) (`MessageTransport`), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox)
 
 ## Context
 
-ADR-0104 pinned the OP-94 §1 follow-up: the
+ADR-0105 pinned the OP-94 §1 follow-up: the
 `/api/v1/internal/cron/notification-fanout` route, the `FanOutSummary →
 CronRunOutcome` mapper, and the opportunistic `after()` trigger in
 `emitDomainEvent`. This GREEN card implements exactly those pins (three spec
@@ -41,7 +41,7 @@ and `POST` are exported; no helper is exported from the route module.
 
 ### 3. Two credential legs, matching the pinned contract (I1–I9)
 
-ADR-0104's contract splits the two verbs: `GET` is the Vercel Cron leg and
+ADR-0105's contract splits the two verbs: `GET` is the Vercel Cron leg and
 accepts **only** the `CRON_SECRET` bearer; `POST` is the signed manual/QStash
 leg and requires `Bearer <INTERNAL_API_SECRET>` plus a valid HMAC. The route's
 auth stage is therefore built per request: for a `GET` it passes the cron
@@ -149,7 +149,7 @@ failure so it can never surface as an unhandled rejection. A non-`pending`
   `adapters/message-transport-provider.ts` (plus `fan-out-trigger.ts`) have no
   direct pin. Their behaviour is a request for the Test Author's next cycle; no
   threshold was lowered and no test was written here.
-- **`after()` is pinned by scheduling, not execution** (ADR-0104): the unit spec
+- **`after()` is pinned by scheduling, not execution** (ADR-0105): the unit spec
   asserts the callback is registered and never invokes it. Actual draining is
   covered by the route pins.
 
@@ -173,7 +173,7 @@ failure so it can never surface as an unhandled rejection. A non-`pending`
   opportunistic run. Regressing either (wrong secret, dropped batch, wrong
   mapping, unconditional trigger) fails a named pin.
 - `GET` on the cron route is a cron-secret-only leg; a valid internal bearer on
-  it is `internal_auth_failed`, which is the contract ADR-0104 pinned even
+  it is `internal_auth_failed`, which is the contract ADR-0105 pinned even
   though the generic stage would have reported `stale_signature`.
 - The recipient repository and the vendor-selection branch are production seams
   with no direct pin yet (see the coverage gap above); they are intentionally
