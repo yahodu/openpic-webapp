@@ -1,3 +1,9 @@
+## [1.20.1](https://github.com/yahodu/openpic-webapp/compare/v1.20.0...v1.20.1) (2026-10-06)
+
+### Bug Fixes
+
+- **notifications:** OP-95 follow-up GREEN — synchronous OTP actionUrl, catalogue-fallback guard, sync-path polish ([#199](https://github.com/yahodu/openpic-webapp/issues/199)) ([a9da3e6](https://github.com/yahodu/openpic-webapp/commit/a9da3e65940309a573eb68fa3612ef743a0f9180))
+
 ## [1.20.0](https://github.com/yahodu/openpic-webapp/compare/v1.19.0...v1.20.0) (2026-10-06)
 
 ### Features
