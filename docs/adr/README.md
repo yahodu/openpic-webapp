@@ -105,6 +105,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0098](ADR-0098-op95-otp-delivery-through-notification-service-green.md)           | OP-95 GREEN: synchronous OTP sender, metadata-only ledger, seed fallback and 503 surfacing               | Accepted |
 | [0099](ADR-0099-op95-otp-delivery-green-review-signoff.md)                         | OP-95 GREEN review sign-off: synchronous OTP delivery ships with hardening follow-ups routed             | Accepted |
 | [0100](ADR-0100-op96-digest-retry-quiet-hours-crons-red.md)                        | OP-96 RED: digest buckets, dispatch retry and quiet-hours release cron contract                          | Accepted |
+| [0101](ADR-0101-op96-digest-retry-quiet-hours-crons-red-review-signoff.md)         | OP-96 RED review sign-off: contract approved, four coverage gaps routed to a gating RED card             | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
