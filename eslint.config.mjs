@@ -141,6 +141,27 @@ export default tseslint.config(
     },
   },
   {
+    // The notification-transport registry is the composition root that must
+    // name the vendor adapter it selects (OP-94 §1 follow-up, ADR-0095). The
+    // service the route depends on stays adapter-free; this registry is the one
+    // deliberate seam allowed to import the Novu adapter, with the logging
+    // boundary preserved.
+    files: ["apps/web/src/server/notifications/notification-transport.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/server/logging/**", "@/server/logging/*"],
+              message: "Import only the Logger port from @/server/logging.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Cron jobs write `domainEvents`; the fan-out consumer delivers. A job must
     // therefore never reach for a notification or delivery adapter directly, so
     // the `defineCronJob` contract stays free of a notification dependency
