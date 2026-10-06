@@ -151,14 +151,14 @@ absent). I7 pins that a bucket due after local midnight earns a fresh allowance
 even while it is still the previous day in UTC. This forbids a server-local or
 UTC-day implementation chosen by accident.
 
-**A4 — Cap scope is per recipient, not per type (and not per event).** ADR-0100
-assumption 4 ("per recipient per local day") is the approved reading, against
-the GREEN card body's looser "per user per type" wording. I8 pins it: three
-digests of one type exhaust the day's allowance for the recipient, so a due
-bucket of a _different_ digest type the same day is deferred (`affected: 0`,
-bucket stays `open`). Flagged for the orchestrator: design §6 / G3 phrase the
-cap as "≤3 emails/day/event"; if product intends a per-type or per-event scope
-instead, I8 must be updated **before** GREEN, never silently loosened.
+**A4 — Cap scope is per recipient per local day, shared across digest types
+(not per type, not per event).** ADR-0100 assumption 4 is the approved reading.
+I8 pins it: three digests of one type exhaust the day's allowance for the
+recipient, so a due bucket of a _different_ digest type the same day is deferred
+(`affected: 0`, bucket stays `open`). Settled by the orchestrator (card
+`t_ad6e0ec3`, 2026-10-06): the cap scope is per recipient per local day, shared
+across digest types. I8 stands unchanged; the GREEN card body §2 was corrected to
+match, and the design §6 / API G3 wording is aligned by this card.
 
 **A5 — Partial `{status, until}` index.** The phase-1 I5 assertion accepted any
 index whose key named `status` and `until`; it now requires a non-null
