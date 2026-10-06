@@ -234,6 +234,41 @@ describe("quiet-hours release cron (I5)", () => {
   });
 });
 
+/**
+ * True when a `partialFilterExpression` scopes the index to `status: "deferred"`.
+ *
+ * Structural rather than literal, so it tolerates MongoDB's normalisation: the
+ * literal `{status: "deferred"}`, the normalised `{status: {$eq: "deferred"}}`
+ * and the set form `{status: {$in: ["deferred"]}}` all count, and the filter is
+ * searched recursively (e.g. through `$and`/`$or`) so a nested expression still
+ * counts. A partial filter scoped to any other status (e.g. `"sent"`) returns
+ * false: it does not serve the release sweep's `status: "deferred" && until <=
+ * now` predicate.
+ */
+function scopesStatusToDeferred(filter: unknown): boolean {
+  if (filter === null || typeof filter !== "object") {
+    return false;
+  }
+  if (Array.isArray(filter)) {
+    return filter.some(scopesStatusToDeferred);
+  }
+  const record = filter as Record<string, unknown>;
+  const status = record.status;
+  if (status === "deferred") {
+    return true;
+  }
+  if (status !== null && typeof status === "object") {
+    const operator = status as Record<string, unknown>;
+    if (operator.$eq === "deferred") {
+      return true;
+    }
+    if (Array.isArray(operator.$in) && operator.$in.includes("deferred")) {
+      return true;
+    }
+  }
+  return Object.values(record).some(scopesStatusToDeferred);
+}
+
 describe("the deferred-dispatch index (I5)", () => {
   it("I5: the dispatches collection carries a partial index on {status, until} for the release sweep", async () => {
     await withTestDb(async (test) => {
@@ -245,11 +280,12 @@ describe("the deferred-dispatch index (I5)", () => {
       }) as { readonly partialFilterExpression?: unknown } | undefined;
 
       expect(sweepIndex).toBeDefined();
-      // ADR-0100 requires a *partial* index: the sweep covers only deferred rows,
-      // so `{status, until}` must carry a `partialFilterExpression` — a plain
-      // compound index is not the contract.
-      const partial = sweepIndex?.partialFilterExpression;
-      expect(typeof partial === "object" && partial !== null).toBe(true);
+      // ADR-0100 requires a *partial* index scoped to the rows the release sweep
+      // selects (`status: "deferred"` and `until <= now`). A plain compound index
+      // — or one scoped to any other status — would silently drop the sweep's
+      // index support, so the filter must reference `status` as `"deferred"`
+      // (tolerating MongoDB's `{$eq: "deferred"}` normalisation).
+      expect(scopesStatusToDeferred(sweepIndex?.partialFilterExpression)).toBe(true);
     });
   });
 });
