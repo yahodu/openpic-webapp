@@ -31,7 +31,7 @@ import { makeNovuTriggerResponse, makeOutboundMessage } from "@/test/factories/t
  * U2 is deliberately RED against the merged implementation at 49126f4, where
  * the branch builds `novuTransport({ apiKey: "" })` and only fails on the first
  * `send()`. The implementation must not be changed in the TEST lane; a GREEN
- * child is raised for `openpic-webapp-backend-coder` (see ADR-0107).
+ * child is raised for `openpic-webapp-backend-coder` (see ADR-0108).
  *
  * `MESSAGE_TRANSPORT` accepts only `memory | ses` (`config/env.ts`
  * `PROVIDER_SPECS`), and `ses` is the documented non-memory selection outside

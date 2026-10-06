@@ -1,3 +1,9 @@
+## [1.21.0](https://github.com/yahodu/openpic-webapp/compare/v1.20.1...v1.21.0) (2026-10-06)
+
+### Features
+
+- **notifications:** OP-94 notification-fanout cron route and after() trigger ([#201](https://github.com/yahodu/openpic-webapp/issues/201)) ([49126f4](https://github.com/yahodu/openpic-webapp/commit/49126f4acec84518dd4f9a20fd3760bebf5f55c2))
+
 ## [1.20.1](https://github.com/yahodu/openpic-webapp/compare/v1.20.0...v1.20.1) (2026-10-06)
 
 ### Bug Fixes

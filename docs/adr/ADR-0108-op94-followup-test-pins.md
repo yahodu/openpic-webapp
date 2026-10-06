@@ -1,4 +1,4 @@
-# ADR-0107 — OP-94 §1 follow-up TEST pins: the non-memory transport branch, the recipient audiences and the `after()` trigger failure path
+# ADR-0108 — OP-94 §1 follow-up TEST pins: the non-memory transport branch, the recipient audiences and the `after()` trigger failure path
 
 - **Status:** Accepted · **Date:** 2026-10-06 · **Author:** `openpic-webapp-testcase-writer`
 - **Card:** `t_bd94250c` (OP-94 §1 follow-up TEST) · **Origin:** review of the GREEN card `t_205e5ae7` (PR #201, squash-merged to `main` as `49126f4`), findings M1 + M2
