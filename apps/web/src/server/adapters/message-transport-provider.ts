@@ -14,11 +14,17 @@
  *     `MESSAGE_TRANSPORT=memory` is refused by `getConfig()` in production, so a
  *     deployed app can never silently drop messages into a process-local outbox.
  *
+ * A non-memory provider selected without a usable `NOVU_API_KEY` fails closed at
+ * selection time (`ConfigError` naming the key, never its value) — the deploy
+ * posture of `getRateLimitConfig()` (refuses `redis` without Upstash
+ * credentials) and `getConfig()` (refuses `memory` in production). A transport
+ * that cannot send must not be constructed (OP-94 §1 follow-up, ADR-0108).
+ *
  * Importing this module is side-effect free.
  */
 import { memoryMessageTransport } from "@/server/adapters/memory-message-transport";
 import { novuTransport } from "@/server/adapters/novu/novu-transport";
-import { getConfig, getNovuRuntimeConfig } from "@/server/config/env";
+import { ConfigError, getConfig, getNovuRuntimeConfig } from "@/server/config/env";
 import { getLogger } from "@/server/logging";
 import type { MessageTransport } from "@/server/notifications/message-transport";
 
@@ -35,6 +41,12 @@ export function getMessageTransport(): MessageTransport {
   }
 
   const novu = getNovuRuntimeConfig();
+  // `getNovuRuntimeConfig()` types `apiKey` as a string, defaulting an unset
+  // `NOVU_API_KEY` to `""`, so "missing" and "blank" collapse to the blank
+  // check here (a `=== undefined` arm would be dead code the linter rejects).
+  if (novu.apiKey.trim() === "") {
+    throw new ConfigError(["NOVU_API_KEY"]);
+  }
   return novuTransport({
     baseUrl: novu.baseUrl,
     apiKey: novu.apiKey,
