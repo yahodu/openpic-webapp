@@ -4,7 +4,7 @@ import { E2E_BASE_URL } from "./ports";
 
 /**
  * E1 — full email OTP sign-in over a real `next start` server, now delivered by
- * the synchronous `NotificationService` path (OP-95, ADR-0094).
+ * the synchronous `NotificationService` path (OP-95, ADR-0096).
  *
  * The integration suite drives the auth handler in-process; this spec proves the
  * same journey works through the deployed HTTP surface with the **real** OTP

@@ -32,7 +32,7 @@ import { expectNoSecretsInLogs } from "../helpers/log-assertions";
 
 /**
  * Integration / contract — OTP delivery through the NotificationService
- * (OP-95, design §5, §8.2, §19.5; API Contract §0.13, §7.6; ADR-0094).
+ * (OP-95, design §5, §8.2, §19.5; API Contract §0.13, §7.6; ADR-0096).
  *
  * Better Auth's OTP callbacks must not talk to the legacy memory capture or to
  * a vendor directly: every delivered one-time code goes through the synchronous
@@ -53,14 +53,14 @@ import { expectNoSecretsInLogs } from "../helpers/log-assertions";
  *     (defaulting from config) and wires `notificationOtpSender` as the OTP
  *     port, replacing the OP-85 `memoryOtpSender`.
  *   - `@/server/notifications/fan-out` exports `sendTransactionalNow(input)`
- *     (ADR-0094) — the synchronous resolve → render → dispatch path. It
+ *     (ADR-0096) — the synchronous resolve → render → dispatch path. It
  *     persists one `notificationDispatches` row (metadata only, `body: null`
  *     for `retainBody: false` types) and hands a fully rendered
  *     `OutboundMessage` to the transport.
  *   - The `auth.otp.*` templates render the code (`{{code}}`), since the code is
  *     a template variable, not a persisted field.
  *
- * ## Assumptions (ADR-0094)
+ * ## Assumptions (ADR-0096)
  *
  *   - The synchronous path resolves only the recipient's fact for the requested
  *     channel; recipient *audience* resolution is the fan-out's concern and is
