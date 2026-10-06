@@ -1,3 +1,9 @@
+## [1.21.1](https://github.com/yahodu/openpic-webapp/compare/v1.21.0...v1.21.1) (2026-10-06)
+
+### Bug Fixes
+
+- **notifications:** OP-94 fail closed when a non-memory transport lacks NOVU_API_KEY ([#205](https://github.com/yahodu/openpic-webapp/issues/205)) ([f16e26d](https://github.com/yahodu/openpic-webapp/commit/f16e26d450ed18dc40a7182f462ec5ddef8ae26b))
+
 ## [1.21.0](https://github.com/yahodu/openpic-webapp/compare/v1.20.1...v1.21.0) (2026-10-06)
 
 ### Features
