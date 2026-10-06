@@ -1293,7 +1293,7 @@ function seededTypeRow(typeKey: string): NotificationType | null {
 
 /**
  * Guard the sanctioned seed-catalogue fallback against silence (OP-95
- * follow-up F2, ADR-0100; the fallback itself is the E1 resolution, ADR-0098 §6).
+ * follow-up F2, ADR-0102; the fallback itself is the E1 resolution, ADR-0098 §6).
  *
  * Production must never serve the compile-time seed behind an empty or
  * schema-invalid stored catalogue; outside production the fallback is kept but

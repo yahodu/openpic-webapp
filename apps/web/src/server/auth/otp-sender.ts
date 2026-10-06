@@ -139,7 +139,7 @@ async function resolveUserId(db: Db, channel: OtpChannel, to: string): Promise<s
 export function notificationOtpSender(options: NotificationOtpSenderOptions): OtpSender {
   const inbox = options.inbox ?? otpInbox;
   // The declared `actionUrl` variable the email OTP copy renders (OP-95
-  // follow-up F1, ADR-0100). A non-secret app link; the validated config is
+  // follow-up F1, ADR-0102). A non-secret app link; the validated config is
   // the only source, and reading it here keeps `renderVarsFor` strict.
   const actionUrl = getConfig().app.baseUrl;
 

@@ -1,4 +1,4 @@
-# ADR-0100 — OP-95 follow-up RED: synchronous OTP copy `actionUrl` and the catalogue-fallback guard
+# ADR-0102 — OP-95 follow-up RED: synchronous OTP copy `actionUrl` and the catalogue-fallback guard
 
 - **Status:** Accepted · **Date:** 2026-10-06
 - **Card:** OP-95 follow-up RED (`t_7fde2bdd`), GREEN card `t_17ca0cb6` (assignee `openpic-webapp-backend-coder`)
