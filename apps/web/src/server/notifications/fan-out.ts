@@ -1291,6 +1291,33 @@ function seededTypeRow(typeKey: string): NotificationType | null {
   return SEED_NOTIFICATION_TYPES.find((type) => type.typeKey === typeKey) ?? null;
 }
 
+/**
+ * Guard the sanctioned seed-catalogue fallback against silence (OP-95
+ * follow-up F2, ADR-0100; the fallback itself is the E1 resolution, ADR-0098 §6).
+ *
+ * Production must never serve the compile-time seed behind an empty or
+ * schema-invalid stored catalogue; outside production the fallback is kept but
+ * recorded at warn level so an operator can see the miss. The environment is
+ * read at call time through the uncached {@link getAppEnv} — the memoised
+ * `getConfig()` would pin the boot-time answer.
+ *
+ * @param typeKey - The notification type whose stored row was absent/invalid.
+ * @param collection - The catalogue collection the fallback stands in for.
+ * @throws When the process runs in production.
+ */
+function guardSeededCatalogueFallback(typeKey: string, collection: string): void {
+  if (getAppEnv() === "production") {
+    throw new Error(
+      `notification catalogue fallback is not permitted in production: ${typeKey} (${collection})`
+    );
+  }
+  getLogger().warn("notification.catalogue_fallback", {
+    event: "notification.catalogue_fallback",
+    typeKey,
+    collection,
+  });
+}
+
 /** The active seeded templates for a type, grouped by routing channel. */
 function seededTemplates(typeKey: string): Map<string, readonly NotificationTemplate[]> {
   const byChannel = new Map<string, NotificationTemplate[]>();
@@ -1326,7 +1353,18 @@ export async function sendTransactionalNow(
   const db = input.db ?? getDb();
   const clock = input.clock ?? systemClock;
 
-  const storedType = await loadTypeRow(db, input.typeKey);
+  // The type row, its templates and the platform settings are independent
+  // reads; issue them together instead of awaiting one after the other (OP-95
+  // follow-up F3).
+  const [storedType, storedTemplates, settings] = await Promise.all([
+    loadTypeRow(db, input.typeKey),
+    loadTemplates(db, input.typeKey),
+    getPlatformSettings({ db, clock }),
+  ]);
+
+  if (storedType === null) {
+    guardSeededCatalogueFallback(input.typeKey, COLLECTIONS.notificationTypes);
+  }
   const typeRow = storedType ?? seededTypeRow(input.typeKey);
   if (typeRow?.enabled !== true) {
     throw new Error(`unknown or disabled notification type: ${input.typeKey}`);
@@ -1342,11 +1380,19 @@ export async function sendTransactionalNow(
     contacts: otpContacts(input.channel, input.destination),
   });
 
-  const storedTemplates = await loadTemplates(db, input.typeKey);
+  // Validate the resolved channel *before* the dispatch insert (OP-95
+  // follow-up F4): a non-deliverable target must not leave a permanently
+  // `queued` orphan ledger row behind.
+  if (target.channel !== "email" && target.channel !== "sms") {
+    throw new Error(`OTP target resolved to a non-deliverable channel: ${target.channel}`);
+  }
+
+  const storedForGroup = storedTemplates.get(target.channelGroup);
+  if (storedForGroup === undefined) {
+    guardSeededCatalogueFallback(input.typeKey, COLLECTIONS.notificationTemplates);
+  }
   const candidates =
-    storedTemplates.get(target.channelGroup) ??
-    seededTemplates(input.typeKey).get(target.channelGroup) ??
-    [];
+    storedForGroup ?? seededTemplates(input.typeKey).get(target.channelGroup) ?? [];
   const template = selectTemplate(candidates, FALLBACK_LOCALE);
   if (template === undefined) {
     throw new Error(`no active template for ${input.typeKey}/${target.channelGroup}`);
@@ -1359,7 +1405,6 @@ export async function sendTransactionalNow(
   );
 
   const now = clock.now();
-  const settings = await getPlatformSettings({ db, clock });
   const record = buildDispatchRecord({
     typeRow,
     userId: input.userId ?? null,
@@ -1381,9 +1426,6 @@ export async function sendTransactionalNow(
   const inserted = await platformRepo(db).collection(COLLECTIONS.dispatches).insertOne(document);
   const dispatchId = inserted.insertedId.toHexString();
 
-  if (target.channel !== "email" && target.channel !== "sms") {
-    throw new Error(`OTP target resolved to a non-deliverable channel: ${target.channel}`);
-  }
   const message = buildOutboundMessage(
     target.channel,
     input.userId ?? "",
