@@ -1,3 +1,9 @@
+## [1.20.0](https://github.com/yahodu/openpic-webapp/compare/v1.19.0...v1.20.0) (2026-10-06)
+
+### Features
+
+- **notifications:** OP-95 deliver OTP through the synchronous NotificationService ([#194](https://github.com/yahodu/openpic-webapp/issues/194)) ([da7e3c3](https://github.com/yahodu/openpic-webapp/commit/da7e3c345fde8c7e0e267db26911da09b1c34908))
+
 ## [1.19.0](https://github.com/yahodu/openpic-webapp/compare/v1.18.1...v1.19.0) (2026-10-05)
 
 ### Features
