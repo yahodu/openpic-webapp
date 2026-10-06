@@ -7,7 +7,7 @@ import { platformRepo } from "@/server/repos";
 
 /**
  * Mongo-backed `RecipientRepository` for the notification fan-out (OP-94 §2,
- * ADR-0090, ADR-0095).
+ * ADR-0090, ADR-0106).
  *
  * The fan-out resolves its audience **at send time** (audience is never stored
  * on the outbox row): the injected {@link RecipientRepository} port is the only

@@ -1,7 +1,7 @@
 import { getLogger } from "@/server/logging";
 
 /**
- * The opportunistic fan-out drain (OP-94 §1 follow-up, ADR-0095).
+ * The opportunistic fan-out drain (OP-94 §1 follow-up, ADR-0106).
  *
  * `emitDomainEvent` schedules this once per notifications-pending emit via
  * Next.js's `after()`, so a fresh event is delivered without waiting for the

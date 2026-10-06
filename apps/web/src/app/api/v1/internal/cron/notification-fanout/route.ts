@@ -12,7 +12,7 @@ import { getNotificationTransport } from "@/server/services/notification-transpo
 /**
  * `GET`/`POST /api/v1/internal/cron/notification-fanout` — the scheduled drain
  * of the notification outbox (OP-94 §1 follow-up, contract §10.2, ADR-0028,
- * ADR-0090, ADR-0095).
+ * ADR-0090, ADR-0106).
  *
  * OP-94 shipped the fan-out consumer (`@/server/notifications/fan-out`) but
  * de-scoped its two triggers. This is the scheduled half: it runs a bounded
@@ -58,7 +58,7 @@ function buildNotificationFanOutRoute(requestedLimit: string | null) {
     response: cronResultSchema,
     auth: (ctx, request) => {
       const config = getConfig();
-      // The route has two credential legs (ADR-0094): `GET` is the Vercel Cron
+      // The route has two credential legs (ADR-0106 §3): `GET` is the Vercel Cron
       // leg and accepts only the `CRON_SECRET` bearer, while `POST` is the
       // signed manual/QStash leg requiring `Bearer <INTERNAL_API_SECRET>` plus a
       // valid HMAC. Presenting the internal secret on the cron `GET` is a wrong

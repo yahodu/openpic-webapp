@@ -3,7 +3,7 @@ import type { FanOutSummary } from "@/server/notifications/fan-out";
 
 /**
  * Project a notification fan-out run summary onto the bounded cron
- * `CronRunOutcome` (OP-94 §1 follow-up, contract §10.2, ADR-0028, ADR-0095).
+ * `CronRunOutcome` (OP-94 §1 follow-up, contract §10.2, ADR-0028, ADR-0106).
  *
  * `runNotificationFanOut` resolves a {@link FanOutSummary}
  * (`{ claimed, processed, failed }`); the cron job that drains it must project
