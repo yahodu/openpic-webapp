@@ -312,3 +312,179 @@ describe("digest daily cap (I3)", () => {
     });
   });
 });
+
+describe("digest flush is bounded by `limit` (I6)", () => {
+  it("I6: flushes exactly `limit` due buckets and reports hasMore while a backlog remains", async () => {
+    await withTestDb(async (test) => {
+      const attendee = newUserId();
+      await seedRecipient(test.db, attendee);
+      const transport = memoryMessageTransport();
+      const recipients = fixedRecipients(attendee);
+
+      // Three independent buckets, all due by t0 + 20m.
+      for (let index = 0; index < 3; index += 1) {
+        await insertArrival(test.db, new ObjectId().toHexString(), attendee);
+        await runFanOutAt(test.db, transport, recipients, at(T0, index * MINUTE));
+      }
+
+      const first = await flushDueDigests({
+        db: test.db,
+        clock: fixedClock(at(T0, 20 * MINUTE)),
+        transport,
+        limit: 2,
+      });
+
+      // A backlog larger than `limit`: exactly `limit` flushed, more remains.
+      expect(first.affected).toBe(2);
+      expect(first.hasMore).toBe(true);
+      expect(transport.outbox).toHaveLength(2);
+
+      // The backlog now fits under `limit`: the remainder flushes, nothing is left.
+      const rest = await flushDueDigests({
+        db: test.db,
+        clock: fixedClock(at(T0, 25 * MINUTE)),
+        transport,
+        limit: 2,
+      });
+
+      expect(rest.affected).toBe(1);
+      expect(rest.hasMore).toBe(false);
+      expect(transport.outbox).toHaveLength(3);
+    });
+  });
+});
+
+describe("digest daily-cap day boundary (I7)", () => {
+  it("I7: the daily cap rolls over at local midnight in the recipient's time zone, not UTC midnight", async () => {
+    await withTestDb(async (test) => {
+      const attendee = newUserId();
+      await seedRecipientInZone(test.db, attendee, "Asia/Kolkata");
+      const transport = memoryMessageTransport();
+      const recipients = fixedRecipients(attendee);
+
+      // Three digests sent on the recipient's local day 2026-03-01.
+      for (let index = 0; index < 3; index += 1) {
+        await insertArrival(test.db, new ObjectId().toHexString(), attendee);
+        await runFanOutAt(test.db, transport, recipients, at(T0, index * MINUTE));
+      }
+      const capped = await flushDueDigests({
+        db: test.db,
+        clock: fixedClock(at(T0, 20 * MINUTE)),
+        transport,
+        limit: 100,
+      });
+      expect(capped.affected).toBe(3);
+      expect(transport.outbox).toHaveLength(3);
+
+      // A fourth bucket flushes at 19:30Z = 01:00 IST on 2026-03-02 even though it
+      // is still 2026-03-01 in UTC: a fresh local day earns a fresh allowance.
+      await insertArrival(test.db, new ObjectId().toHexString(), attendee);
+      await runFanOutAt(test.db, transport, recipients, "2026-03-01T19:00:00.000Z");
+
+      const nextDay = await flushDueDigests({
+        db: test.db,
+        clock: fixedClock("2026-03-01T19:30:00.000Z"),
+        transport,
+        limit: 100,
+      });
+
+      expect(nextDay.affected).toBe(1);
+      expect(transport.outbox).toHaveLength(4);
+    });
+  });
+});
+
+describe("digest daily-cap scope (I8)", () => {
+  it("I8: the daily cap is shared per recipient across digest types, not per type", async () => {
+    await withTestDb(async (test) => {
+      const attendee = newUserId();
+      await seedRecipient(test.db, attendee);
+      const transport = memoryMessageTransport();
+      const recipients = fixedRecipients(attendee);
+
+      // Three `attendee.matches.new` digests exhaust the day's allowance.
+      for (let index = 0; index < 3; index += 1) {
+        await insertArrival(test.db, new ObjectId().toHexString(), attendee);
+        await runFanOutAt(test.db, transport, recipients, at(T0, index * MINUTE));
+      }
+      const capped = await flushDueDigests({
+        db: test.db,
+        clock: fixedClock(at(T0, 20 * MINUTE)),
+        transport,
+        limit: 100,
+      });
+      expect(capped.affected).toBe(3);
+
+      // A due bucket of a *different* digest type for the same recipient, later
+      // the same day. The cap is per recipient, so no allowance remains.
+      await insertArrivalFor(
+        test.db,
+        "admin.abuse.flagged",
+        new ObjectId().toHexString(),
+        attendee
+      );
+      await runFanOutAt(test.db, transport, recipients, at(T0, 30 * MINUTE));
+
+      const second = await flushDueDigests({
+        db: test.db,
+        clock: fixedClock(at(T0, 45 * MINUTE)),
+        transport,
+        limit: 100,
+      });
+
+      expect(second.affected).toBe(0);
+      expect(transport.outbox).toHaveLength(3);
+
+      const otherType = await test.db
+        .collection<StoredDigest>(NOTIFICATION_DIGESTS)
+        .findOne({ typeKey: "admin.abuse.flagged" });
+      expect(otherType?.status).toBe("open");
+    });
+  });
+});
+
+/** A recipient whose configured time zone is `timeZone` (the day-boundary pin). */
+async function seedRecipientInZone(database: Db, userId: string, timeZone: string): Promise<void> {
+  const objectId = new ObjectId(userId);
+  await database.collection(USER).insertOne({
+    _id: objectId,
+    email: `${userId}@example.com`,
+    emailVerified: true,
+    phoneNumber: null,
+    phoneNumberVerified: false,
+  });
+  await database.collection(COLLECTIONS.userProfiles).insertOne({
+    userId: objectId,
+    platformRole: "client",
+    locale: "en-IN",
+    contactCapabilities: { whatsappCapable: null, whatsappCheckedAt: null },
+  });
+  await database.collection(COLLECTIONS.notificationPreferences).insertOne({
+    userId: objectId,
+    global: { in_app: "on", email: "on", mobile: "on" },
+    byType: {},
+    byEvent: {},
+    quietHours: { enabled: false, start: "22:00", end: "07:00", timeZone },
+    locale: "en-IN",
+  });
+}
+
+/** Insert a pending outbox row for an arbitrary digest `typeKey`. */
+async function insertArrivalFor(
+  database: Db,
+  typeKey: string,
+  eventId: string,
+  userId: string
+): Promise<void> {
+  const occurredAt = new Date(T0);
+  await database.collection(COLLECTIONS.domainEvents).insertOne({
+    eventKey: typeKey,
+    tenantId: new ObjectId().toHexString(),
+    actorRef: { kind: "system", id: "digest" },
+    subjectRef: { kind: "user", id: userId },
+    payload: { eventId, count: 1 },
+    occurredAt,
+    expireAt: new Date(occurredAt.getTime() + 180 * 24 * HOUR),
+    dispatch: { notifications: "pending", analytics: "not_applicable", queue: "not_applicable" },
+  });
+}

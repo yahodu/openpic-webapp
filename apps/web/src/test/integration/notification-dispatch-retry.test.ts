@@ -264,3 +264,84 @@ describe("notification-dispatch-retry (I4)", () => {
     });
   });
 });
+
+describe("notification-dispatch-retry is bounded by `limit` (I9)", () => {
+  it("I9: retries exactly `limit` due rows and reports hasMore while a backlog remains", async () => {
+    await withTestDb(async (test) => {
+      const recipient = newUserId();
+      const actor = newUserId();
+      await seedRecipient(test.db, recipient);
+
+      // Three events, each failing retryably on its first attempt.
+      const transport = scriptedTransport(3, true);
+      for (let index = 0; index < 3; index += 1) {
+        await deliverWith(test.db, transport, recipient, actor);
+      }
+      expect(transport.calls).toBe(3);
+      expect(
+        await test.db
+          .collection<StoredDispatch>(DISPATCHES)
+          .countDocuments({ status: "failed", "lastError.retryable": true })
+      ).toBe(3);
+
+      const first = await retryDueDispatches({
+        db: test.db,
+        clock: fixedClock("2026-03-01T10:02:00.000Z"),
+        transport,
+        limit: 2,
+      });
+
+      // A backlog larger than `limit`: exactly `limit` retried, more remains.
+      expect(first.affected).toBe(2);
+      expect(first.hasMore).toBe(true);
+      expect(transport.calls).toBe(5);
+
+      // The backlog now fits under `limit`: the remainder retries, nothing is left.
+      const rest = await retryDueDispatches({
+        db: test.db,
+        clock: fixedClock("2026-03-01T10:05:00.000Z"),
+        transport,
+        limit: 2,
+      });
+
+      expect(rest.affected).toBe(1);
+      expect(rest.hasMore).toBe(false);
+      expect(await test.db.collection(DISPATCHES).countDocuments({ status: "failed" })).toBe(0);
+    });
+  });
+});
+
+describe("notification-dispatch-retry is idempotent (I10)", () => {
+  it("I10: a second run after a successful retry re-sends nothing", async () => {
+    await withTestDb(async (test) => {
+      const recipient = newUserId();
+      const actor = newUserId();
+      await seedRecipient(test.db, recipient);
+
+      const transport = scriptedTransport(1, true);
+      await deliverWith(test.db, transport, recipient, actor);
+
+      const first = await retryDueDispatches({
+        db: test.db,
+        clock: fixedClock("2026-03-01T10:02:00.000Z"),
+        transport,
+        limit: 100,
+      });
+      expect(first.affected).toBe(1);
+      expect(transport.calls).toBe(2);
+      expect(transport.outbox).toHaveLength(1);
+
+      // A sent row is not `failed && retryable` any more: the next run is a no-op.
+      const second = await retryDueDispatches({
+        db: test.db,
+        clock: fixedClock("2026-03-01T10:10:00.000Z"),
+        transport,
+        limit: 100,
+      });
+
+      expect(second.affected).toBe(0);
+      expect(transport.calls).toBe(2);
+      expect(transport.outbox).toHaveLength(1);
+    });
+  });
+});

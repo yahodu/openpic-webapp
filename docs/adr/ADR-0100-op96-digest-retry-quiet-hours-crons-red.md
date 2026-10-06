@@ -121,6 +121,50 @@ failure (`lastError.retryable: false`) is **never** selected or re-sent.
    reconstruct the message; the assertions are on the observable transport call
    and the row transition, never on a stored field shape.
 
+### Addendum — OP-96 follow-up RED pins (card `t_7a67b87d`)
+
+The phase-1 RED review (ADR-0101, task `t_bf539e5b`) approved the contract but
+found four coverage gaps. This addendum settles the two that needed a product
+decision and records the pins that close all four. The pins live on the same RED
+branch (`OP-96-task-digest-retry-quiet-hours-crons-red`) and the GREEN card
+`t_609968cf` must satisfy them.
+
+**A1 — Bounding and `hasMore` (all three crons).** Each job already returns the
+§10.2 `CronRunOutcome`, but no phase-1 pin exercised `limit`/`hasMore`. The pins
+(I6, I9, I11) fix the semantics: a run selects at most `limit` due rows, reports
+`affected === limit` and `hasMore: true` **iff** an unselected due row remains;
+when the backlog is smaller than `limit` the run drains it (`hasMore: false`).
+`hasMore` is about _unprocessed due work_, not about the daily cap: a
+cap-deferred digest bucket stays `open` and is **not** counted as `hasMore`.
+
+**A2 — Idempotency (retry and release).** A row transitions to a terminal
+`sent`/`failed` state, so a second consecutive run selects nothing: I10 and I12
+pin `affected: 0` and no further transport call / outbox growth after a
+successful retry or release, and I12 additionally pins that two deferred rows
+for the same recipient are each sent exactly once.
+
+**A3 — Digest daily-cap day boundary (resolves assumption 4).** The cap is
+counted per **recipient per local day**, where "local" is the recipient's
+configured time zone: `notificationPreferences.quietHours.timeZone` (the only
+per-recipient zone in the schema; UTC when the preference row or the field is
+absent). I7 pins that a bucket due after local midnight earns a fresh allowance
+even while it is still the previous day in UTC. This forbids a server-local or
+UTC-day implementation chosen by accident.
+
+**A4 — Cap scope is per recipient, not per type (and not per event).** ADR-0100
+assumption 4 ("per recipient per local day") is the approved reading, against
+the GREEN card body's looser "per user per type" wording. I8 pins it: three
+digests of one type exhaust the day's allowance for the recipient, so a due
+bucket of a _different_ digest type the same day is deferred (`affected: 0`,
+bucket stays `open`). Flagged for the orchestrator: design §6 / G3 phrase the
+cap as "≤3 emails/day/event"; if product intends a per-type or per-event scope
+instead, I8 must be updated **before** GREEN, never silently loosened.
+
+**A5 — Partial `{status, until}` index.** The phase-1 I5 assertion accepted any
+index whose key named `status` and `until`; it now requires a non-null
+`partialFilterExpression` (ADR-0100 §Quiet-hours deferral) so the release sweep
+is index-supported only for deferred rows.
+
 ## RED evidence
 
 - `pnpm test:unit` → `Test Files 2 failed | 79 passed`; the two failures are
@@ -155,10 +199,11 @@ Base tree: `origin/main` `d261297` (OP-95 sign-off merged), worktree branch
 
 - The `/internal/cron/notification-fanout` route and the `after()` opportunistic
   trigger (the OP-94 cron-route lane; not this card).
-- Cross-day rollover of the digest daily counter, and the `notificationDigests`
-  TTL/unique index _bodies_ (the collection name is pinned; the index specs are
-  the GREEN card's to add and are asserted only structurally in I5 for the
-  dispatches `{status,until}` index).
+- Cross-day rollover of the digest daily counter is pinned by the follow-up
+  addendum A3/I7 (the recipient's local day, resolved above); the
+  `notificationDigests` TTL/unique index _bodies_ remain out of scope (the
+  collection name is pinned; the index specs are the GREEN card's to add and are
+  asserted only structurally in I5 for the dispatches `{status,until}` index).
 - Admin deliverability-forensics routes and suppression-list CRUD.
 - Playwright e2e — the card's `e2e_api_playwright` list is empty.
 

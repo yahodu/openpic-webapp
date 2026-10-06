@@ -239,12 +239,94 @@ describe("the deferred-dispatch index (I5)", () => {
     await withTestDb(async (test) => {
       const indexes = await test.db.collection(DISPATCHES).listIndexes().toArray();
 
-      const supportsSweep = indexes.some((index: unknown) => {
+      const sweepIndex = indexes.find((index: unknown) => {
         const key = (index as { readonly key?: Record<string, unknown> }).key;
         return key !== undefined && "status" in key && "until" in key;
+      }) as { readonly partialFilterExpression?: unknown } | undefined;
+
+      expect(sweepIndex).toBeDefined();
+      // ADR-0100 requires a *partial* index: the sweep covers only deferred rows,
+      // so `{status, until}` must carry a `partialFilterExpression` — a plain
+      // compound index is not the contract.
+      const partial = sweepIndex?.partialFilterExpression;
+      expect(typeof partial === "object" && partial !== null).toBe(true);
+    });
+  });
+});
+
+describe("quiet-hours release is bounded by `limit` (I11)", () => {
+  it("I11: releases exactly `limit` due rows and reports hasMore while a backlog remains", async () => {
+    await withTestDb(async (test) => {
+      const recipient = newUserId();
+      const actor = newUserId();
+      await seedQuietRecipient(test.db, recipient);
+      const transport = memoryMessageTransport();
+
+      // Three deferred email rows, all targeting the same window end.
+      for (let index = 0; index < 3; index += 1) {
+        await fanOutAt(test.db, transport, recipient, actor, INSIDE);
+      }
+      expect(await test.db.collection(DISPATCHES).countDocuments({ status: "deferred" })).toBe(3);
+
+      const first = await releaseDeferredDispatches({
+        db: test.db,
+        clock: fixedClock(WINDOW_END),
+        transport,
+        limit: 2,
       });
 
-      expect(supportsSweep).toBe(true);
+      // A backlog larger than `limit`: exactly `limit` released, more remains.
+      expect(first.affected).toBe(2);
+      expect(first.hasMore).toBe(true);
+      expect(transport.outbox).toHaveLength(2);
+
+      // The backlog now fits under `limit`: the remainder releases, nothing is left.
+      const rest = await releaseDeferredDispatches({
+        db: test.db,
+        clock: fixedClock(WINDOW_END),
+        transport,
+        limit: 2,
+      });
+
+      expect(rest.affected).toBe(1);
+      expect(rest.hasMore).toBe(false);
+      expect(transport.outbox).toHaveLength(3);
+    });
+  });
+});
+
+describe("quiet-hours release is idempotent (I12)", () => {
+  it("I12: each deferred row is released once and a second run re-sends nothing", async () => {
+    await withTestDb(async (test) => {
+      const recipient = newUserId();
+      const actor = newUserId();
+      await seedQuietRecipient(test.db, recipient);
+      const transport = memoryMessageTransport();
+
+      // Two deferred rows for the same recipient: each must be sent exactly once.
+      await fanOutAt(test.db, transport, recipient, actor, INSIDE);
+      await fanOutAt(test.db, transport, recipient, actor, INSIDE);
+
+      const first = await releaseDeferredDispatches({
+        db: test.db,
+        clock: fixedClock(WINDOW_END),
+        transport,
+        limit: 100,
+      });
+      expect(first.affected).toBe(2);
+      expect(transport.outbox).toHaveLength(2);
+
+      // The rows are `sent` now: a second run selects nothing and re-sends nothing.
+      const second = await releaseDeferredDispatches({
+        db: test.db,
+        clock: fixedClock(WINDOW_END),
+        transport,
+        limit: 100,
+      });
+      expect(second.affected).toBe(0);
+      expect(transport.outbox).toHaveLength(2);
+      expect(await test.db.collection(DISPATCHES).countDocuments({ status: "deferred" })).toBe(0);
+      expect(await test.db.collection(DISPATCHES).countDocuments({ status: "sent" })).toBe(2);
     });
   });
 });
