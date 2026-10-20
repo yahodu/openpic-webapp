@@ -1,3 +1,9 @@
+## [1.22.2](https://github.com/yahodu/openpic-webapp/compare/v1.22.1...v1.22.2) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 round-2 GREEN — owner-gated digest flush, terminal capped rows, delivered-only daily cap ([#217](https://github.com/yahodu/openpic-webapp/issues/217)) ([2c779b3](https://github.com/yahodu/openpic-webapp/commit/2c779b3a5d212fa0e62147bc054a502af721d690)), closes [#6](https://github.com/yahodu/openpic-webapp/issues/6)
+
 ## [1.22.1](https://github.com/yahodu/openpic-webapp/compare/v1.22.0...v1.22.1) (2026-10-20)
 
 ### Bug Fixes
