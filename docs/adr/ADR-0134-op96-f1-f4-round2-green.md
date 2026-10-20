@@ -182,6 +182,76 @@ used.
 
 ## Review sign-off (round 2 GREEN, artifact lens)
 
-_Pending — to be recorded here by `openpic-webapp-reviewer` on PR #217, in place,
-so the lane does not consume a second ADR number (the convention the round-1
-GREEN lane used inside ADR-0130)._
+**Verdict: APPROVED WITH FINDINGS** — `openpic-webapp-reviewer`, 2026-10-20, on head
+`ffd6e43`, branch `OP-96-task-f1-f4-round2-red`, PR #217. No implementation, test,
+mock, fixture or factory file was edited by the reviewer; the only reviewer commit
+on this PR is docs-only (this section). No Critical or High finding.
+
+### Independently verified (not taken from the handoff)
+
+- **Diff read cold first** (artifact lens): the GREEN commits after the RED head
+  `e73cfbb` touch only `digest.ts`, `dispatch-retry.ts`, `fan-out.ts`,
+  `quiet-hours-release.ts`, `docs/Notification and Database Design.md` and the ADR
+  files. `git diff --name-only e73cfbb..HEAD | grep -Ei 'test|mock|fixture|factory'`
+  → none: the pins are unedited.
+- **Suite reproduced on `ffd6e43`** with the lane's worktree (`node_modules`,
+  `TMPDIR=/root/tmp-mongo`): `vitest --project unit` → **85 files / 1477 passed**;
+  `vitest --project integration` → **53 files / 356 passed** (RED was 3 failed /
+  353 passed). All three pins (F1b `notification-digest-flush-non-retryable`, F1c
+  `notification-digest-flush-daily-cap`, F2b `notification-dispatch-retry-cap`)
+  are green and nothing previously green regressed.
+- **Gates re-run**: `tsc -p apps/web/tsconfig.json --noEmit` exit 0; `prettier
+--check` clean on the touched sources and ADR. `gh pr checks 217` → all green
+  (`ci`, `unit_test`, `test_coverage`, `lint`, `env-changes`, `secret-scan`,
+  `validate-branch-name`, `validate-pr-title`, CodeQL).
+- **ADR number free**: `origin/main` ADR high-water is `0130`; `0134` is unused on
+  main and on every open ref, and no other ref claims it. README row + lane
+  paragraph are consistent (one number ↔ one file on `main`).
+- **Honesty audit** of the diff: no fixture-specific hardcoding, no
+  test-environment conditional, no `@ts-ignore`/lint suppression, no added console
+  noise, no new dependency. `"attempts_exhausted"` / `flushOutcome` are the
+  general field names the RED contract pins, not test-shaped constants.
+- **Design coherence**: `redeliverDispatchRow` remains the single shared
+  redelivery path (`dispatch-retry.ts:29`, `quiet-hours-release.ts:21`); F1's
+  single-owner rule holds (a retryable failure still closes the bucket —
+  `notification-digest-flush-failure.test.ts:282` still green).
+
+### Findings
+
+- **F1c-r2 (Medium, coverage gap — routes to a NEW round-3 TEST card).** On a
+  **retryable** flush failure the bucket is closed with `flushOutcome: "failed"`
+  (`digest.ts:503`) while the ledger row redelivers the same summary
+  (`dispatch-redelivery.ts:224-251`). A digest that is delivered **via the
+  redelivery** therefore never counts against `maxDigestEmailsPerDay`
+  (`countFlushedToday` counts `flushOutcome: "sent"` only, `digest.ts:231-233`),
+  so a recipient can exceed the documented per-day cap by the number of
+  fail-then-recover digests in a local day. ADR-0120 A4 as amended here says the
+  cap bounds "how many digest emails one recipient may **receive** in a day", and
+  a redelivered summary is received. No existing pin covers this
+  (`notification-digest-flush-failure.test.ts` asserts the delivery, not the
+  cap). Fixing it needs a contract decision (count the recovery, or amend A4 to
+  "sent on first attempt"), so it is pinned first — new card created from this
+  review.
+- **F1b-r2 (Low, already routed).** A permanently non-retryable flush failure is
+  re-attempted on every tick and inserts one `failed` ledger row per attempt
+  until the bucket TTL; deliberately unbounded here because no pin covers it
+  (accepted in §F1b above). Pinned by the round-3 TEST card `t_b6540886`.
+- **Deploy edge (Low, accepted).** A bucket flushed by the previous version
+  carries no `flushOutcome`, so it stops counting for the remainder of that local
+  day — an under-count of at most one day, never an over-send (§F1c). Bounded and
+  documented; no action.
+- **F2b observability note (Low, accepted).** `markAttemptsExhausted` overwrites
+  the transport's own `lastError` (`code`/`status`) with the terminal marker, and
+  a capped row is counted in `errors` on the tick that classifies it. Both are
+  the designed semantics and are documented; no action.
+
+### Test-quality note (report only)
+
+The round-2 pins are strong behaviour pins (real `MongoMemoryReplSet`, real
+fan-out + flush/retry jobs, delivery-based observables, non-default settings
+seeded so the default is never assumed). One observation: the daily cap is
+exercised only end-to-end through `flushDueDigests`, while the pure unit
+`withinDigestDailyCap` (`digest.test.ts` U2) is decoupled from the new
+`flushOutcome` count — which is why the F1c change was invisible to the unit
+project. That is fine, but it means the F1c-r2 gap above has no cheap unit
+coverage either.
