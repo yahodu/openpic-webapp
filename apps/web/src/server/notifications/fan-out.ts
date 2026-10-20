@@ -729,9 +729,17 @@ async function writeSkip(
  * §6/§19.6, ADR-0120).
  *
  * Each arrival pushes `flushAt` forward to `lastItemAt + quietMinutes`, capped
- * at `firstItemAt + hardFlushHours` — via one atomic pipeline upsert, so a
- * concurrent arrival can never reset the bucket's `firstItemAt` or lose a
- * count. `sampleItems` keeps the last five arrivals.
+ * at `firstItemAt + hardFlushHours` — via one atomic pipeline upsert, so an
+ * arrival that matches the open bucket can never reset its `firstItemAt` or
+ * lose a count. `sampleItems` keeps the last five arrivals.
+ *
+ * The upsert is **not** equivalent to a unique-index dedupe (F5, ADR-0134): two
+ * arrivals whose query phases both miss the `{userId, bucketKey, status:
+ * "open"}` filter both attempt the insert, and the loser raises `E11000` on the
+ * `notification_digests_user_bucket_open_unique` index. Per-recipient isolation
+ * records that as a fan-out failure and leaves the event claimable, so a later
+ * sweep re-processes it and the arrival is counted then — never lost, but
+ * transiently uncounted.
  */
 async function upsertDigestBucket(
   db: Db,
@@ -834,8 +842,11 @@ async function writeDeferred(
       subject = rendered.subject;
       body = ctx.typeRow.retainBody ? rendered.body : null;
     } catch {
-      // A render failure must not lose the deferred intent; release falls back
-      // to a metadata-only message.
+      // A render failure must not lose the deferred intent — the row is still
+      // written (with `body: null`), and `quiet-hours-release` classifies it
+      // terminally as `unretained_body` in the shared redelivery path (F4,
+      // ADR-0130). There is deliberately no metadata-only fallback message to
+      // release: a subject-only send would deliver empty copy.
     }
   }
 

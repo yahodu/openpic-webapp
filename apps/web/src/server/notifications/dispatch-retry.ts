@@ -9,6 +9,12 @@
  * selected — retrying it would only delay the inevitable. A retry is not
  * immediate: {@link retryBackoffMs} grows the delay `×2` per attempt up to a
  * 5-minute ceiling, so a provider outage is not hammered.
+ *
+ * Attempts are bounded by `platformSettings.pipeline.maxAttempts` (ADR-0130).
+ * A row that has reached the cap is never re-attempted and is recorded as
+ * terminally non-retryable (`lastError.code: "attempts_exhausted"`), so a
+ * backlog metric keyed on `retryable` cannot report a permanent queue
+ * (F2b, ADR-0134).
  */
 import type { Db } from "mongodb";
 
@@ -27,6 +33,11 @@ import type { MessageTransport } from "./message-transport";
 const BASE_MS = 60_000;
 /** The backoff ceiling: 5 minutes. */
 const CAP_MS = 300_000;
+/**
+ * The terminal `lastError.code` a row carries once it has exhausted
+ * `platformSettings.pipeline.maxAttempts` (F2b, ADR-0134).
+ */
+const ATTEMPTS_EXHAUSTED = "attempts_exhausted";
 
 /** Options accepted by {@link retryDueDispatches}. */
 export interface DispatchRetryOptions {
@@ -62,6 +73,29 @@ interface RetryRow extends RedeliveryRow {
 /** True for a plain (non-array) object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Record the terminal classification for a row that has exhausted
+ * `platformSettings.pipeline.maxAttempts` (F2b, ADR-0134).
+ *
+ * Without it the row keeps `status: "failed", lastError.retryable: true`
+ * forever — indistinguishable from one still awaiting its backoff — so any
+ * backlog/alert metric keyed on `retryable` reports a permanent queue.
+ * `attempts` is deliberately left unchanged: the row is not retried, it is
+ * classified.
+ *
+ * @param db - The database handle.
+ * @param id - The dispatch row id.
+ * @returns The update result.
+ */
+function markAttemptsExhausted(db: Db, id: RetryRow["_id"]): Promise<unknown> {
+  return platformRepo(db)
+    .collection(COLLECTIONS.dispatches)
+    .updateOne(
+      { _id: id, status: "failed", "lastError.retryable": true },
+      { $set: { lastError: { retryable: false, code: ATTEMPTS_EXHAUSTED } } }
+    );
 }
 
 /** Narrow an unknown stored value to a retryable dispatch row. */
@@ -101,17 +135,18 @@ export async function retryDueDispatches(options: DispatchRetryOptions): Promise
   const now = clock.now();
 
   // Retries are bounded by the settings seam (F2, ADR-0130): a row that has
-  // reached `pipeline.maxAttempts` is no longer selectable, so a permanently
-  // retryable failure leaves the sweep instead of being re-attempted forever.
-  // The cap is read through the existing settings seam, never a constant.
+  // reached `pipeline.maxAttempts` is no longer re-attempted. It is selected
+  // here anyway so the sweep can record its terminal classification (F2b,
+  // ADR-0134) — including a row that reached the cap before this shipped. The
+  // cap is read through the existing settings seam, never a constant.
   const settings = await getPlatformSettings({ db, clock });
   const maxAttempts = settings.pipeline.maxAttempts;
 
-  // The read is bounded too (F3, ADR-0130): fetch one more than the run will
+  // The read is bounded (F3, ADR-0130): fetch one more than the run will
   // process so `hasMore` reports a remaining backlog without materialising it.
   const raw: unknown = await platformRepo(db)
     .collection(COLLECTIONS.dispatches)
-    .find({ status: "failed", "lastError.retryable": true, attempts: { $lt: maxAttempts } })
+    .find({ status: "failed", "lastError.retryable": true })
     .sort({ failedAt: 1 })
     .limit(limit + 1)
     .toArray();
@@ -127,6 +162,15 @@ export async function retryDueDispatches(options: DispatchRetryOptions): Promise
 
   for (const row of rows) {
     scanned += 1;
+
+    if (row.attempts >= maxAttempts) {
+      // The attempt budget is exhausted: the row can never be re-attempted, so
+      // record the terminal classification instead of leaving it permanently
+      // retryable (F2b, ADR-0134). No transport call, `attempts` unchanged.
+      errors += 1;
+      await markAttemptsExhausted(db, row._id);
+      continue;
+    }
 
     const due =
       row.failedAt !== null &&
