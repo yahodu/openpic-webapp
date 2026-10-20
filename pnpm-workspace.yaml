@@ -10,6 +10,10 @@ allowBuilds:
 # ranges (next -> postcss). Remove once upstream ships the fix.
 overrides:
   postcss@<=8.5.22: "^8.5.23"
+  # GHSA-xw65-4hp5-5hc7 — semantic-release -> conventional-changelog-writer
+  # declares `handlebars@^4.7.7` but the lockfile resolved the vulnerable
+  # 4.7.9; patched at >=4.7.10. Remove once upstream bumps its range.
+  handlebars@<4.7.10: "4.7.10"
 
 audit:
   level: moderate

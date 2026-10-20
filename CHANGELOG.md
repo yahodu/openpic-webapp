@@ -1,3 +1,27 @@
+## [1.22.3](https://github.com/yahodu/openpic-webapp/compare/v1.22.2...v1.22.3) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 round-3 GREEN — bound the repeated non-retryable digest-flush failure (F1b-r2) ([#218](https://github.com/yahodu/openpic-webapp/issues/218)) ([509b559](https://github.com/yahodu/openpic-webapp/commit/509b55994ffe123b59001c8fd1433305a91d5fec))
+
+## [1.22.2](https://github.com/yahodu/openpic-webapp/compare/v1.22.1...v1.22.2) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 round-2 GREEN — owner-gated digest flush, terminal capped rows, delivered-only daily cap ([#217](https://github.com/yahodu/openpic-webapp/issues/217)) ([2c779b3](https://github.com/yahodu/openpic-webapp/commit/2c779b3a5d212fa0e62147bc054a502af721d690)), closes [#6](https://github.com/yahodu/openpic-webapp/issues/6)
+
+## [1.22.1](https://github.com/yahodu/openpic-webapp/compare/v1.22.0...v1.22.1) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 bound digest-flush ownership, retries and sweep reads (F1-F4) ([#216](https://github.com/yahodu/openpic-webapp/issues/216)) ([fde586b](https://github.com/yahodu/openpic-webapp/commit/fde586bc7d5d8b7e7e388bf59e37404dc124747e))
+
+## [1.22.0](https://github.com/yahodu/openpic-webapp/compare/v1.21.1...v1.22.0) (2026-10-20)
+
+### Features
+
+- **notifications:** OP-96 digest buckets, dispatch retry and quiet-hours release crons ([#203](https://github.com/yahodu/openpic-webapp/issues/203)) ([bb70cef](https://github.com/yahodu/openpic-webapp/commit/bb70ceff07679345a2aa20466c073eb225fc063b))
+
 ## [1.21.1](https://github.com/yahodu/openpic-webapp/compare/v1.21.0...v1.21.1) (2026-10-06)
 
 ### Bug Fixes

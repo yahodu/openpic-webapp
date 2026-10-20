@@ -323,7 +323,7 @@ db.notifications.findOneAndUpdate(
 
 `readAt: null` is in the filter on purpose: once the attendee has read "38 new photos", the next arrival must start a **fresh** counter rather than resurrecting a read row — otherwise the unread badge silently under-counts. This is the one place an upsert filter carries read state, and it is intentional.
 
-**Digest window for matches:** flush 15 minutes after the last arrival, hard-flush at 6 hours, cap 3 emails/day/event. Rationale: photo uploads arrive in bursts (a photographer dumps 800 images at once), so a quiet-period flush naturally produces one email per burst rather than one per image or one per fixed hour.
+**Digest window for matches:** flush 15 minutes after the last arrival, hard-flush at 6 hours, cap 3 emails/day/recipient (shared across digest types). Rationale: photo uploads arrive in bursts (a photographer dumps 800 images at once), so a quiet-period flush naturally produces one email per burst rather than one per image or one per fixed hour.
 
 ---
 
@@ -1954,7 +1954,13 @@ One row per (notification, channel) attempt — **including skips**.
 // notificationDigests — open buckets awaiting flush
 { userId, typeKey, bucketKey: "attendee.matches.new:6702abc",
   itemCount: 38, sampleItems: [ /* first 5, for the summary line */ ],
-  firstItemAt, lastItemAt, flushAt, status: "open" | "flushed", expireAt }
+  firstItemAt, lastItemAt, flushAt, status: "open" | "flushed", expireAt,
+  // bounded non-retryable flush failures: at pipeline.maxAttempts the bucket is
+  // closed terminally (status "flushed", flushOutcome "failed") so the flush cron
+  // stops re-attempting a "never retry" failure (F1b-r2, ADR-0137)
+  nonRetryableFailures: 0,
+  // on close: why it closed — only a "sent" flush counts against maxDigestEmailsPerDay
+  flushOutcome: "sent" | "failed" }
 ```
 
 **Indexes:** `{userId:1, bucketKey:1}` unique partial on `status:"open"` · `{status:1, flushAt:1}` partial on `open` (the flush cron) · `{expireAt:1}` TTL 0

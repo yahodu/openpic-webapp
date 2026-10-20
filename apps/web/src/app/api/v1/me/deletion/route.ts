@@ -78,7 +78,7 @@ export const POST = defineRoute({
     );
 
     // Announce the request once through the identity lifecycle seam — the
-    // `handleDeletionRequested` counterpart of the revoke-all emit (ADR-0043
+    // `handleDeletionRequested` counterpart of the revoke-all emit (ADR-0045
     // §3, ADR-0070). The route never writes a domain event directly; there is
     // no database hook for this transition, so there is no double-emit.
     await createIdentityLifecycleSeams({ db: database }).deletionRequested({
