@@ -337,6 +337,36 @@ describe("POST /api/v1/me/notifications/read-all", () => {
     expect((await requireRow(oldest)).readAt).toBeInstanceOf(Date);
   });
 
+  it("I3: with `before`, leaves a row created exactly at the instant unread", async () => {
+    // The operator is `createdAt < before` (ADR-0129 §Feed projection): a row
+    // whose `createdAt` equals the cut instant is NOT "created before" it, so it
+    // stays unread. The seeded / cut values share one instant so `$lt` and `$lte`
+    // are distinguishable — the earlier case (1/3/5 days, cut at 2) cannot.
+    const session = await app.signIn(makeIdentity("op97-read-all-before-boundary"));
+    const cut = daysAgo(2);
+    const atCut = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: cut,
+    });
+    const justBefore = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: new Date(cut.getTime() - 1),
+    });
+
+    const response = await markAllRead(
+      postRequest(session, "/api/v1/me/notifications/read-all", {
+        before: cut.toISOString(),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ markedCount: 1, unreadCount: 1 });
+    expect((await requireRow(atCut)).readAt).toBeNull();
+    expect((await requireRow(justBefore)).readAt).toBeInstanceOf(Date);
+  });
+
   it("I3: ANDs category and eventId when both are supplied", async () => {
     const session = await app.signIn(makeIdentity("op97-read-all-and"));
     const event = new ObjectId();

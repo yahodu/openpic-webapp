@@ -128,6 +128,12 @@ defaults to 20 and is clamped to 50; `cursor` encodes `createdAt` + `_id`.
 `unread-count` endpoint returns — and `summary.unreadByCategory` lists only
 non-zero categories.
 
+`read-all` with a `before` instant marks `createdAt < before` — strictly
+earlier, so a row created exactly at the cut instant is **not** "created before"
+and stays unread. The operator is pinned observably (a row seeded exactly at the
+instant stays unread; one 1 ms earlier is marked); `before` is AND-ed with
+`category` and `eventId`.
+
 Input fallbacks are explicit: a non-positive or non-numeric `limit` falls back
 to the default of 20 (never `0`, never `400`), and an unknown `filter` value
 falls back to the default `active` band (never `400`).
@@ -182,6 +188,24 @@ contract. They change no production file.
 | F5  | **Resolved.** The I4 `explain` seeds `EXPLAIN_READ_ROWS = 200` read rows before the four unread rows, so the partial index is the decisive plan rather than a marginal one; the spec docstring records the flake risk and why the size removes it.                                                                                                                                                                                                                             |
 | F6  | **Deferred (accepted).** The rate-class binding (`read.normal` feed, `read.hot` unread-count, `write.normal` mutations) has no cheap in-suite assertion: `defineRoute` returns a plain `(request) => Promise<Response>` handler with no inspectable metadata, so a spec cannot read the declared class off the route. The numeric budget is already owned by the rate-limit suite; the binding stays asserted by reference only, and this deferral is the recorded acceptance. |
 | F7  | **Done.** The header names the real branch, and the never-return claim above now matches what F1 pins. This ADR is updated in place; its number is unchanged.                                                                                                                                                                                                                                                                                                                  |
+
+### Follow-up settlement (card `t_bd74e9bf`)
+
+The two actionable findings of ADR-0130's round-2 review are closed here, before
+GREEN (`t_58825ec3`) implements:
+
+- **A (key set).** Resolved to the **stable 18-key shape** this ADR already
+  declares. `docs/API Contract.md` §7.1's example now carries
+  `"actionResolvedVia": null, "actionResolvedAt": null` on **both** items (the
+  first item previously omitted them), and the `AppNotification` interface now
+  declares both as required-nullable (`actionResolvedVia: ResolvedVia | null;`
+  / `actionResolvedAt: IsoDateTime | null;`, no `?`). The example, the interface
+  and `FEED_ITEM_KEYS` therefore tell one story: the two keys are always present
+  and serialize as `null` when unresolved. The omit-when-unresolved alternative
+  was **not** chosen, so the pin stays strict.
+- **B (`before` operator).** Now recorded above (`createdAt < before`) and made
+  observable by a boundary pin in `notification-read-state.test.ts` (a row
+  exactly at the cut instant stays unread, so `$lte` would fail the case).
 
 ## Consequences
 
