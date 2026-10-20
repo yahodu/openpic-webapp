@@ -1,3 +1,9 @@
+## [1.22.4](https://github.com/yahodu/openpic-webapp/compare/v1.22.3...v1.22.4) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 count a retry-redelivered digest against the daily cap (F1c-r2) ([#219](https://github.com/yahodu/openpic-webapp/issues/219)) ([4424e74](https://github.com/yahodu/openpic-webapp/commit/4424e74f61013c8f23c1dad49b8f6b2847470d2b))
+
 ## [1.22.3](https://github.com/yahodu/openpic-webapp/compare/v1.22.2...v1.22.3) (2026-10-20)
 
 ### Bug Fixes
