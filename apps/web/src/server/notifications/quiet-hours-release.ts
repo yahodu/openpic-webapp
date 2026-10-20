@@ -87,6 +87,12 @@ export async function releaseDeferredDispatches(
 
   let scanned = 0;
   let affected = 0;
+  // Structurally always 0 (F7, ADR-0134): every selected deferred row is either
+  // released (`sent`) or recorded as a terminal `failed` row with a classified
+  // `lastError` (`unretained_body` / `no_destination` / the transport's own
+  // classification) and counted in `errors`. `redeliverDispatchRow` has no path
+  // that returns without writing the row, so nothing is silently skipped —
+  // `dispatch-redelivery.ts`'s only row-less return is unreachable.
   const skipped = 0;
   let errors = 0;
   let hasMore = rows.length > limit;
