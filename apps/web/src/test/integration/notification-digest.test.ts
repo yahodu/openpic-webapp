@@ -22,7 +22,7 @@ import {
 /**
  * Integration / contract — digest bucket accumulation and the daily cap
  * (OP-96, design §6/§19.6; contract §10.2 `notification-digest-flush`;
- * ADR-0100).
+ * ADR-0120).
  *
  * A `throttle.strategy: "digest"` type (`attendee.matches.new`, window 6 h) does
  * **not** send on arrival: the fan-out accumulates each arrival into one open
@@ -33,7 +33,7 @@ import {
  * Runs against a real `MongoMemoryReplSet` and the real seed catalogue. The
  * bucket collection is referenced by its schema §12 name `notificationDigests`.
  *
- * Assumptions (ADR-0100):
+ * Assumptions (ADR-0120):
  *   - the fan-out resolves the digest quiet period / hard flush from
  *     `platformSettings.notifications` (`digestQuietMinutes` 15,
  *     `digestHardFlushHours` 6), read at send time;

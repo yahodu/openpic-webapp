@@ -26,7 +26,7 @@ import {
 
 /**
  * Integration / contract — the dispatch retry cron (OP-96, contract §10.2
- * `notification-dispatch-retry`; ADR-0100).
+ * `notification-dispatch-retry`; ADR-0120).
  *
  * The fan-out records a transport failure on the `notificationDispatches` row
  * with a classified `lastError.retryable`. The retry cron re-attempts **only**

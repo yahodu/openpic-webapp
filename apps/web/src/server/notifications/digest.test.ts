@@ -5,7 +5,7 @@ import { computeDigestFlushAt, withinDigestDailyCap } from "@/server/notificatio
 /**
  * Unit — digest flush scheduling and the daily cap (OP-96, design §6, §19.6;
  * contract §9.10 `platformSettings.notifications`, §10.2
- * `notification-digest-flush`; ADR-0100).
+ * `notification-digest-flush`; ADR-0120).
  *
  * A digest type's occurrences accumulate in one open `notificationDigests`
  * bucket; the bucket carries a single `flushAt` instant that the flush cron
