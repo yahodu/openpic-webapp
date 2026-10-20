@@ -323,7 +323,7 @@ db.notifications.findOneAndUpdate(
 
 `readAt: null` is in the filter on purpose: once the attendee has read "38 new photos", the next arrival must start a **fresh** counter rather than resurrecting a read row — otherwise the unread badge silently under-counts. This is the one place an upsert filter carries read state, and it is intentional.
 
-**Digest window for matches:** flush 15 minutes after the last arrival, hard-flush at 6 hours, cap 3 emails/day/event. Rationale: photo uploads arrive in bursts (a photographer dumps 800 images at once), so a quiet-period flush naturally produces one email per burst rather than one per image or one per fixed hour.
+**Digest window for matches:** flush 15 minutes after the last arrival, hard-flush at 6 hours, cap 3 emails/day/recipient (shared across digest types). Rationale: photo uploads arrive in bursts (a photographer dumps 800 images at once), so a quiet-period flush naturally produces one email per burst rather than one per image or one per fixed hour.
 
 ---
 

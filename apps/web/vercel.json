@@ -3,6 +3,18 @@
     {
       "path": "/api/v1/internal/cron/notification-fanout",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/notification-digest-flush",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/notification-dispatch-retry",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/quiet-hours-release",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
