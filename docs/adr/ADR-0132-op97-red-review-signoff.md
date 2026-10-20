@@ -300,3 +300,86 @@ Merging here would redden `main` until the implementation lands.
   `read-all`'s `before` comparison must be strict (`createdAt < before`).
 - No new ADR number consumed; ADR-0131 stays the contract of record and is
   updated in place.
+
+## Round 4 — ADR renumber review (card `t_7e748b0f`)
+
+This section records the review of the cross-lane renumber that moved the lane's
+two ADRs off the numbers OP-96 PR #216 claimed.
+
+### What landed and why
+
+- `ADR-0129-op97-in-app-feed-read-state-unread-count-red.md` → `ADR-0131-…`
+  (the RED contract of record).
+- `ADR-0130-op97-red-review-signoff.md` → `ADR-0132-…` (this file).
+- Reason: `origin/main` (`fde586b`, PR #216) carries OP-96's `ADR-0129-op96-*`
+  and `ADR-0130-op96-*`. The lane merged `origin/main` first (`8f0e668`) and
+  renumbered into the lowest free block above main's high-water mark `0130`;
+  `0133`+ was reserved for the lane's GREEN ADR.
+- Every H1/self-reference, the two integration-spec comment citations
+  (`notification-feed.test.ts`, `notification-read-state.test.ts`) and the
+  `docs/adr/README.md` rows plus the trailing lane paragraph were updated.
+  Docs and comments only.
+
+### Round-1 change request and its closure
+
+Round 1 (artifact lens, head `6a0d8a4`) requested two docs-only corrections in
+this file; both are closed on `5bb08a9`:
+
+1. `L46-47` claimed "ADR `0129` is the next free number above `origin/main`'s
+   high-water mark `0128`; no collision" — false after the renumber, and it
+   evaded the mechanical `ADR-0129` grep because the reference was bare
+   `0129`. It now states that `0131` is the first free number above `0130` and
+   records the `0129`/`0130` → `0131`/`0132` renumber.
+2. `L211` read "ADR-0131 is updated in place without renumbering" as a
+   present-tense claim contradicting the README rows; it is now scoped to the
+   round ("the then-`ADR-0129` contract was updated in place; no new number
+   consumed in round 2").
+
+### Independently reproduced on `5bb08a9` (round 2, execution lens)
+
+- `prettier --check` clean on `ADR-0131-…`, `ADR-0132-…` and `README.md`.
+- `git grep -n -E 'ADR-0129|ADR-0130'` hits only OP-96 files (`ADR-0120`,
+  `ADR-0129-op96-*`, `ADR-0130-op96-*`, the four OP-96 production comments)
+  plus this file's intentional renumber narration (`L46-48`, `L212`).
+- `docs/adr/README.md`: 124 rows ↔ 124 `ADR-*.md` files, zero duplicate
+  numbers, no broken link, no orphan file; rows `0131`/`0132` correct and the
+  trailing paragraph records the renumber and its reason.
+- No local or remote ref other than `OP-97-task-in-app-feed-read-state-red`
+  claims `0131`/`0132`.
+- `vitest run --project unit` → 1477/1477 passed, 2 files red at import (the
+  intended OP-97 RED pins). `vitest run --project integration` → 353 passed /
+  1 failed (the intended PRE-1 pin), 4 files red at import — baseline-identical,
+  so the renumber is behaviour-neutral.
+- Cumulative diff vs `origin/main` = tests + docs + two test helpers + the e2e
+  spec; no production file, route, assertion or fixture touched.
+
+### Cross-lane finding (new, Medium) — `0133` is contested
+
+`ADR-0133-op96-f1-f4-round2-red.md` now exists on the OP-96 round-2 RED branch
+(`OP-96-task-f1-f4-round2-red`, draft PR #217), while the comment on
+`t_58825ec3` (2026-10-20 13:03) reserved `0133`+ for this lane's GREEN ADR. The
+two open branches would therefore collide again at `0133`. Routed to
+orchestrator card `t_cf0b1f77` for a single binding allocation (recommended:
+OP-96 round-2 keeps `0133` and takes `0134`; OP-97 GREEN takes `0135`/`0136`);
+if PR #217 lands first the last lander renumbers as usual.
+
+Also observed: the OP-97 GREEN branch
+(`OP-97-task-in-app-feed-read-state-green` @ `c426f57`, worktree
+`.worktrees/t_58825ec3`) still carries the pre-renumber
+`docs/adr/ADR-0130-op97-red-review-signoff.md`. It must merge `5bb08a9` before
+its PR, or the colliding OP-97 `ADR-0130-…` filename re-enters `main` through
+the GREEN PR. Both points are in the `t_cf0b1f77` relay instructions.
+
+### Merge posture (unchanged)
+
+PR #215 stays a **draft and unmerged** on head `5bb08a9` — the lane is a
+deliberately red-CI RED lane whose pins ship inside the OP-97 GREEN PR (§4);
+merging here would redden `main` until the implementation lands. No merge was
+performed by this round.
+
+### Consequences (round 4)
+
+- Card `t_7e748b0f` is met on `5bb08a9`: the renumber is complete, the two
+  round-1 corrections are closed, and the suite posture is baseline-identical.
+- No new ADR number consumed by this review round; `ADR-0132` is extended in
+  place, as rounds 2 and 3 were.
