@@ -58,7 +58,7 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  *                                                  DELETE -> 204 | 409 deletion_already_executed
  *
  * `POST /me/sessions:revoke-all` revokes through the identity lifecycle seam
- * (`createIdentityLifecycleSeams().sessionsRevoked`, ADR-0043 §3), which emits
+ * (`createIdentityLifecycleSeams().sessionsRevoked`, ADR-0045 §3), which emits
  * one `account.sessions.revoked` row into the `domainEvents` outbox. The spec
  * asserts that observable row, so a route that deletes session documents
  * directly (bypassing the emit) fails I3.
