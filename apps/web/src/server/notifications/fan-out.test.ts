@@ -312,7 +312,7 @@ describe("interpolateDedupeKey — template expansion (U3)", () => {
 
 /**
  * The channel a **pre-selection** skip/defer/digest records on its dispatch row
- * (OP-94 follow-up; ADR-0094, ADR-0110).
+ * (OP-94 follow-up; ADR-0094, ADR-0111).
  *
  * `fanOutToRecipient` decides some outcomes before any candidate is chosen
  * (a quiet-hours `defer`, a throttled `skip`, an outbound `digest`). Those arms
@@ -327,7 +327,7 @@ describe("interpolateDedupeKey — template expansion (U3)", () => {
  * regression can return silently and the ledger would name a channel the
  * resolver would never have tried first.
  *
- * ## Contract expected of the implementation (authorized test seam, ADR-0110)
+ * ## Contract expected of the implementation (authorized test seam, ADR-0111)
  *
  * ```ts
  * // @/server/notifications/fan-out
@@ -341,7 +341,7 @@ describe("interpolateDedupeKey — template expansion (U3)", () => {
  * `channelGroupSchema` rejects an **enabled** `mobile` group that omits
  * `candidates`, while `fanOutToRecipient` skips a **disabled** group. A test that
  * injected such a row would therefore observe **zero** dispatch rows and fail
- * for the wrong reason (probe recorded in ADR-0110). The card authorised exporting the pure
+ * for the wrong reason (probe recorded in ADR-0111). The card authorised exporting the pure
  * selector instead; the helper is a total function of its argument and the
  * production call sites are unchanged.
  */
@@ -350,7 +350,7 @@ describe("interpolateDedupeKey — template expansion (U3)", () => {
 type GroupChannelSeam = (group: ChannelGroup) => ResolvedChannel;
 
 /** The module plus the seam this spec requires it to expose. */
-const fanOut = fanOutModule as typeof fanOutModule & {
+const fanOut = fanOutModule as Omit<typeof fanOutModule, "groupChannel"> & {
   readonly groupChannel?: GroupChannelSeam;
 };
 
@@ -368,7 +368,7 @@ function groupChannelOf(group: ChannelGroup): ResolvedChannel {
   if (seam === undefined) {
     throw new Error(
       "fan-out must export `groupChannel(group: ChannelGroup): ResolvedChannel` " +
-        "(authorized test seam, ADR-0110) — the pre-selection skip channel cannot be pinned otherwise"
+        "(authorized test seam, ADR-0111) — the pre-selection skip channel cannot be pinned otherwise"
     );
   }
 
