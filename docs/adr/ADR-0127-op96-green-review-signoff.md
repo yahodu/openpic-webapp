@@ -1,36 +1,38 @@
-# ADR-0119 — OP-96 GREEN review sign-off: integration renumber, one redelivery path, four routed findings
+# ADR-0127 — OP-96 GREEN review sign-off: integration renumber, one redelivery path, four routed findings
 
 - **Status:** Accepted · **Date:** 2026-10-20
 - **Card:** OP-96 phase 1 (GREEN, `t_609968cf`), review lane round 1 · **Reviewed:** PR #203, branch `OP-96-task-digest-retry-quiet-hours-crons-green`
-- **Implements / refactors:** ADR-0117 (the GREEN implementation), ADR-0118 (per-dispatch failure ownership) · **Contract:** ADR-0111
+- **Implements / refactors:** ADR-0125 (the GREEN implementation), ADR-0126 (per-dispatch failure ownership) · **Contract:** ADR-0119
 - **Verdict:** Approved with findings (ship; findings feed the next cycle)
 
 ## Context
 
-The OP-96 GREEN implementation (ADR-0117) arrived for review with one formally
+The OP-96 GREEN implementation (ADR-0125) arrived for review with one formally
 disputed RED pin — OP-94's `notification-fan-out.test.ts` I5, which pinned the
-retired event-level retry (ADR-0118 supersedes it) — and with `origin/main` moved
+retired event-level retry (ADR-0126 supersedes it) — and with `origin/main` moved
 on by two commits. This record captures the integration work the review lane had
 to do to make the PR mergeable, the one behaviour-preserving refactor it made,
 and the findings it routed out.
 
 ## Decision
 
-### 1. The lane's ADRs are renumbered `0110`–`0117 → 0111`–`0118`
+### 1. The lane's ADRs are renumbered `0111`–`0119 → 0119`–`0127`
 
-`origin/main` had already claimed `0110` for the OP-89 residual-citation
-follow-up (PR #209), which the lane's earlier integration pass (`0100`–`0106 →
-0110`–`0116`) could not have known. A duplicate `ADR-0110` is not an acceptable
-merge state, so the OP-96 block moved up by one as a contiguous unit: the eight
-ADR files were renamed, and every reference in the lane's own artefacts (the ADR
-files, `docs/adr/README.md`, `docs/adr/ADR-0092`, and the production comments in
-`fan-out.ts`, `digest.ts`, `dispatch-retry.ts`, `quiet-hours-release.ts`,
-`dispatch-redelivery.ts`, `collections.ts`, `indexes.ts`,
-`notification-cron-jobs.ts` and the three cron routes) was shifted with them.
+`origin/main` had already claimed `0110` (the OP-89 residual-citation
+follow-up, PR #209) and then `0118` (the OP-101 dependency-audit remediation,
+PR #211) — the second claim landed _inside_ the range the lane had moved into,
+so the block moved up again, above main's high-water mark. A duplicate
+`ADR-0118` is not an acceptable merge state, so the nine ADR files were
+renamed as a contiguous unit, and every reference in the lane's own artefacts
+(the ADR files, `docs/adr/README.md`, `docs/adr/ADR-0092`, and the production
+comments in `fan-out.ts`, `digest.ts`, `dispatch-retry.ts`,
+`quiet-hours-release.ts`, `dispatch-redelivery.ts`, `collections.ts`,
+`indexes.ts`, `notification-cron-jobs.ts` and the three cron routes) was
+shifted with them.
 
 Scope guard: **no test file was touched** — the stale `ADR-0100` references in
 the six OP-96 spec files remain the reconciliation card's (`t_a4cdff8f`) work,
-and its target numbers are restated on that card as `ADR-0111` / `ADR-0115`.
+and its target numbers are restated on that card as `ADR-0119` / `ADR-0123`.
 
 ### 2. The retry and release crons share one redelivery implementation
 
@@ -85,7 +87,7 @@ integration merge and this refactor on top.
 ## Consequences
 
 - The lane's ADR block is contiguous and collision-free against `origin/main`;
-  this sign-off is `0119`.
+  this sign-off is `0127`.
 - One redelivery path serves both crons, so a future change to the redelivery
   transition cannot drift between retry and release.
 - F1–F4 are behaviour changes and were deliberately **not** made by the review

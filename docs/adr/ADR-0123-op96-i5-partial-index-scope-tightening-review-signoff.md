@@ -1,14 +1,14 @@
-# ADR-0115 — OP-96 follow-up: I5 partial-index scope tightening review sign-off
+# ADR-0123 — OP-96 follow-up: I5 partial-index scope tightening review sign-off
 
 - **Status:** Accepted · **Date:** 2026-10-06
 - **Card:** OP-96 follow-up TEST (`t_8113a184`, reviewer `openpic-webapp-reviewer`)
 - **Reviewed artifact:** branch `OP-96-task-digest-retry-quiet-hours-crons-red`, head `01f3c08`, base `origin/main` `d261297` (draft PR #200 holds the review)
-- **Contract:** ADR-0111 (§5 / contract §10.2 `quiet-hours-release`) · ADR-0113 (finding F2) · ADR-0114 (tightening decision)
+- **Contract:** ADR-0119 (§5 / contract §10.2 `quiet-hours-release`) · ADR-0121 (finding F2) · ADR-0122 (tightening decision)
 - **Verdict:** APPROVED (no Critical/High/Medium findings; no changes requested)
 
 ## Context
 
-ADR-0113 finding F2 observed that the I5 pin required only a **non-null**
+ADR-0121 finding F2 observed that the I5 pin required only a **non-null**
 `partialFilterExpression` on the `{status, until}` index, so any partial filter
 — including one scoped to the wrong status — would pass while the release sweep
 silently lost its index support. This card (a parent of the GREEN card
@@ -51,7 +51,7 @@ passed`, 1444 passed — unchanged. `tsc -p apps/web/tsconfig.json --noEmit`
   rejected encodings (exact-literal-only, `$eq`-only, raw string search) were
   each genuinely worse.
 - **Scope discipline.** The commit touches only the I5 block (plus the new
-  predicate), ADR-0114 and its README row; no other spec, fixture or source
+  predicate), ADR-0122 and its README row; no other spec, fixture or source
   file changed.
 - **No honesty issues.** No fixture-shaped hardcoding, no environment/test
   conditionals, no `@ts-ignore`/lint suppressions, no skips or timeouts.
@@ -75,7 +75,7 @@ blocking and neither requiring a card:
 
 ## Consequences
 
-- ADR-0113 finding F2 is closed: a plain compound index, or a partial index
+- ADR-0121 finding F2 is closed: a plain compound index, or a partial index
   scoped to any status other than `"deferred"`, now fails I5 loudly.
 - `t_609968cf` (GREEN) stays gated on this card together with the A4 docs card
   `t_f682dc3c`, matching the "strengthened pins before implementation" rule.
@@ -84,4 +84,4 @@ blocking and neither requiring a card:
   implementation, as OP-92/PR #182 and OP-93/PR #187 did.
 - **Numbering hotspot:** `origin/main` claims `0100`–`0103` for the OP-95 lane,
   so the OP-96 block (`0100`–`0104`) collides numerically and is renumbered as a
-  contiguous unit at integration, as recorded in ADR-0113 and the ADR README.
+  contiguous unit at integration, as recorded in ADR-0121 and the ADR README.

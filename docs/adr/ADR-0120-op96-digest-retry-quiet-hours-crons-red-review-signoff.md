@@ -1,16 +1,16 @@
-# ADR-0112 — OP-96 RED review sign-off: digest/retry/quiet-hours contract approved, four coverage gaps routed
+# ADR-0120 — OP-96 RED review sign-off: digest/retry/quiet-hours contract approved, four coverage gaps routed
 
 - **Status:** Accepted · **Date:** 2026-10-06
 - **Card:** OP-96 RED (`t_bf539e5b`, reviewer `openpic-webapp-reviewer`)
 - **Reviewed artifact:** branch `OP-96-task-digest-retry-quiet-hours-crons-red`, head `639fd06`, base `origin/main` `d261297` (draft PR opened to hold the review)
-- **Contract:** ADR-0111 (the RED pins) · ADR-0092/0093 (OP-94 fan-out + Medium finding) · ADR-0028 (bounded cron framework)
+- **Contract:** ADR-0119 (the RED pins) · ADR-0092/0093 (OP-94 fan-out + Medium finding) · ADR-0028 (bounded cron framework)
 - **Verdict:** APPROVED WITH FINDINGS (no Critical/High); the RED contract is fit to implement against
 - **Follow-up:** `t_7a67b87d` (RED pins), a parent of the GREEN card `t_609968cf`
 
 ## Context
 
 OP-96 phase-1 RED pins U1–U3 and I1–I5 for digest bucketing, the dispatch-retry
-cron and the durable quiet-hours deferral + release cron (ADR-0111). The
+cron and the durable quiet-hours deferral + release cron (ADR-0119). The
 Implementer handed off a green-except-new suite. This ADR records the independent
 review: what was verified, why the RED is trustworthy, and which coverage gaps
 were routed to a follow-up RED card rather than waved through to GREEN.
@@ -64,13 +64,13 @@ only change to this branch is this sign-off ADR and its README row.
    `flushDueDigests`, `retryDueDispatches` and `releaseDeferredDispatches`.
 2. **Low — idempotency of a re-run is unpinned.** Pin that a second retry/release
    run after success is a no-op (`affected: 0`, transport not re-called).
-3. **Low — the digest daily-cap day boundary is unpinned.** ADR-0111 assumption 4
+3. **Low — the digest daily-cap day boundary is unpinned.** ADR-0119 assumption 4
    deliberately leaves cross-day rollover to the implementation and I3 is
    same-UTC-day only, so a GREEN could silently use server-local time. Pin the
    intended timezone source (or `it.todo` + orchestrator decision).
 4. **Low — index shape and per-type cap.** The I5 index assertion accepts any
-   `{status, until}` index, not a **partial** one as ADR-0111 requires; and the
-   GREEN body's "per user per type" cap is indistinguishable from ADR-0111's
+   `{status, until}` index, not a **partial** one as ADR-0119 requires; and the
+   GREEN body's "per user per type" cap is indistinguishable from ADR-0119's
    "per recipient per day" because I3 uses one type. Tighten both.
 
 ## Consequences

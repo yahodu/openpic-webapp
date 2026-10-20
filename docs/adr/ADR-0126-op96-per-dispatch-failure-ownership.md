@@ -1,7 +1,7 @@
-# ADR-0118 — OP-96: per-dispatch failure ownership (the retry cron owns redelivery)
+# ADR-0126 — OP-96: per-dispatch failure ownership (the retry cron owns redelivery)
 
 - **Status:** Accepted · **Date:** 2026-10-20
-- **Card:** OP-96 phase 1 (`t_609968cf`) · **Supersedes in part:** ADR-0092 §1 §I5 (event-level retry for a per-dispatch failure) · **Related:** ADR-0111 (the OP-96 contract), ADR-0117 (the OP-96 GREEN implementation), ADR-0090/0092 (OP-94 fan-out), ADR-0028 (`defineCronJob`)
+- **Card:** OP-96 phase 1 (`t_609968cf`) · **Supersedes in part:** ADR-0092 §1 §I5 (event-level retry for a per-dispatch failure) · **Related:** ADR-0119 (the OP-96 contract), ADR-0125 (the OP-96 GREEN implementation), ADR-0090/0092 (OP-94 fan-out), ADR-0028 (`defineCronJob`)
 
 ## Context
 
@@ -11,9 +11,9 @@ true`, so the outbox row was left `dispatch.notifications: "pending"` via
 `markFailed` and would be re-claimed by the next fan-out run. That was pinned by
 OP-94's `notification-fan-out.test.ts` I5.
 
-ADR-0111 (OP-96 RED) introduces `notification-dispatch-retry`, a cron that
+ADR-0119 (OP-96 RED) introduces `notification-dispatch-retry`, a cron that
 re-sends a **failed-retryable `notificationDispatches` row** from the durable
-ledger (ADR-0111 §3). Its pins (`notification-dispatch-retry.test.ts` I4/I9/I10)
+ledger (ADR-0119 §3). Its pins (`notification-dispatch-retry.test.ts` I4/I9/I10)
 require that a failed dispatch is redelivered by that cron and **only** by it:
 I9 drives three fan-out failures and asserts `transport.calls === 3` before the
 retry sweep, which is only true if the fan-out did not leave the events
@@ -30,7 +30,7 @@ one of two designs:
 2. **Dispatch-level retry** (OP-96): the failure is recorded on the dispatch
    row, the outbox event is marked `done`, and the retry cron owns redelivery.
 
-ADR-0111 did not flag the collision ("Supersedes/amends: none").
+ADR-0119 did not flag the collision ("Supersedes/amends: none").
 
 ## Decision
 
@@ -41,7 +41,7 @@ marked `done`.**
 failure — render error, no deliverable destination, or transport failure. The
 failure is durable on the `notificationDispatches` row (`status:"failed"`,
 `lastError.retryable`, `attempts`), and `notification-dispatch-retry`
-(ADR-0111 §3) re-sends it with backoff. Only an **unexpected** per-recipient
+(ADR-0119 §3) re-sends it with backoff. Only an **unexpected** per-recipient
 error that produced **no** dispatch row still leaves the event claimable via
 `markFailed` — the at-least-once guarantee ADR-0092 §1 wanted is preserved, just
 anchored on the dispatch row instead of the outbox row.
@@ -61,7 +61,7 @@ Two further, smaller amendments to ADR-0092 recorded here:
   secret types (e.g. OTP) is preserved — OP-94 I6 still passes.
 - **`DispatchRow.status` gains `"deferred"`** (plus `until`) so a quiet-hours
   deferral is a durable, selectable intent instead of a terminal `skipped` row
-  (ADR-0111, ADR-0093). ADR-0092 enumerated `queued | sent | failed | skipped`.
+  (ADR-0119, ADR-0093). ADR-0092 enumerated `queued | sent | failed | skipped`.
 
 ## Consequences
 

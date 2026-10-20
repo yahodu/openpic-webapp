@@ -4,7 +4,7 @@ import { quietHoursReleaseJob } from "@/server/services/notification-cron-jobs";
 
 /**
  * `GET`/`POST /api/v1/internal/cron/quiet-hours-release` — release deferred
- * dispatches whose window has ended (OP-96, contract §10.2, ADR-0111).
+ * dispatches whose window has ended (OP-96, contract §10.2, ADR-0119).
  *
  * Guarded by the internal HMAC stage; a `CRON_SECRET` bearer (Vercel Cron) or a
  * signed POST runs the bounded job and returns its §10.2 `CronResult`.

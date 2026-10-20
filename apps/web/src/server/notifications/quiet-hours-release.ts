@@ -1,6 +1,6 @@
 /**
  * Quiet-hours release cron (OP-96, design §5, contract §10.2
- * `quiet-hours-release`, ADR-0111/ADR-0093).
+ * `quiet-hours-release`, ADR-0119/ADR-0093).
  *
  * A quiet-hours deferral is a durable, selectable intent: the fan-out persists
  * a `notificationDispatches` row with `status: "deferred"` and `until` = the
@@ -33,7 +33,7 @@ export interface QuietHoursReleaseOptions {
   readonly limit?: number;
 }
 
-/** The deferred-row narrowings (schema §19.5 + ADR-0111). */
+/** The deferred-row narrowings (schema §19.5 + ADR-0119). */
 type DeferredRow = RedeliveryRow;
 
 /** True for a plain (non-array) object. */

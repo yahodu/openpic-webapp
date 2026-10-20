@@ -1,15 +1,15 @@
-# ADR-0117 — OP-96 GREEN: digest buckets, dispatch retry, quiet-hours release
+# ADR-0125 — OP-96 GREEN: digest buckets, dispatch retry, quiet-hours release
 
 - **Status:** Accepted · **Date:** 2026-10-06
 - **Card:** OP-96 phase 1 (GREEN, `t_609968cf`) · **Depends on:** OP-94 (ADR-0090/0092), OP-87 (ADR-0028), OP-93 (ADR-0085)
-- **Contract:** ADR-0111 (`docs/adr/ADR-0111-op96-digest-retry-quiet-hours-crons-red.md`) · **Supersedes / amends:** ADR-0092 §1/§I5 (event-level retry for a per-dispatch failure) via ADR-0118
-- **Lane ADRs:** renumbered twice at integration: `0100`–`0106 → 0110`–`0116` (2026-10-20) because `origin/main` claimed `0100`–`0109` first, then `0110`–`0117 → 0111`–`0118` because the OP-89 residual-citation follow-up (PR #209) claimed `0110` on `origin/main`. The GREEN review sign-off is `0119`.
+- **Contract:** ADR-0119 (`docs/adr/ADR-0119-op96-digest-retry-quiet-hours-crons-red.md`) · **Supersedes / amends:** ADR-0092 §1/§I5 (event-level retry for a per-dispatch failure) via ADR-0126
+- **Lane ADRs:** renumbered at integration (2026-10-20) because `origin/main` kept claiming numbers first: `0100`–`0106 → 0110`–`0116`, then `0110`–`0117 → 0111`–`0118` (the OP-89 residual-citation follow-up, PR #209, claimed `0110`), then the whole lane moved above main's high-water mark to `0119`–`0127` (the OP-101 dependency-audit remediation, PR #211, claimed `0118`). The GREEN review sign-off is `0127`.
 
 ## Context
 
-ADR-0111 pinned six RED specs for the three de-scoped §6/§19 behaviours and the
+ADR-0119 pinned six RED specs for the three de-scoped §6/§19 behaviours and the
 durable quiet-hours deferral. This ADR records the GREEN implementation and one
-design decision the implementation had to make that ADR-0111 left implicit.
+design decision the implementation had to make that ADR-0119 left implicit.
 
 ## Decision
 
@@ -42,14 +42,14 @@ design decision the implementation had to make that ADR-0111 left implicit.
 The fan-out `digest` branch now upserts **one open `notificationDigests`
 bucket** per `{userId, bucketKey}` via an atomic pipeline upsert (so a
 concurrent arrival cannot reset `firstItemAt` or lose a count); no per-arrival
-`queued` dispatch row is written (ADR-0111 assumption 3, pinned by I1).
+`queued` dispatch row is written (ADR-0119 assumption 3, pinned by I1).
 `sampleItems` keeps the last five arrivals; `flushAt` = `min(lastItemAt +
 digestQuietMinutes, firstItemAt + digestHardFlushHours)`.
 
 `flushDueDigests` selects `status:"open" && flushAt <= now`, renders one summary
 per bucket (the type's email template plus the item count), sends, writes the
 `sent`/`failed` dispatch row and marks the bucket `flushed`. The daily cap is
-**per recipient per local day, shared across digest types** (ADR-0111 A4): it
+**per recipient per local day, shared across digest types** (ADR-0119 A4): it
 counts the recipient's `flushed` buckets since local midnight in
 `notificationPreferences.quietHours.timeZone` (UTC fallback, A3); a due bucket
 beyond the cap stays `open` and is not counted as `hasMore`.
@@ -58,7 +58,7 @@ beyond the cap stays `open` and is not counted as `hasMore`.
 
 `DispatchRow` gains `status:"deferred"`, `until` and the persisted
 `subject`/`body`; the fan-out `defer` branch writes
-`{status:"deferred", until:<window end>, skipReason:null}` (ADR-0111, ADR-0093).
+`{status:"deferred", until:<window end>, skipReason:null}` (ADR-0119, ADR-0093).
 `releaseDeferredDispatches` selects `status:"deferred" && until <= now`, sends
 and marks `sent`/`failed`. `INDEX_SPECS` gains the partial
 `{tenantId, status, until}` index scoped to `deferred`, the `notificationDigests`
@@ -78,7 +78,7 @@ This retires the OP-94 event-level retry, which would otherwise re-fan the whole
 event and double-send alongside the retry cron. ADR-0092 §I5 pinned the old
 behaviour ("a retryable failure leaves the event claimable"); its rationale
 (at-least-once delivery) is now satisfied by the reclaimable dispatch row, so
-the pin is **stale**. ADR-0111's author did not flag the collision.
+the pin is **stale**. ADR-0119's author did not flag the collision.
 
 **Disputed test (resolved 2026-10-20).**
 `apps/web/src/test/integration/notification-fan-out.test.ts` (I5, line 586)
@@ -86,7 +86,7 @@ asserted `dispatch.notifications === "pending"` after a retryable transport
 failure, which is mutually exclusive with OP-96's `notification-dispatch-retry`
 pins (I9/I10). The user approved retiring the OP-94 event-level retry; the pin is
 updated to `"done"` by the OP-96 test-reconciliation Test-Author card, and the
-supersession is recorded as ADR-0118. Until that card lands the pin stays red —
+supersession is recorded as ADR-0126. Until that card lands the pin stays red —
 this implementation does not touch any test.
 
 ## Alternatives considered
