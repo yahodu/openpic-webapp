@@ -1,7 +1,7 @@
 # ADR-0092 — OP-94 GREEN: notification fan-out consumer implementation (outbox → feed + dispatches)
 
 - **Status:** Accepted · **Date:** 2026-10-05
-- **Card:** OP-94 notification fan-out consumer GREEN (`t_d8f1e9e5`) · **Relates to:** [ADR-0090](ADR-0090-op94-notification-fan-out-red.md) (the pinned contract), [ADR-0091](ADR-0091-op94-fan-out-red-review-signoff.md) (its sign-off), [ADR-0085](ADR-0085-op93-channel-resolution-and-template-renderer-red.md) (`resolveChannel` + `renderTemplate`), [ADR-0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md) (`MessageTransport`), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox) · **Superseded in part by:** [ADR-0117](ADR-0117-op96-per-dispatch-failure-ownership.md) — §1's event-level retry for a per-dispatch failure (the outbox is now marked `done`; the dispatch row is retried by the `notification-dispatch-retry` cron), plus the `subject`/`body` and `deferred`-status amendments.
+- **Card:** OP-94 notification fan-out consumer GREEN (`t_d8f1e9e5`) · **Relates to:** [ADR-0090](ADR-0090-op94-notification-fan-out-red.md) (the pinned contract), [ADR-0091](ADR-0091-op94-fan-out-red-review-signoff.md) (its sign-off), [ADR-0085](ADR-0085-op93-channel-resolution-and-template-renderer-red.md) (`resolveChannel` + `renderTemplate`), [ADR-0076](ADR-0076-op92-message-transport-and-novu-drift-guard-green.md) (`MessageTransport`), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox) · **Superseded in part by:** [ADR-0118](ADR-0118-op96-per-dispatch-failure-ownership.md) — §1's event-level retry for a per-dispatch failure (the outbox is now marked `done`; the dispatch row is retried by the `notification-dispatch-retry` cron), plus the `subject`/`body` and `deferred`-status amendments.
 
 ## Context
 
@@ -37,7 +37,7 @@ Decisions the contract left open:
    is left `pending` while its peers are still delivered. An unexpected
    per-recipient error is treated as retryable (at-least-once) and logged as
    `notification.fan_out_failed` without tenant/contact data. _(Superseded in
-   part by [ADR-0117](ADR-0117-op96-per-dispatch-failure-ownership.md): a
+   part by [ADR-0118](ADR-0118-op96-per-dispatch-failure-ownership.md): a
    recorded per-dispatch failure now leaves the event `done` and is retried from
    the dispatch row; only an unexpected error that produced no dispatch row
    still calls `markFailed`.)_
@@ -121,7 +121,7 @@ apps/web/tsconfig.json --noEmit` reports only the two expected `TS2307`s.
 - **Mark the event `done` despite a retryable failure.** Rejected (at the time):
   at-least-once delivery requires the failed event to be reclaimable; I5 pins
   `pending`. _Superseded by
-  [ADR-0117](ADR-0117-op96-per-dispatch-failure-ownership.md): at-least-once is
+  [ADR-0118](ADR-0118-op96-per-dispatch-failure-ownership.md): at-least-once is
   now anchored on the reclaimable dispatch row, and the event is marked `done`
   to avoid a fan-out/retry double-send._
 - **Render the feed row on read.** Rejected by design §19.4 ("render at write
@@ -129,7 +129,7 @@ apps/web/tsconfig.json --noEmit` reports only the two expected `TS2307`s.
 - **Store the rendered body on the dispatch (even gated by `retainBody`).**
   Rejected: schema §19.5 has no `body` field, and I6 asserts the OTP sentinel is
   absent from the stored row. _Superseded by
-  [ADR-0117](ADR-0117-op96-per-dispatch-failure-ownership.md): the redelivery
+  [ADR-0118](ADR-0118-op96-per-dispatch-failure-ownership.md): the redelivery
   crons cannot re-render without the destination, so `subject`/`body` are now
   persisted, the body gated by `retainBody` (I6 still passes)._
 - **Implement the cron route / `after()` / `sendTransactionalNow()` now.**

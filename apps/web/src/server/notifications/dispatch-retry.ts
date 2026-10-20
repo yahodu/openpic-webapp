@@ -1,6 +1,6 @@
 /**
  * Dispatch retry cron (OP-96, contract §10.2 `notification-dispatch-retry`,
- * ADR-0110).
+ * ADR-0111).
  *
  * The fan-out records a transport failure on the `notificationDispatches` row
  * with a classified `lastError.retryable`. This job re-attempts **only** the
@@ -10,9 +10,8 @@
  * immediate: {@link retryBackoffMs} grows the delay `×2` per attempt up to a
  * 5-minute ceiling, so a provider outage is not hammered.
  */
-import type { Db, ObjectId as ObjectIdValue } from "mongodb";
+import type { Db } from "mongodb";
 
-import { getAppEnv } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import type { CronRunOutcome } from "@/server/jobs/cron-job";
@@ -20,11 +19,10 @@ import { getLogger } from "@/server/logging";
 import { platformRepo } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
 
-import { buildRedeliveryMessage, resolveDestination, sendRedelivery } from "./dispatch-redelivery";
+import { redeliverDispatchRow, type RedeliveryRow } from "./dispatch-redelivery";
 import type { MessageTransport } from "./message-transport";
-import type { ResolvedChannel } from "./resolve-channel";
 
-/** The backoff base: 60 s (ADR-0110 assumption 1). */
+/** The backoff base: 60 s (ADR-0111 assumption 1). */
 const BASE_MS = 60_000;
 /** The backoff ceiling: 5 minutes. */
 const CAP_MS = 300_000;
@@ -56,15 +54,8 @@ export function retryBackoffMs(attempts: number): number {
 }
 
 /** A retryable stored dispatch row (schema §19.5). */
-interface RetryRow {
-  readonly _id: ObjectIdValue;
-  readonly userId: ObjectIdValue | null;
-  readonly typeKey: string;
-  readonly channel: string;
-  readonly attempts: number;
+interface RetryRow extends RedeliveryRow {
   readonly failedAt: Date | null;
-  readonly subject: string | null;
-  readonly body: string | null;
 }
 
 /** True for a plain (non-array) object. */
@@ -85,81 +76,14 @@ function asRetryRow(value: unknown): RetryRow | null {
     return null;
   }
   return {
-    _id: _id as ObjectIdValue,
-    userId: (userId ?? null) as ObjectIdValue | null,
-    typeKey,
-    channel,
+    _id: _id as RetryRow["_id"],
+    userId: (userId ?? null) as RetryRow["userId"],
+    channel: channel as RetryRow["channel"],
     attempts,
     failedAt: failedAt instanceof Date ? failedAt : null,
     subject: typeof subject === "string" ? subject : null,
     body: typeof body === "string" ? body : null,
   };
-}
-
-/** Re-attempt one due row and persist its transition. */
-async function retryOneRow(
-  db: Db,
-  row: RetryRow,
-  now: Date,
-  transport: MessageTransport
-): Promise<"sent" | "error"> {
-  const attempts = row.attempts + 1;
-
-  const channel = row.channel as ResolvedChannel;
-  const destination = await resolveDestination(db, row.userId, channel);
-  if (destination === null) {
-    await platformRepo(db)
-      .collection(COLLECTIONS.dispatches)
-      .updateOne(
-        { _id: row._id },
-        {
-          $set: {
-            status: "failed",
-            attempts,
-            failedAt: now,
-            lastError: { retryable: false, code: "no_destination" },
-          },
-        }
-      );
-    return "error";
-  }
-
-  const message = buildRedeliveryMessage(
-    { userId: row.userId, channel, subject: row.subject, body: row.body },
-    destination
-  );
-  if (message === null) return "error";
-
-  const outcome = await sendRedelivery(transport, message);
-  if (!outcome.ok) {
-    await platformRepo(db)
-      .collection(COLLECTIONS.dispatches)
-      .updateOne(
-        { _id: row._id },
-        { $set: { status: "failed", attempts, failedAt: now, lastError: outcome.failure } }
-      );
-    return "error";
-  }
-
-  await platformRepo(db)
-    .collection(COLLECTIONS.dispatches)
-    .updateOne(
-      { _id: row._id },
-      {
-        $set: {
-          status: "sent",
-          attempts,
-          sentAt: now,
-          lastError: null,
-          providerRef: {
-            provider: "transport",
-            env: getAppEnv(),
-            messageId: outcome.receipt.providerMessageId,
-          },
-        },
-      }
-    );
-  return "sent";
 }
 
 /**
@@ -206,7 +130,7 @@ export async function retryDueDispatches(options: DispatchRetryOptions): Promise
       break;
     }
 
-    const result = await retryOneRow(db, row, now, options.transport);
+    const result = await redeliverDispatchRow(db, row, now, options.transport);
     if (result === "sent") {
       affected += 1;
     } else {

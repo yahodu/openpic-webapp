@@ -1,4 +1,4 @@
-# ADR-0110 — OP-96 RED: digest buckets, dispatch retry and the quiet-hours release cron
+# ADR-0111 — OP-96 RED: digest buckets, dispatch retry and the quiet-hours release cron
 
 - **Status:** Accepted · **Date:** 2026-10-06
 - **Card:** OP-96 phase 1 (RED, `t_bf539e5b`) · **Depends on:** OP-94 (ADR-0092 fan-out, ADR-0093 review finding Medium), OP-87 (ADR-0028 internal HMAC + bounded cron framework)
@@ -123,7 +123,7 @@ failure (`lastError.retryable: false`) is **never** selected or re-sent.
 
 ### Addendum — OP-96 follow-up RED pins (card `t_7a67b87d`)
 
-The phase-1 RED review (ADR-0111, task `t_bf539e5b`) approved the contract but
+The phase-1 RED review (ADR-0112, task `t_bf539e5b`) approved the contract but
 found four coverage gaps. This addendum settles the two that needed a product
 decision and records the pins that close all four. The pins live on the same RED
 branch (`OP-96-task-digest-retry-quiet-hours-crons-red`) and the GREEN card
@@ -152,7 +152,7 @@ even while it is still the previous day in UTC. This forbids a server-local or
 UTC-day implementation chosen by accident.
 
 **A4 — Cap scope is per recipient per local day, shared across digest types
-(not per type, not per event).** ADR-0110 assumption 4 is the approved reading.
+(not per type, not per event).** ADR-0111 assumption 4 is the approved reading.
 I8 pins it: three digests of one type exhaust the day's allowance for the
 recipient, so a due bucket of a _different_ digest type the same day is deferred
 (`affected: 0`, bucket stays `open`). Settled by the orchestrator (card
@@ -162,7 +162,7 @@ match, and the design §6 / API G3 wording is aligned by this card.
 
 **A5 — Partial `{status, until}` index.** The phase-1 I5 assertion accepted any
 index whose key named `status` and `until`; it now requires a non-null
-`partialFilterExpression` (ADR-0110 §Quiet-hours deferral) so the release sweep
+`partialFilterExpression` (ADR-0111 §Quiet-hours deferral) so the release sweep
 is index-supported only for deferred rows.
 
 ## RED evidence

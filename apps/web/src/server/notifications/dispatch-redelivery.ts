@@ -1,6 +1,6 @@
 /**
  * Shared redelivery plumbing for the dispatch retry and quiet-hours release
- * crons (OP-96, contract §10.2, ADR-0110).
+ * crons (OP-96, contract §10.2, ADR-0111).
  *
  * A `notification-dispatches` row that is `failed`/retryable or `deferred`
  * carries the rendered copy it must re-send (`subject`/`body`, persisted by the
@@ -15,6 +15,8 @@ import type { Db, ObjectId as ObjectIdValue } from "mongodb";
 import { ObjectId } from "mongodb";
 
 import { TransportError } from "@/server/adapters/transport-error";
+import { getAppEnv } from "@/server/config/env";
+import { COLLECTIONS } from "@/server/db/collections";
 import { platformRepo } from "@/server/repos";
 
 import type {
@@ -143,4 +145,90 @@ export async function sendRedelivery(
   } catch (error) {
     return { ok: false, failure: classifyRedeliveryError(error) };
   }
+}
+
+/** A persisted dispatch row a redelivery re-sends (schema §19.5). */
+export interface RedeliveryRow extends RedeliveryTarget {
+  /** The `notificationDispatches` row id. */
+  readonly _id: ObjectIdValue;
+  /** The attempts already recorded on the row. */
+  readonly attempts: number;
+}
+
+/** Write a row's `lastError` transition after a failed redelivery. */
+function recordFailure(
+  db: Db,
+  id: ObjectIdValue,
+  attempts: number,
+  now: Date,
+  failure: RedeliveryFailure
+): Promise<unknown> {
+  return platformRepo(db)
+    .collection(COLLECTIONS.dispatches)
+    .updateOne(
+      { _id: id },
+      { $set: { status: "failed", attempts, failedAt: now, lastError: failure } }
+    );
+}
+
+/**
+ * Re-send one durable dispatch row and persist its transition.
+ *
+ * The single implementation both redelivery crons share (the retry sweep and the
+ * quiet-hours release always act identically on a row — they differ only in
+ * *which* rows they select). Re-resolves the destination, rebuilds the message
+ * from the persisted copy, classifies the outcome and writes `sent`/`failed`
+ * with the incremented `attempts`.
+ *
+ * @param db - The database handle.
+ * @param row - The durable row to re-send.
+ * @param now - The run instant (`sentAt` / `failedAt`).
+ * @param transport - The outbound transport.
+ * @returns `"sent"` when the transport accepted the message, else `"error"`.
+ */
+export async function redeliverDispatchRow(
+  db: Db,
+  row: RedeliveryRow,
+  now: Date,
+  transport: MessageTransport
+): Promise<"sent" | "error"> {
+  const attempts = row.attempts + 1;
+
+  const destination = await resolveDestination(db, row.userId, row.channel);
+  if (destination === null) {
+    await recordFailure(db, row._id, attempts, now, {
+      retryable: false,
+      code: "no_destination",
+    });
+    return "error";
+  }
+
+  const message = buildRedeliveryMessage(row, destination);
+  if (message === null) return "error";
+
+  const outcome = await sendRedelivery(transport, message);
+  if (!outcome.ok) {
+    await recordFailure(db, row._id, attempts, now, outcome.failure);
+    return "error";
+  }
+
+  await platformRepo(db)
+    .collection(COLLECTIONS.dispatches)
+    .updateOne(
+      { _id: row._id },
+      {
+        $set: {
+          status: "sent",
+          attempts,
+          sentAt: now,
+          lastError: null,
+          providerRef: {
+            provider: "transport",
+            env: getAppEnv(),
+            messageId: outcome.receipt.providerMessageId,
+          },
+        },
+      }
+    );
+  return "sent";
 }

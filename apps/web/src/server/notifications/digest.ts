@@ -1,6 +1,6 @@
 /**
  * Digest bucket flush (OP-96, design §6/§19.6, contract §10.2
- * `notification-digest-flush`, ADR-0110).
+ * `notification-digest-flush`, ADR-0111).
  *
  * A `throttle.strategy: "digest"` type does not send on arrival: the fan-out
  * accumulates each occurrence into one open `notificationDigests` bucket keyed
@@ -12,9 +12,9 @@
  * per due bucket, sends it and marks the bucket `flushed`.
  *
  * The daily cap (`maxDigestEmailsPerDay`, default 3) is enforced **per
- * recipient per local day**, shared across digest types (ADR-0110 A4): the
+ * recipient per local day**, shared across digest types (ADR-0111 A4): the
  * count is the recipient's `flushed` buckets since local midnight in
- * `notificationPreferences.quietHours.timeZone` (UTC fallback, ADR-0110 A3). A
+ * `notificationPreferences.quietHours.timeZone` (UTC fallback, ADR-0111 A3). A
  * due bucket beyond the cap is **deferred**, not dropped — it stays `open` and
  * is not counted as `hasMore`.
  */
@@ -42,7 +42,7 @@ const FALLBACK_LOCALE = "en-IN";
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 
-/** The input to {@link computeDigestFlushAt} (ADR-0110 module contract). */
+/** The input to {@link computeDigestFlushAt} (ADR-0111 module contract). */
 export interface DigestFlushAtInput {
   /** The bucket's creation instant. */
   readonly firstItemAt: Date;
@@ -148,7 +148,7 @@ function asBucket(value: unknown): DigestBucket | null {
   };
 }
 
-/** The recipient's configured quiet-hours time zone, or UTC (ADR-0110 A3). */
+/** The recipient's configured quiet-hours time zone, or UTC (ADR-0111 A3). */
 async function recipientTimeZone(db: Db, userId: ObjectIdValue): Promise<string> {
   const raw: unknown = await platformRepo(db)
     .collection(COLLECTIONS.notificationPreferences)
@@ -196,7 +196,7 @@ function zonedParts(
   return { year, month, day, offsetMs: localWallClockAsUtc - instant.getTime() };
 }
 
-/** The instant local midnight begins on `instant`'s civil day (ADR-0110 A3). */
+/** The instant local midnight begins on `instant`'s civil day (ADR-0111 A3). */
 function startOfLocalDay(instant: Date, timeZone: string): Date {
   const parts = zonedParts(instant, timeZone);
   if (parts === null) {
@@ -208,7 +208,7 @@ function startOfLocalDay(instant: Date, timeZone: string): Date {
   return new Date(midnightWallClock - parts.offsetMs);
 }
 
-/** Count the recipient's digest emails sent since local midnight (ADR-0110 A4). */
+/** Count the recipient's digest emails sent since local midnight (ADR-0111 A4). */
 async function countFlushedToday(db: Db, userId: ObjectIdValue, now: Date): Promise<number> {
   const timeZone = await recipientTimeZone(db, userId);
   const since = startOfLocalDay(now, timeZone);
@@ -379,7 +379,7 @@ async function flushOneBucket(
  *
  * A bucket beyond the recipient's daily cap is left `open` (deferred) and is
  * not counted as `hasMore`; `hasMore` is true only when a due, within-cap
- * bucket was left unprocessed because the limit was reached (ADR-0110 A1).
+ * bucket was left unprocessed because the limit was reached (ADR-0111 A1).
  *
  * @param options - Database/clock/transport seams and the per-run limit.
  * @returns The §10.2 run outcome.

@@ -47,7 +47,7 @@ export const COLLECTIONS = {
    */
   tenantMembers: "tenantMembers",
   /**
-   * Digest aggregation buckets (schema §12/§19.6, ADR-0110). One open bucket per
+   * Digest aggregation buckets (schema §12/§19.6, ADR-0111). One open bucket per
    * `{ userId, bucketKey }` accumulates a digest type's occurrences until the
    * `notification-digest-flush` cron drains it.
    */
