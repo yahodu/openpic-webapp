@@ -1960,7 +1960,16 @@ One row per (notification, channel) attempt — **including skips**.
   // stops re-attempting a "never retry" failure (F1b-r2, ADR-0137)
   nonRetryableFailures: 0,
   // on close: why it closed — only a "sent" flush counts against maxDigestEmailsPerDay
-  flushOutcome: "sent" | "failed" }
+  flushOutcome: "sent" | "failed",
+  // flush claim (F2, ADR-0143): set by the flush run that atomically took the
+  // bucket before sending, unset when it closes or releases the bucket. Two
+  // OVERLAPPING flush runs therefore deliver at most one summary per bucket: the
+  // loser's conditional transition does not match. A claim older than the lease
+  // (5 min, mirroring the outbox consumer's stale-claim rule) is reclaimable, so
+  // a run that dies mid-send can never strand a bucket. Status stays "open" while
+  // claimed, so the bucket keeps serving the fan-out's {userId, bucketKey} upsert
+  // and stays inside both partial indexes below.
+  flushClaimedAt: null }
 ```
 
 **Indexes:** `{userId:1, bucketKey:1}` unique partial on `status:"open"` · `{status:1, flushAt:1}` partial on `open` (the flush cron) · `{expireAt:1}` TTL 0
