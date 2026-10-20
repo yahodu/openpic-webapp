@@ -4,7 +4,7 @@
 - **Card:** OP-97 phase 1 (RED, `t_08538ff6`) · **GREEN card:** `t_58825ec3` (backend-coder) · **Depends on:** OP-94 (ADR-0092 fan-out / ADR-0093), OP-81 (rate-limit classes), OP-82 (ADR-0007 `platformSettings`), OP-87 (ADR-0028 internal auth)
 - **Design:** §19.4 (`notifications`), §21 (indexes), §22 (retention/TTL), §4 rule 6/7 (OTP secrecy, `in_app` never opt-outable), §20.4 (`platformSettings.notifications`) · **Contract:** §7.1 (in-app feed), §7.2 (unread count), §0.10 (ETag/304), §0.15 (never-return)
 - **Supersedes / amends:** none. Implements the OP-97 feed lane and carries the `PRE-1` finding routed by ADR-0128.
-- **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_08538ff6` (branch `wt/t_08538ff6`, to be renamed `OP-97-task-in-app-feed-read-state-red`)
+- **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_08538ff6` (branch `OP-97-task-in-app-feed-read-state-red`)
 
 ## Context
 
@@ -109,7 +109,15 @@ Two consequences the implementation must honour:
 - `id` is the hex string of `_id`; `_id`, `titleKey`, `expireAt` and every other
   never-return field (§0.15) must not reach the wire. `serializeResponse` runs
   the response through its Zod schema strictly, and the specs additionally run
-  `findForbiddenFields` over the parsed body (I6).
+  `findForbiddenFields` over the parsed body (I6). Because
+  `findForbiddenFields` does not know `titleKey`/`expireAt`, the projection and
+  I6 cases also pin the **exact** key set of a returned item
+  (`Object.keys(item).sort()`), so any extra key fails the suite.
+- The wire key set is therefore exactly the eighteen fields above, in that
+  order-agnostic set: `actionResolvedVia` and `actionResolvedAt` are always
+  present and serialize as `null` when the stored row carries no resolution
+  (the fixture never stores them, so the projection must default them). The
+  unread-count body is pinned to exactly its five fields (§7.2) the same way.
 - `category` is **denormalised from the notification catalogue** by `typeKey`
   (the stored row carries `severity` but not `category`). The seed catalogue is
   a compile-time constant, so this needs no database read.
@@ -119,6 +127,10 @@ defaults to 20 and is clamped to 50; `cursor` encodes `createdAt` + `_id`.
 `summary.unreadCount` is the caller's whole unread count — the same number the
 `unread-count` endpoint returns — and `summary.unreadByCategory` lists only
 non-zero categories.
+
+Input fallbacks are explicit: a non-positive or non-numeric `limit` falls back
+to the default of 20 (never `0`, never `400`), and an unknown `filter` value
+falls back to the default `active` band (never `400`).
 
 ### OTP defence in depth
 
@@ -154,6 +166,22 @@ journey, so the choice is the implementer's):
 The first keeps the fallback in one place and mirrors the resolving pattern the
 synchronous path already ships; the second keeps production write behaviour
 untouched. The GREEN card must state which it chose.
+
+## Follow-up RED pins (F1–F7, card `t_321f6091`)
+
+The review of this RED lane (ADR-0130) routed seven findings; the pins below
+land **before** the GREEN implementation so it builds against the complete
+contract. They change no production file.
+
+| #   | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| F1  | **Pinned.** The feed projection and its I6 case now assert the exact §7.1 key set (`FEED_ITEM_KEYS`, 18 keys), and the unread-count I6 case asserts the exact §7.2 key set (`UNREAD_COUNT_KEYS`, 5 keys). `findForbiddenFields` is kept as the shared scanner. This makes the never-return claim real for `titleKey`/`expireAt`, which the scanner does not know.                                                                                                              |
+| F2  | **Pinned.** `read-all` gains cases for an `eventId` scope, a `before` scope, and `category` AND `eventId` together; each asserts the out-of-scope rows stay unread and that `markedCount`/`unreadCount` reflect the scoped mutation.                                                                                                                                                                                                                                           |
+| F3  | **Pinned.** A pagination case seeds three rows sharing one `createdAt`, so only the `_id`-descending tie-break can order them; it asserts both pages concatenate to the deterministic `_id`-desc order with no row skipped or repeated.                                                                                                                                                                                                                                        |
+| F4  | **Pinned.** `?limit=0`/`-5`/`abc`/`` (empty) fall back to the default `20`, and an unknown `filter` (`bogus`) falls back to the default `active` band (never `400`). Both choices are restated above.                                                                                                                                                                                                                                                                          |
+| F5  | **Resolved.** The I4 `explain` seeds `EXPLAIN_READ_ROWS = 200` read rows before the four unread rows, so the partial index is the decisive plan rather than a marginal one; the spec docstring records the flake risk and why the size removes it.                                                                                                                                                                                                                             |
+| F6  | **Deferred (accepted).** The rate-class binding (`read.normal` feed, `read.hot` unread-count, `write.normal` mutations) has no cheap in-suite assertion: `defineRoute` returns a plain `(request) => Promise<Response>` handler with no inspectable metadata, so a spec cannot read the declared class off the route. The numeric budget is already owned by the rate-limit suite; the binding stays asserted by reference only, and this deferral is the recorded acceptance. |
+| F7  | **Done.** The header names the real branch, and the never-return claim above now matches what F1 pins. This ADR is updated in place; its number is unchanged.                                                                                                                                                                                                                                                                                                                  |
 
 ## Consequences
 

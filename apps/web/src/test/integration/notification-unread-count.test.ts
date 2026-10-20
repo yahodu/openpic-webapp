@@ -57,6 +57,13 @@ let app: TestApp;
 /** A non-default poll cadence, so the value provably comes from settings. */
 const POLL_INTERVAL_SECONDS = 45;
 
+/**
+ * Read rows the I4 `explain` seeds before the four unread rows, so the partial
+ * index `idx_user_unread` is the decisive plan rather than a marginal one
+ * (finding F5). A tiny collection risks a `COLLSCAN` win and a flaky pin.
+ */
+const EXPLAIN_READ_ROWS = 200;
+
 beforeAll(async () => {
   app = await startTestApp({ prefix: "op97-unread" });
 
@@ -90,6 +97,22 @@ interface UnreadCountBody {
   readonly pollIntervalSeconds: number;
   readonly serverTime: string;
 }
+
+/**
+ * The exact §7.2 body, in the sorted order `Object.keys(...).sort()` produces.
+ *
+ * The endpoint answers the polled badge and nothing else: any extra key —
+ * `userId`, a leaked row, an audit field — fails this pin. `findForbiddenFields`
+ * only knows its shared forbidden-key set, so the exact key set is what makes
+ * "the body carries no never-return field" complete.
+ */
+const UNREAD_COUNT_KEYS = [
+  "byCategory",
+  "highestSeverity",
+  "pollIntervalSeconds",
+  "serverTime",
+  "unreadCount",
+];
 
 /** A GET with the session cookie and optional extra headers. */
 function countRequest(session: SignedInUser, headers: Record<string, string> = {}): Request {
@@ -181,6 +204,10 @@ describe("GET /api/v1/me/notifications/unread-count", () => {
     const body: unknown = await response.json();
 
     expect(findForbiddenFields(body, "default")).toEqual([]);
+
+    // F1: `findForbiddenFields` does not know every field the row stores, so
+    // also pin the exact §7.2 key set — any extra key is a leak.
+    expect(Object.keys(body as Record<string, unknown>).sort()).toEqual(UNREAD_COUNT_KEYS);
   });
 
   it("I7: never counts an OTP-type row, even one stored unread", async () => {
@@ -231,8 +258,12 @@ describe("GET /api/v1/me/notifications/unread-count", () => {
   it("I4: the count query is served by the partial index idx_user_unread", async () => {
     const session = await app.signIn(makeIdentity("op97-unread-explain"));
     // A read-heavy collection: the partial index indexes only the unread rows,
-    // so the planner must prefer it over a full-collection scan.
-    const readRows = Array.from({ length: 30 }, (_, index) => index);
+    // so the planner must prefer it over a full-collection scan. The read rows
+    // are seeded deliberately large (not the ~30 that only marginalise the
+    // choice) so the index is not merely *a* candidate but the winning plan —
+    // with a tiny collection the multi-plan runner could in principle prefer a
+    // `COLLSCAN` and flake. The size is what makes the pin deterministic.
+    const readRows = Array.from({ length: EXPLAIN_READ_ROWS }, (_, index) => index);
     for (const index of readRows) {
       await insertFeedRow(app.db, {
         userId: session.userId,

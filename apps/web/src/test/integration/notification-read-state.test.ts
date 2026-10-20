@@ -262,4 +262,114 @@ describe("POST /api/v1/me/notifications/read-all", () => {
     expect(await first.json()).toEqual({ markedCount: 1, unreadCount: 0 });
     expect(await second.json()).toEqual({ markedCount: 0, unreadCount: 0 });
   });
+
+  it("I3: with an eventId, marks only that event's rows and reports the remaining count", async () => {
+    const session = await app.signIn(makeIdentity("op97-read-all-event"));
+    const scopedEvent = new ObjectId();
+    const otherEvent = new ObjectId();
+    const scopedA = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "attendee.matches.new",
+      eventId: scopedEvent,
+      createdAt: daysAgo(1),
+    });
+    const scopedB = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "collab.invite.sent",
+      eventId: scopedEvent,
+      createdAt: daysAgo(2),
+    });
+    const other = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "event.details.updated",
+      eventId: otherEvent,
+      createdAt: daysAgo(3),
+    });
+    const unassigned = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      eventId: null,
+      createdAt: daysAgo(4),
+    });
+
+    const response = await markAllRead(
+      postRequest(session, "/api/v1/me/notifications/read-all", {
+        eventId: scopedEvent.toHexString(),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ markedCount: 2, unreadCount: 2 });
+    expect((await requireRow(scopedA)).readAt).toBeInstanceOf(Date);
+    expect((await requireRow(scopedB)).readAt).toBeInstanceOf(Date);
+    expect((await requireRow(other)).readAt).toBeNull();
+    expect((await requireRow(unassigned)).readAt).toBeNull();
+  });
+
+  it("I3: with `before`, marks only rows created before the instant", async () => {
+    const session = await app.signIn(makeIdentity("op97-read-all-before"));
+    const recent = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(1),
+    });
+    const older = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(3),
+    });
+    const oldest = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(5),
+    });
+
+    const response = await markAllRead(
+      postRequest(session, "/api/v1/me/notifications/read-all", {
+        before: daysAgo(2).toISOString(),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ markedCount: 2, unreadCount: 1 });
+    expect((await requireRow(recent)).readAt).toBeNull();
+    expect((await requireRow(older)).readAt).toBeInstanceOf(Date);
+    expect((await requireRow(oldest)).readAt).toBeInstanceOf(Date);
+  });
+
+  it("I3: ANDs category and eventId when both are supplied", async () => {
+    const session = await app.signIn(makeIdentity("op97-read-all-and"));
+    const event = new ObjectId();
+    const both = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "attendee.matches.new",
+      eventId: event,
+      createdAt: daysAgo(1),
+    });
+    const categoryOnly = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "attendee.matches.new",
+      eventId: new ObjectId(),
+      createdAt: daysAgo(2),
+    });
+    const eventOnly = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "collab.invite.sent",
+      eventId: event,
+      createdAt: daysAgo(3),
+    });
+
+    const response = await markAllRead(
+      postRequest(session, "/api/v1/me/notifications/read-all", {
+        category: "matching",
+        eventId: event.toHexString(),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ markedCount: 1, unreadCount: 2 });
+    expect((await requireRow(both)).readAt).toBeInstanceOf(Date);
+    expect((await requireRow(categoryOnly)).readAt).toBeNull();
+    expect((await requireRow(eventOnly)).readAt).toBeNull();
+  });
 });

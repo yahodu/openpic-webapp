@@ -33,12 +33,16 @@ import { insertFeedRow } from "../helpers/notification-rows";
  *   days) | `archived` (the 30–90 day band);
  * - `category` is repeatable; `eventId` scopes to one event; `limit` defaults
  *   to 20 and is clamped to 50; `cursor` continues on `createdAt` + `_id`;
- * - rows are sorted `createdAt` desc and projected exactly as the §7.1 example:
+ * - rows are sorted `createdAt` desc with `_id` descending as the tie-break,
+ *   and projected to **exactly** the §7.1 projection list:
  *   `id`, `typeKey`, `category`, `severity`, `title`, `body`, `data`, `groupKey`,
- *   `groupCount`, `actionTarget`, `actions`, `readAt`, `eventId`, `tenantId`,
- *   `createdAt`, `updatedAt`. `title`/`body` are the stored pre-rendered strings;
- *   `category` is denormalised from the catalogue (the stored feed row does not
- *   carry it, and `severity` is denormalised the same way);
+ *   `groupCount`, `actionTarget`, `actions`, `actionResolvedVia`,
+ *   `actionResolvedAt`, `readAt`, `eventId`, `tenantId`, `createdAt`,
+ *   `updatedAt`. The two unresolved-action audit fields are always present and
+ *   `null` when the row has no resolution. `title`/`body` are the stored
+ *   pre-rendered strings; `category` is denormalised from the catalogue (the
+ *   stored feed row does not carry it, and `severity` is denormalised the same
+ *   way);
  * - the response never carries an `_id` or any other never-return field
  *   (§0.15), and never an `auth.otp.*` row — defence in depth, since the fan-out
  *   already refuses to write one (design rule 6).
@@ -49,6 +53,9 @@ import { insertFeedRow } from "../helpers/notification-rows";
  *   number the `unread-count` endpoint returns), not the count of the page.
  * - An explicitly supplied `window` narrows the lookback only (see the unit
  *   spec's `resolveFeedWindow` contract).
+ * - An unknown `filter` value falls back to the default `active` band (never a
+ *   `400`); a non-positive or non-numeric `limit` falls back to the default of
+ *   `20` (contract §7.1). Both choices are recorded in ADR-0129.
  */
 
 const FEED_PATH = "/api/v1/me/notifications";
@@ -81,12 +88,45 @@ interface FeedItem {
   readonly groupCount: number;
   readonly actionTarget: Record<string, unknown> | null;
   readonly actions: readonly Record<string, unknown>[];
+  readonly actionResolvedVia: string | null;
+  readonly actionResolvedAt: string | null;
   readonly readAt: string | null;
   readonly eventId: string | null;
   readonly tenantId: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+
+/**
+ * The exact §7.1 projection of one feed item (contract §7.1; ADR-0129
+ * §Feed projection), in the sorted order `Object.keys(...).sort()` produces.
+ *
+ * An item carrying **any** extra key — `titleKey` or `expireAt`, which the
+ * stored row deliberately holds, `_id`, or a field added by accident — fails
+ * this pin. `findForbiddenFields` cannot catch `titleKey`/`expireAt` because
+ * they are not in its shared forbidden-key set, so the exact key set is the
+ * assertion that makes the "must not reach the wire" claim real.
+ */
+const FEED_ITEM_KEYS = [
+  "actionResolvedAt",
+  "actionResolvedVia",
+  "actionTarget",
+  "actions",
+  "body",
+  "category",
+  "createdAt",
+  "data",
+  "eventId",
+  "groupCount",
+  "groupKey",
+  "id",
+  "readAt",
+  "severity",
+  "tenantId",
+  "title",
+  "typeKey",
+  "updatedAt",
+];
 
 interface FeedBody {
   readonly data: readonly FeedItem[];
@@ -248,6 +288,81 @@ describe("GET /api/v1/me/notifications — filter bands (I1)", () => {
   });
 });
 
+describe("GET /api/v1/me/notifications — limit and filter boundaries", () => {
+  it.each(["?limit=0", "?limit=-5", "?limit=abc", "?limit="])(
+    "I1: falls back to the default limit of 20 for %s",
+    async (query) => {
+      const session = await app.signIn(makeIdentity("op97-feed-limit-bound"));
+
+      const body = await fetchFeed(session, query);
+
+      expect(body.page.limit).toBe(20);
+    }
+  );
+
+  it("I1: falls back to the default `active` band for an unknown filter", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-filter-unknown"));
+    const inActive = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(1),
+    });
+    await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "event.details.updated",
+      createdAt: daysAgo(45),
+    });
+
+    const unknown = await fetchFeed(session, "?filter=bogus");
+    const fallback = await fetchFeed(session);
+
+    expect(idsOf(unknown)).toEqual([inActive.toString()]);
+    expect(idsOf(unknown)).toEqual(idsOf(fallback));
+  });
+});
+
+describe("GET /api/v1/me/notifications — cursor pagination", () => {
+  it("I1: breaks a `createdAt` tie on `_id` descending with no row skipped or repeated", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-tie"));
+    const sharedCreatedAt = daysAgo(1);
+    const first = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: sharedCreatedAt,
+    });
+    const second = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: sharedCreatedAt,
+    });
+    const third = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: sharedCreatedAt,
+    });
+
+    // All three rows share one `createdAt`, so only the `_id` tie-break can
+    // order them: newest `_id` first, deterministically.
+    const expected = [first.toString(), second.toString(), third.toString()].sort((a, b) =>
+      a < b ? 1 : a > b ? -1 : 0
+    );
+
+    const pageOne = await fetchFeed(session, "?limit=2");
+    expect(idsOf(pageOne)).toEqual(expected.slice(0, 2));
+    expect(pageOne.page.hasMore).toBe(true);
+    expect(pageOne.page.nextCursor).not.toBeNull();
+
+    const pageTwo = await fetchFeed(
+      session,
+      `?limit=2&cursor=${encodeURIComponent(String(pageOne.page.nextCursor))}`
+    );
+
+    expect(idsOf(pageTwo)).toEqual(expected.slice(2));
+    expect(pageTwo.page.hasMore).toBe(false);
+    expect(new Set([...idsOf(pageOne), ...idsOf(pageTwo)]).size).toBe(3);
+  });
+});
+
 describe("GET /api/v1/me/notifications — projection", () => {
   it("returns the stored, pre-rendered row projected to the §7.1 shape", async () => {
     const session = await app.signIn(makeIdentity("op97-feed-projection"));
@@ -294,6 +409,15 @@ describe("GET /api/v1/me/notifications — projection", () => {
       { key: "accept", label: "Accept", style: "primary", state: "available" },
       { key: "reject", label: "Decline", style: "secondary", state: "available" },
     ]);
+
+    // F1: the projection is exhaustive. `titleKey`, `expireAt`, `_id` or any
+    // other extra key must not reach the wire — and since `findForbiddenFields`
+    // does not know `titleKey`/`expireAt`, the exact key set is what makes that
+    // claim real.
+    if (item === undefined) {
+      throw new Error("the projection response carried no feed item");
+    }
+    expect(Object.keys(item).sort()).toEqual(FEED_ITEM_KEYS);
   });
 
   it("I6: the response body carries no never-return field", async () => {
@@ -308,6 +432,16 @@ describe("GET /api/v1/me/notifications — projection", () => {
     const body: unknown = await response.json();
 
     expect(findForbiddenFields(body, "default")).toEqual([]);
+
+    // F1: the shared scanner does not know `titleKey`/`expireAt`, so also pin
+    // the exact projection key set — any extra key is a leak.
+    const parsed = body as FeedBody;
+    expect(parsed.data).toHaveLength(1);
+    const item = parsed.data[0];
+    if (item === undefined) {
+      throw new Error("the never-return response carried no feed item");
+    }
+    expect(Object.keys(item).sort()).toEqual(FEED_ITEM_KEYS);
   });
 });
 
