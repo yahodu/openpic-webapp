@@ -1,3 +1,9 @@
+## [1.22.1](https://github.com/yahodu/openpic-webapp/compare/v1.22.0...v1.22.1) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 bound digest-flush ownership, retries and sweep reads (F1-F4) ([#216](https://github.com/yahodu/openpic-webapp/issues/216)) ([fde586b](https://github.com/yahodu/openpic-webapp/commit/fde586bc7d5d8b7e7e388bf59e37404dc124747e))
+
 ## [1.22.0](https://github.com/yahodu/openpic-webapp/compare/v1.21.1...v1.22.0) (2026-10-20)
 
 ### Features
