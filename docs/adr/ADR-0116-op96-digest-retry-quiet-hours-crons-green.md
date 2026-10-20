@@ -30,6 +30,12 @@ design decision the implementation had to make that ADR-0110 left implicit.
   (an app route may not import an adapter directly) via the shared
   `_lib/run-cron-route` helper, so each route is a `GET`/`POST` one-liner
   mirroring `cron/sample/route.ts`.
+- `apps/web/vercel.json` registers the three schedules from the card (§2/§3/§4:
+  `*/5 * * * *` for digest-flush and dispatch-retry, `*/15 * * * *` for
+  quiet-hours-release) alongside the merged `notification-fanout` entry, so the
+  routes actually fire in the Vercel deployment. No pin asserts the schedule
+  (the OP-94 follow-up lane owns the `vercel.json` pattern), so this is a
+  deliberate completion of the card's cadence, not a test-driven change.
 
 ### Digest accumulation is bucket-only
 
