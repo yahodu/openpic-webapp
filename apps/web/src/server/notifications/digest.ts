@@ -21,7 +21,11 @@
  *
  * A bucket is closed only when the recorded failure has an owner (F1b,
  * ADR-0134): a **retryable** transport failure is redelivered by the ledger row,
- * while a **non-retryable** one leaves the bucket `open` for a later flush.
+ * while a **non-retryable** one leaves the bucket `open` for a later flush. The
+ * re-attempts of a non-retryable failure are bounded (F1b-r2, ADR-0137): once
+ * the bucket's non-retryable failure count reaches `pipeline.maxAttempts` it is
+ * closed terminally (`flushOutcome: "failed"`), so the flush cron stops
+ * selecting it instead of retrying a "never retry" failure forever.
  */
 import type { Db, ObjectId as ObjectIdValue } from "mongodb";
 
@@ -85,6 +89,12 @@ interface DigestBucket {
   readonly lastItemAt: Date;
   readonly flushAt: Date;
   readonly status: string;
+  /**
+   * How many times this bucket's flush has failed **non-retryably** (schema
+   * §19.6). Once it reaches `platformSettings.pipeline.maxAttempts` the bucket
+   * is closed terminally (F1b-r2, ADR-0137).
+   */
+  readonly nonRetryableFailures?: number;
 }
 
 /** The scheduling half of the digest contract (design §19.6). */
@@ -120,6 +130,7 @@ function asBucket(value: unknown): DigestBucket | null {
     lastItemAt,
     flushAt,
     status,
+    nonRetryableFailures,
   } = value;
   if (
     _id === undefined ||
@@ -150,6 +161,7 @@ function asBucket(value: unknown): DigestBucket | null {
     lastItemAt,
     flushAt,
     status,
+    ...(typeof nonRetryableFailures === "number" ? { nonRetryableFailures } : {}),
   };
 }
 
@@ -310,7 +322,9 @@ async function renderSummary(
  *   so the caller closes the bucket (F1, ADR-0130).
  * - `failed_terminal` — the transport rejected the send **non-retryably**; the
  *   ledger row is recorded but no cron will ever re-select it, so nothing owns
- *   the redelivery and the bucket must stay `open` (F1b, ADR-0134).
+ *   the redelivery and the bucket must stay `open` (F1b, ADR-0134) — until the
+ *   bounded non-retryable failure count reaches `pipeline.maxAttempts`, when the
+ *   caller closes it terminally (F1b-r2, ADR-0137).
  * - `failed_unrecorded` — no ledger row at all (an unresolvable destination or
  *   an unbuildable message); nothing owns a retry, so the bucket stays `open`.
  */
@@ -429,10 +443,11 @@ async function flushOneBucket(
  * A transport failure is durably recorded on the ledger row, and the bucket is
  * marked `flushed` **only when that row owns the redelivery** — i.e. the failure
  * is retryable (F1, ADR-0130). A non-retryable failure has no owner, so the
- * bucket stays `open` and a later tick re-attempts the summary (F1b, ADR-0134).
- * A closed bucket records whether the summary actually went out
- * (`flushOutcome: "sent" | "failed"`), and only a `"sent"` flush consumes the
- * recipient's daily allowance (F1c, ADR-0134).
+ * bucket stays `open` and a later tick re-attempts the summary (F1b, ADR-0134) —
+ * but only up to `pipeline.maxAttempts` times, after which it is closed
+ * terminally (F1b-r2, ADR-0137). A closed bucket records whether the summary
+ * actually went out (`flushOutcome: "sent" | "failed"`), and only a `"sent"`
+ * flush consumes the recipient's daily allowance (F1c, ADR-0134).
  *
  * @param options - Database/clock/transport seams and the per-run limit.
  * @returns The §10.2 run outcome.
@@ -445,6 +460,7 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
 
   const settings = await getPlatformSettings({ db, clock });
   const maxPerDay = settings.notifications.maxDigestEmailsPerDay;
+  const maxAttempts = settings.pipeline.maxAttempts;
 
   const raw: unknown = await platformRepo(db)
     .collection(COLLECTIONS.notificationDigests)
@@ -478,6 +494,25 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
         { $set: { status: "flushed", flushOutcome, flushedAt: now } }
       );
 
+  /**
+   * Record one non-retryable flush failure against the bucket and return the
+   * resulting count (schema §19.6, F1b-r2, ADR-0137).
+   *
+   * The increment is a single atomic `$inc`, so concurrent flush workers can
+   * never lose a failure recorded for the same bucket.
+   */
+  const recordNonRetryableFailure = async (bucket: DigestBucket): Promise<number> => {
+    const updated: unknown = await platformRepo(db)
+      .collection(COLLECTIONS.notificationDigests)
+      .findOneAndUpdate(
+        { _id: bucket._id, status: "open" },
+        { $inc: { nonRetryableFailures: 1 } },
+        { returnDocument: "after" }
+      );
+    const count = isRecord(updated) ? updated.nonRetryableFailures : undefined;
+    return typeof count === "number" ? count : (bucket.nonRetryableFailures ?? 0) + 1;
+  };
+
   for (const bucket of due) {
     scanned += 1;
 
@@ -507,10 +542,23 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
       // (F1c, ADR-0134), so `sentByUser` is deliberately left unchanged.
       errors += 1;
       await markFlushed(bucket, "failed");
+    } else if (result === "failed_terminal") {
+      // No owner took the redelivery on a non-retryable failure, so the bucket
+      // stays `open` for a later attempt (F1b, ADR-0134) — but the retries are
+      // **bounded** (F1b-r2, ADR-0137): once the non-retryable failure count
+      // reaches `pipeline.maxAttempts` the bucket is closed terminally
+      // (`status: "flushed"`, `flushOutcome: "failed"`) so the flush cron's
+      // `status: "open"` read stops selecting it.
+      errors += 1;
+      const failures = await recordNonRetryableFailure(bucket);
+      if (failures >= maxAttempts) {
+        await markFlushed(bucket, "failed");
+      }
     } else {
-      // No owner took the redelivery — a non-retryable failure (F1b, ADR-0134)
-      // or one recorded nowhere at all. Leave the bucket `open` so a later
-      // flush re-attempts the summary instead of silently dropping it.
+      // No owner took the redelivery — a failure recorded nowhere at all (an
+      // unresolvable destination or an unbuildable message). Leave the bucket
+      // `open` so a later flush re-attempts the summary instead of silently
+      // dropping it.
       errors += 1;
     }
   }

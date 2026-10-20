@@ -1955,6 +1955,10 @@ One row per (notification, channel) attempt — **including skips**.
 { userId, typeKey, bucketKey: "attendee.matches.new:6702abc",
   itemCount: 38, sampleItems: [ /* first 5, for the summary line */ ],
   firstItemAt, lastItemAt, flushAt, status: "open" | "flushed", expireAt,
+  // bounded non-retryable flush failures: at pipeline.maxAttempts the bucket is
+  // closed terminally (status "flushed", flushOutcome "failed") so the flush cron
+  // stops re-attempting a "never retry" failure (F1b-r2, ADR-0137)
+  nonRetryableFailures: 0,
   // on close: why it closed — only a "sent" flush counts against maxDigestEmailsPerDay
   flushOutcome: "sent" | "failed" }
 ```

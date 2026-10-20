@@ -121,6 +121,27 @@ _permanent_ non-retryable rejection so the unbounded-repeat boundary is what is 
   schema in `docs/Notification and Database Design.md` §19.6 must be updated by the GREEN card so the
   document matches the code.
 
+## GREEN implementation (round 3, F1b-r2)
+
+Landed on this same branch (`OP-96-task-f1-f4-round3-red`) so the pin ships with the code.
+
+- **Counter field.** The `notificationDigests` bucket gains `nonRetryableFailures` (integer). It is
+  absent on a fresh bucket, is parsed as an optional number in `asBucket`, and the authoritative
+  schema (`docs/Notification and Database Design.md` §19.6) is updated to match. No index changes:
+  the `{userId:1, bucketKey:1}` unique partial-on-`open` and `{status:1, flushAt:1}` partial-on-`open`
+  indexes keep their semantics — a terminal bucket stops matching both because its `status` is no
+  longer `"open"`.
+- **Bound.** `flushDueDigests` reads `platformSettings.pipeline.maxAttempts` through the same
+  `getPlatformSettings({ db, clock })` seam it already used, and on a `failed_terminal` result it
+  atomically `$inc`s `nonRetryableFailures` (`findOneAndUpdate`, so a concurrent worker cannot lose
+  an increment) and closes the bucket terminally (`status: "flushed"`, `flushOutcome: "failed"`) once
+  the count reaches the ceiling. Below the ceiling the bucket stays `open`, preserving the round-2
+  F1b contract.
+- **Unchanged.** `failed_unrecorded` (an unresolvable destination or an unbuildable message) is not a
+  _non-retryable transport failure_ and is left exactly as F1b shipped (bucket stays `open`); no
+  second `platformSettings` field is added; the terminal marker is field-identical to the round-2
+  retryable closure, as decided above.
+
 ## Alternatives considered
 
 - **Bound `N = 1` (a non-retryable failure is terminal immediately).** Rejected: it breaks the
