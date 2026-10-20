@@ -503,7 +503,9 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
    *
    * `flushOutcome` records **why** it closed, distinctly from `status`
    * (F1c, ADR-0134): only a delivered summary consumes the recipient's daily
-   * allowance, so {@link countFlushedToday} counts `"sent"` flushes alone.
+   * allowance, so {@link countFlushedToday} counts a close whose `flushedAt`
+   * is a delivered `"sent"` flush **or** whose `redeliveredAt` falls in the
+   * local day (F1c-r2, ADR-0141).
    */
   const markFlushed = (bucket: DigestBucket, flushOutcome: "sent" | "failed"): Promise<unknown> =>
     platformRepo(db)
