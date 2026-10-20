@@ -1,0 +1,333 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { findForbiddenFields } from "@openpic/contracts";
+
+import { GET as listNotifications } from "@/app/api/v1/me/notifications/route";
+
+import {
+  APP_ORIGIN,
+  makeIdentity,
+  startTestApp,
+  type SignedInUser,
+  type TestApp,
+} from "../helpers/authed-app";
+import { insertFeedRow } from "../helpers/notification-rows";
+
+/**
+ * Integration / contract — `GET /api/v1/me/notifications` (OP-97, contract
+ * §7.1; design §19.4, §21).
+ *
+ * The feed is the read surface for the in-app notification panel: one cursor
+ * page of the caller's rows, filtered by a `createdAt` band, by category or by
+ * event, plus a `summary` the shell renders without a second call.
+ *
+ * ## Contract expected of the implementation
+ *
+ * `@/app/api/v1/me/notifications/route` exports `GET`, guarded with the `user`
+ * label, reading `notifications` (schema §19.4) and answering
+ * `{ data, page: { nextCursor, hasMore, limit }, summary: { unreadCount,
+ * unreadByCategory } }`.
+ *
+ * - `filter` ∈ `active` (default, last 30 days) | `unread` | `all` (last 90
+ *   days) | `archived` (the 30–90 day band);
+ * - `category` is repeatable; `eventId` scopes to one event; `limit` defaults
+ *   to 20 and is clamped to 50; `cursor` continues on `createdAt` + `_id`;
+ * - rows are sorted `createdAt` desc and projected exactly as the §7.1 example:
+ *   `id`, `typeKey`, `category`, `severity`, `title`, `body`, `data`, `groupKey`,
+ *   `groupCount`, `actionTarget`, `actions`, `readAt`, `eventId`, `tenantId`,
+ *   `createdAt`, `updatedAt`. `title`/`body` are the stored pre-rendered strings;
+ *   `category` is denormalised from the catalogue (the stored feed row does not
+ *   carry it, and `severity` is denormalised the same way);
+ * - the response never carries an `_id` or any other never-return field
+ *   (§0.15), and never an `auth.otp.*` row — defence in depth, since the fan-out
+ *   already refuses to write one (design rule 6).
+ *
+ * ## Assumptions recorded in the handoff
+ *
+ * - `unreadCount` in `summary` is the caller's whole unread count (the same
+ *   number the `unread-count` endpoint returns), not the count of the page.
+ * - An explicitly supplied `window` narrows the lookback only (see the unit
+ *   spec's `resolveFeedWindow` contract).
+ */
+
+const FEED_PATH = "/api/v1/me/notifications";
+
+let app: TestApp;
+
+beforeAll(async () => {
+  app = await startTestApp({ prefix: "op97-feed" });
+}, 30_000);
+
+afterAll(async () => {
+  await app.cleanup();
+});
+
+/** The instant `days` ago, so seeded rows land in (or outside) a filter band. */
+function daysAgo(days: number): Date {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
+/** One feed item as the §7.1 example projects it. */
+interface FeedItem {
+  readonly id: string;
+  readonly typeKey: string;
+  readonly category: string;
+  readonly severity: string;
+  readonly title: string;
+  readonly body: string;
+  readonly data: Record<string, unknown>;
+  readonly groupKey: string | null;
+  readonly groupCount: number;
+  readonly actionTarget: Record<string, unknown> | null;
+  readonly actions: readonly Record<string, unknown>[];
+  readonly readAt: string | null;
+  readonly eventId: string | null;
+  readonly tenantId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+interface FeedBody {
+  readonly data: readonly FeedItem[];
+  readonly page: {
+    readonly nextCursor: string | null;
+    readonly hasMore: boolean;
+    readonly limit: number;
+  };
+  readonly summary: {
+    readonly unreadCount: number;
+    readonly unreadByCategory: Record<string, number>;
+  };
+}
+
+/** A GET with the session cookie and any query string appended. */
+function feedRequest(session: SignedInUser, query = ""): Request {
+  return new Request(new URL(`${FEED_PATH}${query}`, APP_ORIGIN), {
+    method: "GET",
+    headers: { cookie: session.cookie },
+  });
+}
+
+/** GET the feed and parse the body. */
+async function fetchFeed(session: SignedInUser, query = ""): Promise<FeedBody> {
+  const response = await listNotifications(feedRequest(session, query));
+  expect(response.status).toBe(200);
+  return (await response.json()) as FeedBody;
+}
+
+/** The `data[].id` of a feed page, in the order the server returned them. */
+function idsOf(body: FeedBody): string[] {
+  return body.data.map((item) => item.id);
+}
+
+describe("GET /api/v1/me/notifications — filter bands (I1)", () => {
+  it("I1: each filter returns exactly its own createdAt band, newest first", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-bands"));
+    const active = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(1),
+    });
+    const readInWindow = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "attendee.matches.new",
+      readAt: daysAgo(2),
+      createdAt: daysAgo(2),
+    });
+    const archivedBand = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "collab.invite.sent",
+      createdAt: daysAgo(45),
+    });
+    await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "event.details.updated",
+      readAt: daysAgo(99),
+      createdAt: daysAgo(100),
+    });
+    const stranger = await app.signIn(makeIdentity("op97-feed-stranger"));
+    await insertFeedRow(app.db, {
+      userId: stranger.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(1),
+    });
+
+    const activeBand = await fetchFeed(session);
+    const unreadBand = await fetchFeed(session, "?filter=unread");
+    const allBand = await fetchFeed(session, "?filter=all");
+    const archived = await fetchFeed(session, "?filter=archived");
+
+    expect(idsOf(activeBand)).toEqual([active.toString(), readInWindow.toString()]);
+    expect(idsOf(unreadBand)).toEqual([active.toString(), archivedBand.toString()]);
+    expect(idsOf(allBand)).toEqual([
+      active.toString(),
+      readInWindow.toString(),
+      archivedBand.toString(),
+    ]);
+    expect(idsOf(archived)).toEqual([archivedBand.toString()]);
+
+    expect(activeBand.summary).toEqual({
+      unreadCount: 2,
+      unreadByCategory: { account: 1, collaboration: 1 },
+    });
+  });
+
+  it("I1: filters by category, repeatable, and by eventId", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-scope"));
+    const eventId = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "attendee.matches.new",
+      createdAt: daysAgo(1),
+    });
+    const invited = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "collab.invite.sent",
+      createdAt: daysAgo(2),
+    });
+    await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(3),
+    });
+
+    const matching = await fetchFeed(session, "?category=matching");
+    const either = await fetchFeed(session, "?category=matching&category=collaboration");
+    const scoped = await fetchFeed(session, `?eventId=${eventId.toString()}`);
+
+    expect(idsOf(matching)).toEqual([eventId.toString()]);
+    expect(idsOf(either)).toEqual([eventId.toString(), invited.toString()]);
+    expect(idsOf(scoped)).toEqual([eventId.toString()]);
+  });
+
+  it("I1: returns the secondary data and appends the next cursor", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-page"));
+    const first = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(1),
+    });
+    const second = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(2),
+    });
+    const third = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(3),
+    });
+
+    const page = await fetchFeed(session, "?limit=2");
+    expect(idsOf(page)).toEqual([first.toString(), second.toString()]);
+    expect(page.page.limit).toBe(2);
+    expect(page.page.hasMore).toBe(true);
+    expect(page.page.nextCursor).not.toBeNull();
+
+    const next = await fetchFeed(
+      session,
+      `?limit=2&cursor=${encodeURIComponent(String(page.page.nextCursor))}`
+    );
+    expect(idsOf(next)).toEqual([third.toString()]);
+    expect(next.page.hasMore).toBe(false);
+  });
+
+  it("I1: defaults the limit to 20 and clamps a larger limit to 50", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-limit"));
+
+    const defaulted = await fetchFeed(session);
+    const clamped = await fetchFeed(session, "?limit=100");
+
+    expect(defaulted.page.limit).toBe(20);
+    expect(clamped.page.limit).toBe(50);
+  });
+});
+
+describe("GET /api/v1/me/notifications — projection", () => {
+  it("returns the stored, pre-rendered row projected to the §7.1 shape", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-projection"));
+    const createdAt = daysAgo(1);
+    const id = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "collab.invite.sent",
+      severity: "important",
+      title: "Rahul invited you to co-organize",
+      body: "Rahul & Priya's Wedding · expires in 13 days",
+      data: { eventId: "6702ffffffffffffffffffff", link: "/invitations/6703bb" },
+      groupKey: "6702ffffffffffffffffffff",
+      groupCount: 1,
+      actionTarget: { kind: "invitation", id: "6703bbbbbbbbbbbbbbbbbbbb", state: "open" },
+      actions: [
+        { key: "accept", label: "Accept", style: "primary", state: "available" },
+        { key: "reject", label: "Decline", style: "secondary", state: "available" },
+      ],
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const body = await fetchFeed(session, "?filter=all");
+    const item = body.data[0];
+
+    expect(item).toMatchObject({
+      id: id.toString(),
+      typeKey: "collab.invite.sent",
+      category: "collaboration",
+      severity: "important",
+      title: "Rahul invited you to co-organize",
+      body: "Rahul & Priya's Wedding · expires in 13 days",
+      data: { eventId: "6702ffffffffffffffffffff", link: "/invitations/6703bb" },
+      groupKey: "6702ffffffffffffffffffff",
+      groupCount: 1,
+      actionTarget: { kind: "invitation", id: "6703bbbbbbbbbbbbbbbbbbbb", state: "open" },
+      readAt: null,
+      eventId: null,
+      tenantId: null,
+    });
+    expect(item?.createdAt).toBe(createdAt.toISOString());
+    expect(item?.updatedAt).toBe(createdAt.toISOString());
+    expect(item?.actions).toEqual([
+      { key: "accept", label: "Accept", style: "primary", state: "available" },
+      { key: "reject", label: "Decline", style: "secondary", state: "available" },
+    ]);
+  });
+
+  it("I6: the response body carries no never-return field", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-never-return"));
+    await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(1),
+    });
+
+    const response = await listNotifications(feedRequest(session));
+    const body: unknown = await response.json();
+
+    expect(findForbiddenFields(body, "default")).toEqual([]);
+  });
+});
+
+describe("GET /api/v1/me/notifications — OTP defence in depth (I7)", () => {
+  it("I7: never returns an OTP-type row even when one is stored", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-otp"));
+    const welcome = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(1),
+    });
+    await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "auth.otp.email.requested",
+      severity: "critical",
+      title: "Your OpenPic code",
+      body: "123456",
+      createdAt: daysAgo(1),
+    });
+
+    const all = await fetchFeed(session, "?filter=all");
+    const unread = await fetchFeed(session, "?filter=unread");
+    const filtered = await fetchFeed(session, "?category=authentication");
+
+    expect(idsOf(all)).toEqual([welcome.toString()]);
+    expect(idsOf(unread)).toEqual([welcome.toString()]);
+    expect(idsOf(filtered)).toEqual([]);
+  });
+});
