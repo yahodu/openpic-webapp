@@ -92,3 +92,63 @@ errors: 0}`, `{scanned: 0, errors: 0}` — the bucket is terminal after the seed
 - No test, mock, fixture or factory is modified. The RED pin (ADR-0138) is untouched.
 - The F2 round-3 finding (overlapping flush invocations double-deliver a summary) is a separate card
   (`t_e3369a9e`, ADR-0139); the F1c-r2 coverage gap is a separate card (`t_92c086f5`, ADR-0140).
+
+## Review sign-off (round 1 GREEN, artifact lens)
+
+- **Verdict:** APPROVED WITH FINDINGS. The implementation is correct, contract-preserving and green;
+  the only required change is this lane's ADR **number** (finding F1-r1-A), routed to card
+  `t_aa82386b`, which renumbers and then merges PR #220.
+- **Reviewed head:** `a0a7287` (implementation) plus this docs-only sign-off commit.
+- **Independently reproduced** in `/root/openpic/openpic-webapp/.worktrees/t-unrecorded-red` on
+  `a0a7287`: RED pin `1 passed`; integration `55 files / 358 tests` green **twice**
+  (`TMPDIR=/root/tmp-mongo`); unit `85 files / 1477 tests` green; `typecheck` clean on all three
+  projects; `eslint .` 0 errors (42 pre-existing warnings); `prettier --check` clean on the touched
+  files; `pnpm build` exit 0; CI on `a0a7287` green, including the `ci` job's E2E and dependency-audit
+  steps.
+- **Contract audit:** `failed_unrecorded` still returns before any transport call and writes no ledger
+  row — the pin asserts `transport.calls === 0`, an empty outbox, zero ledger rows and zero
+  `status: "sent"` rows. The four flush ticks log `{scanned 1, errors 1}`, `{1, 1}`, `{0, 0}`,
+  `{0, 0}`; the bucket is `open` after the first failure and terminal (`status: "flushed"`,
+  `flushOutcome: "failed"`) after the seeded `N = 2`. The ceiling is
+  `platformSettings.pipeline.maxAttempts` (validated `min(1)`, default `5`) read through the existing
+  `getPlatformSettings({ db, clock })` seam; no new setting and no new schema field.
+- **Honesty audit:** the diff adds no `@ts-ignore`/`@ts-expect-error`, no `eslint-disable`, no
+  `.only`/`.skip`, no `console.*`, no test-environment conditional and no fixture-shaped logic.
+  `a0a7287` touches no test, mock, fixture or factory; ADR-0138 and the RED pin are byte-unchanged.
+- **Refactor log:** none — this is a review lane and a behaviour-preserving refactor would have added
+  re-verification risk for no gain.
+
+### Findings
+
+- **F1-r1-A (Medium — delivery hygiene / cross-lane numbering).** Two distinct ADRs claim `0141`:
+  this file (`a0a7287`, 2026-10-20T15:25:54Z) and the sibling F1c-r2 GREEN's
+  `ADR-0141-op96-f1c-r2-redelivered-digest-cap-green.md` (`7f5a830`, 2026-10-20T15:21:12Z — the
+  earlier claim, already pushed to the open PR #219). **This lane yields** and renumbers to **`0143`**
+  — **not** `0142`, which is held by the OP-101 audit-job-split ADR (`ADR-0142-op101-ci-audit-job-split.md`)
+  on the still-open PR #213, so `0142` would reproduce the same collision. Routed to card
+  `t_aa82386b` (child of `t_cedd4e37`): rename, retitle, README row, every F1-lane `ADR-0141`
+  citation, then merge PR #220. **PR #220 must not merge while it still contains an `ADR-0141` file.**
+- **F1-r1-B (Low — maintainability, informational).** The `failed_terminal` and `failed_unrecorded`
+  branches of `flushDueDigests` are now byte-identical, and the trailing `else` is an implicit
+  catch-all that is only safe because `FlushOne` is a closed union. Collapsing both into one
+  "unrecoverable" branch (behaviour-preserving) is recommended at the next change that touches
+  `flushDueDigests`; not blocking, and not worth a dedicated card.
+- **F1-r1-C (Low — product trade-off, informational).** The bound turns a possibly transient
+  unrecorded failure into a permanent drop of the summary: the `notification-digest-flush` cron runs
+  **every 5 minutes** (`docs/API Contract.md` §10.2, `apps/web/vercel.json`) and the ceiling is
+  `pipeline.maxAttempts` (default `5`), so the digest is discarded roughly 25 minutes after the first
+  unrecorded failure instead of staying `open` until its `expireAt` TTL. Deliberate under ADR-0138
+  option (a); recorded so the product owner can weigh a time-based ceiling if a recipient regaining an
+  address inside the digest's window matters.
+- **F1-r1-D (Low — coverage, informational).** Only the `resolveDestination(...) === null` trigger is
+  pinned; `buildRedeliveryMessage(...) === null` shares the same `FlushOne` member and therefore the
+  same branch and bound (already recorded as ADR-0138 §Assumptions F1-r1-L1).
+- **F1-r1-E (Low — flake note, informational).** One non-reproducible integration failure in
+  `notification-bounded-sweeps.test.ts` was reported mid-development; two full integration runs plus a
+  targeted re-run of that spec are green here, and the retryable-transport path it exercises is not
+  touched by this diff.
+
+### Merge posture
+
+PR #220 is **ready** and CI-green on `a0a7287`, but its merge is **held** until `t_aa82386b` renumbers
+this ADR to `0143` and re-runs CI. The F1c-r2 lane keeps `0141`.
