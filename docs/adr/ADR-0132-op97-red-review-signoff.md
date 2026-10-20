@@ -43,8 +43,9 @@ false]` with `severity: informational`, so quiet hours defer the email while
   consistent rather than contradictory.
 - `SINGLETON_ID === "singleton"`, so the unread-count suite's settings override
   (a non-default 45 s cadence, seeded precisely so a hard-coded 30 fails) lands.
-- ADR `0129` is the next free number above `origin/main`'s high-water mark
-  `0128`; no collision.
+- `0131` is the first free number above `origin/main`'s high-water mark `0130`,
+  so no collision; the lane's original `0129`/`0130` collided with OP-96 PR #216
+  and were renumbered `0129` → `0131`, `0130` → `0132`.
 
 ### 2. The branch was two commits behind `origin/main`
 
@@ -208,7 +209,8 @@ commit.
 
 - The card's whole definition of done is met: F1–F4 are present and red for the
   right reason, F5–F7 are addressed or explicitly recorded as accepted, and
-  ADR-0131 is updated in place without renumbering.
+  the then-`ADR-0129` contract was updated in place; no new number consumed in
+  round 2.
 - One open contradiction remains between the pinned contract and the published
   contract document; card `t_bd74e9bf` closes it, and the GREEN card cannot start
   until it does.
