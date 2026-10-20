@@ -166,3 +166,64 @@ fresh `origin/main` `3f46950` and **every** ref immediately before committing: `
 `0136` reserved for its sign-off); and the binding allocation (`t_cf0b1f77`, extended by the round-3
 review) reserves `0138`/`0139` for the two sibling round-3 finding cards (`t_c9e903c5`,
 `t_e3369a9e`). `0138`–`0139` are reserved, so the next free is `0140`.
+
+## Review sign-off (round 1, artifact lens)
+
+- **Verdict: APPROVED** — no changes requested. The RED pin is genuine, precise and fit to implement
+  against. As with the F1–F4, round-2 and round-3-F1b precedent, this sign-off is recorded **inside**
+  the delivered ADR rather than as a new number, so no extra ADR number is consumed.
+- **Reviewer:** `openpic-webapp-reviewer` (card `t_92c086f5`, run 474) · **Round:** 1 (artifact lens)
+  · **Reviewed head:** `012faad` (base `origin/main` `3f46950`) · **PR:** #219 (draft,
+  RED-by-design).
+
+### Independently verified
+
+- **RED is genuine and reproduces exactly.** `vitest run --project integration` on `012faad` →
+  `1 failed | 54 passed (55)` files, `1 failed | 357 passed (358)` tests — byte-for-byte the claimed
+  counts, reproduced on three consecutive runs. The single failure is the new pin, at its intended
+  assertion: `notification-digest-flush-daily-cap-redelivery.test.ts:309` —
+  `expect(outcome.affected).toBe(0)` → `expected 1 to be +0`. Every pre-existing integration spec
+  still passes — no regression.
+- **The failure is for the intended reason, not an unrelated gap.** The pin's own premise assertions
+  pass before the failure: the failure tick records `affected: 0`, `errors: 1`, empty outbox; the
+  retry tick records `affected: 1`, one outbox message (so the bucket was created, due, failed
+  retryably and then delivered by the retry sweep). The job log for the failing tick shows the second
+  digest flush `scanned: 1, affected: 1, skipped: 0` — the summary was **sent** because
+  `countFlushedToday` counts only `flushOutcome: "sent"`, so the retry-delivered bucket
+  (`flushOutcome: "failed"`) burned no allowance. That is exactly the F1c-r2 defect.
+- **CI red is the intended RED and nothing else.** PR #219: `ci` and `test_coverage` = failure (the
+  single pin); `secret-scan`, `lint`, `unit_test`, `env-changes`, `validate-branch-name`,
+  `validate-pr-title` and CodeQL all pass. No non-pin failure masks the RED.
+- **Contract hygiene.** `git diff origin/main...HEAD` touches only 3 files — the new spec, ADR-0140
+  and the `docs/adr/README.md` row/allocation note. **No production file, mock, fixture, factory or
+  existing test is touched.**
+- **Real production paths, deterministic.** The pin drives `runNotificationFanOut` +
+  `flushDueDigests` + `retryDueDispatches` against a real `MongoMemoryReplSet` and the real seed
+  catalogue; only the transport and the recipient repository (external boundaries) are scripted.
+  Fixed clock throughout; the cap is seeded to the non-default `1`, so it never depends on the
+  shipped default `3`.
+- **Baseline gates re-run on `012faad`:** `unit` → 85 files / 1477 tests passed · `typecheck` clean ·
+  `eslint .` 0 errors (42 pre-existing warnings) · `prettier --check` clean on the three touched
+  files.
+- **ADR number.** `0140` is the lowest free: `docs/adr` on `origin/main` `3f46950` ends at `0137`;
+  `0135` is held in the still-open OP-97 GREEN worktree; `0138`/`0139` are held uncommitted in the
+  two sibling round-3 finding worktrees — independently confirmed on disk.
+- **Card acceptance criteria mapped.** (i) option (a), count the recovery, chosen and stated with
+  rationale (§Decision); (ii) the deterministic scenario, non-default cap `1`, retryable failure,
+  retry delivery, later same-day digest deferred (lines 253–317); (iii) exact RED counts, failing
+  assertion + line and ADR number reported.
+
+### Findings (non-blocking; none Critical/High/Medium)
+
+- **Merge posture (Low, cross-card).** RED-only: PR #219 stays a **draft**; the GREEN card
+  `t_4c6c34fe` (assignee `openpic-webapp-backend-coder`) continues on this branch
+  (`OP-96-task-f1c-r2-cap-red`) in worktree
+  `/root/openpic/openpic-webapp/.worktrees/t_6a4943e8` and turns the pin green, and the PR merges
+  only then. No production code is changed by this card.
+- **Contract-pair consistency confirmed (informational).** The new pin and the existing F1c pin
+  (`notification-digest-flush-daily-cap.test.ts`) bound the allowance from both sides: F1c requires
+  a failed-but-not-yet-delivered flush to consume **no** allowance (the next digest in that run is
+  still sent); this pin requires a flush **delivered by the retry sweep** to consume the allowance.
+  A GREEN that marks a `failed` bucket at attempt time breaks F1c; one that never counts a
+  redelivered bucket breaks this pin. Both are satisfied by counting at **delivery** time.
+- No new cards are required by this review.
