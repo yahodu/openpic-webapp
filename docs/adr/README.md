@@ -114,6 +114,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0107](ADR-0107-op94-followup-fanout-cron-route-green-review-signoff.md)           | OP-94 §1 follow-up GREEN review sign-off: M1/M2 coverage gaps + L1 drift routed to the TEST card           | Accepted |
 | [0108](ADR-0108-op94-followup-test-pins.md)                                        | OP-94 §1 follow-up TEST: non-memory transport branch, recipient audiences, `after()` failure path          | Accepted |
 | [0109](ADR-0109-op94-followup-test-pins-review-signoff.md)                         | OP-94 §1 follow-up TEST review sign-off: round-2 APPROVED WITH FINDINGS; merge posture + archive routed    | Accepted |
+| [0110](ADR-0110-op89-residual-adr-0043-production-citations.md)                    | OP-89 follow-up: residual stale `ADR-0043` production citations redirected to `ADR-0045` §1/§3             | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 

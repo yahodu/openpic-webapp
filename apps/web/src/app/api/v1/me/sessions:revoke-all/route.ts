@@ -16,7 +16,7 @@ import { revokeCallerSessions } from "@/server/me/session-revocation";
  * Guarded with the `user` label. The revocation is performed through Better
  * Auth's `revoke-other-sessions` / `revoke-sessions` endpoint (so the library
  * owns the session store), then announced once through the identity lifecycle
- * seam (`createIdentityLifecycleSeams().sessionsRevoked`, ADR-0043 §3), which
+ * seam (`createIdentityLifecycleSeams().sessionsRevoked`, ADR-0045 §3), which
  * emits the single `account.sessions.revoked` outbox row. The route never
  * writes that event directly.
  */
