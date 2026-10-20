@@ -3,7 +3,7 @@ import { ObjectId, type Db } from "mongodb";
 import { APIError } from "better-auth/api";
 
 import { TransportError } from "@/server/adapters/transport-error";
-import { getRateLimitConfig } from "@/server/config/env";
+import { getConfig, getRateLimitConfig } from "@/server/config/env";
 import { getLogger } from "@/server/logging";
 import { sendTransactionalNow } from "@/server/notifications/fan-out";
 import type { MessageTransport } from "@/server/notifications/message-transport";
@@ -138,6 +138,10 @@ async function resolveUserId(db: Db, channel: OtpChannel, to: string): Promise<s
  */
 export function notificationOtpSender(options: NotificationOtpSenderOptions): OtpSender {
   const inbox = options.inbox ?? otpInbox;
+  // The declared `actionUrl` variable the email OTP copy renders (OP-95
+  // follow-up F1, ADR-0102). A non-secret app link; the validated config is
+  // the only source, and reading it here keeps `renderVarsFor` strict.
+  const actionUrl = getConfig().app.baseUrl;
 
   return {
     async send(request: OtpSendRequest): Promise<void> {
@@ -151,7 +155,7 @@ export function notificationOtpSender(options: NotificationOtpSenderOptions): Ot
           typeKey: OTP_TYPE_KEY[request.channel],
           channel: request.channel,
           destination: request.to,
-          payload: { code: request.code },
+          payload: { code: request.code, actionUrl },
           userId,
         });
         providerMessageId = result.providerMessageId;

@@ -1,10 +1,12 @@
 import type { ClientSession, Db, Document, ObjectId } from "mongodb";
 import { ObjectId as ObjectIdValue } from "mongodb";
+import { after } from "next/server";
 import { z } from "zod";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { getLogger } from "@/server/logging";
+import { runNotificationFanOutTrigger } from "@/server/notifications/fan-out-trigger";
 import { getEnabledNotificationTypeKeys } from "@/server/notifications/notification-type-cache";
 import { NOTIFICATION_TYPE_KEYS } from "@/server/notifications/notification-types.values";
 import { platformRepo } from "@/server/repos";
@@ -237,6 +239,27 @@ function toDomainEventDocument(raw: Document): DomainEventDocument {
 }
 
 /**
+ * Schedule one opportunistic fan-out run after the response is sent.
+ *
+ * In a real Next.js request this registers the drain with `after()`. When the
+ * writer is invoked directly (unit/integration tests, scripts) there is no
+ * request scope, so `after()` throws — there is nothing to defer and the cron
+ * route remains the delivery path. The seam must never break the writer (mirror
+ * of `apps/web/src/app/api/v1/health/route.ts`).
+ *
+ * The deferred work lives in `@/server/notifications/fan-out-trigger` so this
+ * writer gains no notification dependency and no import cycle (that module
+ * resolves the fan-out lazily).
+ */
+function scheduleNotificationFanOut(): void {
+  try {
+    after(runNotificationFanOutTrigger);
+  } catch {
+    // No Next.js request scope; the cron route drains the outbox instead.
+  }
+}
+
+/**
  * Record one domain event in the outbox.
  *
  * Validates the input, gates the `eventKey` (catalogue ∪ analytics-only),
@@ -324,6 +347,13 @@ export async function emitDomainEvent(
     tenantId: event.tenantId,
     subjectRef: { kind: event.subjectRef.kind, id: event.subjectRef.id },
   });
+
+  // A freshly emitted event the notifications consumer owns is drained promptly
+  // rather than waiting up to a minute for the next cron tick. The no-op
+  // outside a request scope keeps the writer usable from scripts and tests.
+  if (notifications === "pending") {
+    scheduleNotificationFanOut();
+  }
 
   return { deduped: false, id: String(insertedId) };
 }

@@ -141,6 +141,29 @@ export default tseslint.config(
     },
   },
   {
+    // The config-driven transport factory is the composition root that must
+    // name the vendor adapter it selects (OP-94 §1 follow-up, ADR-0105). The
+    // service the route depends on stays adapter-free; this factory is the one
+    // deliberate seam allowed to import the Novu adapter, with the logging
+    // boundary preserved. (OP-95 introduced this factory for the synchronous OTP
+    // path; OP-94 wires its non-memory branch to Novu so both paths share one
+    // provider selection.)
+    files: ["apps/web/src/server/adapters/message-transport-provider.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/server/logging/**", "@/server/logging/*"],
+              message: "Import only the Logger port from @/server/logging.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Cron jobs write `domainEvents`; the fan-out consumer delivers. A job must
     // therefore never reach for a notification or delivery adapter directly, so
     // the `defineCronJob` contract stays free of a notification dependency

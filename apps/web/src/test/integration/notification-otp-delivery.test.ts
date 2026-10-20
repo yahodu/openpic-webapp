@@ -15,7 +15,7 @@ import {
   setLogger,
   type MemoryTransport,
 } from "@/server/logging";
-import type { MessageTransport } from "@/server/notifications/message-transport";
+import type { MessageTransport, OutboundMessage } from "@/server/notifications/message-transport";
 import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
 import { SEED_NOTIFICATION_TEMPLATES } from "@/server/notifications/notification-templates.values";
 import { SEED_NOTIFICATION_TYPES } from "@/server/notifications/notification-types.values";
@@ -32,7 +32,7 @@ import { expectNoSecretsInLogs } from "../helpers/log-assertions";
 
 /**
  * Integration / contract — OTP delivery through the NotificationService
- * (OP-95, design §5, §8.2, §19.5; API Contract §0.13, §7.6; ADR-0094).
+ * (OP-95, design §5, §8.2, §19.5; API Contract §0.13, §7.6; ADR-0096).
  *
  * Better Auth's OTP callbacks must not talk to the legacy memory capture or to
  * a vendor directly: every delivered one-time code goes through the synchronous
@@ -53,14 +53,14 @@ import { expectNoSecretsInLogs } from "../helpers/log-assertions";
  *     (defaulting from config) and wires `notificationOtpSender` as the OTP
  *     port, replacing the OP-85 `memoryOtpSender`.
  *   - `@/server/notifications/fan-out` exports `sendTransactionalNow(input)`
- *     (ADR-0094) — the synchronous resolve → render → dispatch path. It
+ *     (ADR-0096) — the synchronous resolve → render → dispatch path. It
  *     persists one `notificationDispatches` row (metadata only, `body: null`
  *     for `retainBody: false` types) and hands a fully rendered
  *     `OutboundMessage` to the transport.
  *   - The `auth.otp.*` templates render the code (`{{code}}`), since the code is
  *     a template variable, not a persisted field.
  *
- * ## Assumptions (ADR-0094)
+ * ## Assumptions (ADR-0096)
  *
  *   - The synchronous path resolves only the recipient's fact for the requested
  *     channel; recipient *audience* resolution is the fan-out's concern and is
@@ -183,6 +183,13 @@ function sixDigitStrings(value: unknown): string[] {
   return found;
 }
 
+/** The subject + rendered text/html of an outbound message, joined for scanning. */
+function renderedBody(message: OutboundMessage | undefined): string {
+  return [message?.subject, message?.text, message?.html]
+    .filter((part): part is string => typeof part === "string")
+    .join("\n");
+}
+
 describe("OTP delivery through the NotificationService (OP-95)", () => {
   it("I1: an email OTP reaches the memory transport and the dispatch row carries no code", async () => {
     const transport = memoryMessageTransport();
@@ -300,6 +307,140 @@ describe("OTP delivery through the NotificationService (OP-95)", () => {
 
         // The attempt is recorded and retryable, with no code anywhere.
         const dispatches = await dispatchesOf(db, "auth.otp.email.requested");
+        expect(dispatches).toHaveLength(1);
+        expect(dispatches[0]).toMatchObject({
+          status: "failed",
+          attempts: 1,
+          lastError: { retryable: true, status: 503 },
+        });
+        expect(sixDigitStrings(dispatches[0])).toEqual([]);
+
+        expect(sixDigitStrings(sink.entries)).toEqual([]);
+        expectNoSecretsInLogs(sink);
+      });
+    } finally {
+      setLogger(previousLogger);
+    }
+  });
+
+  /**
+   * F1 (OP-95 follow-up RED, ADR-0102) — the synchronous copy is well-formed.
+   *
+   * `auth.otp.email.requested` declares `code` **and** `actionUrl`; the sync
+   * sender passed only `{ code }`, and `renderVarsFor` defaults every missing
+   * declared variable to `""`, so the delivered email read
+   * `"… View the details at ."`. The settled behaviour: the synchronous OTP
+   * path supplies the `actionUrl` variable it renders, using
+   * `getConfig().app.baseUrl` (a non-secret app link) as the destination.
+   *
+   * These pins are additive; I1/I2 above still assert the code/secret rules.
+   */
+  it("F1: the synchronous email OTP body carries the app link and no empty-variable artefact", async () => {
+    const transport = memoryMessageTransport();
+
+    await withHarness(transport, async ({ auth }) => {
+      const email = uniqueEmail();
+
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/email-otp/send-verification-otp",
+        { email, type: "sign-in" },
+        { "x-forwarded-for": "203.0.113.20" }
+      );
+      expect(response.status).toBe(200);
+
+      const code = otpInbox.list().find((entry) => entry.to === email)?.code ?? "";
+      expect(code).toMatch(/^\d{6}$/);
+
+      const emails = transport.outbox.filter((message) => message.channel === "email");
+      expect(emails).toHaveLength(1);
+      const body = renderedBody(emails[0]);
+
+      // Regression (extends I1): the code still renders.
+      expect(body).toContain(code);
+      // The declared `actionUrl` must be supplied, not defaulted to "".
+      expect(body).toContain(APP_ORIGIN);
+      // No unresolved placeholder and no empty-variable artefact (" at .").
+      expect(body).not.toContain("{{");
+      expect(body).not.toMatch(/\bat\s*\./i);
+    });
+  });
+
+  it("F1b: the synchronous sms OTP body is well-formed and carries no unresolved placeholder", async () => {
+    const transport = memoryMessageTransport();
+
+    await withHarness(transport, async ({ auth, db }) => {
+      const phone = uniquePhone();
+      await seedVerifiedUser(db, { phone, whatsappCapable: true });
+
+      const response = await authPost(
+        auth,
+        APP_ORIGIN,
+        "/api/auth/phone-number/send-otp",
+        { phoneNumber: phone },
+        { "x-forwarded-for": "203.0.113.21" }
+      );
+      expect(response.status).toBe(200);
+
+      const messages = transport.outbox;
+      expect(messages).toHaveLength(1);
+      const code = otpInbox.list().find((entry) => entry.to === phone)?.code ?? "";
+      expect(code).toMatch(/^\d{6}$/);
+
+      const body = renderedBody(messages[0]);
+      expect(body).toContain(code);
+      expect(body).not.toContain("{{");
+      expect(body).not.toMatch(/\bat\s*\./i);
+    });
+  });
+
+  /**
+   * F5 (OP-95 follow-up RED, ADR-0102) — the phone-path 503 surface.
+   *
+   * I3 pins the retryable `upstream_unavailable` surface for the email OTP
+   * endpoint; this pins the same contract for `POST /api/auth/phone-number/send-otp`.
+   */
+  it("I4: a transport failure on the phone OTP path surfaces a retryable 503 and logs no code", async () => {
+    const failing: MessageTransport = {
+      send: () =>
+        Promise.reject(
+          new TransportError("provider unavailable", { retryable: true, code: "http", status: 503 })
+        ),
+    };
+
+    const previousLogger = getLogger();
+    const sink: MemoryTransport = memoryTransport();
+    setLogger(
+      createLogger({
+        level: "info",
+        transports: [sink],
+        service: "openpic-web",
+        env: "test",
+        version: "test-sha",
+      })
+    );
+
+    try {
+      await withHarness(failing, async ({ auth, db }) => {
+        const phone = uniquePhone();
+        await seedVerifiedUser(db, { phone, whatsappCapable: true });
+
+        const response = await authPost(
+          auth,
+          APP_ORIGIN,
+          "/api/auth/phone-number/send-otp",
+          { phoneNumber: phone },
+          { "x-forwarded-for": "203.0.113.13" }
+        );
+
+        // The synchronous sender rejects; Better Auth surfaces a retryable 503.
+        expect(response.status).toBe(503);
+        const payload = (await response.clone().json()) as { code?: string };
+        expect(payload.code).toBe("upstream_unavailable");
+
+        // The attempt is recorded and retryable, with no code anywhere.
+        const dispatches = await dispatchesOf(db, "auth.otp.mobile.requested");
         expect(dispatches).toHaveLength(1);
         expect(dispatches[0]).toMatchObject({
           status: "failed",

@@ -4,7 +4,7 @@ import { digestFlushJob } from "@/server/services/notification-cron-jobs";
 
 /**
  * `GET`/`POST /api/v1/internal/cron/notification-digest-flush` — drain due
- * digest buckets (OP-96, contract §10.2, ADR-0100).
+ * digest buckets (OP-96, contract §10.2, ADR-0110).
  *
  * Guarded by the internal HMAC stage; a `CRON_SECRET` bearer (Vercel Cron) or a
  * signed POST runs the bounded job and returns its §10.2 `CronResult`.

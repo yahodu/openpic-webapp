@@ -1,6 +1,6 @@
 /**
  * Dispatch retry cron (OP-96, contract §10.2 `notification-dispatch-retry`,
- * ADR-0100).
+ * ADR-0110).
  *
  * The fan-out records a transport failure on the `notificationDispatches` row
  * with a classified `lastError.retryable`. This job re-attempts **only** the
@@ -24,7 +24,7 @@ import { buildRedeliveryMessage, resolveDestination, sendRedelivery } from "./di
 import type { MessageTransport } from "./message-transport";
 import type { ResolvedChannel } from "./resolve-channel";
 
-/** The backoff base: 60 s (ADR-0100 assumption 1). */
+/** The backoff base: 60 s (ADR-0110 assumption 1). */
 const BASE_MS = 60_000;
 /** The backoff ceiling: 5 minutes. */
 const CAP_MS = 300_000;

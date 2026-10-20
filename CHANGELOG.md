@@ -1,3 +1,21 @@
+## [1.21.1](https://github.com/yahodu/openpic-webapp/compare/v1.21.0...v1.21.1) (2026-10-06)
+
+### Bug Fixes
+
+- **notifications:** OP-94 fail closed when a non-memory transport lacks NOVU_API_KEY ([#205](https://github.com/yahodu/openpic-webapp/issues/205)) ([f16e26d](https://github.com/yahodu/openpic-webapp/commit/f16e26d450ed18dc40a7182f462ec5ddef8ae26b))
+
+## [1.21.0](https://github.com/yahodu/openpic-webapp/compare/v1.20.1...v1.21.0) (2026-10-06)
+
+### Features
+
+- **notifications:** OP-94 notification-fanout cron route and after() trigger ([#201](https://github.com/yahodu/openpic-webapp/issues/201)) ([49126f4](https://github.com/yahodu/openpic-webapp/commit/49126f4acec84518dd4f9a20fd3760bebf5f55c2))
+
+## [1.20.1](https://github.com/yahodu/openpic-webapp/compare/v1.20.0...v1.20.1) (2026-10-06)
+
+### Bug Fixes
+
+- **notifications:** OP-95 follow-up GREEN — synchronous OTP actionUrl, catalogue-fallback guard, sync-path polish ([#199](https://github.com/yahodu/openpic-webapp/issues/199)) ([a9da3e6](https://github.com/yahodu/openpic-webapp/commit/a9da3e65940309a573eb68fa3612ef743a0f9180))
+
 ## [1.20.0](https://github.com/yahodu/openpic-webapp/compare/v1.19.0...v1.20.0) (2026-10-06)
 
 ### Features

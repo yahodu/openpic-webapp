@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/v1/internal/cron/notification-fanout",
+      "schedule": "* * * * *"
+    }
+  ]
+}

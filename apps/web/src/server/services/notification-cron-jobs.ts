@@ -1,5 +1,5 @@
 /**
- * The three notification cron jobs (OP-96, contract §10.2, ADR-0100).
+ * The three notification cron jobs (OP-96, contract §10.2, ADR-0110).
  *
  * The route handlers under `app/api/v1/internal/cron/**` may not import an
  * adapter directly (they depend on services, not adapters), so this module owns

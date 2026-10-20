@@ -154,7 +154,7 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
   },
   // notification_dispatches — the quiet-hours release sweep selects
   // `{ status: "deferred", until <= now }`; the partial index scopes it to the
-  // deferred rows only (ADR-0100 §Quiet-hours deferral; ADR-0104). `dispatches`
+  // deferred rows only (ADR-0110 §Quiet-hours deferral; ADR-0114). `dispatches`
   // is tenant-scoped, so the compound index leads with `tenantId` (§21 P3).
   {
     collection: COLLECTIONS.dispatches,
@@ -168,7 +168,7 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
   },
 
   // notificationDigests — one open bucket per (user, bucketKey); a flushed
-  // bucket leaves the partial index and frees the key (schema §19.6, ADR-0100).
+  // bucket leaves the partial index and frees the key (schema §19.6, ADR-0110).
   {
     collection: COLLECTIONS.notificationDigests,
     name: "notification_digests_user_bucket_open_unique",
@@ -180,7 +180,7 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     partialFilterExpression: { status: "open" },
   },
   // notificationDigests — the flush cron reads open buckets whose flushAt has
-  // passed, in flushAt order (schema §19.6, ADR-0100).
+  // passed, in flushAt order (schema §19.6, ADR-0110).
   {
     collection: COLLECTIONS.notificationDigests,
     name: "notification_digests_status_flush_at_open",

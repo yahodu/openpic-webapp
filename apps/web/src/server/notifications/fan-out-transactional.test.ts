@@ -12,7 +12,7 @@ import { makeNotificationType, requireType } from "@/test/factories/notification
 
 /**
  * The synchronous transactional entry point — unit contract (OP-95, design §5,
- * §8.2, schema §19.1/§19.4/§19.5; ADR-0094).
+ * §8.2, schema §19.1/§19.4/§19.5; ADR-0096).
  *
  * `sendTransactionalNow` is the join the fan-out left out (ADR-0090 "Out of
  * scope"): the synchronous resolve → render → dispatch path that Better Auth's
@@ -104,7 +104,7 @@ import { makeNotificationType, requireType } from "@/test/factories/notification
  * `sendTransactionalNow` is the operator-routed home for OP-94 card §6: the
  * synchronous entry point lives in `fan-out.ts` alongside the pure helpers.
  *
- * ## Assumptions (ADR-0094)
+ * ## Assumptions (ADR-0096)
  *
  * - `resolveOtpTarget` reuses the real {@link resolveChannel} against the real
  *   seeded OTP type row; it is not a re-implementation of the resolver. A
