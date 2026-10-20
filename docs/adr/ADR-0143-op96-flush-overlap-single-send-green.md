@@ -5,7 +5,7 @@
 - **RED pin:** `apps/web/src/test/integration/notification-digest-flush-overlap-single-send.test.ts` (unchanged by this card), decision record **ADR-0139**
 - **Implements:** ADR-0139 §Decision (at most one delivery per bucket per open → flushed transition) · ADR-0130 §"F1" ("the flush cron can never re-select the bucket and double-send the summary") · ADR-0028 §1 (the "concurrency-safe" cron-framework claim, `apps/web/src/server/jobs/cron-job.ts`)
 - **Touches:** `apps/web/src/server/notifications/digest.ts` (production), `docs/Notification and Database Design.md` §19.6 (schema doc), this ADR + the ADR index row. **No test, mock, fixture or factory is touched.**
-- **Branch:** `OP-96-task-flush-overlap-single-send-red` (carries the RED pin + this GREEN; PR **#221**) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-flush-overlap-red` · **Base:** `origin/main` `3f46950`
+- **Branch:** `OP-96-task-flush-overlap-single-send-red` (carries the RED pin + this GREEN; PR **#221**) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-flush-overlap-red` · **Base:** `origin/main` `3f46950`, merged up to `origin/main` `52f742e` before the final verification run
 
 ## Context
 
@@ -147,11 +147,21 @@ null }` in the `$or`. `$unset` keeps one representation of "unclaimed" (absent) 
   sibling (ADR-0139 finding F2-3, optional hardening) and the pre-existing window in which an arrival
   merged into a bucket between its claim-read and its close is delivered only in the next bucket.
 - **Numbering.** The card expected `0140`; re-checked immediately before committing against fresh
-  `origin/main` `3f46950` and every open ref/worktree, `0140` is **taken** (the F1c-r2 lane,
-  `OP-96-task-f1c-r2-cap-red` / PR #219, `ADR-0140-op96-f1c-r2-redelivered-digest-cap-red.md`), and so
-  are `0141` and `0142` (that lane's GREEN and the F1 unrecorded-bound GREEN). The lowest free number is
-  therefore **`0143`**, which is what this ADR takes. The GREEN's review sign-off will be recorded as a
-  section **inside** this ADR (the ADR-0130/0134/0137/0139 precedent), so no second number is consumed.
+  `origin/main` and every open ref/worktree, `0140` is **taken** (the F1c-r2 lane,
+  `OP-96-task-f1c-r2-cap-red` / PR #219, `ADR-0140-op96-f1c-r2-redelivered-digest-cap-red.md` — by the
+  time of the final run it had merged and `origin/main` itself carried `0140`/`0141`). `0142` is the
+  OP-101 CI audit-job-split lane (`t_a3d52d6e`), and `0141` is additionally held by the F1
+  unrecorded-bound GREEN (`t_c9e903c5`, PR #220). The lowest free number is therefore **`0143`**, which is
+  what this ADR takes. The GREEN's review sign-off will be recorded as a section **inside** this ADR (the
+  ADR-0130/0134/0137/0139 precedent), so no second number is consumed.
+- **Merged up to `origin/main` `52f742e`.** `origin/main` advanced past this branch's base while the GREEN
+  was being written: the F1c-r2 GREEN (PR #219, `4424e74`) merged and also touched `digest.ts`
+  (`countFlushedToday` now counts a retry-redelivered summary via `redeliveredAt`, and the `failed` ledger
+  row carries `digestBucketId`). `git merge origin/main` auto-merged `digest.ts` cleanly — the two changes
+  are orthogonal (the F1c-r2 work changes the count and the ledger row; this one adds a pre-send claim) —
+  and the only conflicts were the two shared docs, resolved by keeping **both** sides: §19.6 now documents
+  `redeliveredAt` **and** `flushClaimedAt`, and the ADR index keeps `0139`/`0140`/`0141` plus this
+  `0143` row and every allocation note. The final verification run below is on the merged tree.
 
 ## GREEN evidence
 
@@ -160,9 +170,11 @@ null }` in the `$or`. `$unset` keeps one representation of "unclaimed" (absent) 
   job's point of view: success case `scanned: 1, affected: 0, skipped: 1` (loser) next to
   `scanned: 1, affected: 1, skipped: 0` (winner); failure case `scanned: 1, errors: 1` once and
   `scanned: 1, affected: 0, skipped: 1` once — no run reports the same bucket as delivered.
-- **Full integration suite:** `Test Files 55 passed (55) · Tests 359 passed (359)` — against the RED
-  baseline `1 failed | 54 passed (55)` files, `2 failed | 357 passed (359)` tests (ADR-0139 §RED
-  evidence; independently reproduced on this branch before coding).
+- **Full integration suite (on the merged tree, `origin/main` `52f742e`):**
+  `Test Files 56 passed (56) · Tests 360 passed (360)` — the 56th file is the F1c-r2 spec merged in from
+  `main`; on this branch before that merge it was `Test Files 55 passed (55) · Tests 359 passed (359)`,
+  against the RED baseline `1 failed | 54 passed (55)` files, `2 failed | 357 passed (359)` tests
+  (ADR-0139 §RED evidence; independently reproduced on this branch before coding).
 - **Unit suite:** `Test Files 85 passed (85) · Tests 1477 passed (1477)` (unchanged before/after —
   `digest.test.ts` covers the two pure functions only).
 - `pnpm typecheck` clean · `pnpm run lint` 0 errors (42 pre-existing warnings) · `pnpm run build`
