@@ -1,3 +1,4 @@
+import { ObjectId } from "mongodb";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { findForbiddenFields } from "@openpic/contracts";
@@ -174,29 +175,34 @@ describe("GET /api/v1/me/notifications — filter bands (I1)", () => {
 
   it("I1: filters by category, repeatable, and by eventId", async () => {
     const session = await app.signIn(makeIdentity("op97-feed-scope"));
-    const eventId = await insertFeedRow(app.db, {
+    const scopedEvent = new ObjectId();
+    const otherEvent = new ObjectId();
+    const matching = await insertFeedRow(app.db, {
       userId: session.userId,
       typeKey: "attendee.matches.new",
+      eventId: scopedEvent,
       createdAt: daysAgo(1),
     });
     const invited = await insertFeedRow(app.db, {
       userId: session.userId,
       typeKey: "collab.invite.sent",
+      eventId: scopedEvent,
       createdAt: daysAgo(2),
     });
     await insertFeedRow(app.db, {
       userId: session.userId,
-      typeKey: "account.welcome",
+      typeKey: "event.details.updated",
+      eventId: otherEvent,
       createdAt: daysAgo(3),
     });
 
-    const matching = await fetchFeed(session, "?category=matching");
-    const either = await fetchFeed(session, "?category=matching&category=collaboration");
-    const scoped = await fetchFeed(session, `?eventId=${eventId.toString()}`);
+    const byCategory = await fetchFeed(session, "?category=matching");
+    const eitherCategory = await fetchFeed(session, "?category=matching&category=collaboration");
+    const byEvent = await fetchFeed(session, `?eventId=${scopedEvent.toHexString()}`);
 
-    expect(idsOf(matching)).toEqual([eventId.toString()]);
-    expect(idsOf(either)).toEqual([eventId.toString(), invited.toString()]);
-    expect(idsOf(scoped)).toEqual([eventId.toString()]);
+    expect(idsOf(byCategory)).toEqual([matching.toString()]);
+    expect(idsOf(eitherCategory)).toEqual([matching.toString(), invited.toString()]);
+    expect(idsOf(byEvent)).toEqual([matching.toString(), invited.toString()]);
   });
 
   it("I1: returns the secondary data and appends the next cursor", async () => {
