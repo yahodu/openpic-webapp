@@ -1,3 +1,9 @@
+## [1.22.0](https://github.com/yahodu/openpic-webapp/compare/v1.21.1...v1.22.0) (2026-10-20)
+
+### Features
+
+- **notifications:** OP-96 digest buckets, dispatch retry and quiet-hours release crons ([#203](https://github.com/yahodu/openpic-webapp/issues/203)) ([bb70cef](https://github.com/yahodu/openpic-webapp/commit/bb70ceff07679345a2aa20466c073eb225fc063b))
+
 ## [1.21.1](https://github.com/yahodu/openpic-webapp/compare/v1.21.0...v1.21.1) (2026-10-06)
 
 ### Bug Fixes
