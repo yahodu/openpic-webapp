@@ -28,8 +28,8 @@ That scope is wrong for the part of the tree that is not shipped. Observed on
   supply-chain incident: the advisory is in code that never reaches a deployed
   artefact.
 - Meanwhile the security-meaningful part — the **production** supply chain — was
-  already clean (`pnpm audit --prod --audit-level=moderate` → `No known
-vulnerabilities found`), and stayed clean through the same period.
+  already clean (`pnpm audit --prod --audit-level=moderate` reported no known
+  vulnerabilities) and stayed clean through the same period.
 
 `audit` was therefore conflating two different risk classes under one gate: the
 shipped production tree (must stay strictly blocking) and the dev/test toolchain
