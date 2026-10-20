@@ -177,3 +177,87 @@ interleaving — which is precisely the defect.
   non-retryable pair must not consume two of the bucket's `pipeline.maxAttempts` attempts. A future
   round that changes the non-retryable bound (ADR-0137) must keep "one flush attempt = at most one
   counted failure".
+
+## Review sign-off (round 1, artifact lens)
+
+- **Verdict: APPROVED** — no changes requested. The RED pin is genuine, deterministic and
+  mechanism-agnostic, and it reproduces exactly. Mirroring the round-1/round-2/round-3 precedent (the
+  F1–F4, round-2 and round-3 sign-offs are sections of ADR-0130/ADR-0133/ADR-0134/ADR-0137), this
+  sign-off is recorded **inside** the delivered ADR rather than as a new number, so no extra ADR
+  number is consumed.
+- **Reviewer:** `openpic-webapp-reviewer` (card `t_e3369a9e`, run 478) · **Round:** 1 (artifact
+  lens) · **Reviewed head:** `1eb4420` (base `origin/main` `509b559`; `origin/main` itself at
+  `3f46950`) · **PR:** #221 (draft, RED-by-design).
+
+### Independently verified
+
+- **RED is genuine and reproduces exactly.** `vitest run --project integration` on the new spec
+  alone, 4 consecutive runs → `Tests 2 failed (2)` every time, failing at the same two sites with the
+  same received values: `notification-digest-flush-overlap-single-send.test.ts:358:32`
+  (`expect(transport.outbox).toHaveLength(1)` → length `2`) and `:391:31`
+  (`expect(transport.calls).toBe(1)` → `2`). Full suite → `1 failed | 54 passed (55)` files,
+  `2 failed | 357 passed (359)` tests — byte-for-byte the claimed counts; every pre-existing
+  integration spec still passes.
+- **The defect is visible from the product's own log lines.** The success case emits
+  `notification.digest_flush` with `scanned: 1, affected: 1` **twice** for the one bucket, and the
+  failure case emits it twice with `scanned: 1, errors: 1` — i.e. two runs both claiming to have
+  flushed the same bucket.
+- **CI red is the intended RED and nothing else.** PR #221 `ci` job (`Integration tests` step; the
+  steps before it — typecheck, lint, unit, build — pass): `Test Files 1 failed | 54 passed (55)`,
+  the two failures being this card's pins at `358:32` / `391:31`.
+- **The pre-existing claim is accurate.** `91d1101` (before the round-3 GREEN `509b559`) already had
+  the unguarded select `find({ status: "open", flushAt: { $lte: now } })` and the write-only guard
+  `updateOne({ _id, status: "open" })` in `markFlushed`, with no claim/lease anywhere — so this pin
+  does **not** pin a regression introduced by the round-3 GREEN.
+- **Contract hygiene.** `git diff 509b559 1eb4420` touches only 3 files (585 insertions, **0
+  deletions**): the new spec, ADR-0139 and the `docs/adr/README.md` row/allocation note. **No
+  production file, mock, fixture, factory or existing test is touched.** Diff scan clean: no
+  `@ts-ignore`/`eslint-disable`, no `.only`/`.skip`, no `console.*`, no TODO/FIXME, no test-env
+  conditional, no fixture-shaped logic. `prettier --check` clean on all three files.
+- **The pin asserts observables only, and is satisfiable.** Transport `calls`/`outbox`, the `sent`
+  ledger row count, the stored `status`/`flushOutcome`, and the summed `affected` — the per-run
+  `CronRunOutcome` split is deliberately unpinned, so a claim/lease-before-send and an atomic
+  transition-before-send both pass. Real production paths throughout (real `MongoMemoryReplSet`, real
+  seed catalogue, real `runNotificationFanOut` + `flushDueDigests`); only the transport and the
+  recipient port are scripted. Deterministic: fixed clock, real 150 ms delay + `Promise.all`, no fake
+  timers, no latch.
+- **ADR number.** `0139` is free: `docs/adr` on `origin/main` `3f46950` ends at `0137`, no ref or
+  worktree holds `0139` (the sibling F1 lane holds `0138`, the F1c-r2 lane `0140`), so the two
+  parallel op-96 follow-ups cannot collide.
+- **Card acceptance criteria mapped.** (1) one due bucket seeded through the real fan-out (line 328
+  asserts it is `open`); (2) two concurrent `flushDueDigests` with a transport that blocks 150 ms
+  (lines 352–355); (3) contract pinned on delivery, not on a run split: one outbox message + one call
+  (358–359), one `sent` row (362), bucket `flushed`/`sent` (365–367), `affected` sum `1` (370);
+  (4) the non-retryable sibling is deterministic and red (one call expected, received `2`);
+  (5) RED counts, failing assertions and the ADR number are reported as claimed.
+
+### Findings (non-blocking; none Critical/High — no changes requested)
+
+- **F2-1 (Low, test-quality meta).** The RED evidence proves only the **first** failing assertion per
+  test — in the failure sibling everything after `transport.calls === 1` (one `failed` ledger row, the
+  bucket still `open`, `affected` sum `0`) is unproven until the GREEN runs, because Vitest stops the
+  test body at the first failed `expect`. Route: the F2 GREEN's review round must confirm those
+  assertions still hold; the pin itself needs no change. (Also noted: the empty-`outbox` assertion is
+  an invariant given the rejecting stub — deliberately kept for parity with the F1b-r2 pin and
+  documented at length in §"Assumptions recorded".)
+- **F2-2 (Low, pre-existing flake in an unrelated spec — routed to its own card).**
+  `notification-quiet-hours-release.test.ts` I11 failed once in 5 local full-suite runs here:
+  `expected 1 to be 3` at line `305:91` — three real fan-outs produced **one** `deferred` row, and
+  that file-run took 10.6 s against 2.5 s in CI. It is green in isolation (5/5), green when run
+  paired with this card's new spec (2 runs), green in CI on `1eb4420`, and green in **3/3**
+  pin-absent full runs on `main` — so it is not attributable to this pin, but a load-dependent
+  partial fan-out is also the signature of a swallowed write error and deserves its own
+  investigation rather than being left undiagnosed.
+- **F2-3 (Low, coverage gap, informational).** The **retryable**-overlap sibling is not pinned. Under
+  the defect an overlapped _retryable_ rejection writes two owner ledger rows, and the
+  dispatch-retry cron would then redeliver the same summary twice — a second duplicate-delivery
+  path. The card asked only for the non-retryable sibling, and the core assertion
+  (`transport.calls === 1`) already funnels the same claim fix, so this is optional hardening for the
+  F2 GREEN's round; no card is raised, since adding a RED pin **after** the fix would invert the
+  RED→GREEN order.
+- **Merge posture.** RED-only: PR #221 stays a **draft**; the F2 GREEN card `t_4cc14cd8`
+  (`openpic-webapp-backend-coder`) continues on this branch
+  (`OP-96-task-flush-overlap-single-send-red`) in this worktree
+  (`/root/openpic/openpic-webapp/.worktrees/t-flush-overlap-red`) and turns the pin green, and the PR
+  merges only then. Per the card, this RED pin is **not** merged on its own — a RED `main` would
+  break CI.
