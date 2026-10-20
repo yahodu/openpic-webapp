@@ -1,4 +1,4 @@
-# ADR-0110 — OP-94 follow-up: pin the pre-selection `mobile` skip channel through an authorised test seam on `groupChannel`
+# ADR-0111 — OP-94 follow-up: pin the pre-selection `mobile` skip channel through an authorised test seam on `groupChannel`
 
 - **Status:** Accepted · **Date:** 2026-10-20 · **Author:** `openpic-webapp-testcase-writer`
 - **Card:** `t_9e63f809` (OP-94 fan-out follow-up RED) · **Origin:** review of card `t_3b8e846d` (PR #190, ADR-0094), finding `mobile-skip-channel-unpinned` (Low)
@@ -68,7 +68,7 @@ The accessor exists so the RED is **scoped and legible**: a bare named import of
 a missing export aborts module instantiation, which would report all 15 existing
 U1–U3 tests as failed and hide the real message. Instead `groupChannelOf()`
 throws
-`fan-out must export "groupChannel(group: ChannelGroup): ResolvedChannel" (authorized test seam, ADR-0110) …`,
+`fan-out must export "groupChannel(group: ChannelGroup): ResolvedChannel" (authorized test seam, ADR-0111) …`,
 so the 8 intended failures each name the missing contract while U1–U3 stay
 green. `tsc` also stays clean because the seam is declared optional.
 
