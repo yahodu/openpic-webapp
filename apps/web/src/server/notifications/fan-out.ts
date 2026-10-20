@@ -677,8 +677,13 @@ function dispatchBase(
   };
 }
 
-/** The channel a group would target, used for a skip recorded before candidate selection. */
-function groupChannel(group: ChannelGroup): ResolvedChannel {
+/**
+ * The channel a group would target, used for a skip recorded before candidate selection.
+ *
+ * @internal Test seam only (ADR-0111) — consumers must use `runNotificationFanOut` /
+ * `resolveChannel`.
+ */
+export function groupChannel(group: ChannelGroup): ResolvedChannel {
   if (group.group !== "mobile") return group.group;
   // Mirror the resolver's default candidate order so a recorded skip names the
   // same first candidate `resolveChannel` would have tried.
