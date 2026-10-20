@@ -137,6 +137,12 @@ when the backlog is smaller than `limit` the run drains it (`hasMore: false`).
 `hasMore` is about _unprocessed due work_, not about the daily cap: a
 cap-deferred digest bucket stays `open` and is **not** counted as `hasMore`.
 
+> **Amended by ADR-0130 (OP-96 F3).** With the sweep read bounded to
+> `limit + 1`, `hasMore` now means "more **selectable** rows exist beyond
+> `limit`" — it is `true` whenever the query returned more than `limit` rows,
+> even if every send failed (`affected: 0`). The I6/I9/I11 pins (backlog of
+> exactly `limit + 1`, successful sends) are unaffected.
+
 **A2 — Idempotency (retry and release).** A row transitions to a terminal
 `sent`/`failed` state, so a second consecutive run selects nothing: I10 and I12
 pin `affected: 0` and no further transport call / outbox growth after a
