@@ -13,10 +13,15 @@
  *
  * The daily cap (`maxDigestEmailsPerDay`, default 3) is enforced **per
  * recipient per local day**, shared across digest types (ADR-0120 A4): the
- * count is the recipient's `flushed` buckets since local midnight in
- * `notificationPreferences.quietHours.timeZone` (UTC fallback, ADR-0120 A3). A
- * due bucket beyond the cap is **deferred**, not dropped — it stays `open` and
- * is not counted as `hasMore`.
+ * count is the recipient's **delivered** flushes since local midnight in
+ * `notificationPreferences.quietHours.timeZone` (UTC fallback, ADR-0120 A3) —
+ * a flush whose send failed never reached the recipient, so it does not consume
+ * the allowance (F1c, ADR-0134). A due bucket beyond the cap is **deferred**,
+ * not dropped — it stays `open` and is not counted as `hasMore`.
+ *
+ * A bucket is closed only when the recorded failure has an owner (F1b,
+ * ADR-0134): a **retryable** transport failure is redelivered by the ledger row,
+ * while a **non-retryable** one leaves the bucket `open` for a later flush.
  */
 import type { Db, ObjectId as ObjectIdValue } from "mongodb";
 
@@ -208,13 +213,25 @@ function startOfLocalDay(instant: Date, timeZone: string): Date {
   return new Date(midnightWallClock - parts.offsetMs);
 }
 
-/** Count the recipient's digest emails sent since local midnight (ADR-0120 A4). */
+/**
+ * Count the recipient's **delivered** digest emails since local midnight
+ * (ADR-0120 A4, amended by ADR-0134).
+ *
+ * Only a `flushOutcome: "sent"` flush counts: a summary whose transport send
+ * failed (retryably or not) never reached the recipient, so it must not burn the
+ * day's `maxDigestEmailsPerDay` allowance (F1c, ADR-0134).
+ */
 async function countFlushedToday(db: Db, userId: ObjectIdValue, now: Date): Promise<number> {
   const timeZone = await recipientTimeZone(db, userId);
   const since = startOfLocalDay(now, timeZone);
   return platformRepo(db)
     .collection(COLLECTIONS.notificationDigests)
-    .countDocuments({ userId, status: "flushed", flushedAt: { $gte: since } });
+    .countDocuments({
+      userId,
+      status: "flushed",
+      flushOutcome: "sent",
+      flushedAt: { $gte: since },
+    });
 }
 
 /** Load the active email template for a digest type, when one exists. */
@@ -284,18 +301,32 @@ async function renderSummary(
   }
 }
 
-/** The outcome of flushing one bucket. */
-type FlushOne = "sent" | "failed_recorded" | "failed_unrecorded";
+/**
+ * The outcome of flushing one bucket:
+ *
+ * - `sent` — the transport accepted the summary.
+ * - `failed_retryable` — the transport rejected the send retryably; the
+ *   `failed` ledger row owns the redelivery (`lastError.retryable: true`),
+ *   so the caller closes the bucket (F1, ADR-0130).
+ * - `failed_terminal` — the transport rejected the send **non-retryably**; the
+ *   ledger row is recorded but no cron will ever re-select it, so nothing owns
+ *   the redelivery and the bucket must stay `open` (F1b, ADR-0134).
+ * - `failed_unrecorded` — no ledger row at all (an unresolvable destination or
+ *   an unbuildable message); nothing owns a retry, so the bucket stays `open`.
+ */
+type FlushOne = "sent" | "failed_retryable" | "failed_terminal" | "failed_unrecorded";
 
 /**
- * Flush one due bucket: render, send, write the ledger row, mark the bucket.
+ * Flush one due bucket: render, send, write the ledger row, classify the
+ * failure's owner.
  *
- * A transport failure is **durably recorded on the ledger row** and reported as
- * `failed_recorded` — the row (not the bucket) owns the redelivery, mirroring
- * ADR-0127/ADR-0130, so the flush cron marks the bucket `flushed` and never
- * re-selects it. A failure with no ledger row (an unresolvable destination or
- * an unbuildable message) is `failed_unrecorded`: nothing owns a retry, so the
- * bucket stays `open` for a later flush.
+ * A transport failure is **durably recorded on the ledger row**. Whether that
+ * row owns the redelivery decides what happens to the bucket: a **retryable**
+ * failure is owned by `notification-dispatch-retry` (ADR-0127/ADR-0130), so the
+ * caller closes the bucket; a **non-retryable** failure has no owner, so the
+ * bucket stays `open` and a later flush re-attempts the summary (F1b, ADR-0134).
+ * A failure with no ledger row (an unresolvable destination or an unbuildable
+ * message) is `failed_unrecorded` — also left `open`.
  */
 async function flushOneBucket(
   db: Db,
@@ -345,7 +376,10 @@ async function flushOneBucket(
       notificationId: null,
       expireAt,
     });
-    return "failed_recorded";
+    // The ledger row owns the redelivery only when the failure is retryable
+    // (`notification-dispatch-retry` selects `lastError.retryable: true`). A
+    // non-retryable failure has no owner, so the bucket must stay selectable.
+    return outcome.failure.retryable ? "failed_retryable" : "failed_terminal";
   }
 
   await platformRepo(db)
@@ -392,9 +426,13 @@ async function flushOneBucket(
  * `limit` (ADR-0120 A1, amended by ADR-0130). A bucket beyond the recipient's
  * daily cap is left `open` (deferred) and is **not** counted as `hasMore`.
  *
- * A transport failure is durably recorded on the ledger row and the bucket is
- * marked `flushed` (F1, ADR-0130): the ledger row is the single owner of the
- * redelivery, so the flush cron never re-selects the bucket.
+ * A transport failure is durably recorded on the ledger row, and the bucket is
+ * marked `flushed` **only when that row owns the redelivery** — i.e. the failure
+ * is retryable (F1, ADR-0130). A non-retryable failure has no owner, so the
+ * bucket stays `open` and a later tick re-attempts the summary (F1b, ADR-0134).
+ * A closed bucket records whether the summary actually went out
+ * (`flushOutcome: "sent" | "failed"`), and only a `"sent"` flush consumes the
+ * recipient's daily allowance (F1c, ADR-0134).
  *
  * @param options - Database/clock/transport seams and the per-run limit.
  * @returns The §10.2 run outcome.
@@ -425,13 +463,19 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
   let hasMore = due.length > limit;
   const sentByUser = new Map<string, number>();
 
-  /** Mark a bucket closed so the flush cron never re-selects it (F1). */
-  const markFlushed = (bucket: DigestBucket): Promise<unknown> =>
+  /**
+   * Mark a bucket closed so the flush cron never re-selects it (F1).
+   *
+   * `flushOutcome` records **why** it closed, distinctly from `status`
+   * (F1c, ADR-0134): only a delivered summary consumes the recipient's daily
+   * allowance, so {@link countFlushedToday} counts `"sent"` flushes alone.
+   */
+  const markFlushed = (bucket: DigestBucket, flushOutcome: "sent" | "failed"): Promise<unknown> =>
     platformRepo(db)
       .collection(COLLECTIONS.notificationDigests)
       .updateOne(
         { _id: bucket._id, status: "open" },
-        { $set: { status: "flushed", flushedAt: now } }
+        { $set: { status: "flushed", flushOutcome, flushedAt: now } }
       );
 
   for (const bucket of due) {
@@ -455,15 +499,18 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
     if (result === "sent") {
       affected += 1;
       sentByUser.set(key, sentToday + 1);
-      await markFlushed(bucket);
-    } else if (result === "failed_recorded") {
+      await markFlushed(bucket, "sent");
+    } else if (result === "failed_retryable") {
       // The failure is durably on the ledger row, which owns the redelivery
       // (ADR-0127/ADR-0130); close the bucket so the flush cron cannot re-send.
+      // A summary that never went out does not consume the daily allowance
+      // (F1c, ADR-0134), so `sentByUser` is deliberately left unchanged.
       errors += 1;
-      sentByUser.set(key, sentToday + 1);
-      await markFlushed(bucket);
+      await markFlushed(bucket, "failed");
     } else {
-      // No ledger row owns a retry: leave the bucket `open` for a later flush.
+      // No owner took the redelivery — a non-retryable failure (F1b, ADR-0134)
+      // or one recorded nowhere at all. Leave the bucket `open` so a later
+      // flush re-attempts the summary instead of silently dropping it.
       errors += 1;
     }
   }
