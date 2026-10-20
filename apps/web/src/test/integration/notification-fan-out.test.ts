@@ -579,11 +579,12 @@ describe("runNotificationFanOut — transport failure isolation (I5)", () => {
       );
       expect(healthyEmail?.status).toBe("sent");
 
-      // A retryable failure must leave the event claimable for the retry sweep.
+      // A per-dispatch failure is owned by the dispatch row (ADR-0127); the
+      // event is done and the `notification-dispatch-retry` cron re-sends.
       const storedEvent = await test.db
         .collection<StoredEvent>(DOMAIN_EVENTS)
         .findOne({ _id: eventId });
-      expect(storedEvent?.dispatch?.notifications).toBe("pending");
+      expect(storedEvent?.dispatch?.notifications).toBe("done");
     });
   });
 });

@@ -11,7 +11,7 @@ import { setupMongoTestEnv, MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
 /**
  * Integration / contract — the three notification crons are wired as bounded,
  * authenticated `/api/v1/internal/cron/**` routes (OP-96, contract §10.2;
- * ADR-0100).
+ * ADR-0120).
  *
  * The job modules carry the behaviour (`notification-digest.test.ts`,
  * `notification-dispatch-retry.test.ts`, `notification-quiet-hours-release.test.ts`);

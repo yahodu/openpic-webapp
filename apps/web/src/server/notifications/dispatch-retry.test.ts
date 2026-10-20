@@ -4,7 +4,7 @@ import { retryBackoffMs } from "@/server/notifications/dispatch-retry";
 
 /**
  * Unit — the dispatch retry backoff schedule (OP-96, contract §10.2
- * `notification-dispatch-retry`, §9.10 platform settings; ADR-0100).
+ * `notification-dispatch-retry`, §9.10 platform settings; ADR-0120).
  *
  * The `notification-dispatch-retry` cron re-attempts a `notificationDispatches`
  * row that failed **retryably** (`lastError.retryable: true`). A retry must not
