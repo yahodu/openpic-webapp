@@ -4,6 +4,50 @@ Short, immutable records of decisions that are expensive to reverse. One file pe
 decision, numbered `ADR-NNNN-<slug>.md`. Never edit an accepted ADR — supersede it
 with a new one and mark the old `Superseded by ADR-NNNN`.
 
+## ADR number allocation
+
+ADR numbers are drawn from **per-lane reserved ranges**; a lane never allocates
+against the shared high-water mark. This removes the last-writer-wins race that
+made this file a serialization point for the whole board (in one afternoon an
+OP-101 card was renumbered three times and the OP-96 lane four times, each cycle
+costing a rebase, a CI run and often a re-review). The rule, its rationale and
+the rejected alternatives are recorded in
+[ADR-0300](ADR-0300-adr-number-range-allocation-policy.md).
+
+- The orchestrator is the **allocator**. It assigns each lane (`OP-<n>`) a
+  disjoint range of numbers up front — before any of that lane's cards are
+  dispatched — and writes the range into every card body of the lane.
+- A lane takes its next ADR number as the **next unused number inside its own
+  range** (a lane-local counter). It never consults `origin/main`'s high-water
+  mark, the tail of this file, or another lane's refs.
+- Ranges are disjoint by construction and are never re-cut, so two lanes cannot
+  collide even though neither inspects the other's branches.
+- Gaps inside a range (and ranges that go unused) are expected and cheap: a
+  number is consumed once and is never reissued to another lane.
+- Numbers allocated **before this policy** (`≤ 0145`) are frozen history and are
+  never moved; a branch that already carries one keeps it.
+- Board-wide / process decisions that belong to no single lane draw from the
+  allocator-owned `board-wide` range.
+
+### Reserved ranges (effective 2026-10-20)
+
+| Holder (lane)                       | Reserved range                  | Next free                |
+| ----------------------------------- | ------------------------------- | ------------------------ |
+| board-wide / process (orchestrator) | `0300`–`0319`                   | `0300` (this policy ADR) |
+| OP-96 notifications follow-up       | `0146`–`0179`                   | `0146`                   |
+| OP-97 in-app feed                   | `0180`–`0199`                   | `0180`                   |
+| OP-94 fan-out                       | `0200`–`0219`                   | `0200`                   |
+| OP-98 notification preferences      | `0220`–`0239`                   | `0220`                   |
+| OP-99 one-click unsubscribe         | `0240`–`0259`                   | `0240`                   |
+| OP-100 tenancy                      | `0260`–`0279`                   | `0260`                   |
+| OP-101 CI lane-shape                | `0280`–`0299`                   | `0280`                   |
+| unallocated (future lanes)          | `0320`+ (20 per lane, in order) | `0320`                   |
+
+_Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
+`0139`–`0141` (OP-96 round-3), `0131`/`0132` (OP-97 RED, PR #215), `0111`/`0112`
+(OP-94 mobile skip-channel). These stay as committed; their lanes draw any **new**
+ADRs from their reserved range above.
+
 | ADR                                                                                | Title                                                                                                                | Status                    |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | [0001](ADR-0001-ports-and-adapters.md)                                             | Ports and adapters, provider neutrality                                                                              | Accepted                  |
@@ -139,6 +183,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0142](ADR-0142-op101-ci-audit-job-split.md)                                       | OP-101 follow-up: give `Dependency audit` its own blocking `audit` job so it stops masking the gate                  | Accepted                  |
 | [0144](ADR-0144-op101-ci-audit-job-split-review-signoff.md)                        | OP-101 review sign-off: the `audit` job split is verified and merged (PR #213)                                       | Accepted                  |
 | [0145](ADR-0145-op96-f1-unrecorded-flush-bound-green.md)                           | OP-96 follow-up round 3 GREEN: bound the repeated `failed_unrecorded` digest-flush re-attempt (F1)                   | Accepted                  |
+| [0300](ADR-0300-adr-number-range-allocation-policy.md)                             | ADR numbers are drawn from per-lane reserved ranges, never the shared high-water mark                                | Accepted                  |
 
 Template: Context · Decision · Consequences · Alternatives.
 
