@@ -159,6 +159,13 @@ export interface RedeliveryRow extends RedeliveryTarget {
   readonly _id: ObjectIdValue;
   /** The attempts already recorded on the row. */
   readonly attempts: number;
+  /**
+   * The digest bucket this row was flushed from, when the row records a
+   * **digest flush failure** (schema §19.5). A successful redelivery of such a
+   * row credits the bucket (`redeliveredAt`) so the daily cap counts the
+   * recovered delivery (F1c-r2, ADR-0141). Absent for every non-digest row.
+   */
+  readonly digestBucketId?: ObjectIdValue | null;
 }
 
 /** Write a row's `lastError` transition after a failed redelivery. */
@@ -178,13 +185,37 @@ function recordFailure(
 }
 
 /**
+ * Credit the digest bucket a redelivered row flushes (F1c-r2, ADR-0141).
+ *
+ * A digest summary that fails retryably closes its bucket
+ * (`flushOutcome: "failed"`) while the owning `failed` ledger row carries the
+ * rendered copy. When that row is finally redelivered the summary **reaches the
+ * recipient**, so the bucket records the delivery instant in `redeliveredAt`;
+ * `countFlushedToday` then counts it against `maxDigestEmailsPerDay` exactly
+ * like a first-attempt success. Only a bucket that is still the closed flush it
+ * links from (`status: "flushed"`) is credited — the update is a no-op
+ * otherwise.
+ *
+ * @param db - The database handle.
+ * @param bucketId - The linked `notificationDigests` bucket id.
+ * @param now - The redelivery instant (the delivery time).
+ * @returns The update result.
+ */
+function creditDigestBucket(db: Db, bucketId: ObjectIdValue, now: Date): Promise<unknown> {
+  return platformRepo(db)
+    .collection(COLLECTIONS.notificationDigests)
+    .updateOne({ _id: bucketId, status: "flushed" }, { $set: { redeliveredAt: now } });
+}
+
+/**
  * Re-send one durable dispatch row and persist its transition.
  *
  * The single implementation both redelivery crons share (the retry sweep and the
  * quiet-hours release always act identically on a row — they differ only in
  * *which* rows they select). Re-resolves the destination, rebuilds the message
  * from the persisted copy, classifies the outcome and writes `sent`/`failed`
- * with the incremented `attempts`.
+ * with the incremented `attempts`. A digest flush's `failed` row (`digestBucketId`)
+ * additionally credits its bucket on success (F1c-r2, ADR-0141).
  *
  * @param db - The database handle.
  * @param row - The durable row to re-send.
@@ -248,5 +279,11 @@ export async function redeliverDispatchRow(
         },
       }
     );
+  // A digest flush's `failed` row reaching the recipient is a digest the
+  // recipient now **receives**: credit the bucket so it consumes the daily
+  // allowance (F1c-r2, ADR-0141).
+  if (row.digestBucketId !== undefined && row.digestBucketId !== null) {
+    await creditDigestBucket(db, row.digestBucketId, now);
+  }
   return "sent";
 }

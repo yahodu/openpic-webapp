@@ -17,6 +17,7 @@
  * (F2b, ADR-0134).
  */
 import type { Db } from "mongodb";
+import { ObjectId } from "mongodb";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
@@ -101,7 +102,8 @@ function markAttemptsExhausted(db: Db, id: RetryRow["_id"]): Promise<unknown> {
 /** Narrow an unknown stored value to a retryable dispatch row. */
 function asRetryRow(value: unknown): RetryRow | null {
   if (!isRecord(value)) return null;
-  const { _id, userId, typeKey, channel, attempts, failedAt, subject, body } = value;
+  const { _id, userId, typeKey, channel, attempts, failedAt, subject, body, digestBucketId } =
+    value;
   if (
     _id === undefined ||
     typeof typeKey !== "string" ||
@@ -118,6 +120,7 @@ function asRetryRow(value: unknown): RetryRow | null {
     failedAt: failedAt instanceof Date ? failedAt : null,
     subject: typeof subject === "string" ? subject : null,
     body: typeof body === "string" ? body : null,
+    digestBucketId: digestBucketId instanceof ObjectId ? digestBucketId : null,
   };
 }
 
