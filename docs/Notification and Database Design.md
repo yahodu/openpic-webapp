@@ -1960,7 +1960,7 @@ One row per (notification, channel) attempt — **including skips**.
   // an unrecorded failure (no ledger row owns a retry): at pipeline.maxAttempts
   // the bucket is closed terminally (status "flushed", flushOutcome "failed") so
   // the flush cron stops re-attempting a "never retry" failure
-  // (F1b-r2, ADR-0137; extended to failed_unrecorded by F1, ADR-0143)
+  // (F1b-r2, ADR-0137; extended to failed_unrecorded by F1, ADR-0145)
   nonRetryableFailures: 0,
   // on close: why the flush attempt ended — only a "sent" flush counts against
   // maxDigestEmailsPerDay as a first-attempt success

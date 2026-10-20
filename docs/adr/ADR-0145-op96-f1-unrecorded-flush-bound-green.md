@@ -1,4 +1,4 @@
-# ADR-0143 — OP-96 follow-up round 3 GREEN: bound the repeated `failed_unrecorded` digest-flush re-attempt (F1)
+# ADR-0145 — OP-96 follow-up round 3 GREEN: bound the repeated `failed_unrecorded` digest-flush re-attempt (F1)
 
 - **Status:** Accepted · **Date:** 2026-10-20
 - **Card:** OP-96 follow-up round 3 GREEN (`t_cedd4e37`) · **Parent / RED pin:** `t_c9e903c5` (ADR-0138) · **Review of the RED:** ADR-0138 §"Review sign-off (round 1, artifact lens)"
@@ -103,13 +103,20 @@ This file was committed as **`0141`** by the GREEN card `t_cedd4e37` (`a0a7287`,
 (`ADR-0141-op96-f1c-r2-redelivered-digest-cap-green.md`), which then merged to `main` as `4424e74` —
 so two distinct ADRs briefly shared `0141`.
 
-**This lane yields and renumbers `0141 → 0143` under card `t_aa82386b`** (child of `t_cedd4e37`):
-`0141` stays with the F1c-r2 GREEN on `main` and `0142` is held by the still-open OP-101 lane
-(`ADR-0142-op101-ci-audit-job-split.md`, PR #213), so `0142` would reproduce the same collision.
-`0143` was re-checked free against `origin/main`, every `origin` ref and the other local worktrees
-immediately before the rename. The number renumber raised as finding **F1-r1-A** by the round-1
-(artifact lens) sign-off below is the only documentation change; no behaviour, test, mock, fixture or
-the RED pin (ADR-0138) is touched.
+**This lane yields and renumbers under card `t_aa82386b`** (child of `t_cedd4e37`): `0141` stays with
+the F1c-r2 GREEN on `main`. The first target, **`0143`**, proved contested in turn — the F2 lane
+`OP-96-task-flush-overlap-single-send-red` (card `t_4cc14cd8`, PR #221) already carries
+`ADR-0143-op96-flush-overlap-single-send-green.md`; `0142` is held by OP-101 (`705467a`) and `0144` is
+contested between the OP-101 review sign-off (PR #224) and the `OP-96-task-quiet-release-flake-red`
+branch. This lane therefore takes the **lowest free number above the high-water — `0145`** —
+re-resolved against a fresh `origin/main` (`e3d8803`) and every `origin` ref immediately before
+committing. No other ref claims `0145`, so the choice stays collision-free whichever way the `0143`
+allocation between the two OP-96 lanes is arbitrated: this lane **vacates** the contested number
+rather than pre-empting that decision, which is routed to `openpic-orchestrator` (card `t_a83e7ff3`).
+The renumber raised as finding **F1-r1-A** by the round-1 (artifact lens) sign-off below is the only
+documentation change; no behaviour, test, mock, fixture or the RED pin (ADR-0138) is touched. The
+sign-off below, written before the second collision was known, still names the intermediate `0143` —
+that number was superseded here before either PR merged.
 
 ## Review sign-off (round 1 GREEN, artifact lens)
 
@@ -141,7 +148,7 @@ the RED pin (ADR-0138) is touched.
 - **F1-r1-A (Medium — delivery hygiene / cross-lane numbering).** Two distinct ADRs claim `0141`:
   this file (`a0a7287`, 2026-10-20T15:25:54Z) and the sibling F1c-r2 GREEN's
   `ADR-0141-op96-f1c-r2-redelivered-digest-cap-green.md` (`7f5a830`, 2026-10-20T15:21:12Z — the
-  earlier claim, already pushed to the open PR #219). **This lane yields** and renumbers to **`0143`**
+  earlier claim, already pushed to the open PR #219). **This lane yields** and renumbers to **`0145`**
   — **not** `0142`, which is held by the OP-101 audit-job-split ADR (`ADR-0142-op101-ci-audit-job-split.md`)
   on the still-open PR #213, so `0142` would reproduce the same collision. Routed to card
   `t_aa82386b` (child of `t_cedd4e37`): rename, retitle, README row, every F1-lane `ADR-0141`
@@ -169,4 +176,4 @@ the RED pin (ADR-0138) is touched.
 ### Merge posture
 
 PR #220 is **ready** and CI-green on `a0a7287`, but its merge is **held** until `t_aa82386b` renumbers
-this ADR to `0143` and re-runs CI. The F1c-r2 lane keeps `0141`.
+this ADR to `0145` and re-runs CI. The F1c-r2 lane keeps `0141`.
