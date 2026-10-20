@@ -240,3 +240,79 @@ Landed on this same branch (`OP-96-task-f1-f4-round3-red`) so the pin ships with
   continues on this branch (`OP-96-task-f1-f4-round3-red`) in worktree
   `/root/openpic/openpic-webapp/.worktrees/t_6a4943e8` and turns the pin green, and the PR merges
   only then.
+
+## Review sign-off (round 1 GREEN, artifact lens)
+
+- **Verdict: APPROVED WITH FINDINGS** — no changes requested; PR #218 turned ready and
+  **squash-merged** to `main`. As with the RED round above, this sign-off is recorded **inside** the
+  delivered ADR (no new number consumed).
+- **Reviewer:** `openpic-webapp-reviewer` (card `t_4e4f0239`, run 470) · **Round:** 1 (artifact
+  lens) · **Reviewed head:** `5464bfc` (base `origin/main` `91d1101`, which is also the branch's
+  merge base — the branch was up to date) · **PR:** #218 (ready → merged).
+
+### Independently verified (re-run on `5464bfc`, in `/root/openpic/openpic-webapp/.worktrees/t_6a4943e8`)
+
+- `vitest run --project integration` → **54 passed (54) files, 357 passed (357) tests**
+  (`TMPDIR=/root/tmp-mongo`) — the round-3 pin is green and every pre-existing pin held.
+- `vitest run --project unit` → **85 passed (85) files, 1477 passed (1477) tests**.
+- `pnpm typecheck` clean · `pnpm run lint` **0 errors** (42 pre-existing warnings) · `pnpm run build`
+  clean · `prettier --check` clean on the touched files.
+- PR #218 CI: `ci` (typecheck · lint · unit · integration · coverage · build · **e2e** · dependency
+  audit), `secret-scan`, `env-changes`, `validate-branch-name`, `validate-pr-title`, CodeQL — all
+  green.
+- **Card contract mapped to code.** (i) transport ≤ `N` across `N + 2` ticks → the `failed_terminal`
+  branch in `flushDueDigests` increments `nonRetryableFailures` and stops selecting the bucket at the
+  ceiling; (ii) `1 <= failed rows <= N` → one row per attempt (`attempts: 1`); (iii) never delivered →
+  no outbox message, no `sent` row; (iv) terminal `status: "flushed"` + `flushOutcome: "failed"` with
+  trailing `scanned: 0`. The round-2 F1b pin (bucket stays `open` under one failure, default
+  `maxAttempts: 5`) still passes.
+- **Honesty / scope audit.** `git show 5464bfc --stat` → 3 files: `digest.ts` (+66/−9), the §19.6
+  schema doc (+4) and this ADR (+21). **No test, mock, fixture or factory is touched**; no
+  `@ts-ignore`/lint suppression, no debug print, no TODO, no new dependency, no
+  test-environment conditional, and no fixture-shaped logic: the bound is read generically from
+  `platformSettings.pipeline.maxAttempts` (zod `min(1)`, default `5`), and the pin's non-default `N =
+2` is never referenced in production code.
+
+### Findings (none blocking)
+
+- **F1 — a `failed_unrecorded` bucket is still re-attempted forever (Low, coverage gap; routed to a
+  NEW round-3 TEST card).** `failed_unrecorded` (an unresolvable destination or an unbuildable
+  message, `digest.ts:354`/`digest.ts:361`) is deliberately left `open`, but it now shares the same
+  defect class **this card just fixed for the transport-failure variant**: it never reaches a
+  terminal classification, so the flush cron re-selects it on every tick — re-resolving the
+  destination and re-rendering the summary — and counts an `errors: 1` until the bucket's `expireAt`
+  TTL retires it. Those conditions are effectively permanent (a user with no address for the channel
+  never gains one), so the asymmetry the bound introduces is: a permanent transport failure is
+  bounded at `N`, a permanent _unrecorded_ failure is unbounded. Both need the same
+  contract decision (bound + terminal marker, or an explicit exemption), and neither is pinned. New
+  card created from this review; not a defect in this delivery.
+- **F2 — two _overlapping_ flush invocations deliver the same summary twice (Medium, pre-existing,
+  unpinned; routed to a NEW round-3 TEST card).** `flushDueDigests` selects `{ status: "open", flushAt
+<= now }` and only the _write_ is guarded (`updateOne({ _id, status: "open" })`), so two
+  invocations that overlap both read the bucket before either closes it and both call the transport.
+  Reproduced empirically on `5464bfc` with a throwaway reviewer probe (two concurrent
+  `flushDueDigests` on one `MongoMemoryReplSet`, one due bucket, delayed transport):
+  `transportCalls: 2, outboxLength: 2, sentLedgerRows: 2`, both runs reporting
+  `{ scanned: 1, affected: 1 }`, bucket `flushed`/`sent`. That contradicts ADR-0130 F1's stated
+  intent ("the flush cron can never re-select the bucket and double-send the summary") and ADR-0028
+  §1's "concurrency-safe" cron claim. It is **not** introduced by this card (the new counter is
+  atomically incremented and only closes buckets), but it is adjacent and unpinned. New card created
+  from this review.
+- **F3 — the crash window between the `$inc` and the close can cost one extra transport call (Low,
+  informational).** `recordNonRetryableFailure` and `markFlushed` are two writes: if the process dies
+  between them on the attempt that reaches the ceiling, the next tick records failure `N + 1` and
+  closes, so the transport is called `N + 1` times. Bounded by one, only reachable on a crash, and
+  outside what the pin scripts — recorded here so a future round does not read "at most `N`" as
+  absolute (the pin asserts exactly `N`; see the RED round's "assertion stricter than prose").
+- **F4 — the counter is observability-only on the document (Low, informational).** `errors` counts
+  each non-retryable attempt and the closing tick alike, and `nonRetryableFailures` never reaches the
+  `notification.digest_flush` summary line, so an operator cannot see how close a still-`open` bucket
+  is to the ceiling. No action required; noted for a future observability pass.
+
+### Test-quality note (report only)
+
+The new pin is a strong behaviour pin: real `MongoMemoryReplSet`, the real fan-out + flush jobs, a
+non-default `N = 2` so the default is never assumed, `N + 2` ticks, delivery-based observables, and
+no coupling to internals beyond the §19.6 fields the schema already defines. The one soft spot is the
+prose/assertion gap it inherits from the RED round ("at most `N` calls" vs `toBe(N)`); the assertion
+is the stronger and correct one.
