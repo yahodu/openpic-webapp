@@ -2,8 +2,8 @@
 
 - **Status:** Accepted · **Date:** 2026-10-20
 - **Card:** OP-96 follow-up "diagnose + stabilize the intermittent I11 fan-out flake" (`t_e8e658fd`) · **Parent:** `t_e3369a9e` (the F2 RED pin) · **Evidence source:** round-1 (artifact lens) review of `t_e3369a9e`, finding **F2-2**
-- **Branch:** `OP-96-task-quiet-release-flake-red`, merged with `origin/main` `4144983` (originally created from `3f46950`, rebased onto `705467a`) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-quiet-i11-flake`
-- **ADR number:** `0146` — renumbered from `0144` in review round 1 after `ADR-0144-op101-ci-audit-job-split-review-signoff.md` merged on `main` (PR #224) and `ADR-0145-op96-f1-unrecorded-flush-bound-green.md` landed (PR #220). `0146` is the lowest free number above the high-water across `origin/main` `4144983` and every local/remote ref.
+- **Branch:** `OP-96-task-quiet-release-flake-red`, merged with `origin/main` `23c236d` (originally created from `3f46950`, then merged with `705467a` and `4144983`) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-quiet-i11-flake`
+- **ADR number:** `0146` — the first number of the OP-96 reserved range `0146`–`0179` under [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md). It was first written as `0144`, which review round 1 found already claimed on `main` by `ADR-0144-op101-ci-audit-job-split-review-signoff.md` (PR #224), while `ADR-0145-op96-f1-unrecorded-flush-bound-green.md` had landed via PR #220. The number is drawn from the lane's reserved range, **not** from `origin/main`'s high-water mark or the tail of the ADR index (that rule is retired by ADR-0300).
 - **Touches:** one existing integration spec (`notification-quiet-hours-release.test.ts`) + this ADR + the ADR index. **No production code, mock, fixture, factory or other spec.**
 
 ## Context
