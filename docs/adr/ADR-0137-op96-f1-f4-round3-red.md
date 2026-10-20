@@ -156,3 +156,66 @@ _permanent_ non-retryable rejection so the unbounded-repeat boundary is what is 
 - The F1c-r2 coverage gap (a retry/redelivery-path digest delivered `flushOutcome: "failed"` is never
   counted against `maxDigestEmailsPerDay`) is a **separate** round-3 card (`t_92c086f5`) and is not
   pinned here.
+
+## Review sign-off (round 1, artifact lens)
+
+- **Verdict: APPROVED** — no changes requested. The RED pin is genuine, precise and fit to implement
+  against. Mirroring the round-1/round-2 precedent (the F1–F4 and round-2 sign-offs are sections of
+  ADR-0130/ADR-0133/ADR-0134), this sign-off is recorded **inside** the delivered ADR rather than as
+  a new number, so no extra ADR number is consumed.
+- **Reviewer:** `openpic-webapp-reviewer` (card `t_b6540886`, run 468) · **Round:** 1 (artifact
+  lens) · **Reviewed head:** `07dd940` (base `origin/main` `91d1101`) · **PR:** #218 (draft,
+  RED-by-design).
+
+### Independently verified
+
+- **RED is genuine and reproduces exactly.** `vitest run --project integration` on `07dd940` →
+  `1 failed | 53 passed (54)` files, `1 failed | 356 passed (357)` tests — byte-for-byte the claimed
+  counts. The single failure is the new pin, at its intended assertion:
+  `notification-digest-flush-non-retryable-bound.test.ts:340` —
+  `expect(transport.calls).toBe(MAX_FLUSH_ATTEMPTS)` → `expected 4 to be 2` (the transport was called
+  on all four flush ticks, one `failed` ledger row per tick, the bucket still `open`). Every
+  pre-existing integration spec still passes — no regression.
+- **CI red is the intended RED and nothing else.** PR #218 `ci` job: Typecheck / Lint / Unit tests =
+  success, **Integration tests = failure** (the single pin above); `test_coverage` fails for the same
+  pin; `secret-scan`, `lint`, `unit_test`, `env-changes`, `validate-branch-name`, `validate-pr-title`
+  and CodeQL all pass. No non-pin failure masks the RED.
+- **Contract hygiene.** `git diff origin/main...HEAD` touches only 3 files — the new spec, ADR-0137
+  and the `docs/adr/README.md` row/allocation note. **No production file, mock, fixture, factory or
+  existing test is touched.**
+- **Real production paths.** The pin drives `runNotificationFanOut` + `flushDueDigests` against a
+  real `MongoMemoryReplSet` and the real seed catalogue; only the transport and the recipient
+  repository (external boundaries) are scripted. Deterministic: fixed clock, settings seeded with a
+  non-default `N = 2`.
+- **Card acceptance criteria mapped.** (i) transport ≤ `N` across `N + 2 = 4` ticks (line 340);
+  (ii) `1 <= failed rows <= N` (lines 348–356); (iii) summary never delivered (lines 357–362);
+  (iv) terminal observable `status: "flushed"` / `flushOutcome: "failed"` with the trailing ticks
+  `scanned: 0` (lines 344–346, 365–366).
+- **Semantics note folded in and accurate.** The spec's doc comment records that the round-2 F1b
+  pin's scripted transport makes a `retryable: false` error _succeed_ on its second call
+  (`scriptedNonRetryableTransport(failures)`, `notification-digest-flush-non-retryable.test.ts:102–129`),
+  so its recovery is synthetic — independently confirmed.
+- **ADR number.** `0137` is the lowest free: `docs/adr` on `origin/main` `91d1101` ends at `0134`;
+  the open OP-97 refs hold `0131`/`0132`/`0135`/`0136`; no ref holds `0137`.
+
+### Findings (non-blocking; none Critical/High/Medium)
+
+- **ADR tolerance wording (Low, docs accuracy).** §"Bounded rows" states the pin "also tolerates an
+  implementation that records the repeated failures on a single upserted row … instead of one row per
+  attempt". The pin's `expect(failedRows[0]).toMatchObject({ attempts: 1 })` (lines 352–356) requires
+  the row's `attempts` to be exactly `1`, so a single-upserted-row implementation that _increments_
+  `attempts` per failure would fail it. The chosen contract is one-row-per-attempt, so the GREEN is
+  unaffected; the wording merely overstates the tolerance. The GREEN card should keep `attempts: 1`
+  on the recorded `failed` row.
+- **Assertion stricter than prose (Low, informational).** The doc comment and the ADR say "at most
+  `N` calls" while the assertion is exactly `toBe(N)`. With `N = 2` and the round-2 F1b requirement
+  that the first failure must not terminate, exactly two calls is the forced outcome, so the
+  assertion is correct; only the prose is looser.
+- **Commit-identity nit (Low, no action).** The branch commit is authored as
+  `openpic-webapp-backend-coder <backend-coder@openpic.local>` although the worker was the Test
+  Author. The RED branch is never merged on its own and the squash-merge reattributes, so this is
+  immaterial (same nit already accepted for ADR-0133).
+- **Merge posture.** RED-only: PR #218 stays a **draft**; the round-3 GREEN card `t_4e4f0239`
+  continues on this branch (`OP-96-task-f1-f4-round3-red`) in worktree
+  `/root/openpic/openpic-webapp/.worktrees/t_6a4943e8` and turns the pin green, and the PR merges
+  only then.
