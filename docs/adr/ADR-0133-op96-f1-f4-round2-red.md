@@ -176,3 +176,71 @@ code:"attempts_exhausted"}`): the capped row has no terminal state.
 - **F7: seed an unbuildable `deferred` row and assert `skipped > 0`.** Rejected: the only
   reachable unbuildable cases already record a terminal `no_destination` and are reported in
   `errors`; forcing `skipped` would impose an arbitrary re-classification of a non-defect.
+
+## Review sign-off (round 1, artifact lens)
+
+- **Verdict: APPROVED** — no changes requested. The RED pins are genuine, precise and fit to
+  implement against. Mirroring the round-1 precedent (the F1–F4 review sign-off is a section of
+  ADR-0130), this sign-off is recorded **inside** the delivered ADR rather than as a new number, so
+  no extra ADR number is consumed (the next free after this lane is `0134`; `0131`/`0132` are held by
+  the open OP-97 red branch).
+- **Reviewer:** `openpic-webapp-reviewer` (card `t_1e598454`, run 463) · **Round:** 1 (artifact
+  lens) · **Reviewed head:** `e73cfbb` (base `origin/main` `37a82d0`) · **PR:** #217 (draft,
+  RED-by-design).
+
+### Independently verified
+
+- **RED is genuine and reproduces exactly.** `vitest run --project integration` on `e73cfbb` →
+  `3 failed | 50 passed (53)` files, `3 failed | 353 passed (356)` tests — byte-for-byte the claimed
+  counts. Each new pin fails at its intended assertion:
+  - **F1b** `notification-digest-flush-non-retryable.test.ts:278` — `(await theBucket(db))?.status`
+    is `"flushed"`, expected `"open"`.
+  - **F1c** `notification-digest-flush-daily-cap.test.ts:271` — `transport.calls` is `1`, expected
+    `2` (the failed flush consumed the cap of one).
+  - **F2b** `notification-dispatch-retry-cap.test.ts:326` — `lastError` is
+    `{retryable:true, code:"http"}`, expected `{retryable:false, code:"attempts_exhausted"}`.
+    The pre-existing F2 case and every other integration spec still pass — no regression.
+- **CI red is the intended RED and nothing else.** PR #217 `ci` job: Setup → Typecheck=success,
+  Lint=success, Unit tests=success, **Integration tests=failure** (the three pins above), coverage/
+  build/e2e/audit skipped; `test_coverage` fails for the same reason; `secret-scan`, CodeQL,
+  `lint`, `unit_test`, `env-changes`, `validate-branch-name`, `validate-pr-title` all pass. No
+  non-pin failure masks the RED.
+- **Contract hygiene.** `git diff origin/main...HEAD` touches only 5 files: the two new specs, one
+  extra `it` + a `code?` field added to `StoredDispatch` in `notification-dispatch-retry-cap.test.ts`
+  (the existing F2 case is unchanged), and two docs. **No production file, mock, fixture or factory
+  is touched.** `pnpm typecheck` (all three tsconfigs) → exit 0; `eslint` on the three specs → 0
+  problems; `prettier --check` on all five changed files → clean. Branch name matches
+  `^OP-[0-9]+-(feature|bug|task)-.+$`.
+- **ADR number.** `0133` is the lowest free: `docs/adr` on `origin/main` ends at `0130`, and the
+  open OP-97 branch holds `0131`/`0132`; no ref holds `0133`.
+- **F5 non-pinnability accepted.** `upsertDigestBucket` performs a bare pipeline `updateOne(…, {
+upsert: true })` (`fan-out.ts:779-781`) with no duplicate-key handling, so the collision is real;
+  the evidence that the only deterministic harness is load-sensitive (RED 4/4 in isolation, green in
+  a full parallel `test:int`) correctly rules out shipping it as a pin.
+- **F7 non-pinnability accepted and independently confirmed.** In `redeliverDispatchRow`
+  (`dispatch-redelivery.ts:195-252`): `body === null` is handled first (`unretained_body`, line 207),
+  and a non-outbound channel or `null` `userId` makes `resolveDestination` return `null` first
+  (`no_destination`, line 216) — because `resolveDestination` returns `null` for any channel other
+  than `email`/`sms`/`whatsapp` and for `userId === null` (lines 87-104). Line 225 is therefore
+  unreachable, so the card's identified "silently left `deferred`" path does not exist and both
+  listed observables already hold (`errors` counts it; the row reaches a terminal
+  `no_destination`). Correct to route it to GREEN as "no behavioural change required".
+
+### Findings (non-blocking; none Critical/High)
+
+- **F1b-r2 (Low, coverage gap → routed).** The pin selects option (a), so a **permanently**
+  non-retryable flush failure (e.g. a provider `400` for a bad destination) leaves the bucket `open`
+  and is re-attempted on **every** subsequent flush tick, inserting a fresh `attempts:1` `failed`
+  ledger row each time and calling the transport again, until the bucket's `expireAt` TTL retires it.
+  The pin drives a single failure then recovery, so it bounds nothing here, and its scripted
+  transport makes a `retryable:false` error _recover_ — i.e. it proves failure **ownership**, not
+  real recoverability. Non-blocking for the RED delivery (the card explicitly sanctions option (a)),
+  but the unbounded repeat is a real behaviour gap in the contract it establishes. Routed to a new
+  round-3 TEST card (gated after the round-2 GREEN `t_6163c787`) and flagged on the GREEN card.
+- **Commit-identity nit (Low, no action).** The branch commit is authored as
+  `openpic-webapp-backend-coder <backend-coder@openpic.local>` although the worker was the Test
+  Author; merged history uses `getwithashish`. The RED branch is never merged on its own and the
+  squash-merge reattributes, so this is immaterial.
+- **Merge posture.** RED-only: PR #217 stays a **draft**; the round-2 GREEN card `t_6163c787`
+  continues on this branch (`OP-96-task-f1-f4-round2-red`) and turns the pins green, and the PR
+  merges only then.
