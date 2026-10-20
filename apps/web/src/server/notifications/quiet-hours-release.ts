@@ -73,10 +73,13 @@ export async function releaseDeferredDispatches(
   const limit = options.limit ?? 1000;
   const now = clock.now();
 
+  // The read is bounded (F3, ADR-0130): fetch one more than the run will
+  // process so `hasMore` reports a remaining backlog without materialising it.
   const raw: unknown = await platformRepo(db)
     .collection(COLLECTIONS.dispatches)
     .find({ status: "deferred", until: { $lte: now } })
     .sort({ until: 1 })
+    .limit(limit + 1)
     .toArray();
   const rows = Array.isArray(raw)
     ? raw.map(asDeferredRow).filter((row): row is DeferredRow => row !== null)
@@ -86,7 +89,7 @@ export async function releaseDeferredDispatches(
   let affected = 0;
   const skipped = 0;
   let errors = 0;
-  let hasMore = false;
+  let hasMore = rows.length > limit;
 
   for (const row of rows) {
     scanned += 1;

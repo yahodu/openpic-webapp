@@ -285,9 +285,18 @@ async function renderSummary(
 }
 
 /** The outcome of flushing one bucket. */
-type FlushOne = "sent" | "error";
+type FlushOne = "sent" | "failed_recorded" | "failed_unrecorded";
 
-/** Flush one due bucket: render, send, write the ledger row, mark the bucket. */
+/**
+ * Flush one due bucket: render, send, write the ledger row, mark the bucket.
+ *
+ * A transport failure is **durably recorded on the ledger row** and reported as
+ * `failed_recorded` — the row (not the bucket) owns the redelivery, mirroring
+ * ADR-0127/ADR-0130, so the flush cron marks the bucket `flushed` and never
+ * re-selects it. A failure with no ledger row (an unresolvable destination or
+ * an unbuildable message) is `failed_unrecorded`: nothing owns a retry, so the
+ * bucket stays `open` for a later flush.
+ */
 async function flushOneBucket(
   db: Db,
   bucket: DigestBucket,
@@ -297,14 +306,14 @@ async function flushOneBucket(
 ): Promise<FlushOne> {
   const channel = bucket.channel as ResolvedChannel;
   const destination = await resolveDestination(db, bucket.userId, channel);
-  if (destination === null) return "error";
+  if (destination === null) return "failed_unrecorded";
 
   const { subject, body } = await renderSummary(db, bucket);
   const message = buildRedeliveryMessage(
     { userId: bucket.userId, channel, subject, body },
     destination
   );
-  if (message === null) return "error";
+  if (message === null) return "failed_unrecorded";
 
   const outcome = await sendRedelivery(transport, message);
   const settings = await getPlatformSettings({ db, clock });
@@ -336,7 +345,7 @@ async function flushOneBucket(
       notificationId: null,
       expireAt,
     });
-    return "error";
+    return "failed_recorded";
   }
 
   await platformRepo(db)
@@ -377,9 +386,15 @@ async function flushOneBucket(
 /**
  * Flush every due open digest bucket, bounded by `limit`.
  *
- * A bucket beyond the recipient's daily cap is left `open` (deferred) and is
- * not counted as `hasMore`; `hasMore` is true only when a due, within-cap
- * bucket was left unprocessed because the limit was reached (ADR-0120 A1).
+ * The read is bounded (F3, ADR-0130): one more bucket than the run will process
+ * is fetched, so `hasMore` reports a remaining backlog without materialising it
+ * — `hasMore` is true when more selectable (due, open) buckets exist beyond
+ * `limit` (ADR-0120 A1, amended by ADR-0130). A bucket beyond the recipient's
+ * daily cap is left `open` (deferred) and is **not** counted as `hasMore`.
+ *
+ * A transport failure is durably recorded on the ledger row and the bucket is
+ * marked `flushed` (F1, ADR-0130): the ledger row is the single owner of the
+ * redelivery, so the flush cron never re-selects the bucket.
  *
  * @param options - Database/clock/transport seams and the per-run limit.
  * @returns The §10.2 run outcome.
@@ -397,6 +412,7 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
     .collection(COLLECTIONS.notificationDigests)
     .find({ status: "open", flushAt: { $lte: now } })
     .sort({ flushAt: 1 })
+    .limit(limit + 1)
     .toArray();
   const due = Array.isArray(raw)
     ? raw.map(asBucket).filter((bucket): bucket is DigestBucket => bucket !== null)
@@ -406,8 +422,17 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
   let affected = 0;
   let skipped = 0;
   let errors = 0;
-  let hasMore = false;
+  let hasMore = due.length > limit;
   const sentByUser = new Map<string, number>();
+
+  /** Mark a bucket closed so the flush cron never re-selects it (F1). */
+  const markFlushed = (bucket: DigestBucket): Promise<unknown> =>
+    platformRepo(db)
+      .collection(COLLECTIONS.notificationDigests)
+      .updateOne(
+        { _id: bucket._id, status: "open" },
+        { $set: { status: "flushed", flushedAt: now } }
+      );
 
   for (const bucket of due) {
     scanned += 1;
@@ -430,13 +455,15 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
     if (result === "sent") {
       affected += 1;
       sentByUser.set(key, sentToday + 1);
-      await platformRepo(db)
-        .collection(COLLECTIONS.notificationDigests)
-        .updateOne(
-          { _id: bucket._id, status: "open" },
-          { $set: { status: "flushed", flushedAt: now } }
-        );
+      await markFlushed(bucket);
+    } else if (result === "failed_recorded") {
+      // The failure is durably on the ledger row, which owns the redelivery
+      // (ADR-0127/ADR-0130); close the bucket so the flush cron cannot re-send.
+      errors += 1;
+      sentByUser.set(key, sentToday + 1);
+      await markFlushed(bucket);
     } else {
+      // No ledger row owns a retry: leave the bucket `open` for a later flush.
       errors += 1;
     }
   }

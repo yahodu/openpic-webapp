@@ -18,6 +18,7 @@ import type { CronRunOutcome } from "@/server/jobs/cron-job";
 import { getLogger } from "@/server/logging";
 import { platformRepo } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
+import { getPlatformSettings } from "@/server/settings/platform-settings";
 
 import { redeliverDispatchRow, type RedeliveryRow } from "./dispatch-redelivery";
 import type { MessageTransport } from "./message-transport";
@@ -99,10 +100,20 @@ export async function retryDueDispatches(options: DispatchRetryOptions): Promise
   const limit = options.limit ?? 500;
   const now = clock.now();
 
+  // Retries are bounded by the settings seam (F2, ADR-0130): a row that has
+  // reached `pipeline.maxAttempts` is no longer selectable, so a permanently
+  // retryable failure leaves the sweep instead of being re-attempted forever.
+  // The cap is read through the existing settings seam, never a constant.
+  const settings = await getPlatformSettings({ db, clock });
+  const maxAttempts = settings.pipeline.maxAttempts;
+
+  // The read is bounded too (F3, ADR-0130): fetch one more than the run will
+  // process so `hasMore` reports a remaining backlog without materialising it.
   const raw: unknown = await platformRepo(db)
     .collection(COLLECTIONS.dispatches)
-    .find({ status: "failed", "lastError.retryable": true })
+    .find({ status: "failed", "lastError.retryable": true, attempts: { $lt: maxAttempts } })
     .sort({ failedAt: 1 })
+    .limit(limit + 1)
     .toArray();
   const rows = Array.isArray(raw)
     ? raw.map(asRetryRow).filter((row): row is RetryRow => row !== null)
@@ -112,7 +123,7 @@ export async function retryDueDispatches(options: DispatchRetryOptions): Promise
   let affected = 0;
   let skipped = 0;
   let errors = 0;
-  let hasMore = false;
+  let hasMore = rows.length > limit;
 
   for (const row of rows) {
     scanned += 1;
