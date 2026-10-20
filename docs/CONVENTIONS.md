@@ -177,5 +177,44 @@ This list is mirrored, copy-pasteably, in `.github/pull_request_template.md`.
 When two sources conflict, stop and ask — do not silently pick one. Record the
 resolution as an ADR so the next reader inherits the decision.
 
+## 11. ADR numbering
+
+ADR numbers are allocated in **per-lane reserved ranges**, never from a shared
+high-water mark. The orchestrator is the allocator: when it creates a lane's cards
+it assigns that lane a disjoint block of numbers and writes the block into every
+card body of the lane. A lane takes the **next free number inside its own block**
+and never consults the shared high-water mark, the tail of `docs/adr/README.md` or
+another lane's refs. Numbers allocated before the policy (`≤ 0145`) are frozen
+history and are never moved.
+
+- **The ledger.** The live range table is `docs/adr/README.md` § "ADR number
+  allocation" (ADR-0300) — the single source of truth. Do not copy or re-derive
+  the ranges anywhere else, including here.
+- **The guard.** `pnpm test:unit` fails on a duplicate `ADR-NNNN` prefix or a
+  malformed `ADR-*.md` name
+  (`apps/web/src/test/unit/adr-numbering.test.ts`). It is the mechanical backstop
+  for the rule above and a required pre-merge check; `docs/adr/README.md` and any
+  other non-`ADR-*.md` file are ignored.
+- **Out of scope of the guard, by decision.** The guard does not check that a new
+  number sits inside its lane's reserved range, and it does not cross-check
+  `origin/main`. The range ledger is prose (parsing it in CI is brittle), and a PR
+  checkout does not guarantee a fetched `origin/main`. Both stay **review-time
+  obligations for the reviewer**, recorded here rather than mechanised.
+- **Rejected alternatives** (letters follow ADR-0300, where (a) is the adopted rule
+  stated above).
+  - **(b) Merger-owned finalisation** — the merger assigns the number when the
+    branch lands, the ADR carrying an `ADR-NNNN-…` placeholder until then.
+    Rejected: it serializes renames at merge time instead of removing them (every
+    merge rewrites a filename and every cross-reference) and moves authorship of a
+    decision artifact into the mechanical `--squash --admin` merge step.
+  - **(c) Positional append-only log** — one `docs/adr/` log where the number is
+    the row index. Rejected: it renames history; ADRs are cited by number across
+    code, tests, the `docs/` design docs and other ADRs, so positional numbers
+    invalidate every existing citation on the next insert.
+  - **(d) Lowest free number at commit time** — the status quo this replaces.
+    Rejected: unenforceable (the answer is stale the moment it is computed — it
+    cost four renumbers in one day and two `CONFLICTING` PRs) and it makes the
+    shared ledger tail a serialization point for the whole board.
+
 Document map: `AGENTS.md` (agent entry point) · `docs/CONVENTIONS.md` (this file)
 · `docs/adr/` (decisions) · `.github/pull_request_template.md` (PR + DoD).
