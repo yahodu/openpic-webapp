@@ -1,4 +1,4 @@
-# ADR-0146 — OP-94 fan-out follow-up: review sign-off of the pre-selection `mobile` skip-channel seam pin (GREEN)
+# ADR-0200 — OP-94 fan-out follow-up: review sign-off of the pre-selection `mobile` skip-channel seam pin (GREEN)
 
 - **Status:** Accepted · **Date:** 2026-10-20 · **Author:** `openpic-webapp-reviewer`
 - **Card:** `t_b9bb5e0a` (OP-94 fan-out follow-up GREEN) · **Verdict:** **APPROVED WITH FINDINGS** — no changes requested; squash-merged
@@ -90,9 +90,12 @@ preserving the required linear history. Local `main` was fast-forwarded, and loc
   documented **test seam**: only tests may import it, and any future consumer goes
   through `runNotificationFanOut` / `resolveChannel`. ADR-0111 records the
   decision; this record closes it.
-- Number `0146` is consumed by this sign-off. It was resolved as the **lowest
-  number free against `main` `4144983`** — ADR-0140, 0141, 0142, 0144 and 0145
-  exist, `0146` is the next free.
+- Number `0200` is consumed by this sign-off. The record was first drafted as
+  `0146` (the lowest number free against `main` `4144983`) and renumbered to
+  `0200` under the binding per-lane reserved-range allocation (ADR-0300, merged
+  as `23c236d`), which assigns the OP-94 fan-out lane the range `0200`–`0219`;
+  `0146`–`0179` belongs to the OP-96 lane, so the number is settled by range
+  rather than by a race against the shared high-water mark.
 - This is a docs-only record: no production, test, fixture or configuration file
   is touched, so no suite's observable behaviour changes. The companion correction
   in ADR-0111 §2 (the Low finding) is likewise docs-only.
