@@ -1954,7 +1954,9 @@ One row per (notification, channel) attempt — **including skips**.
 // notificationDigests — open buckets awaiting flush
 { userId, typeKey, bucketKey: "attendee.matches.new:6702abc",
   itemCount: 38, sampleItems: [ /* first 5, for the summary line */ ],
-  firstItemAt, lastItemAt, flushAt, status: "open" | "flushed", expireAt }
+  firstItemAt, lastItemAt, flushAt, status: "open" | "flushed", expireAt,
+  // on close: why it closed — only a "sent" flush counts against maxDigestEmailsPerDay
+  flushOutcome: "sent" | "failed" }
 ```
 
 **Indexes:** `{userId:1, bucketKey:1}` unique partial on `status:"open"` · `{status:1, flushAt:1}` partial on `open` (the flush cron) · `{expireAt:1}` TTL 0
