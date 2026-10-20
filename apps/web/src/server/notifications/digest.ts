@@ -31,10 +31,14 @@
  * A bucket is closed only when the recorded failure has an owner (F1b,
  * ADR-0134): a **retryable** transport failure is redelivered by the ledger row,
  * while a **non-retryable** one leaves the bucket `open` for a later flush. The
- * re-attempts of a non-retryable failure are bounded (F1b-r2, ADR-0137): once
- * the bucket's non-retryable failure count reaches `pipeline.maxAttempts` it is
- * closed terminally (`flushOutcome: "failed"`), so the flush cron stops
- * selecting it instead of retrying a "never retry" failure forever.
+ * re-attempts of a permanent (unrecoverable) failure are bounded (F1b-r2,
+ * ADR-0137): once the bucket's unrecoverable failure count reaches
+ * `pipeline.maxAttempts` it is closed terminally (`flushOutcome: "failed"`), so
+ * the flush cron stops selecting it instead of retrying a "never retry" failure
+ * forever. The same bound covers the **unrecorded** failure (F1, ADR-0145): a
+ * bucket whose destination never resolves (`failed_unrecorded`) is refetched and
+ * re-rendered on every tick with no ledger row to own a retry, so it shares the
+ * one unrecoverable-failure counter and ceiling instead of looping to TTL.
  */
 import type { Db, ObjectId as ObjectIdValue } from "mongodb";
 
@@ -111,9 +115,11 @@ interface DigestBucket {
   readonly flushAt: Date;
   readonly status: string;
   /**
-   * How many times this bucket's flush has failed **non-retryably** (schema
-   * §19.6). Once it reaches `platformSettings.pipeline.maxAttempts` the bucket
-   * is closed terminally (F1b-r2, ADR-0137).
+   * How many times this bucket's flush has failed **unrecoverably** (schema
+   * §19.6) — a **non-retryable** transport failure, or an **unrecorded** failure
+   * (no ledger row owns a retry). Once it reaches
+   * `platformSettings.pipeline.maxAttempts` the bucket is closed terminally
+   * (F1b-r2, ADR-0137; extended to `failed_unrecorded` by F1, ADR-0145).
    */
   readonly nonRetryableFailures?: number;
 }
@@ -591,13 +597,22 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
       .updateOne({ _id: bucket._id }, { $unset: { flushClaimedAt: "" } });
 
   /**
-   * Record one non-retryable flush failure against the bucket and return the
-   * resulting count (schema §19.6, F1b-r2, ADR-0137).
+   * Record one **unrecoverable** flush failure against the bucket and return the
+   * resulting count (schema §19.6, F1b-r2, ADR-0137; extended to
+   * `failed_unrecorded` by F1, ADR-0145).
+   *
+   * "Unrecoverable" covers both permanent-failure classes the flush cron must
+   * not keep retrying: a **non-retryable** transport failure (whose ledger row
+   * owns no redelivery) and an **unrecorded** failure (which writes no ledger
+   * row at all). Sharing one counter and one ceiling means a bucket that
+   * alternates between the two classes is still bounded, and the terminal close
+   * is reached by whichever combination of failures accumulates to
+   * `pipeline.maxAttempts`.
    *
    * The increment is a single atomic `$inc`, so concurrent flush workers can
    * never lose a failure recorded for the same bucket.
    */
-  const recordNonRetryableFailure = async (bucket: DigestBucket): Promise<number> => {
+  const recordUnrecoverableFailure = async (bucket: DigestBucket): Promise<number> => {
     const updated: unknown = await platformRepo(db)
       .collection(COLLECTIONS.notificationDigests)
       .findOneAndUpdate(
@@ -656,7 +671,7 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
       // (`status: "flushed"`, `flushOutcome: "failed"`) so the flush cron's
       // `status: "open"` read stops selecting it.
       errors += 1;
-      const failures = await recordNonRetryableFailure(claimed);
+      const failures = await recordUnrecoverableFailure(claimed);
       if (failures >= maxAttempts) {
         await markFlushed(claimed, "failed");
       } else {
@@ -667,11 +682,24 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
       }
     } else {
       // No owner took the redelivery — a failure recorded nowhere at all (an
-      // unresolvable destination or an unbuildable message). Leave the bucket
-      // `open` so a later flush re-attempts the summary instead of silently
-      // dropping it.
+      // unresolvable destination or an unbuildable message). Nothing durably
+      // owns a retry, so a later flush re-attempts the summary (F1b, ADR-0134)
+      // — but those re-attempts are **bounded** (F1, ADR-0145): the failure is
+      // counted against the same unrecoverable-failure ceiling as a
+      // non-retryable transport failure, and once it reaches
+      // `pipeline.maxAttempts` the bucket is closed terminally
+      // (`status: "flushed"`, `flushOutcome: "failed"`) so the flush cron's
+      // `status: "open"` read stops re-selecting and re-rendering it.
       errors += 1;
-      await releaseClaim(claimed);
+      const failures = await recordUnrecoverableFailure(claimed);
+      if (failures >= maxAttempts) {
+        await markFlushed(claimed, "failed");
+      } else {
+        // Still under the bound, so the bucket is selectable for the F1b retry:
+        // release the claim now rather than making the next tick wait out the
+        // lease.
+        await releaseClaim(claimed);
+      }
     }
   }
 
