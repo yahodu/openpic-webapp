@@ -112,9 +112,15 @@ export function buildRedeliveryMessage(
   const channel = toOutboundChannel(target.channel);
   if (channel === null || target.userId === null) return null;
 
+  // A `retainBody:false` row persists no body (the one-time code must never
+  // reach the ledger). Rebuilding it would produce a subject-only message, so
+  // there is nothing deliverable to reconstruct (F4, ADR-0130): the caller
+  // classifies the row terminally instead of sending an empty body.
+  if (target.body === null) return null;
+
   const userId = typeof target.userId === "string" ? target.userId : target.userId.toHexString();
   const subject = target.subject ?? "";
-  const body = target.body ?? "";
+  const body = target.body;
 
   if (channel === "email") {
     return {
@@ -193,6 +199,18 @@ export async function redeliverDispatchRow(
   transport: MessageTransport
 ): Promise<"sent" | "error"> {
   const attempts = row.attempts + 1;
+
+  // A `retainBody:false` row carries no body (F4, ADR-0130): there is nothing
+  // to re-send, so the row reaches a terminal, non-retryable classification —
+  // exactly like `no_destination` — instead of a subject-only empty message.
+  // It therefore leaves the sweep forever.
+  if (row.body === null) {
+    await recordFailure(db, row._id, attempts, now, {
+      retryable: false,
+      code: "unretained_body",
+    });
+    return "error";
+  }
 
   const destination = await resolveDestination(db, row.userId, row.channel);
   if (destination === null) {
