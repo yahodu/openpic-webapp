@@ -19,6 +19,13 @@
  * the allowance (F1c, ADR-0134). A due bucket beyond the cap is **deferred**,
  * not dropped — it stays `open` and is not counted as `hasMore`.
  *
+ * A due bucket is **claimed** before it is sent (F2, ADR-0143): one atomic
+ * conditional transition takes an unclaimed (or stale-claimed) bucket, so two
+ * **overlapping** `flushDueDigests` runs deliver at most one summary per bucket
+ * — the loser leaves the bucket alone. The claim is a lease, so a run that dies
+ * mid-send can never strand a bucket: a claim older than
+ * {@link FLUSH_CLAIM_STALE_MS} is reclaimable.
+ *
  * A bucket is closed only when the recorded failure has an owner (F1b,
  * ADR-0134): a **retryable** transport failure is redelivered by the ledger row,
  * while a **non-retryable** one leaves the bucket `open` for a later flush. The
@@ -50,6 +57,18 @@ const FALLBACK_LOCALE = "en-IN";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
+
+/**
+ * How long a flush claim is honoured before another run may reclaim the bucket
+ * (F2, ADR-0143).
+ *
+ * The claim is what stops two **overlapping** `flushDueDigests` runs from both
+ * sending the same summary. It mirrors the outbox consumer's
+ * `STALE_CLAIM_MS` (`@/server/domain/domain-events`): a claim older than this is
+ * treated as abandoned, so a run that dies mid-send can never strand a bucket
+ * permanently — the next tick reclaims and re-attempts it.
+ */
+const FLUSH_CLAIM_STALE_MS = 5 * MINUTE_MS;
 
 /** The input to {@link computeDigestFlushAt} (ADR-0120 module contract). */
 export interface DigestFlushAtInput {
@@ -440,6 +459,10 @@ async function flushOneBucket(
  * `limit` (ADR-0120 A1, amended by ADR-0130). A bucket beyond the recipient's
  * daily cap is left `open` (deferred) and is **not** counted as `hasMore`.
  *
+ * Each selected bucket is **claimed before it is sent** (F2, ADR-0143), so two
+ * overlapping runs cannot both deliver the same summary; a run that loses the
+ * claim counts the bucket `skipped` and leaves it untouched for the winner.
+ *
  * A transport failure is durably recorded on the ledger row, and the bucket is
  * marked `flushed` **only when that row owns the redelivery** — i.e. the failure
  * is retryable (F1, ADR-0130). A non-retryable failure has no owner, so the
@@ -457,6 +480,8 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
   const clock = options.clock ?? systemClock;
   const limit = options.limit ?? 1000;
   const now = clock.now();
+  // A claim at or before this instant is abandoned and may be reclaimed (F2).
+  const staleBefore = new Date(now.getTime() - FLUSH_CLAIM_STALE_MS);
 
   const settings = await getPlatformSettings({ db, clock });
   const maxPerDay = settings.notifications.maxDigestEmailsPerDay;
@@ -484,15 +509,66 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
    *
    * `flushOutcome` records **why** it closed, distinctly from `status`
    * (F1c, ADR-0134): only a delivered summary consumes the recipient's daily
-   * allowance, so {@link countFlushedToday} counts `"sent"` flushes alone.
+   * allowance, so {@link countFlushedToday} counts `"sent"` flushes alone. The
+   * flush claim is released with the close (F2, ADR-0143): a `flushed` bucket is
+   * already out of the selectable set, and the release keeps the lease from
+   * outliving the work it guarded.
    */
   const markFlushed = (bucket: DigestBucket, flushOutcome: "sent" | "failed"): Promise<unknown> =>
     platformRepo(db)
       .collection(COLLECTIONS.notificationDigests)
       .updateOne(
         { _id: bucket._id, status: "open" },
-        { $set: { status: "flushed", flushOutcome, flushedAt: now } }
+        {
+          $set: { status: "flushed", flushOutcome, flushedAt: now },
+          $unset: { flushClaimedAt: "" },
+        }
       );
+
+  /**
+   * Atomically claim one due bucket for this run, before its summary is sent
+   * (F2, ADR-0143).
+   *
+   * One conditional `findOneAndUpdate` on `{ _id, status: "open" }` that also
+   * requires the bucket to be unclaimed (or to hold a claim older than
+   * {@link FLUSH_CLAIM_STALE_MS}) transitions it to claimed in a single atomic
+   * step, so of two **overlapping** runs exactly one can win the bucket and only
+   * the winner calls {@link flushOneBucket}. The status is deliberately left
+   * `"open"`: the bucket stays inside both partial indexes (schema §19.6), and a
+   * claimed-but-abandoned bucket still serves the fan-out's `{ userId, bucketKey,
+   * status: "open" }` upsert instead of blocking the unique key until its lease
+   * goes stale.
+   *
+   * @returns The claimed bucket, or `null` when another run already holds it.
+   */
+  const claimBucket = async (bucket: DigestBucket): Promise<DigestBucket | null> => {
+    const raw: unknown = await platformRepo(db)
+      .collection(COLLECTIONS.notificationDigests)
+      .findOneAndUpdate(
+        {
+          _id: bucket._id,
+          status: "open",
+          $or: [{ flushClaimedAt: { $exists: false } }, { flushClaimedAt: { $lte: staleBefore } }],
+        },
+        { $set: { flushClaimedAt: now } },
+        { returnDocument: "after" }
+      );
+    return asBucket(raw);
+  };
+
+  /**
+   * Release a claim without changing the bucket's status, so the bucket is
+   * immediately selectable again (F2, ADR-0143).
+   *
+   * Used on every path that leaves the bucket `open`: a non-retryable failure
+   * below `pipeline.maxAttempts` (F1b, ADR-0134) and a failure recorded nowhere
+   * both must stay re-attemptable by the very next tick, not only after the lease
+   * goes stale.
+   */
+  const releaseClaim = (bucket: DigestBucket): Promise<unknown> =>
+    platformRepo(db)
+      .collection(COLLECTIONS.notificationDigests)
+      .updateOne({ _id: bucket._id }, { $unset: { flushClaimedAt: "" } });
 
   /**
    * Record one non-retryable flush failure against the bucket and return the
@@ -530,18 +606,28 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
       break;
     }
 
-    const result = await flushOneBucket(db, bucket, now, options.transport, clock);
+    // Claim the bucket before the send (F2, ADR-0143): of two overlapping runs
+    // only the winner of this atomic transition may hand the summary to the
+    // transport, so the bucket's `open -> flushed` transition delivers at most
+    // one summary. The loser leaves the bucket exactly as it found it.
+    const claimed = await claimBucket(bucket);
+    if (claimed === null) {
+      skipped += 1;
+      continue;
+    }
+
+    const result = await flushOneBucket(db, claimed, now, options.transport, clock);
     if (result === "sent") {
       affected += 1;
       sentByUser.set(key, sentToday + 1);
-      await markFlushed(bucket, "sent");
+      await markFlushed(claimed, "sent");
     } else if (result === "failed_retryable") {
       // The failure is durably on the ledger row, which owns the redelivery
       // (ADR-0127/ADR-0130); close the bucket so the flush cron cannot re-send.
       // A summary that never went out does not consume the daily allowance
       // (F1c, ADR-0134), so `sentByUser` is deliberately left unchanged.
       errors += 1;
-      await markFlushed(bucket, "failed");
+      await markFlushed(claimed, "failed");
     } else if (result === "failed_terminal") {
       // No owner took the redelivery on a non-retryable failure, so the bucket
       // stays `open` for a later attempt (F1b, ADR-0134) — but the retries are
@@ -550,9 +636,14 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
       // (`status: "flushed"`, `flushOutcome: "failed"`) so the flush cron's
       // `status: "open"` read stops selecting it.
       errors += 1;
-      const failures = await recordNonRetryableFailure(bucket);
+      const failures = await recordNonRetryableFailure(claimed);
       if (failures >= maxAttempts) {
-        await markFlushed(bucket, "failed");
+        await markFlushed(claimed, "failed");
+      } else {
+        // Still under the bound, so the bucket is selectable for the F1b retry:
+        // release the claim now rather than making the next tick wait out the
+        // lease.
+        await releaseClaim(claimed);
       }
     } else {
       // No owner took the redelivery — a failure recorded nowhere at all (an
@@ -560,6 +651,7 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
       // `open` so a later flush re-attempts the summary instead of silently
       // dropping it.
       errors += 1;
+      await releaseClaim(claimed);
     }
   }
 
