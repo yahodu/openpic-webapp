@@ -6,7 +6,12 @@ import {
   type RecipientRepository,
   type ResolveRecipientsInput,
 } from "@/server/notifications/fan-out";
-import type { NotificationAudience } from "@/server/notifications/notification-types";
+import * as fanOutModule from "@/server/notifications/fan-out";
+import type { ChannelGroup, NotificationAudience } from "@/server/notifications/notification-types";
+import {
+  DEFAULT_MOBILE_CANDIDATES,
+  type ResolvedChannel,
+} from "@/server/notifications/resolve-channel";
 
 import { makeNotificationType } from "../../test/factories/notification";
 
@@ -303,4 +308,117 @@ describe("interpolateDedupeKey — template expansion (U3)", () => {
       interpolateDedupeKey("{typeKey}:{deviceId}", { typeKey: "auth.signin.new_device" })
     ).toThrow(/deviceId/);
   });
+});
+
+/**
+ * The channel a **pre-selection** skip/defer/digest records on its dispatch row
+ * (OP-94 follow-up; ADR-0094, ADR-0110).
+ *
+ * `fanOutToRecipient` decides some outcomes before any candidate is chosen
+ * (a quiet-hours `defer`, a throttled `skip`, an outbound `digest`). Those arms
+ * persist `writeSkip(..., groupChannel(group), ...)` /
+ * `writeDigestQueued(..., groupChannel(group))`, so `groupChannel` is what the
+ * ledger's `channel` column reports for a message that was never routed.
+ *
+ * For a `mobile` group it must mirror the resolver's candidate order
+ * (`resolve-channel.ts` `candidateChannels`): `candidates[0]`, else
+ * `DEFAULT_MOBILE_CANDIDATES[0]`. PR #190 replaced a hard-coded `"sms"` fallback
+ * with the resolver's exported default (`"whatsapp"`); without this pin that
+ * regression can return silently and the ledger would name a channel the
+ * resolver would never have tried first.
+ *
+ * ## Contract expected of the implementation (authorized test seam, ADR-0110)
+ *
+ * ```ts
+ * // @/server/notifications/fan-out
+ * export function groupChannel(group: ChannelGroup): ResolvedChannel;
+ * ```
+ *
+ * ## Why an exported helper rather than a stored-row assertion
+ *
+ * The branch is unreachable from any stored document: `processEvent` reads a
+ * type row through `loadTypeRow` → `notificationTypeSchema`, and
+ * `channelGroupSchema` rejects an **enabled** `mobile` group that omits
+ * `candidates`, while `fanOutToRecipient` skips a **disabled** group. A test that
+ * injected such a row would therefore observe **zero** dispatch rows and fail
+ * for the wrong reason (probe recorded in ADR-0110). The card authorised exporting the pure
+ * selector instead; the helper is a total function of its argument and the
+ * production call sites are unchanged.
+ */
+
+/** The seam's expected signature — the only contract this section adds. */
+type GroupChannelSeam = (group: ChannelGroup) => ResolvedChannel;
+
+/** The module plus the seam this spec requires it to expose. */
+const fanOut = fanOutModule as typeof fanOutModule & {
+  readonly groupChannel?: GroupChannelSeam;
+};
+
+/**
+ * Call the `groupChannel` seam.
+ *
+ * @param group - The channel group whose recorded channel is under test.
+ * @returns The channel the fan-out would persist for a pre-selection outcome.
+ * @throws When the module does not export the seam — reported as the intended
+ *   RED for this section instead of an opaque `not a function` TypeError.
+ */
+function groupChannelOf(group: ChannelGroup): ResolvedChannel {
+  const seam = fanOut.groupChannel;
+
+  if (seam === undefined) {
+    throw new Error(
+      "fan-out must export `groupChannel(group: ChannelGroup): ResolvedChannel` " +
+        "(authorized test seam, ADR-0110) — the pre-selection skip channel cannot be pinned otherwise"
+    );
+  }
+
+  return seam(group);
+}
+
+/** A mobile group with the given candidate list (omitted = the fallback case). */
+function mobileGroup(candidates?: readonly ("whatsapp" | "sms")[]): ChannelGroup {
+  if (candidates === undefined) {
+    // A group with no declared candidate order: schema-invalid when enabled,
+    // which is exactly the defensive branch under test.
+    return { group: "mobile", enabled: true, optOutAllowed: false, strategy: "first_eligible" };
+  }
+
+  return {
+    group: "mobile",
+    enabled: true,
+    optOutAllowed: false,
+    candidates: [...candidates],
+    strategy: "first_eligible",
+  };
+}
+
+describe("groupChannel — channel recorded for a pre-selection outcome (U4)", () => {
+  it("exports the channel-selection seam these pins need", () => {
+    expect(fanOut.groupChannel).toBeTypeOf("function");
+  });
+
+  it("falls back to the resolver's default mobile candidate when the group declares none", () => {
+    expect(groupChannelOf(mobileGroup())).toBe(DEFAULT_MOBILE_CANDIDATES[0]);
+  });
+
+  it("names `whatsapp` for a mobile group with no declared candidates", () => {
+    // Literal assertion: the default is a contract value, so re-hard-coding the
+    // pre-PR-#190 `"sms"` fallback must fail here even if the constant moves.
+    expect(groupChannelOf(mobileGroup())).toBe("whatsapp");
+  });
+
+  it.each([
+    [["whatsapp", "sms"] as const, "whatsapp"],
+    [["sms", "whatsapp"] as const, "sms"],
+    [["sms"] as const, "sms"],
+  ])("records the group's first declared candidate (%j) as %s", (candidates, expected) => {
+    expect(groupChannelOf(mobileGroup(candidates))).toBe(expected);
+  });
+
+  it.each([["in_app"], ["email"]] as const)(
+    "records the single-member %s group as its own channel",
+    (group) => {
+      expect(groupChannelOf({ group, enabled: true, optOutAllowed: false })).toBe(group);
+    }
+  );
 });
