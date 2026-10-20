@@ -115,3 +115,101 @@ it.
 - F1–F4 strengthen the contract before implementation; F5–F7 are advisory. None
   of them was actioned by the review lane itself, and no test file was edited by
   the reviewer.
+
+## Round 2 — follow-up RED pins review (card `t_321f6091`)
+
+- **Status:** Accepted · **Date:** 2026-10-20 · **Lens:** artifact (round 1 of
+  this card's review; no prior `changes_requested`)
+- **Reviewed:** PR #215 (still draft), branch
+  `OP-97-task-in-app-feed-read-state-red`, base `9b3b83e`, head `9c98fef`
+- **Verdict:** Approved with findings — no changes requested, no test file edited
+  by the reviewer. One Medium finding routed as the new card `t_bd74e9bf`, which
+  is linked as a third parent of the GREEN card `t_58825ec3` so the contract is
+  settled before implementation.
+
+### Independently reproduced on `9c98fef`
+
+- The three touched suites red at import — the right reason:
+  `Cannot find package '@/app/api/v1/me/notifications/…'` (feed),
+  `'…/[id]/route'` (read-state), `'…/unread-count/route'` — `Test Files 3
+failed (3) · Tests no tests`.
+- `vitest run --project unit` → 87 files, **1477/1477 passed**; the only two red
+  files are the new unit specs at import. Identical to the `9b3b83e` baseline.
+- `vitest run --project integration` → 50 files, 46 passed / 4 failed,
+  **347 passed / 1 failed**. The four red files are the three pinned suites at
+  import plus the intended `notification-fan-out` PRE-1 pin
+  (`expected [] to have a length of 1 but got +0`) — identical to the baseline,
+  so the new pins added no regression.
+- Playwright `--project=api` on `me-notifications.spec.ts` → E1 red at
+  `expect(probe.status()).toBe(200)`, received `404`; the route is still missing.
+- `prettier --check` clean and `eslint` exit 0 on the three specs;
+  `tsc -p apps/web/tsconfig.json` reports only the expected `TS2307`
+  missing-module errors on the touched specs.
+- The diff is test-only + docs: three integration specs and ADR-0129, no
+  production file created or edited. Local head == `origin/…` head at the
+  reviewed SHA.
+
+### Pin-by-pin verification
+
+- **F1** — `FEED_ITEM_KEYS` (18) is emitted in default lexicographic order, so it
+  compares equal to `Object.keys(item).sort()`; it pins the exact §7.1 set in both
+  the projection case and the feed I6 case, and `UNREAD_COUNT_KEYS` (5) does the
+  same for §7.2. Cross-checked against `ALWAYS_FORBIDDEN_KEYS` in
+  `packages/contracts/src/security/neverReturn.ts`: `titleKey`/`expireAt` are
+  indeed outside the scanner's set (only `embedding`, `vectors`, `queryVector`,
+  `tokenHash`, `objectKey`, `locationKey`, `bucket`, `externalRefs`,
+  `providerCode`, `_id` plus the profile keys `sessionToken`/`rawPayload`/
+  `similarity`), so the exact-key pin is what makes the never-return claim real.
+  `findForbiddenFields` is retained as the shared scanner.
+- **F2** — three new `read-all` cases (`eventId`, `before`, `category` AND
+  `eventId`); each asserts out-of-scope rows stay unread and that
+  `markedCount`/`unreadCount` reflect the scoped mutation. The `before` operator
+  is deliberately unobservable (rows at 1/3/5 days, cut at 2 days), so `$lt` and
+  `$lte` give the same result.
+- **F3** — three rows share one `createdAt`, leaving only the `_id`-descending
+  tie-break to order them; the case asserts both pages concatenate to that
+  deterministic order with no row repeated or skipped.
+- **F4** — `it.each` over `?limit=0`, `?limit=-5`, `?limit=abc`, `?limit=` (empty)
+  all fall back to 20, and `?filter=bogus` falls back to the `active` band; both
+  fallbacks are stated in ADR-0129 §Feed projection.
+- **F5** — `EXPLAIN_READ_ROWS = 200` read rows precede the four unread rows, and
+  the spec docstring records the flake risk and why the size removes it. Accepted.
+  Verified the I4 assertion still targets `idx_user_unread` in the winning plan.
+- **F6** — deferral verified rather than taken on trust: `defineRoute` returns
+  `async (request) => Response` with no route metadata, and the class exists only
+  as a `rateLimit`/`rateLimitIdentity` stage option at the call site, so no spec
+  can read the declared class off the handler. The recorded deferral is correct.
+- **F7** — ADR-0129's header names the real branch and its never-return paragraph
+  matches what F1 pins; the ADR number is unchanged.
+
+### Findings (round 2)
+
+| #   | Severity | Finding                                                                                                                                                                                                                                                                                                                                                                                                                       | Routed to                                                                                                                               |
+| --- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| A   | Medium   | The exact-key pin requires `actionResolvedVia`/`actionResolvedAt` **always** present (as `null`), but the published contract says otherwise: `docs/API Contract.md` §7.1's example shows one response whose first item omits both keys while its second carries them, and the `AppNotification` interface declares them optional (`?`). A GREEN implementer reading the contract alone can legitimately omit them and go red. | New card `t_bd74e9bf` (testcase-writer), parent of `t_58825ec3`; default resolution is to amend the contract to the stable 18-key shape |
+| B   | Low      | The `read-all` `before` comparison operator (`<` vs `<=`) is unobservable by construction and is not recorded in the ADR.                                                                                                                                                                                                                                                                                                     | New card `t_bd74e9bf`, secondary item                                                                                                   |
+| C   | Info     | The empty `?limit=` case is pinned as "fall back to 20"; the contract defines only the default, so this is a recorded lane choice.                                                                                                                                                                                                                                                                                            | Accepted (recorded in ADR-0129)                                                                                                         |
+| D   | Info     | `EXPLAIN_READ_ROWS = 200` adds 200 sequential inserts to one case; measured full integration run is still 54 s, so the cost is acceptable.                                                                                                                                                                                                                                                                                    | Accepted                                                                                                                                |
+
+No Critical finding. The honesty audit of the diff is clean: no
+test-environment conditionals, no `@ts-ignore`/`eslint-disable`/`skip`/`TODO`, no
+`console` noise, no fixture-shaped hardcoding.
+
+### Merge posture (unchanged)
+
+PR #215 stays a **draft and is not merged**, for the reason in §4: it is a
+deliberately red-CI RED lane whose pins ship inside the OP-97 GREEN PR. The pins
+reviewed here are committed to `OP-97-task-in-app-feed-read-state-red`; merging
+them into `main` would redden every CI run on `main` until the implementation
+lands. The worktree's reviewed head is the SHA recorded on the card, not a merge
+commit.
+
+### Consequences (round 2)
+
+- The card's whole definition of done is met: F1–F4 are present and red for the
+  right reason, F5–F7 are addressed or explicitly recorded as accepted, and
+  ADR-0129 is updated in place without renumbering.
+- One open contradiction remains between the pinned contract and the published
+  contract document; card `t_bd74e9bf` closes it, and the GREEN card cannot start
+  until it does.
+- Local `main` == `origin/main` (`3958213`); nothing reviewed here touched `main`.
