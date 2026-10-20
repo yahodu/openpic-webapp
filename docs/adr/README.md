@@ -31,17 +31,17 @@ the rejected alternatives are recorded in
 
 ### Reserved ranges (effective 2026-10-20)
 
-| Holder (lane)                       | Reserved range                  | Next free                |
-| ----------------------------------- | ------------------------------- | ------------------------ |
-| board-wide / process (orchestrator) | `0300`–`0319`                   | `0300` (this policy ADR) |
-| OP-96 notifications follow-up       | `0146`–`0179`                   | `0146`                   |
-| OP-97 in-app feed                   | `0180`–`0199`                   | `0180`                   |
-| OP-94 fan-out                       | `0200`–`0219`                   | `0200`                   |
-| OP-98 notification preferences      | `0220`–`0239`                   | `0220`                   |
-| OP-99 one-click unsubscribe         | `0240`–`0259`                   | `0240`                   |
-| OP-100 tenancy                      | `0260`–`0279`                   | `0260`                   |
-| OP-101 CI lane-shape                | `0280`–`0299`                   | `0280`                   |
-| unallocated (future lanes)          | `0320`+ (20 per lane, in order) | `0320`                   |
+| Holder (lane)                       | Reserved range                  | Next free |
+| ----------------------------------- | ------------------------------- | --------- |
+| board-wide / process (orchestrator) | `0300`–`0319`                   | `0302`    |
+| OP-96 notifications follow-up       | `0146`–`0179`                   | `0146`    |
+| OP-97 in-app feed                   | `0180`–`0199`                   | `0180`    |
+| OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
+| OP-98 notification preferences      | `0220`–`0239`                   | `0220`    |
+| OP-99 one-click unsubscribe         | `0240`–`0259`                   | `0240`    |
+| OP-100 tenancy                      | `0260`–`0279`                   | `0260`    |
+| OP-101 CI lane-shape                | `0280`–`0299`                   | `0280`    |
+| unallocated (future lanes)          | `0320`+ (20 per lane, in order) | `0320`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
 `0139`–`0141` (OP-96 round-3), `0131`/`0132` (OP-97 RED, PR #215), `0111`/`0112`
@@ -187,6 +187,7 @@ ADRs from their reserved range above.
 | [0145](ADR-0145-op96-f1-unrecorded-flush-bound-green.md)                           | OP-96 follow-up round 3 GREEN: bound the repeated `failed_unrecorded` digest-flush re-attempt (F1)                      | Accepted                  |
 | [0200](ADR-0200-op94-mobile-skip-channel-pin-green-review-signoff.md)              | OP-94 fan-out follow-up GREEN review sign-off: `mobile` skip-channel pins verified GREEN; one Low routed                | Accepted                  |
 | [0300](ADR-0300-adr-number-range-allocation-policy.md)                             | ADR numbers are drawn from per-lane reserved ranges, never the shared high-water mark                                   | Accepted                  |
+| [0301](ADR-0301-ci-audit-dev-vs-prod-scope.md)                                     | Split the `audit` gate: blocking `pnpm audit --prod`, non-blocking `pnpm audit --dev`                                   | Accepted                  |
 
 Template: Context · Decision · Consequences · Alternatives.
 
