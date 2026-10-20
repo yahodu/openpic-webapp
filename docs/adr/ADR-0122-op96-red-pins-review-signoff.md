@@ -1,19 +1,19 @@
-# ADR-0121 — OP-96 follow-up RED pins review sign-off: bounding/idempotency/day-boundary/partial-index pins verified; cap-scope decision gated before GREEN
+# ADR-0122 — OP-96 follow-up RED pins review sign-off: bounding/idempotency/day-boundary/partial-index pins verified; cap-scope decision gated before GREEN
 
 - **Status:** Accepted · **Date:** 2026-10-06
 - **Card:** OP-96 follow-up RED pins (`t_7a67b87d`, reviewer `openpic-webapp-reviewer`)
 - **Reviewed artifact:** branch `OP-96-task-digest-retry-quiet-hours-crons-red`, head `ca69c34`, base `origin/main` `d261297` (draft PR #200 holds the review)
-- **Contract:** ADR-0119 + its A1–A5 addendum · ADR-0120 (phase-1 RED sign-off) · ADR-0028 (bounded cron framework)
+- **Contract:** ADR-0120 + its A1–A5 addendum · ADR-0121 (phase-1 RED sign-off) · ADR-0028 (bounded cron framework)
 - **Verdict:** APPROVED WITH FINDINGS (no Critical/High); the strengthened RED pins are fit to implement against
 - **Follow-up:** A4 cap-scope decision → orchestrator card gating GREEN `t_609968cf`; optional I5 filter-shape tightening → Test-Author card
 
 ## Context
 
-The phase-1 RED review (ADR-0120) routed four coverage gaps to `t_7a67b87d`, a
+The phase-1 RED review (ADR-0121) routed four coverage gaps to `t_7a67b87d`, a
 parent of the GREEN card `t_609968cf`, so the strengthened pins land **before**
 implementation (TDD order). The Test Author appended the pins to the same RED
 branch (head `ca69c34`) and documented two product decisions as addendum
-A1–A5 to ADR-0119. This ADR records the independent review of that follow-up:
+A1–A5 to ADR-0120. This ADR records the independent review of that follow-up:
 what was verified, what remains to be decided, and the routing.
 
 ## Decision
@@ -58,18 +58,18 @@ true`); its `platform_admin` audience resolves empty in the fixture, but
   conditionals, no `@ts-ignore`/lint suppressions; assertions are on observable
   transport calls, row transitions and computed instants.
 - **Scope discipline.** The follow-up touches only the three new specs and
-  ADR-0119; no previously-passing spec was modified.
+  ADR-0120; no previously-passing spec was modified.
 
 ## Findings and routing
 
-1. **Medium — digest daily-cap scope conflict, unresolved.** ADR-0119
+1. **Medium — digest daily-cap scope conflict, unresolved.** ADR-0120
    assumption 4 / addendum A4 and I8 pin the cap as **per recipient per local
    day**; the GREEN card body §2 still says "per user **per type**" and design
    §6/G3 say "≤3 emails/day/**event**". A GREEN implementer following its own
    card body would implement per-type and turn I8 red. Routed to a new
    orchestrator card, linked as a **parent of** `t_609968cf`: confirm one of
    per-recipient / per-type / per-event, and either align the GREEN body to
-   ADR-0119 or have the Test Author change I8 before GREEN. Never loosen I8
+   ADR-0120 or have the Test Author change I8 before GREEN. Never loosen I8
    silently.
 2. **Low — I5 pins partial-index presence, not filter shape.** The tightened
    assertion requires a non-null `partialFilterExpression` but not that it
@@ -80,7 +80,7 @@ true`); its `platform_admin` audience resolves empty in the fixture, but
 3. **Informational — day-boundary source is a documented choice, not a defect.**
    I7 resolves "local day" from `notificationPreferences.quietHours.timeZone`,
    read even when quiet hours are disabled (the only per-recipient zone in the
-   schema; UTC fallback). That is deliberate and recorded in ADR-0119 A3.
+   schema; UTC fallback). That is deliberate and recorded in ADR-0120 A3.
 
 ## Consequences
 

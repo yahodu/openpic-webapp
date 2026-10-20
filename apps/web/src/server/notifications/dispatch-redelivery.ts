@@ -1,6 +1,6 @@
 /**
  * Shared redelivery plumbing for the dispatch retry and quiet-hours release
- * crons (OP-96, contract §10.2, ADR-0119).
+ * crons (OP-96, contract §10.2, ADR-0120).
  *
  * A `notification-dispatches` row that is `failed`/retryable or `deferred`
  * carries the rendered copy it must re-send (`subject`/`body`, persisted by the

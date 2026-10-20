@@ -1,15 +1,15 @@
-# ADR-0122 — OP-96 follow-up: tighten the I5 `{status, until}` partial-index pin to require the filter scopes to `deferred`
+# ADR-0123 — OP-96 follow-up: tighten the I5 `{status, until}` partial-index pin to require the filter scopes to `deferred`
 
 - **Status:** Accepted · **Date:** 2026-10-06 · **Author:** `openpic-webapp-testcase-writer`
-- **Card:** `t_8113a184` (OP-96 follow-up TEST, parent of GREEN `t_609968cf`; finding F2 of ADR-0121) · **Stage:** RED (test only; no production code)
-- **Contract under test:** ADR-0119 (§5 / contract §10.2 `quiet-hours-release`) · ADR-0120 (phase-1 RED sign-off) · ADR-0121 (RED-pins review sign-off, finding F2)
+- **Card:** `t_8113a184` (OP-96 follow-up TEST, parent of GREEN `t_609968cf`; finding F2 of ADR-0122) · **Stage:** RED (test only; no production code)
+- **Contract under test:** ADR-0120 (§5 / contract §10.2 `quiet-hours-release`) · ADR-0121 (phase-1 RED sign-off) · ADR-0122 (RED-pins review sign-off, finding F2)
 - **Branch:** `OP-96-task-digest-retry-quiet-hours-crons-red` (red-CI by design; commit + push, never merge — the GREEN PR carries the pins)
 
 ## Context
 
 The quiet-hours release sweep selects
 `notificationDispatches` rows with `status: "deferred"` and `until <= now`
-(design §5; contract §10.2). ADR-0119 requires the `dispatches` collection to
+(design §5; contract §10.2). ADR-0120 requires the `dispatches` collection to
 carry a **partial** index on `{status, until}` scoped to exactly those rows, so
 the sweep keeps index support as the collection grows.
 
@@ -26,7 +26,7 @@ expect(typeof partial === "object" && partial !== null).toBe(true);
 
 Any partial filter satisfies that — including a wrong one such as
 `{status: "sent"}` — in which case the release sweep would silently lose its
-index support while the pin stayed green. ADR-0121 routed this as finding F2
+index support while the pin stayed green. ADR-0122 routed this as finding F2
 (Low) to this card, a parent of the GREEN card, so the tightening lands before
 implementation.
 
@@ -85,11 +85,10 @@ The `expect(sweepIndex).toBeDefined()` guard is kept. No timeouts, skips,
   the gated GREEN PR on the same branch.
 - **Numbering hotspot:** `origin/main` has advanced past this branch's base and
   has already claimed the OP-95 lane's range, so this branch's OP-96 block
-  (`0100`–`0103`) collides numerically. As already recorded in ADR-0121
+  (`0100`–`0103`) collides numerically. As already recorded in ADR-0122
   and the ADR README, the whole block is renumbered as a contiguous unit at
   integration; this ADR takes the branch-local next sequential number (`0103`)
-  to keep that renumber trivial. (At final integration the lane moved to
-  `0119`–`0127`; see ADR-0127.)
+  to keep that renumber trivial. (At final integration the lane moved to `0120`–`0128`; see ADR-0128.)
 
 ## Alternatives considered
 
