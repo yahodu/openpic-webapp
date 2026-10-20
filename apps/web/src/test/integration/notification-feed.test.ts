@@ -55,7 +55,7 @@ import { insertFeedRow } from "../helpers/notification-rows";
  *   spec's `resolveFeedWindow` contract).
  * - An unknown `filter` value falls back to the default `active` band (never a
  *   `400`); a non-positive or non-numeric `limit` falls back to the default of
- *   `20` (contract §7.1). Both choices are recorded in ADR-0129.
+ *   `20` (contract §7.1). Both choices are recorded in ADR-0131.
  */
 
 const FEED_PATH = "/api/v1/me/notifications";
@@ -98,7 +98,7 @@ interface FeedItem {
 }
 
 /**
- * The exact §7.1 projection of one feed item (contract §7.1; ADR-0129
+ * The exact §7.1 projection of one feed item (contract §7.1; ADR-0131
  * §Feed projection), in the sorted order `Object.keys(...).sort()` produces.
  *
  * An item carrying **any** extra key — `titleKey` or `expireAt`, which the

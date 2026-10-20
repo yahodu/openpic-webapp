@@ -338,7 +338,7 @@ describe("POST /api/v1/me/notifications/read-all", () => {
   });
 
   it("I3: with `before`, leaves a row created exactly at the instant unread", async () => {
-    // The operator is `createdAt < before` (ADR-0129 §Feed projection): a row
+    // The operator is `createdAt < before` (ADR-0131 §Feed projection): a row
     // whose `createdAt` equals the cut instant is NOT "created before" it, so it
     // stays unread. The seeded / cut values share one instant so `$lt` and `$lte`
     // are distinguishable — the earlier case (1/3/5 days, cut at 2) cannot.

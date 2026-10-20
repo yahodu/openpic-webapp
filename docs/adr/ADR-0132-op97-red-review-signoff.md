@@ -1,14 +1,14 @@
-# ADR-0130 — OP-97 RED review sign-off: contract verified, one integration merge, five routed pins
+# ADR-0132 — OP-97 RED review sign-off: contract verified, one integration merge, five routed pins
 
 - **Status:** Accepted · **Date:** 2026-10-20
 - **Card:** OP-97 phase 1 (RED, `t_08538ff6`), review lane round 1 · **Reviewed:** PR #215 (draft), branch `OP-97-task-in-app-feed-read-state-red`, head `9930a17`
-- **Reviews:** ADR-0129 (the RED contract of record) · **Unblocks:** `t_58825ec3` (GREEN, backend-coder), now gated behind the RED-pin card `t_321f6091`
+- **Reviews:** ADR-0131 (the RED contract of record) · **Unblocks:** `t_58825ec3` (GREEN, backend-coder), now gated behind the RED-pin card `t_321f6091`
 - **Verdict:** Approved with findings (the GREEN lane may proceed; the pins below land before it)
 
 ## Context
 
 OP-97 phase 1 delivered a test-only RED suite for the in-app feed, the read-state
-mutations and the unread-count hot path (ADR-0129). The review lane had to answer
+mutations and the unread-count hot path (ADR-0131). The review lane had to answer
 three questions: does the contract the tests pin match the repository it will be
 implemented in, is every suite red for the _right_ reason, and does the diff
 contain anything that only exists to satisfy a fixture.
@@ -62,13 +62,13 @@ regions) and pushed as `9930a17`. After the merge the fan-out suite is **9 passe
 
 | #   | Severity | Finding                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Routed to                            |
 | --- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| F1  | Medium   | The I6 never-return pin is weaker than ADR-0129 claims. `findForbiddenFields(body, "default")` only flags `ALWAYS_FORBIDDEN_KEYS` (…, `_id`) plus `sessionToken`/`rawPayload`/`similarity`; `titleKey` and `expireAt` — which the fixture deliberately stores and the ADR lists as never-return — are **not** detected. The projection assertion uses `toMatchObject`, which is non-exhaustive, so a projection leaking any extra key passes every test in the lane. | RED-pin card `t_321f6091` → GREEN    |
+| F1  | Medium   | The I6 never-return pin is weaker than ADR-0131 claims. `findForbiddenFields(body, "default")` only flags `ALWAYS_FORBIDDEN_KEYS` (…, `_id`) plus `sessionToken`/`rawPayload`/`similarity`; `titleKey` and `expireAt` — which the fixture deliberately stores and the ADR lists as never-return — are **not** detected. The projection assertion uses `toMatchObject`, which is non-exhaustive, so a projection leaking any extra key passes every test in the lane. | RED-pin card `t_321f6091` → GREEN    |
 | F2  | Low      | `read-all`'s `before` and `eventId` scoping is unpinned (contract §7.1: "all optional, all AND-ed"); only `category` is exercised.                                                                                                                                                                                                                                                                                                                                   | RED-pin card `t_321f6091`            |
 | F3  | Low      | The cursor's `_id` tie-break is unpinned — the pagination case uses distinct `createdAt` values only, so a `createdAt`-only cursor would pass.                                                                                                                                                                                                                                                                                                                       | RED-pin card `t_321f6091`            |
 | F4  | Low      | `limit`/`filter` boundary values are unpinned: only default 20 and the clamp to 50 are asserted (no 0, negative, non-numeric, or unknown-`filter` case).                                                                                                                                                                                                                                                                                                             | RED-pin card `t_321f6091`            |
 | F5  | Low      | I4's `explain` assertion is plan-dependent by construction; with a 34-document collection the multi-plan runner could in principle prefer a `COLLSCAN`, so the pin carries a flake risk even though it reproduces today.                                                                                                                                                                                                                                             | RED-pin card `t_321f6091` (advisory) |
-| F6  | Info     | The rate classes (`read.normal`, `read.hot`, `write.normal`) are asserted by reference only; no test in the lane binds a route to its class. ADR-0129 defers the numeric budget to the rate-limit suite, which does not cover the binding either.                                                                                                                                                                                                                    | RED-pin card `t_321f6091` (optional) |
-| F7  | Info     | ADR-0129's header still names the pre-rename worktree branch (`wt/t_08538ff6`), and its never-return claim should be restated to match F1's fix.                                                                                                                                                                                                                                                                                                                     | RED-pin card `t_321f6091` (docs)     |
+| F6  | Info     | The rate classes (`read.normal`, `read.hot`, `write.normal`) are asserted by reference only; no test in the lane binds a route to its class. ADR-0131 defers the numeric budget to the rate-limit suite, which does not cover the binding either.                                                                                                                                                                                                                    | RED-pin card `t_321f6091` (optional) |
+| F7  | Info     | ADR-0131's header still names the pre-rename worktree branch (`wt/t_08538ff6`), and its never-return claim should be restated to match F1's fix.                                                                                                                                                                                                                                                                                                                     | RED-pin card `t_321f6091` (docs)     |
 
 No Critical finding. The honesty audit of the diff is clean: no
 test-environment conditionals, no `@ts-ignore`/`eslint-disable`/`skip`/`TODO`, no
@@ -145,7 +145,7 @@ failed (3) · Tests no tests`.
 - `prettier --check` clean and `eslint` exit 0 on the three specs;
   `tsc -p apps/web/tsconfig.json` reports only the expected `TS2307`
   missing-module errors on the touched specs.
-- The diff is test-only + docs: three integration specs and ADR-0129, no
+- The diff is test-only + docs: three integration specs and ADR-0131, no
   production file created or edited. Local head == `origin/…` head at the
   reviewed SHA.
 
@@ -171,7 +171,7 @@ failed (3) · Tests no tests`.
   deterministic order with no row repeated or skipped.
 - **F4** — `it.each` over `?limit=0`, `?limit=-5`, `?limit=abc`, `?limit=` (empty)
   all fall back to 20, and `?filter=bogus` falls back to the `active` band; both
-  fallbacks are stated in ADR-0129 §Feed projection.
+  fallbacks are stated in ADR-0131 §Feed projection.
 - **F5** — `EXPLAIN_READ_ROWS = 200` read rows precede the four unread rows, and
   the spec docstring records the flake risk and why the size removes it. Accepted.
   Verified the I4 assertion still targets `idx_user_unread` in the winning plan.
@@ -179,7 +179,7 @@ failed (3) · Tests no tests`.
   `async (request) => Response` with no route metadata, and the class exists only
   as a `rateLimit`/`rateLimitIdentity` stage option at the call site, so no spec
   can read the declared class off the handler. The recorded deferral is correct.
-- **F7** — ADR-0129's header names the real branch and its never-return paragraph
+- **F7** — ADR-0131's header names the real branch and its never-return paragraph
   matches what F1 pins; the ADR number is unchanged.
 
 ### Findings (round 2)
@@ -188,7 +188,7 @@ failed (3) · Tests no tests`.
 | --- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | A   | Medium   | The exact-key pin requires `actionResolvedVia`/`actionResolvedAt` **always** present (as `null`), but the published contract says otherwise: `docs/API Contract.md` §7.1's example shows one response whose first item omits both keys while its second carries them, and the `AppNotification` interface declares them optional (`?`). A GREEN implementer reading the contract alone can legitimately omit them and go red. | New card `t_bd74e9bf` (testcase-writer), parent of `t_58825ec3`; default resolution is to amend the contract to the stable 18-key shape |
 | B   | Low      | The `read-all` `before` comparison operator (`<` vs `<=`) is unobservable by construction and is not recorded in the ADR.                                                                                                                                                                                                                                                                                                     | New card `t_bd74e9bf`, secondary item                                                                                                   |
-| C   | Info     | The empty `?limit=` case is pinned as "fall back to 20"; the contract defines only the default, so this is a recorded lane choice.                                                                                                                                                                                                                                                                                            | Accepted (recorded in ADR-0129)                                                                                                         |
+| C   | Info     | The empty `?limit=` case is pinned as "fall back to 20"; the contract defines only the default, so this is a recorded lane choice.                                                                                                                                                                                                                                                                                            | Accepted (recorded in ADR-0131)                                                                                                         |
 | D   | Info     | `EXPLAIN_READ_ROWS = 200` adds 200 sequential inserts to one case; measured full integration run is still 54 s, so the cost is acceptable.                                                                                                                                                                                                                                                                                    | Accepted                                                                                                                                |
 
 No Critical finding. The honesty audit of the diff is clean: no
@@ -208,7 +208,7 @@ commit.
 
 - The card's whole definition of done is met: F1–F4 are present and red for the
   right reason, F5–F7 are addressed or explicitly recorded as accepted, and
-  ADR-0129 is updated in place without renumbering.
+  ADR-0131 is updated in place without renumbering.
 - One open contradiction remains between the pinned contract and the published
   contract document; card `t_bd74e9bf` closes it, and the GREEN card cannot start
   until it does.
@@ -223,7 +223,7 @@ commit.
   (`git ls-remote` == local head)
 - **Verdict:** Approved — no changes requested, no test or production file edited
   by the reviewer. Findings A and B from round 2 are closed; the contract
-  document, ADR-0129 and the specs now tell the same story.
+  document, ADR-0131 and the specs now tell the same story.
 
 ### What closed the round-1 change request
 
@@ -242,13 +242,13 @@ block, `FEED_ITEM_KEYS`, and the `AppNotification` declaration):
   are required-nullable (no `?`), `eventId: Id | null;` / `tenantId: Id | null;`
   present.
 
-So the stable 18-key shape ADR-0129 §Feed projection declares is the only
+So the stable 18-key shape ADR-0131 §Feed projection declares is the only
 reading left in the tree: the example, the interface, the pin and the ADR agree,
 and a GREEN implementer cannot legally omit the two resolution fields.
 
 ### What closed finding B
 
-ADR-0129 §Feed projection (line 131) now records `read-all` with `before` as
+ADR-0131 §Feed projection (line 131) now records `read-all` with `before` as
 `createdAt < before` — strictly earlier — and states that a row at the cut
 instant stays unread. It is also made **observable**: `notification-read-state.test.ts`
 gained a boundary case that seeds one row exactly at the cut and one 1 ms earlier
@@ -271,12 +271,12 @@ Re-ran the suites on the reviewed head instead of trusting the handoff:
 - `prettier --check` clean on both files touched by `62bcbc2` and on the
   read-state spec; `eslint` exit 0 on the spec.
 - `git diff 9c98fef..HEAD --stat` → 4 files, test-only + docs: three integration
-  specs, `docs/API Contract.md`, ADR-0129, ADR-0130. **No production file
+  specs, `docs/API Contract.md`, ADR-0131, ADR-0132. **No production file
   created or edited**, no route or module touched.
 - Honesty audit clean: no `skip`/`only`, no `@ts-ignore`/`eslint-disable`, no
   `NODE_ENV`/`process.env` branch, no `console` noise, no `TODO`, and no logic
   shaped around a fixture value.
-- ADR-0130's round-2 text is unchanged by the rework (`git diff 7bb2375..HEAD`
+- ADR-0132's round-2 text is unchanged by the rework (`git diff 7bb2375..HEAD`
   on this file is empty) — the reviewer-owned finding record was not rewritten.
 - Local `main` == `origin/main` (`3958213`); this round touched nothing on `main`.
 
@@ -296,5 +296,5 @@ Merging here would redden `main` until the implementation lands.
   projection must always emit all eighteen keys with
   `actionResolvedVia`/`actionResolvedAt` as `null` when unresolved, and
   `read-all`'s `before` comparison must be strict (`createdAt < before`).
-- No new ADR number consumed; ADR-0129 stays the contract of record and is
+- No new ADR number consumed; ADR-0131 stays the contract of record and is
   updated in place.

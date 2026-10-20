@@ -1,4 +1,4 @@
-# ADR-0129 — OP-97 RED: in-app feed, read state and the unread-count hot path
+# ADR-0131 — OP-97 RED: in-app feed, read state and the unread-count hot path
 
 - **Status:** Accepted · **Date:** 2026-10-20
 - **Card:** OP-97 phase 1 (RED, `t_08538ff6`) · **GREEN card:** `t_58825ec3` (backend-coder) · **Depends on:** OP-94 (ADR-0092 fan-out / ADR-0093), OP-81 (rate-limit classes), OP-82 (ADR-0007 `platformSettings`), OP-87 (ADR-0028 internal auth)
@@ -175,7 +175,7 @@ untouched. The GREEN card must state which it chose.
 
 ## Follow-up RED pins (F1–F7, card `t_321f6091`)
 
-The review of this RED lane (ADR-0130) routed seven findings; the pins below
+The review of this RED lane (ADR-0132) routed seven findings; the pins below
 land **before** the GREEN implementation so it builds against the complete
 contract. They change no production file.
 
@@ -191,7 +191,7 @@ contract. They change no production file.
 
 ### Follow-up settlement (card `t_bd74e9bf`)
 
-The two actionable findings of ADR-0130's round-2 review are closed here, before
+The two actionable findings of ADR-0132's round-2 review are closed here, before
 GREEN (`t_58825ec3`) implements:
 
 - **A (key set).** Resolved to the **stable 18-key shape** this ADR already
