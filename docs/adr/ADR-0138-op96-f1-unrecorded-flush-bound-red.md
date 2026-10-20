@@ -245,6 +245,9 @@ integration` → **1 failed | 54 passed (55) files; 1 failed | 357 passed (358) 
   (`t_92c086f5`, `ADR-0140-op96-f1c-r2-redelivered-digest-cap-red.md`). The F1 GREEN must therefore
   take `0141` if it is still free; the GREEN card already instructs a re-check immediately before
   committing. Flagged to the GREEN's owner by a comment on `t_cedd4e37`; no action needed here.
+  _Resolved: the F1 GREEN did take `0141` (`a0a7287`), but the sibling F1c-r2 GREEN had claimed it
+  four minutes earlier and merged to `main` first, so the F1 GREEN yielded and renumbered
+  `0141 → 0143` under card `t_aa82386b` (see `docs/adr/README.md`)._
 
 ### Merge posture
 

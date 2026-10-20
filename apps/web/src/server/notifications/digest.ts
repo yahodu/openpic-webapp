@@ -28,7 +28,7 @@
  * ADR-0137): once the bucket's unrecoverable failure count reaches
  * `pipeline.maxAttempts` it is closed terminally (`flushOutcome: "failed"`), so
  * the flush cron stops selecting it instead of retrying a "never retry" failure
- * forever. The same bound covers the **unrecorded** failure (F1, ADR-0141): a
+ * forever. The same bound covers the **unrecorded** failure (F1, ADR-0143): a
  * bucket whose destination never resolves (`failed_unrecorded`) is refetched and
  * re-rendered on every tick with no ledger row to own a retry, so it shares the
  * one unrecoverable-failure counter and ceiling instead of looping to TTL.
@@ -100,7 +100,7 @@ interface DigestBucket {
    * §19.6) — a **non-retryable** transport failure, or an **unrecorded** failure
    * (no ledger row owns a retry). Once it reaches
    * `platformSettings.pipeline.maxAttempts` the bucket is closed terminally
-   * (F1b-r2, ADR-0137; extended to `failed_unrecorded` by F1, ADR-0141).
+   * (F1b-r2, ADR-0137; extended to `failed_unrecorded` by F1, ADR-0143).
    */
   readonly nonRetryableFailures?: number;
 }
@@ -522,7 +522,7 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
   /**
    * Record one **unrecoverable** flush failure against the bucket and return the
    * resulting count (schema §19.6, F1b-r2, ADR-0137; extended to
-   * `failed_unrecorded` by F1, ADR-0141).
+   * `failed_unrecorded` by F1, ADR-0143).
    *
    * "Unrecoverable" covers both permanent-failure classes the flush cron must
    * not keep retrying: a **non-retryable** transport failure (whose ledger row
@@ -592,7 +592,7 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
       // No owner took the redelivery — a failure recorded nowhere at all (an
       // unresolvable destination or an unbuildable message). Nothing durably
       // owns a retry, so a later flush re-attempts the summary (F1b, ADR-0134)
-      // — but those re-attempts are **bounded** (F1, ADR-0141): the failure is
+      // — but those re-attempts are **bounded** (F1, ADR-0143): the failure is
       // counted against the same unrecoverable-failure ceiling as a
       // non-retryable transport failure, and once it reaches
       // `pipeline.maxAttempts` the bucket is closed terminally

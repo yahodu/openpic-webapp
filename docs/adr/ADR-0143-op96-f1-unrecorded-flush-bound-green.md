@@ -1,4 +1,4 @@
-# ADR-0141 — OP-96 follow-up round 3 GREEN: bound the repeated `failed_unrecorded` digest-flush re-attempt (F1)
+# ADR-0143 — OP-96 follow-up round 3 GREEN: bound the repeated `failed_unrecorded` digest-flush re-attempt (F1)
 
 - **Status:** Accepted · **Date:** 2026-10-20
 - **Card:** OP-96 follow-up round 3 GREEN (`t_cedd4e37`) · **Parent / RED pin:** `t_c9e903c5` (ADR-0138) · **Review of the RED:** ADR-0138 §"Review sign-off (round 1, artifact lens)"
@@ -92,6 +92,24 @@ errors: 0}`, `{scanned: 0, errors: 0}` — the bucket is terminal after the seed
 - No test, mock, fixture or factory is modified. The RED pin (ADR-0138) is untouched.
 - The F2 round-3 finding (overlapping flush invocations double-deliver a summary) is a separate card
   (`t_e3369a9e`, ADR-0139); the F1c-r2 coverage gap is a separate card (`t_92c086f5`, ADR-0140).
+
+## ADR-number allocation
+
+This file was committed as **`0141`** by the GREEN card `t_cedd4e37` (`a0a7287`,
+2026-10-20T15:25:54Z), taken as the lowest number free against `origin/main` at that moment
+(`origin/main` ended at `0137`; the F1 RED held `0138`, the sibling F2 RED `0139` and the F1c-r2 RED
+`0140`). Four minutes earlier the sibling F1c-r2 GREEN (`t_4c6c34fe`, PR #219, `7f5a830`,
+2026-10-20T15:21:12Z) had committed a **different** `ADR-0141`
+(`ADR-0141-op96-f1c-r2-redelivered-digest-cap-green.md`), which then merged to `main` as `4424e74` —
+so two distinct ADRs briefly shared `0141`.
+
+**This lane yields and renumbers `0141 → 0143` under card `t_aa82386b`** (child of `t_cedd4e37`):
+`0141` stays with the F1c-r2 GREEN on `main` and `0142` is held by the still-open OP-101 lane
+(`ADR-0142-op101-ci-audit-job-split.md`, PR #213), so `0142` would reproduce the same collision.
+`0143` was re-checked free against `origin/main`, every `origin` ref and the other local worktrees
+immediately before the rename. The number renumber raised as finding **F1-r1-A** by the round-1
+(artifact lens) sign-off below is the only documentation change; no behaviour, test, mock, fixture or
+the RED pin (ADR-0138) is touched.
 
 ## Review sign-off (round 1 GREEN, artifact lens)
 
