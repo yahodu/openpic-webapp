@@ -119,3 +119,101 @@ bound did touch `quiet-hours-release.ts`, but its `skipped = 0` and its
   durable.
 - **F5/F7: implement opportunistically.** Rejected — unpinned behaviour changes
   violate the lane's hard rule; routed to a future RED card instead.
+
+## Review sign-off (round 1, artifact lens) — APPROVED WITH FINDINGS
+
+Reviewed head `cbe546a` (PR #216, base `origin/main` `3958213`). The reviewer
+independently reproduced the whole suite in the lane worktree
+(`/root/openpic/openpic-webapp/.worktrees/t_6a4943e8`): `pnpm test:unit`
+**85 files / 1477 passed**, `pnpm test:int` **51 files / 353 passed** (the four
+F1–F4 pin files: 4 files / 6 tests passed), `tsc` ×3 exit 0, `eslint` 0 errors
+(42 pre-existing warnings), `prettier --check` clean, `pnpm --filter
+@openpic/web build` succeeds, and every PR check green on `cbe546a`. Diff scope
+is 4 production files + 4 pin specs + 3 ADR files; the implementation commit
+(`d5c8dff`) touches **no** test, mock, fixture or factory. The honesty audit is
+clean (no `.only`/`.skip`, no `process.env`/`NODE_ENV` branch, no
+`@ts-ignore`/`eslint-disable`, no `console.*`, no TODO, no dependency change).
+
+The pinned contract (ADR-0129) is met and the two non-blocking considerations
+raised on the RED card are answered: consideration #2 (`hasMore` widening) is
+amended into ADR-0120 A1, and consideration #1 (the failed digest consuming the
+daily cap) is consciously accepted and recorded above. The verdict is
+**APPROVED WITH FINDINGS** — nothing found is a blocker, and every finding below
+is a coverage gap or a hygiene item that needs its own RED pin (or metadata fix)
+rather than a change to this delivery.
+
+### Findings routed to a next-cycle RED pin (Test Author)
+
+1. **F1b (Medium) — a non-retryable digest-flush failure closes the bucket with
+   no owner.** `flushOneBucket` returns `failed_recorded` for _any_ transport
+   failure (`digest.ts:322-348`), but the ledger row it writes carries
+   `lastError: outcome.failure` — the transport's own classification — and
+   `retryDueDispatches` only selects `lastError.retryable: true`
+   (`dispatch-retry.ts:114`). So on a **non-retryable** failure the bucket is
+   marked `flushed` (`digest.ts:459-464`) while the row is never re-selected:
+   nothing redelivers the summary and it is silently dropped. The §F1 decision
+   above describes the recorded row as "a retryable `failed` ledger row", which
+   the code does not guarantee. The F1 pin
+   (`notification-digest-flush-failure.test.ts:215`) scripts a retryable failure
+   only. Pin the non-retryable branch (close only when the recorded failure is
+   retryable, otherwise leave the bucket selectable or record a distinct owned
+   terminal state).
+2. **F2b (Medium) — a capped row keeps `lastError.retryable: true` forever.**
+   The card asked the retry sweep to "record a terminal state so the row leaves
+   the sweep"; the query bound (`dispatch-retry.ts:114`) does remove the row
+   from the sweep but leaves the ledger asserting `status:"failed",
+lastError.retryable:true` — indistinguishable from a row still awaiting its
+   backoff. Any backlog/alert metric keyed on `retryable: true` therefore reports
+   a permanent, growing queue, and an operator cannot tell "will retry" from
+   "gave up". The F2 pin asserts the row is _unchanged_
+   (`notification-dispatch-retry-cap.test.ts:271-273`) via `toMatchObject`, which
+   permits (does not require) a marker. Pin a terminal marker (e.g.
+   `lastError.code: "attempts_exhausted"`, `retryable: false`).
+3. **F1c (Low) — a failed digest consumes the recipient's daily allowance.**
+   Accepted above, but note the claim that a distinct marker "is not available"
+   is too strong: the F1 pin asserts only `status` on the bucket, so a separate
+   `flushOutcome` field (or counting only ledger-`sent` flushes) remains
+   available. Pin "a failed flush does not consume `maxDigestEmailsPerDay`".
+4. **F5 (Low) — `upsertDigestBucket`'s concurrency claim is not honoured.**
+   The doc-comment (`fan-out.ts:727-734`) promises a concurrent arrival "can
+   never reset the bucket's `firstItemAt` or lose a count", but the atomic
+   pipeline upsert against the unique-open partial index can still raise
+   `E11000` on a duplicate arrival. Unpinned and unchanged here, as recorded
+   above.
+5. **F7 (Low) — a deferred row can stay `deferred` forever.** `releaseDeferredDispatches`
+   hard-codes `skipped = 0` (`quiet-hours-release.ts:90`) and
+   `redeliverDispatchRow` returns `"error"` without writing a row when the
+   message cannot be rebuilt (`dispatch-redelivery.ts:225`), so a deferred row
+   whose channel is not outbound is never released and never recorded. Unpinned
+   and unchanged here, as recorded above.
+
+### Findings for the Implementer (comment accuracy, no behaviour change)
+
+- `fan-out.ts:836-839` still says a render failure means "release falls back to a
+  metadata-only message". After F4 that fallback no longer exists: a `body: null`
+  row is classified terminally in the shared path. The comment should say so (or
+  the fallback should be pinned). Non-blocking.
+
+### Delivery-hygiene finding (fixed by the reviewer before merge)
+
+- PR #216 still carried the **RED** title
+  (`test(notifications): OP-96 pin the F1-F4 review findings (RED)`) and a body
+  declaring "DRAFT — RED by design … Do not merge this branch on its own (CI is
+  red by design)" although the branch now carries the GREEN implementation and CI
+  is green. Since a squash merge takes the PR title as the commit subject, the
+  release would have been mis-tagged (`test` → no version bump for production
+  code) and main's history would have carried a false "do not merge" note. The
+  reviewer corrected the title and body as part of this sign-off; the
+  implementation commits themselves are untouched.
+
+### Cross-lane finding (card created for the OP-97 lane)
+
+- **ADR number collision (Medium, integration hygiene).** This branch claims
+  `ADR-0129` + `ADR-0130`; the still-open OP-97 branch
+  (`OP-97-task-in-app-feed-read-state-red`, PR #215) independently claims
+  `ADR-0129` (`…op97-in-app-feed-read-state-unread-count-red`) and `ADR-0130`
+  (`…op97-red-review-signoff`). OP-96 merges first, so the OP-97 lane must
+  renumber `0129/0130 → 0131/0132` before its GREEN card `t_58825ec3` lands. A
+  card is created for that lane and linked as a prerequisite of `t_58825ec3`.
+  For the same reason this sign-off is a section of ADR-0130 rather than a new
+  `ADR-0131`, which would have widened the collision.
