@@ -5,7 +5,7 @@
 - **RED pin:** `apps/web/src/test/integration/notification-digest-flush-overlap-single-send.test.ts` (unchanged by this card), decision record **ADR-0139**
 - **Implements:** ADR-0139 §Decision (at most one delivery per bucket per open → flushed transition) · ADR-0130 §"F1" ("the flush cron can never re-select the bucket and double-send the summary") · ADR-0028 §1 (the "concurrency-safe" cron-framework claim, `apps/web/src/server/jobs/cron-job.ts`)
 - **Touches:** `apps/web/src/server/notifications/digest.ts` (production), `docs/Notification and Database Design.md` §19.6 (schema doc), this ADR + the ADR index row. **No test, mock, fixture or factory is touched.**
-- **Branch:** `OP-96-task-flush-overlap-single-send-red` (carries the RED pin + this GREEN; PR **#221**) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-flush-overlap-red` · **Base:** `origin/main` `3f46950`, merged up to `origin/main` `52f742e` before the final verification run
+- **Branch:** `OP-96-task-flush-overlap-single-send-red` (carries the RED pin + this GREEN; PR **#221**) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-flush-overlap-red` · **Base:** `origin/main` `3f46950`, merged up to `origin/main` `23c236d` before the final verification run (via `52f742e`; the `23c236d` merge also resolved the `docs/adr/README.md` conflict against the ADR-0300 reserved-range policy and kept both this lane's `0139`/`0143` index rows)
 
 ## Context
 
@@ -170,12 +170,29 @@ null }` in the `$or`. `$unset` keeps one representation of "unclaimed" (absent) 
   job's point of view: success case `scanned: 1, affected: 0, skipped: 1` (loser) next to
   `scanned: 1, affected: 1, skipped: 0` (winner); failure case `scanned: 1, errors: 1` once and
   `scanned: 1, affected: 0, skipped: 1` once — no run reports the same bucket as delivered.
-- **Full integration suite (on the merged tree, `origin/main` `52f742e`):**
-  `Test Files 56 passed (56) · Tests 360 passed (360)` — the 56th file is the F1c-r2 spec merged in from
-  `main`; on this branch before that merge it was `Test Files 55 passed (55) · Tests 359 passed (359)`,
-  against the RED baseline `1 failed | 54 passed (55)` files, `2 failed | 357 passed (359)` tests
-  (ADR-0139 §RED evidence; independently reproduced on this branch before coding).
-- **Unit suite:** `Test Files 85 passed (85) · Tests 1477 passed (1477)` (unchanged before/after —
-  `digest.test.ts` covers the two pure functions only).
+- **Full integration suite (final, on the merged tree at `origin/main` `23c236d`):**
+  `Test Files 57 passed (57) · Tests 361 passed (361)` (84 s) — the extra files over this branch's
+  pre-merge `55` are the integration specs merged in from `main` (the F1c-r2 spec, PR #219; the OP-94
+  mobile skip-channel pin, PR #210), against the RED baseline `1 failed | 54 passed (55)` files,
+  `2 failed | 357 passed (359)` tests (ADR-0139 §RED evidence; independently reproduced on this branch
+  before coding). An intermediate run on the earlier merge base `52f742e` was `56 passed (56)` /
+  `360 passed (360)`.
+- **Unit suite:** `Test Files 85 passed (85) · Tests 1485 passed (1485)` (unchanged before/after —
+  `digest.test.ts` covers the two pure functions only; the count is above the ADR's earlier 1477 only
+  because `origin/main` added unit specs while this GREEN was in flight).
+- **Pre-existing TTL-fixture flake, not this lane's (observed once during verification).** One
+  `pnpm test:int` run on the loaded host failed two _unrelated_ specs in one pass
+  (`notification-dispatch-retry-cap.test.ts:309`, `notification-bounded-sweeps.test.ts:349`) and the
+  pin's own second case once (`:391`, `transport.calls` 0). Every one passes in isolation and the
+  re-run above is fully green. The root cause is documented and routed by the sibling lane
+  `t_e8e658fd` (**ADR-0146**): the ~23 integration specs that pin a `2026-03-*` fixture clock persist
+  rows whose `expireAt = instant + retention.dispatchDays` (180 d) is already in the past against the
+  real clock, so mongod's 60 s TTL monitor can delete a fixture mid-test on a slow host. It is a
+  harness defect in the frozen specs, not a product defect and not caused by the claim: the pin's
+  `countDocuments` at line 348 runs **before** any flush, and the claim adds no reader of `expireAt`.
+  Re-anchoring the fixtures to the real clock is ADR-0146's routed class-wide follow-up; this lane is
+  card-restricted from editing any spec but its own pin, and the pin itself was reviewed and frozen.
+- **Coverage.** `pnpm test:coverage` is not re-run here (the locally disabled CI step); the claim
+  helpers are function-scoped additions inside `flushDueDigests` and are exercised by the pin.
 - `pnpm typecheck` clean · `pnpm run lint` 0 errors (42 pre-existing warnings) · `pnpm run build`
   successful · `pnpm exec prettier --check .` clean.
