@@ -115,8 +115,10 @@ and this lane's RED holds `0140`. `0141` is therefore the next free, re-checked 
 
 > **Post-review update (see the sign-off below):** a fourth, then-unknown claim to `0141` appeared
 > four minutes after this commit — the sibling F1 GREEN lane (`t_cedd4e37`). This lane committed
-> first and keeps `0141`; the F1 GREEN renumbers to `0142` under card `t_aa82386b` before which PR
-> #220 must not be merged.
+> first and keeps `0141`; the F1 GREEN renumbers to `0145` under card `t_aa82386b` (`0142` is held by
+> the still-open OP-101 lane, `ADR-0142-op101-ci-audit-job-split.md`) before which PR #220 must not be
+> merged. _(The target number is corrected here from `0142` to `0145` by card `t_aa82386b`, which
+> performed the renumber.)_
 
 ## Review sign-off (round 1, artifact lens) — card `t_4c6c34fe`
 
@@ -155,5 +157,5 @@ and this lane's RED holds `0140`. `0141` is therefore the next free, re-checked 
     sibling F1 GREEN lane committed a _different_ `ADR-0141`
     (`ADR-0141-op96-f1-unrecorded-flush-bound-green.md`, `a0a7287`, 15:25:54Z) four minutes after
     this lane's `7f5a830` (15:21:12Z). This lane keeps `0141` (earliest claim, and the allocation
-    the orchestrator reserved for it); the F1 GREEN renumbers to `0142`. Recorded here so the
+    the orchestrator reserved for it); the F1 GREEN renumbers to `0145`. Recorded here so the
     resolution is auditable, and flagged on PR #220.
