@@ -185,3 +185,72 @@ or ledger cost.
   **separate** card (`t_e3369a9e`, ADR 0139) and is not pinned here.
 - The F1c-r2 coverage gap (a retry-redelivered digest is never counted against
   `maxDigestEmailsPerDay`) is a **separate** card (`t_92c086f5`) and is not pinned here.
+
+## Review sign-off (round 1, artifact lens)
+
+**Verdict: APPROVED — no changes requested.** Reviewed head `91dabf0` (base `origin/main` `509b559`),
+draft PR #220. The review lens for round 1 is the artifact itself: the diff was read cold before the
+implementer's narrative, and every claim in the handoff was then reproduced independently.
+
+### What was verified
+
+- **Scope / honesty audit.** `git diff --name-status origin/main...HEAD` = 3 files: the new spec
+  (added, 378 lines), this ADR (added, 187), and one `docs/adr/README.md` row + allocation note
+  (modified, +3). No production code, no existing test, mock, fixture or factory is touched. The spec
+  contains no `@ts-ignore`/`@ts-expect-error`, no `eslint-disable`, no `.only`/`.skip`, no
+  `console.*`, no `NODE_ENV`/`process.env` branch, and no fixture-shaped logic. `prettier --check` and
+  `pnpm typecheck` are clean on the delivered head.
+- **RED reproduces, for the intended reason.** `TMPDIR=/root/tmp-mongo pnpm vitest run --project
+integration` → **1 failed | 54 passed (55) files; 1 failed | 357 passed (358) tests**, matching the
+  handoff counts byte-for-byte. The single failure is the new pin at
+  `notification-digest-flush-unrecorded-bound.test.ts:365:32`
+  (`expected 'open' to be 'flushed'`), and the four flush ticks log four consecutive
+  `{ scanned: 1, affected: 0, errors: 1 }` — the bucket never leaves the selectable set. Baseline
+  `54 files / 357 tests` on `509b559`, so no pre-existing pin regressed.
+- **The pin cannot pass vacuously.** The spec asserts the open bucket exists (line 330) before driving
+  the ticks, and asserts the zero-cost observables (`transport.calls === 0`, empty outbox, zero ledger
+  rows, zero `status: "sent"` rows) _before_ the terminal assertion — so the failure isolates the
+  missing bound, not a mis-built scenario. It also pins the "the bound is `N`, not `1`" half (bucket
+  still `open` with no `flushOutcome` after the first failure, line 344-345), which would catch a
+  one-failure closure.
+- **The contract is coherent and implementable.** Option (a) reuses the shape the merged transport
+  bound already ships (`digest.ts:545-556`: `recordNonRetryableFailure` + `markFlushed(bucket,
+"failed")` when the count reaches `maxAttempts`), extended to the `failed_unrecorded` branch at
+  `digest.ts:557-560`. The bound is `pipeline.maxAttempts` seeded non-default (`2`), and the terminal
+  marker reuses the existing `status: "flushed"` / `flushOutcome: "failed"` pair, so no new
+  `platformSettings` field and no second marker are required. The RED-failure scenario (clear
+  `user.email` after the real fan-out) is the deterministic construction the card asked for; the
+  card's all-prefs-off suggestion genuinely cannot reach `failed_unrecorded` (preferences are not read
+  on the flush path).
+- **ADR number.** `0138` is referenced by nothing on `origin/main` (`509b559`, ends at `0137`) or any
+  other open ref; re-checked in this review. `README.md`'s row and allocation note are accurate.
+- **CI on the draft PR.** `validate-branch-name`, `validate-pr-title`, `lint`, `unit_test`,
+  `secret-scan`, `env-changes` and CodeQL are green on `91dabf0`; `test_coverage` fails **only** at the
+  intentional RED (`1 failed | 1834 passed`), which is the expected posture for a RED-only draft PR.
+
+### Findings (all Low, non-blocking — none requires a change to this delivery)
+
+- **F1-r1-L1 (coverage, informational).** The pin covers only the `resolveDestination(...) === null`
+  trigger of `failed_unrecorded`; the sibling `buildRedeliveryMessage(...) === null` trigger is not
+  pinned. Both return from the same `FlushOne` member, so the observables pinned here bound it too.
+  Recorded as an accepted limitation (ADR-0138 §Assumptions), not a gap worth a new card.
+- **F1-r1-L2 (implementation latitude, informational).** ADR-0138 permits the GREEN to reuse
+  `nonRetryableFailures` as the unrecorded-failure counter. That would make a permanent unrecorded
+  failure and a permanent non-retryable transport failure share one counter and one ceiling — safe
+  for the bound, but it conflates two failure classes in one field. The pin deliberately does not
+  assert the counter's name, so either choice passes; recorded only so a later round does not read the
+  shared field as a bug.
+- **F1-r1-L3 (cross-lane drift, routed — not a defect in this pin).** The GREEN card `t_cedd4e37`
+  carries the stale hint "expect `0140`", but ADR-0140 was consumed by the sibling F1c-r2 RED lane
+  (`t_92c086f5`, `ADR-0140-op96-f1c-r2-redelivered-digest-cap-red.md`). The F1 GREEN must therefore
+  take `0141` if it is still free; the GREEN card already instructs a re-check immediately before
+  committing. Flagged to the GREEN's owner by a comment on `t_cedd4e37`; no action needed here.
+
+### Merge posture
+
+PR #220 **stays a draft** — a RED pin is never merged on its own. The child GREEN card `t_cedd4e37`
+(`openpic-webapp-backend-coder`, this branch/worktree) turns the pin green, after which the PR goes
+ready and is squash-merged. Nothing was merged by this review.
+
+_Reviewed independently by `openpic-webapp-reviewer` (artifact lens, round 1) on
+2026-10-20; sign-off recorded docs-only, as ADR-0137's round-1 sign-off was._
