@@ -59,10 +59,21 @@ declares the expected signature in its docstring (the contract declaration a
 test may own) and reads the seam through a typed namespace accessor:
 
 ```ts
-const fanOut = fanOutModule as typeof fanOutModule & {
+const fanOut = fanOutModule as Omit<typeof fanOutModule, "groupChannel"> & {
   readonly groupChannel?: GroupChannelSeam;
 };
 ```
+
+The `Omit` is load-bearing, and the first draft did not have it. Once the seam is
+`export`ed, the module's own **required** `groupChannel` declaration subsumes an
+optional member declared via `typeof fanOutModule & …`, so the intersection is
+required and the `if (seam === undefined)` guard becomes statically dead —
+tripping the repo-wide type-aware rule
+`@typescript-eslint/no-unnecessary-condition` (part of the
+`strictTypeChecked` preset, `error`). `Omit<typeof fanOutModule, "groupChannel">`
+drops the module's own declaration first, so the member stays genuinely optional
+and the guard is live in **both** states: the RED (export absent) still throws the
+named contract error below, and the GREEN (export present) reads the seam.
 
 The accessor exists so the RED is **scoped and legible**: a bare named import of
 a missing export aborts module instantiation, which would report all 15 existing
@@ -70,7 +81,10 @@ U1–U3 tests as failed and hide the real message. Instead `groupChannelOf()`
 throws
 `fan-out must export "groupChannel(group: ChannelGroup): ResolvedChannel" (authorized test seam, ADR-0111) …`,
 so the 8 intended failures each name the missing contract while U1–U3 stay
-green. `tsc` also stays clean because the seam is declared optional.
+green. `tsc` also stays clean because the seam is declared optional — but that is
+sufficient only for `tsc`, not for the lint gate: the member must stay _genuinely_
+optional (the `Omit` above) for `no-unnecessary-condition` to leave the guard
+alone, so "declared optional" and "lint-clean" are not the same claim.
 
 The pins:
 
