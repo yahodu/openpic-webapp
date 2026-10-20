@@ -213,3 +213,88 @@ commit.
   contract document; card `t_bd74e9bf` closes it, and the GREEN card cannot start
   until it does.
 - Local `main` == `origin/main` (`3958213`); nothing reviewed here touched `main`.
+
+## Round 3 — follow-up settlement review (card `t_bd74e9bf`)
+
+- **Status:** Accepted · **Date:** 2026-10-20 · **Lens:** execution (round 2 of
+  this card's review; round 1 requested one change and it has landed)
+- **Reviewed:** PR #215 (still draft), branch
+  `OP-97-task-in-app-feed-read-state-red`, base `9c98fef`, head `62bcbc2`
+  (`git ls-remote` == local head)
+- **Verdict:** Approved — no changes requested, no test or production file edited
+  by the reviewer. Findings A and B from round 2 are closed; the contract
+  document, ADR-0129 and the specs now tell the same story.
+
+### What closed the round-1 change request
+
+Round 1 of this card found that §7.1's **second** example item
+(`collab.invite.sent`) still carried 16 keys, omitting `eventId` and `tenantId`.
+Commit `62bcbc2` adds both after `"readAt": null`, matching item 1's order.
+
+Verified programmatically rather than by eye (a script parsed the §7.1 JSON
+block, `FEED_ITEM_KEYS`, and the `AppNotification` declaration):
+
+- item 0 (`attendee.matches.new`) — 18 keys; item 1 (`collab.invite.sent`) —
+  18 keys; the two key sets are **equal**;
+- both equal `FEED_ITEM_KEYS` (`notification-feed.test.ts:110-129`, 18 keys);
+- both equal the `AppNotification` field set (18 fields, **zero** optional);
+- `actionResolvedVia: ResolvedVia | null;` / `actionResolvedAt: IsoDateTime | null;`
+  are required-nullable (no `?`), `eventId: Id | null;` / `tenantId: Id | null;`
+  present.
+
+So the stable 18-key shape ADR-0129 §Feed projection declares is the only
+reading left in the tree: the example, the interface, the pin and the ADR agree,
+and a GREEN implementer cannot legally omit the two resolution fields.
+
+### What closed finding B
+
+ADR-0129 §Feed projection (line 131) now records `read-all` with `before` as
+`createdAt < before` — strictly earlier — and states that a row at the cut
+instant stays unread. It is also made **observable**: `notification-read-state.test.ts`
+gained a boundary case that seeds one row exactly at the cut and one 1 ms earlier
+and reuses the same `Date` for both the seed and the request body, so `$lte`
+would mark 2 and fail `{ markedCount: 1, unreadCount: 1 }`. Unlike the original
+1/3/5-day case, `$lt` and `$lte` are now distinguishable.
+
+### Independently reproduced on `62bcbc2` (execution lens)
+
+Re-ran the suites on the reviewed head instead of trusting the handoff:
+
+- `vitest run --project unit` → 87 files, **1477/1477 passed**, 2 files red at
+  import (`@/server/notifications/feed`, `…/unread-count`) — the new unit specs.
+- `vitest run --project integration` → 50 files, 46 passed / 4 failed,
+  **347 passed / 1 failed**; the four red files are the three pinned OP-97
+  suites at import plus the intended PRE-1 pin at
+  `notification-fan-out.test.ts:774` (`expected [] to have a length of 1 but got +0`).
+- Baseline-identical to `9c98fef` and `e34c515`: no regression, and the docs-only
+  commit movement cannot change posture by construction.
+- `prettier --check` clean on both files touched by `62bcbc2` and on the
+  read-state spec; `eslint` exit 0 on the spec.
+- `git diff 9c98fef..HEAD --stat` → 4 files, test-only + docs: three integration
+  specs, `docs/API Contract.md`, ADR-0129, ADR-0130. **No production file
+  created or edited**, no route or module touched.
+- Honesty audit clean: no `skip`/`only`, no `@ts-ignore`/`eslint-disable`, no
+  `NODE_ENV`/`process.env` branch, no `console` noise, no `TODO`, and no logic
+  shaped around a fixture value.
+- ADR-0130's round-2 text is unchanged by the rework (`git diff 7bb2375..HEAD`
+  on this file is empty) — the reviewer-owned finding record was not rewritten.
+- Local `main` == `origin/main` (`3958213`); this round touched nothing on `main`.
+
+### Merge posture (unchanged, re-affirmed)
+
+PR #215 stays a **draft and unmerged** on head `62bcbc2`. CI is red by design
+(`ci`, `unit_test`, `test_coverage` fail on the not-yet-implemented routes;
+`lint`, `validate-branch-name`, `validate-pr-title`, `secret-scan`,
+`env-changes` and CodeQL pass); the pins ship inside the OP-97 GREEN PR per §4.
+Merging here would redden `main` until the implementation lands.
+
+### Consequences (round 3)
+
+- Card `t_bd74e9bf`'s whole definition of done is met; nothing remains between
+  the pinned contract and the published one.
+- GREEN (`t_58825ec3`) is released to implement against a settled contract: the
+  projection must always emit all eighteen keys with
+  `actionResolvedVia`/`actionResolvedAt` as `null` when unresolved, and
+  `read-all`'s `before` comparison must be strict (`createdAt < before`).
+- No new ADR number consumed; ADR-0129 stays the contract of record and is
+  updated in place.
