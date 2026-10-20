@@ -112,3 +112,48 @@ non-consumption vs cross-run consumption after redelivery).
 (`0136` for its sign-off); the two sibling round-3 finding branches hold `0138`
 (`OP-96-task-failed-unrecorded-bound-red`) and `0139` (`OP-96-task-flush-overlap-single-send-red`);
 and this lane's RED holds `0140`. `0141` is therefore the next free, re-checked against every ref.
+
+> **Post-review update (see the sign-off below):** a fourth, then-unknown claim to `0141` appeared
+> four minutes after this commit — the sibling F1 GREEN lane (`t_cedd4e37`). This lane committed
+> first and keeps `0141`; the F1 GREEN renumbers to `0142` under card `t_aa82386b` before which PR
+> #220 must not be merged.
+
+## Review sign-off (round 1, artifact lens) — card `t_4c6c34fe`
+
+- **Reviewed head:** `7f5a830` on `OP-96-task-f1c-r2-cap-red` (base `origin/main` `3f46950`), PR #219
+  (turned ready by the GREEN). **Verdict: APPROVED** — no changes requested.
+- **Checks run independently** in `/root/openpic/openpic-webapp/.worktrees/t_6a4943e8`:
+  - `TMPDIR=/root/tmp-mongo vitest run --project integration` → **55 files / 358 tests passed**; a
+    focused re-run of the pin plus the two contract-pair pins (F1c
+    `notification-digest-flush-daily-cap.test.ts`, F1b-r2
+    `notification-digest-flush-non-retryable-bound.test.ts`) → 3/3 passed.
+  - `vitest run --project unit` → **85 files / 1477 tests passed**; `pnpm typecheck` clean;
+    `pnpm lint` **0 errors** (42 pre-existing warnings); PR #219 CI green at `7f5a830`.
+  - **Scope/honesty audit:** the GREEN commit touches 6 files (3 production, the schema, this ADR,
+    `docs/adr/README.md`); the pin file is byte-identical to the RED commit `012faad`; no
+    `@ts-ignore` / `eslint-disable` / `.only` / `console.*` / env-conditional or fixture-shaped
+    logic.
+  - **Mechanism audit:** `digestBucketId` is stamped only on the failed-flush ledger row;
+    `creditDigestBucket` only credits a bucket still `status: "flushed"`; the F1c pin (a
+    failed-but-undelivered flush burns no allowance) and the F1b-r2 pin (a terminal non-retryable
+    close is never credited) stay green, and the second flush in the pin logs
+    `scanned: 1, affected: 0, skipped: 1`.
+- **Findings (triaged; none blocking):**
+  - **L1 (Low, maintainability) — routed to card `t_92776e91`.** The `markFlushed` JSDoc in
+    `digest.ts` (~lines 501–507) still says _"counts `"sent"` flushes alone"_, which this change
+    made false.
+  - **L2 (Low, informational) — no card.** `redeliverDispatchRow` marks the ledger row `sent`
+    _before_ awaiting `creditDigestBucket`. A crash in that window delivers the summary without
+    crediting the bucket (cap undercount), mirroring the pre-existing crash window in the send →
+    mark-sent order; not deterministically pinnable, and reordering would trade it for a duplicate
+    send.
+  - **L3 (Low, informational) — pre-existing, no card.** `countFlushedToday` filters
+    `{userId, status: "flushed"}` and no supporting index exists on `notificationDigests`
+    (`{userId, bucketKey}` is partial on `status: "open"`); the added `$or` does not change the
+    access pattern. Introduced by ADR-0134/ADR-0132-class work, not by this change.
+  - **L4 (Medium, delivery hygiene) — routed to card `t_aa82386b`.** ADR-number collision: the
+    sibling F1 GREEN lane committed a _different_ `ADR-0141`
+    (`ADR-0141-op96-f1-unrecorded-flush-bound-green.md`, `a0a7287`, 15:25:54Z) four minutes after
+    this lane's `7f5a830` (15:21:12Z). This lane keeps `0141` (earliest claim, and the allocation
+    the orchestrator reserved for it); the F1 GREEN renumbers to `0142`. Recorded here so the
+    resolution is auditable, and flagged on PR #220.
