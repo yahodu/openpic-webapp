@@ -126,6 +126,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0126](ADR-0126-op96-digest-retry-quiet-hours-crons-green.md)                      | OP-96 GREEN: digest buckets, dispatch retry, quiet-hours release; per-dispatch failure no longer pending             | Accepted                  |
 | [0127](ADR-0127-op96-per-dispatch-failure-ownership.md)                            | OP-96: per-dispatch failure ownership — the retry cron owns redelivery, the outbox event is marked done              | Accepted                  |
 | [0128](ADR-0128-op96-green-review-signoff.md)                                      | OP-96 GREEN review sign-off: integration renumber `0110–0117 → 0111–0118`, shared redelivery path, 4 findings routed | Accepted                  |
+| [0129](ADR-0129-op96-f1-f4-review-findings-red.md)                                 | OP-96 follow-up RED: pin review findings F1–F4 (digest double-send, unbounded retries/reads, empty redelivery)       | Accepted                  |
 
 Template: Context · Decision · Consequences · Alternatives.
 
