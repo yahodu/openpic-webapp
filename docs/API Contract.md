@@ -2454,6 +2454,8 @@ Auth `user` · Rate `read.normal` · Sorted `createdAt` desc (index `{userId:1, 
       "actionResolvedVia": null,
       "actionResolvedAt": null,
       "readAt": null,
+      "eventId": "6702ff...",
+      "tenantId": null,
       "createdAt": "...",
       "updatedAt": "..."
     }

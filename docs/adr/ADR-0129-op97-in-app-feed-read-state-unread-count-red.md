@@ -195,14 +195,15 @@ The two actionable findings of ADR-0130's round-2 review are closed here, before
 GREEN (`t_58825ec3`) implements:
 
 - **A (key set).** Resolved to the **stable 18-key shape** this ADR already
-  declares. `docs/API Contract.md` §7.1's example now carries
-  `"actionResolvedVia": null, "actionResolvedAt": null` on **both** items (the
-  first item previously omitted them), and the `AppNotification` interface now
-  declares both as required-nullable (`actionResolvedVia: ResolvedVia | null;`
-  / `actionResolvedAt: IsoDateTime | null;`, no `?`). The example, the interface
-  and `FEED_ITEM_KEYS` therefore tell one story: the two keys are always present
-  and serialize as `null` when unresolved. The omit-when-unresolved alternative
-  was **not** chosen, so the pin stays strict.
+  declares. `docs/API Contract.md` §7.1's example now shows **both** items with
+  the identical eighteen keys: the first item previously omitted
+  `"actionResolvedVia": null, "actionResolvedAt": null`, and the second omitted
+  `"eventId"`/`"tenantId"`; both now carry the full set, so every example item
+  matches the `AppNotification` interface and `FEED_ITEM_KEYS`. The interface now
+  declares both resolution fields as required-nullable (no `?`), so the example,
+  the interface and `FEED_ITEM_KEYS` tell one story: the eighteen keys are always
+  present and the two resolution fields serialize as `null` when unresolved. The
+  omit-when-unresolved alternative was **not** chosen, so the pin stays strict.
 - **B (`before` operator).** Now recorded above (`createdAt < before`) and made
   observable by a boundary pin in `notification-read-state.test.ts` (a row
   exactly at the cut instant stays unread, so `$lte` would fail the case).
