@@ -16,8 +16,10 @@
  * count is the recipient's **delivered** flushes since local midnight in
  * `notificationPreferences.quietHours.timeZone` (UTC fallback, ADR-0120 A3) —
  * a flush whose send failed never reached the recipient, so it does not consume
- * the allowance (F1c, ADR-0134). A due bucket beyond the cap is **deferred**,
- * not dropped — it stays `open` and is not counted as `hasMore`.
+ * the allowance (F1c, ADR-0134), while one that failed and was then
+ * **redelivered by the retry sweep** does (F1c-r2, ADR-0141). A due bucket
+ * beyond the cap is **deferred**, not dropped — it stays `open` and is not
+ * counted as `hasMore`.
  *
  * A bucket is closed only when the recorded failure has an owner (F1b,
  * ADR-0134): a **retryable** transport failure is redelivered by the ledger row,
@@ -233,11 +235,20 @@ function startOfLocalDay(instant: Date, timeZone: string): Date {
 
 /**
  * Count the recipient's **delivered** digest emails since local midnight
- * (ADR-0120 A4, amended by ADR-0134).
+ * (ADR-0120 A4, amended by ADR-0134 and ADR-0141).
  *
- * Only a `flushOutcome: "sent"` flush counts: a summary whose transport send
- * failed (retryably or not) never reached the recipient, so it must not burn the
- * day's `maxDigestEmailsPerDay` allowance (F1c, ADR-0134).
+ * A digest email counts once it has actually reached the recipient:
+ *
+ * - a `flushOutcome: "sent"` flush was delivered on the first attempt, so its
+ *   `flushedAt` is the delivery instant; or
+ * - a bucket whose summary failed retryably (`flushOutcome: "failed"`) and was
+ *   then **redelivered by the retry sweep** carries `redeliveredAt` — the
+ *   summary is received then, so it consumes the allowance exactly like a
+ *   first-attempt success (F1c-r2, ADR-0141).
+ *
+ * A summary that never reached the recipient — a failed flush not yet
+ * redelivered, or a terminal non-retryable failure — burns no allowance
+ * (F1c, ADR-0134).
  */
 async function countFlushedToday(db: Db, userId: ObjectIdValue, now: Date): Promise<number> {
   const timeZone = await recipientTimeZone(db, userId);
@@ -247,8 +258,10 @@ async function countFlushedToday(db: Db, userId: ObjectIdValue, now: Date): Prom
     .countDocuments({
       userId,
       status: "flushed",
-      flushOutcome: "sent",
-      flushedAt: { $gte: since },
+      $or: [
+        { flushOutcome: "sent", flushedAt: { $gte: since } },
+        { redeliveredAt: { $gte: since } },
+      ],
     });
 }
 
@@ -394,6 +407,10 @@ async function flushOneBucket(
       deliveredAt: null,
       failedAt: now,
       notificationId: null,
+      // The `failed` row owns the redelivery of a retryable flush; link it back
+      // to the bucket it flushes so the redelivery can credit the bucket once
+      // the summary actually reaches the recipient (F1c-r2, ADR-0141).
+      digestBucketId: bucket._id,
       expireAt,
     });
     // The ledger row owns the redelivery only when the failure is retryable
@@ -452,8 +469,10 @@ async function flushOneBucket(
  * bucket stays `open` and a later tick re-attempts the summary (F1b, ADR-0134) —
  * but only up to `pipeline.maxAttempts` times, after which it is closed
  * terminally (F1b-r2, ADR-0137). A closed bucket records whether the summary
- * actually went out (`flushOutcome: "sent" | "failed"`), and only a `"sent"`
- * flush consumes the recipient's daily allowance (F1c, ADR-0134).
+ * actually went out on the flush (`flushOutcome: "sent" | "failed"`), and only a
+ * delivered summary — a `"sent"` flush, or a `"failed"` one later redelivered by
+ * `notification-dispatch-retry` (F1c-r2, ADR-0141) — consumes the recipient's
+ * daily allowance (F1c, ADR-0134).
  *
  * @param options - Database/clock/transport seams and the per-run limit.
  * @returns The §10.2 run outcome.

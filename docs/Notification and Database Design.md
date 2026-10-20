@@ -1937,6 +1937,7 @@ One row per (notification, channel) attempt — **including skips**.
 | `attempts`, `lastError`                         |                                                                                                                                    | Retry accounting                                                                                                                                                           |
 | `queuedAt`, `sentAt`, `deliveredAt`, `failedAt` | date                                                                                                                               | Receipt timeline from provider webhooks                                                                                                                                    |
 | `notificationId`                                | ObjectId \| null                                                                                                                   | Links to the in-app row, when there is one                                                                                                                                 |
+| `digestBucketId`                                | ObjectId \| null                                                                                                                   | Set on a digest flush's `failed` row: links it back to its `notificationDigests` bucket so a successful **retry redelivery** can credit the bucket (F1c-r2, ADR-0141)      |
 | `expireAt`                                      | date                                                                                                                               | TTL 180 days                                                                                                                                                               |
 
 **Indexes:**
@@ -1961,8 +1962,13 @@ One row per (notification, channel) attempt — **including skips**.
   // the flush cron stops re-attempting a "never retry" failure
   // (F1b-r2, ADR-0137; extended to failed_unrecorded by F1, ADR-0141)
   nonRetryableFailures: 0,
-  // on close: why it closed — only a "sent" flush counts against maxDigestEmailsPerDay
-  flushOutcome: "sent" | "failed" }
+  // on close: why the flush attempt ended — only a "sent" flush counts against
+  // maxDigestEmailsPerDay as a first-attempt success
+  flushOutcome: "sent" | "failed",
+  // set when a "failed" flush's ledger row (digestBucketId) is redelivered
+  // successfully by the retry sweep: the summary reached the recipient then, so
+  // it also counts against maxDigestEmailsPerDay (F1c-r2, ADR-0141)
+  redeliveredAt: Date }
 ```
 
 **Indexes:** `{userId:1, bucketKey:1}` unique partial on `status:"open"` · `{status:1, flushAt:1}` partial on `open` (the flush cron) · `{expireAt:1}` TTL 0
