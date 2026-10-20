@@ -51,6 +51,28 @@ jobs:
       - name: E2E tests
         run: pnpm test:e2e
 
+  # The dependency audit is its own check on purpose: when it was the last step
+  # of the `ci` job, an advisory reddened the whole project gate and a genuine
+  # unit/integration/typecheck regression was indistinguishable from it. It
+  # deliberately does not `needs: ci` so it reports independently.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
       - name: Dependency audit
         run: pnpm audit --audit-level=moderate
 

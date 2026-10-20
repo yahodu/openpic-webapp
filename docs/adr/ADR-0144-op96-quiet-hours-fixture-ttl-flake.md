@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-10-20
 - **Card:** OP-96 follow-up "diagnose + stabilize the intermittent I11 fan-out flake" (`t_e8e658fd`) · **Parent:** `t_e3369a9e` (the F2 RED pin) · **Evidence source:** round-1 (artifact lens) review of `t_e3369a9e`, finding **F2-2**
-- **Branch:** `OP-96-task-quiet-release-flake-red`, base `origin/main` `3f46950` (1.22.3) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-quiet-i11-flake`
+- **Branch:** `OP-96-task-quiet-release-flake-red`, rebased onto `origin/main` `705467a` (1.22.4 + #213; originally created from `3f46950`) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-quiet-i11-flake`
 - **Touches:** one existing integration spec (`notification-quiet-hours-release.test.ts`) + this ADR + the ADR index. **No production code, mock, fixture, factory or other spec.**
 
 ## Context
@@ -177,17 +177,23 @@ count fell from `3` to `0` within ~64 s while the test only slept (the monitor's
 ## Post-fix verification
 
 All commands run in `/root/openpic/openpic-webapp/.worktrees/t-quiet-i11-flake` with
-`TMPDIR=/root/tmp-mongo`, on the loaded host described above.
+`TMPDIR=/root/tmp-mongo`, on the loaded host described above. The branch was rebased onto
+`origin/main` `705467a` (which brought in the F1c-r2 lane's new integration spec) before the final
+runs; the numbers below are from the rebased tree.
 
-- **The spec file, 12 consecutive runs under load** (load average 7–9 during the loop), post-fix:
-  **12/12 green, `5 passed (5)` each — 60 test executions, 0 failures.**
-- **Full integration suite, post-fix:** `vitest run --project integration` →
-  **54 passed (54) files, 357 passed (357) tests**, 134 s, at load average **19.60**. Same file/test
-  counts as the pre-change baseline (no test added, removed or skipped).
+- **The spec file, 22 consecutive runs under load, post-fix** — **22/22 green, `5 passed (5)` each
+  (110 test executions, 0 failures)**: 12 runs on the pre-rebase tree (load average 7–9 during the
+  loop) and 10 runs on the rebased tree. No failure in any run.
+- **Full integration suite, post-fix:** `vitest run --project integration` on the rebased tree →
+  **55 passed (55) files, 358 passed (358) tests**, 67 s, load average 7.5. (The pre-change baseline
+  on this branch's original base `3f46950` was 54 files / 357 tests; `origin/main` `705467a` adds one
+  integration spec from the F1c-r2 lane, hence 55/358.) No test was added, removed or skipped by this
+  card — the file test count is unchanged at `5 passed (5)`.
 - **The I11 contract is unchanged.** The diff touches only the three fixture constants and adds a pure
   `nextUtcDay` helper; no assertion, `describe`/`it` name, `expect` expression or timeout changed.
 - `tsc -p tsconfig.json --noEmit` and `tsc -p apps/web/tsconfig.json --noEmit` → clean;
   `eslint` on the spec → clean; `prettier --check` on the spec, the ADR and the ADR index → clean.
+- **PR:** #225 — https://github.com/yahodu/openpic-webapp/pull/225
 
 ## Findings (routed)
 
