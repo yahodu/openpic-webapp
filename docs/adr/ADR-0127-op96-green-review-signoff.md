@@ -80,6 +80,9 @@ integration merge and this refactor on top.
   (`expected 'done' to be 'pending'`) — unchanged before and after the refactor.
 - `tsc -p apps/web/tsconfig.json --noEmit` clean; `eslint` on the three touched
   notification modules clean; `prettier --check .` clean.
+- Coverage measured on the reviewed head (`--coverage`, unit + integration):
+  statements **91.90%**, branches **80.29%**, functions 95.61%, lines 92.64% —
+  above the 80% global gate, with the head-room caveat of finding F6.
 - Honesty audit of the diff: no test-environment conditionals, no `@ts-ignore`
   / `eslint-disable`, no fixture-shaped hardcoding, no console noise in
   production code.
