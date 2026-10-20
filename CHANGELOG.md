@@ -1,3 +1,9 @@
+## [1.22.5](https://github.com/yahodu/openpic-webapp/compare/v1.22.4...v1.22.5) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 round-3 GREEN — bound the repeated failed_unrecorded digest-flush re-attempt (F1) ([#220](https://github.com/yahodu/openpic-webapp/issues/220)) ([1981d85](https://github.com/yahodu/openpic-webapp/commit/1981d8599f9deb6a87c74f82fc9e8f63cf531673)), closes [#219](https://github.com/yahodu/openpic-webapp/issues/219)
+
 ## [1.22.4](https://github.com/yahodu/openpic-webapp/compare/v1.22.3...v1.22.4) (2026-10-20)
 
 ### Bug Fixes

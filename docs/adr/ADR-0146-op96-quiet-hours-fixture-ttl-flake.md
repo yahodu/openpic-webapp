@@ -1,8 +1,9 @@
-# ADR-0144 — OP-96 follow-up: the quiet-hours release spec's past-dated fixtures were TTL-expired (I11 fan-out flake, F2-2)
+# ADR-0146 — OP-96 follow-up: the quiet-hours release spec's past-dated fixtures were TTL-expired (I11 fan-out flake, F2-2)
 
 - **Status:** Accepted · **Date:** 2026-10-20
 - **Card:** OP-96 follow-up "diagnose + stabilize the intermittent I11 fan-out flake" (`t_e8e658fd`) · **Parent:** `t_e3369a9e` (the F2 RED pin) · **Evidence source:** round-1 (artifact lens) review of `t_e3369a9e`, finding **F2-2**
-- **Branch:** `OP-96-task-quiet-release-flake-red`, rebased onto `origin/main` `705467a` (1.22.4 + #213; originally created from `3f46950`) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-quiet-i11-flake`
+- **Branch:** `OP-96-task-quiet-release-flake-red`, merged with `origin/main` `4144983` (originally created from `3f46950`, rebased onto `705467a`) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t-quiet-i11-flake`
+- **ADR number:** `0146` — renumbered from `0144` in review round 1 after `ADR-0144-op101-ci-audit-job-split-review-signoff.md` merged on `main` (PR #224) and `ADR-0145-op96-f1-unrecorded-flush-bound-green.md` landed (PR #220). `0146` is the lowest free number above the high-water across `origin/main` `4144983` and every local/remote ref.
 - **Touches:** one existing integration spec (`notification-quiet-hours-release.test.ts`) + this ADR + the ADR index. **No production code, mock, fixture, factory or other spec.**
 
 ## Context
@@ -39,7 +40,7 @@ The spec drives the product with a **fixed clock pinned to `2026-03-01`**, while
 TTL indexes against the **real** clock. Every row the fan-out persists carries
 
 ```
-expireAt = instant + retention.dispatchDays      // fan-out.ts:1214, dispatchDays default 180
+expireAt = instant + retention.dispatchDays      // fan-out.ts:1219, dispatchDays default 180
 ```
 
 so `INSIDE = 2026-03-01T23:00:00.000Z` yields `expireAt = 2026-08-28T23:00:00.000Z`. On this host the
@@ -47,7 +48,7 @@ real clock is `2026-10-20`, so **every fixture row the spec asserts on is alread
 TTL-expired**, and the `notification_dispatches` TTL index deletes it asynchronously:
 
 ```
-{ key: { expireAt: 1 }, name: "dispatches_expire_at_ttl", expireAfterSeconds: 0 }   // indexes.ts:148–154
+{ key: { expireAt: 1 }, name: "dispatches_expire_at_ttl", expireAfterSeconds: 0 }   // indexes.ts:149–154
 ```
 
 mongod's TTL monitor runs a deletion pass every `ttlMonitorSleepSecs` (default **60**). A single pass
@@ -207,7 +208,7 @@ runs; the numbers below are from the rebased tree.
   harness helper (future-date the fixture clock, or neutralise the retention TTLs on the throwaway
   database) applied across the exposed specs.
 - **F2 — no product defect found.** The card's other candidate class (b), a swallowed write/claim
-  error in `fan-out.ts`, was investigated (the `catch` blocks at `fan-out.ts:1224`, `writeDeferred`'s
+  error in `fan-out.ts`, was investigated (the `catch` blocks at `fan-out.ts:1229`, `writeDeferred`'s
   render `catch`, the `notification.catalogue_fallback` path, and the claim/lease filter in
   `domain-events.ts:385`) and is **not** implicated: no fan-out failed, no `notification.fan_out_failed`
   / `dispatch_failed` line was emitted, and the rows demonstrably existed before the server deleted

@@ -45,7 +45,7 @@ const USER = "user";
  * The three fixture instants this spec drives the clock to.
  *
  * They are derived from one real-clock anchor rather than written as literals
- * (ADR-0144). Every row the fan-out persists carries
+ * (ADR-0146). Every row the fan-out persists carries
  * `expireAt = instant + retention.dispatchDays` (180 days by default), and the
  * `notification_dispatches` TTL index (`dispatches_expire_at_ttl`,
  * `expireAfterSeconds: 0`) is evaluated against the **real** clock by mongod's
