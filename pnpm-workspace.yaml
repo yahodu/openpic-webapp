@@ -14,6 +14,14 @@ overrides:
   # declares `handlebars@^4.7.7` but the lockfile resolved the vulnerable
   # 4.7.9; patched at >=4.7.10. Remove once upstream bumps its range.
   handlebars@<4.7.10: "4.7.10"
+  # GHSA-698v-4r3x-3vcv / GHSA-r825-w8mm-5pxw — vitest's `vite` peer dep
+  # resolved 8.3.1; patched at >=8.3.3. Remove once the lockfile resolves
+  # a patched version on its own.
+  vite@<8.3.3: "^8.3.3"
+  # GHSA-q3jh-wrc6-jgq8 / GHSA-8r9p-f939-6h3c — mongodb-memory-server-core
+  # pins `follow-redirects@^1.15.6`, which resolves the vulnerable 1.16.0;
+  # patched at >=1.16.1. Remove once upstream bumps its range.
+  follow-redirects@<1.16.1: "^1.16.1"
 
 audit:
   level: moderate
