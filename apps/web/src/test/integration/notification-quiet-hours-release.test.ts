@@ -21,7 +21,7 @@ import {
 
 /**
  * Integration / contract — durable quiet-hours deferral and its release cron
- * (OP-96, design §5; contract §10.2 `quiet-hours-release`; ADR-0100).
+ * (OP-96, design §5; contract §10.2 `quiet-hours-release`; ADR-0120).
  *
  * Design §5 says quiet hours **schedule** the send after the window. The fan-out
  * must therefore persist a durable, selectable intent — a `notificationDispatches`
@@ -280,7 +280,7 @@ describe("the deferred-dispatch index (I5)", () => {
       }) as { readonly partialFilterExpression?: unknown } | undefined;
 
       expect(sweepIndex).toBeDefined();
-      // ADR-0100 requires a *partial* index scoped to the rows the release sweep
+      // ADR-0120 requires a *partial* index scoped to the rows the release sweep
       // selects (`status: "deferred"` and `until <= now`). A plain compound index
       // — or one scoped to any other status — would silently drop the sweep's
       // index support, so the filter must reference `status` as `"deferred"`
