@@ -4,6 +4,50 @@ Short, immutable records of decisions that are expensive to reverse. One file pe
 decision, numbered `ADR-NNNN-<slug>.md`. Never edit an accepted ADR — supersede it
 with a new one and mark the old `Superseded by ADR-NNNN`.
 
+## ADR number allocation
+
+ADR numbers are drawn from **per-lane reserved ranges**; a lane never allocates
+against the shared high-water mark. This removes the last-writer-wins race that
+made this file a serialization point for the whole board (in one afternoon an
+OP-101 card was renumbered three times and the OP-96 lane four times, each cycle
+costing a rebase, a CI run and often a re-review). The rule, its rationale and
+the rejected alternatives are recorded in
+[ADR-0300](ADR-0300-adr-number-range-allocation-policy.md).
+
+- The orchestrator is the **allocator**. It assigns each lane (`OP-<n>`) a
+  disjoint range of numbers up front — before any of that lane's cards are
+  dispatched — and writes the range into every card body of the lane.
+- A lane takes its next ADR number as the **next unused number inside its own
+  range** (a lane-local counter). It never consults `origin/main`'s high-water
+  mark, the tail of this file, or another lane's refs.
+- Ranges are disjoint by construction and are never re-cut, so two lanes cannot
+  collide even though neither inspects the other's branches.
+- Gaps inside a range (and ranges that go unused) are expected and cheap: a
+  number is consumed once and is never reissued to another lane.
+- Numbers allocated **before this policy** (`≤ 0145`) are frozen history and are
+  never moved; a branch that already carries one keeps it.
+- Board-wide / process decisions that belong to no single lane draw from the
+  allocator-owned `board-wide` range.
+
+### Reserved ranges (effective 2026-10-20)
+
+| Holder (lane)                       | Reserved range                  | Next free                |
+| ----------------------------------- | ------------------------------- | ------------------------ |
+| board-wide / process (orchestrator) | `0300`–`0319`                   | `0300` (this policy ADR) |
+| OP-96 notifications follow-up       | `0146`–`0179`                   | `0146`                   |
+| OP-97 in-app feed                   | `0180`–`0199`                   | `0180`                   |
+| OP-94 fan-out                       | `0200`–`0219`                   | `0200`                   |
+| OP-98 notification preferences      | `0220`–`0239`                   | `0220`                   |
+| OP-99 one-click unsubscribe         | `0240`–`0259`                   | `0240`                   |
+| OP-100 tenancy                      | `0260`–`0279`                   | `0260`                   |
+| OP-101 CI lane-shape                | `0280`–`0299`                   | `0280`                   |
+| unallocated (future lanes)          | `0320`+ (20 per lane, in order) | `0320`                   |
+
+_Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
+`0139`–`0141` (OP-96 round-3), `0131`/`0132` (OP-97 RED, PR #215), `0111`/`0112`
+(OP-94 mobile skip-channel). These stay as committed; their lanes draw any **new**
+ADRs from their reserved range above.
+
 | ADR                                                                                | Title                                                                                                                | Status                    |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | [0001](ADR-0001-ports-and-adapters.md)                                             | Ports and adapters, provider neutrality                                                                              | Accepted                  |
@@ -139,6 +183,7 @@ with a new one and mark the old `Superseded by ADR-NNNN`.
 | [0142](ADR-0142-op101-ci-audit-job-split.md)                                       | OP-101 follow-up: give `Dependency audit` its own blocking `audit` job so it stops masking the gate                  | Accepted                  |
 | [0144](ADR-0144-op101-ci-audit-job-split-review-signoff.md)                        | OP-101 review sign-off: the `audit` job split is verified and merged (PR #213)                                       | Accepted                  |
 | [0145](ADR-0145-op96-f1-unrecorded-flush-bound-green.md)                           | OP-96 follow-up round 3 GREEN: bound the repeated `failed_unrecorded` digest-flush re-attempt (F1)                   | Accepted                  |
+| [0300](ADR-0300-adr-number-range-allocation-policy.md)                             | ADR numbers are drawn from per-lane reserved ranges, never the shared high-water mark                                | Accepted                  |
 
 Template: Context · Decision · Consequences · Alternatives.
 
@@ -166,4 +211,4 @@ _The OP-94 fan-out **mobile skip-channel** follow-up lane holds `0111` (RED — 
 
 _The OP-101 CI lane-shape follow-up (`t_a3d52d6e`, PR #213) holds `0142`, giving `Dependency audit` its own blocking `audit` job in `.github/workflows/ci.yml` so a red audit no longer masks (or is masked by) the `ci` project gate. The record was first written as `0128` against `main`@`c27f648`, renumbered to `0129` when the OP-96 lane (PR #203) merged as `bb70cef`, and renumbered again to `0142` after the OP-96 follow-up rounds landed: `origin/main` `851a3c1` ends at `ADR-0141` (with `ADR-0129` taken by the OP-96 F1–F4 review-findings RED record, and the gapped `ADR-0111`/`ADR-0112` reserved for the OP-94 mobile skip-channel lane), and the still-open OP-96 follow-up PRs #220/#221 hold `0138`/`0139`, so `0142` is the lowest number free above the high-water across `origin/main` *and* every open ref. Its review sign-off takes the next free number in the same family._
 
-_The OP-101 CI lane-shape follow-up's **review sign-off** (`t_a3d52d6e`, review lane) holds `0144`, recording the round-2 (execution-lens) verdict on PR #213: APPROVED, merged as `705467a`, with the split verified both structurally (separate top-level `audit` job, no `needs:`) and empirically (run `39415696818` showed `audit` green while `ci` was red). `0143` is reserved for the OP-96 round-3 F1 GREEN renumber (`t_aa82386b`) and the F2 flush-overlap lane, so `0144` is the lowest number free above the high-water across `origin/main` (`705467a` ends at `ADR-0142`) *and* every open ref._
+_The OP-101 CI lane-shape follow-up's **review sign-off** (`t_a3d52d6e`, review lane) holds `0144`, recording the round-2 (execution-lens) verdict on PR #213: APPROVED, merged as `705467a`, with the split verified both structurally (separate top-level `audit` job, no `needs:`) and empirically (run `39415696818` showed `audit` green while `ci` was red). `0143` was reserved for the OP-96 round-3 F1 GREEN renumber (`t_aa82386b`) and the F2 flush-overlap lane, so `0144` was the lowest number free above the high-water across `origin/main` (`705467a` ends at `ADR-0142`) *and* every open ref. **Correction (2026-10-20):** the F1 GREEN lane (`t_aa82386b`) yielded instead and merged as `ADR-0145` (PR #220), so it never took `0143`; `0143` is held solely by the F2 flush-overlap lane (PR #221, `t_4cc14cd8`). Number allocation is superseded by the per-lane reserved ranges above._
