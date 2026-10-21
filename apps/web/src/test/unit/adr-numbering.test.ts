@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,6 +72,19 @@ import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/a
  * guaranteed, so: `files` within an issue is sorted ascending, and `issues` is
  * sorted by numeric ADR number ascending with malformed issues (`number === null`)
  * last — the same input in any order yields the same report.
+ *
+ * **Edge cases pinned by characterization** (OP-96 follow-up to the R-1 review;
+ * the helper is frozen contract, so these pin what it does today rather than
+ * asking for a change):
+ *   - the same file name passed twice is two group members, so the lone
+ *     `duplicate` issue repeats the name (`["ADR-0146-a.md", "ADR-0146-a.md"]`);
+ *   - `ADR-0000-x.md` and `ADR-9999-x.md` are well-formed: `parseAdrNumber`
+ *     yields `0` / `9999`, and both are accepted when unique;
+ *   - `checkAdrDirectory` on a missing directory throws (the TSDoc `@throws`
+ *     branch), propagating the `node:fs` error with `code === "ENOENT"`;
+ *   - `readdirSync(dir, { withFileTypes: true })` + `entry.isFile()` is
+ *     lstat-based, so a **symlinked** ADR file is silently skipped — the one way
+ *     the guard can under-report. A symlink never contributes to a duplicate.
  */
 
 const repoRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
@@ -110,6 +123,14 @@ describe("checkAdrNumbers — clean input", () => {
     // Assert
     expect(result).toEqual({ ok: true, issues: [] });
   });
+
+  it("accepts the boundary numbers 0000 and 9999 when they are unique", () => {
+    // Act — the strict four-digit pattern admits both extremes of the range.
+    const result = checkAdrNumbers(["ADR-0000-x.md", "ADR-9999-y.md"]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
 });
 
 describe("checkAdrNumbers — duplicate numbers", () => {
@@ -142,6 +163,23 @@ describe("checkAdrNumbers — duplicate numbers", () => {
           code: "duplicate",
           number: "0300",
           files: ["ADR-0300-a.md", "ADR-0300-b.md", "ADR-0300-c.md"],
+        },
+      ],
+    });
+  });
+
+  it("reports one duplicate issue repeating the name when the same file is passed twice", () => {
+    // Act — the same name twice is two group members, so the issue lists it twice.
+    const result = checkAdrNumbers(["ADR-0146-a.md", "ADR-0146-a.md"]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "duplicate",
+          number: "0146",
+          files: ["ADR-0146-a.md", "ADR-0146-a.md"],
         },
       ],
     });
@@ -267,6 +305,14 @@ describe("parseAdrNumber", () => {
     // Act + Assert
     expect(parseAdrNumber(fileName)).toBeNull();
   });
+
+  it.each<[string, number]>([
+    ["ADR-0000-x.md", 0],
+    ["ADR-9999-x.md", 9999],
+  ])("parses the boundary number %s as %s", (fileName, expected) => {
+    // Act + Assert
+    expect(parseAdrNumber(fileName)).toBe(expected);
+  });
 });
 
 describe("checkAdrDirectory", () => {
@@ -309,6 +355,55 @@ describe("checkAdrDirectory", () => {
     const dir = makeTempAdrDir(["ADR-0146-a.md"]);
     mkdirSync(join(dir, "archive"));
     writeFileSync(join(dir, "archive", "ADR-0146-a.md"), "");
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("throws when the directory cannot be read", () => {
+    // Arrange
+    const dir = makeTempAdrDir([]);
+    const missing = join(dir, "does-not-exist");
+
+    // Act + Assert — the TSDoc `@throws` branch, unpinned until now.
+    expect(() => checkAdrDirectory(missing)).toThrow();
+  });
+
+  it("throws an ENOENT error when the directory does not exist", () => {
+    // Arrange
+    const dir = makeTempAdrDir([]);
+    const missing = join(dir, "does-not-exist");
+
+    // Act + Assert — `node:fs` propagates the raw error code to the caller.
+    expect(() => checkAdrDirectory(missing)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  });
+
+  it("silently skips a symlinked ADR file", () => {
+    // Arrange — `readdirSync(dir, { withFileTypes: true })` + `entry.isFile()`
+    // is lstat-based, so a symlink is neither a regular file nor a directory and
+    // is dropped before `checkAdrNumbers` ever sees it. This skip is the one way
+    // the guard can under-report, so it is pinned instead of left implicit.
+    const targetDir = makeTempAdrDir(["ADR-0146-a.md"]);
+    const dir = makeTempAdrDir([]);
+    symlinkSync(join(targetDir, "ADR-0146-a.md"), join(dir, "ADR-0146-a.md"));
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("does not count a symlinked ADR file toward a duplicate number", () => {
+    // Arrange — number 0146 appears on a real file and on a differently-named
+    // symlink; because the symlink is skipped, 0146 stays unique and no
+    // duplicate is reported.
+    const targetDir = makeTempAdrDir(["ADR-0146-b.md"]);
+    const dir = makeTempAdrDir(["ADR-0146-a.md"]);
+    symlinkSync(join(targetDir, "ADR-0146-b.md"), join(dir, "ADR-0146-b.md"));
 
     // Act
     const result = checkAdrDirectory(dir);
