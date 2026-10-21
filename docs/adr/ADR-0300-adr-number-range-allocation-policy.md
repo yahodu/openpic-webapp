@@ -82,8 +82,9 @@ Adopt **per-lane reserved ranges** as the binding allocation policy for
   the allocator (the rule is "next free _in my range_", and an unallocated lane
   has none).
 - A purely mechanical duplicate-prefix check (two files in `docs/adr/` sharing an
-  `ADR-NNNN`) remains worthwhile as a backstop and is tracked separately; this
-  record is the policy, not the guard.
+  `ADR-NNNN`) remains worthwhile as a backstop and is recorded separately in
+  [ADR-0302](ADR-0302-adr-number-guard-contract.md); this record is the policy,
+  not the guard.
 
 ## Alternatives
 
