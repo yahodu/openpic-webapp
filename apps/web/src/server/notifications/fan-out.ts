@@ -690,8 +690,13 @@ function dispatchBase(
   };
 }
 
-/** The channel a group would target, used for a skip recorded before candidate selection. */
-function groupChannel(group: ChannelGroup): ResolvedChannel {
+/**
+ * The channel a group would target, used for a skip recorded before candidate selection.
+ *
+ * @internal Test seam only (ADR-0111) — consumers must use `runNotificationFanOut` /
+ * `resolveChannel`.
+ */
+export function groupChannel(group: ChannelGroup): ResolvedChannel {
   if (group.group !== "mobile") return group.group;
   // Mirror the resolver's default candidate order so a recorded skip names the
   // same first candidate `resolveChannel` would have tried.
@@ -729,9 +734,17 @@ async function writeSkip(
  * §6/§19.6, ADR-0120).
  *
  * Each arrival pushes `flushAt` forward to `lastItemAt + quietMinutes`, capped
- * at `firstItemAt + hardFlushHours` — via one atomic pipeline upsert, so a
- * concurrent arrival can never reset the bucket's `firstItemAt` or lose a
- * count. `sampleItems` keeps the last five arrivals.
+ * at `firstItemAt + hardFlushHours` — via one atomic pipeline upsert, so an
+ * arrival that matches the open bucket can never reset its `firstItemAt` or
+ * lose a count. `sampleItems` keeps the last five arrivals.
+ *
+ * The upsert is **not** equivalent to a unique-index dedupe (F5, ADR-0134): two
+ * arrivals whose query phases both miss the `{userId, bucketKey, status:
+ * "open"}` filter both attempt the insert, and the loser raises `E11000` on the
+ * `notification_digests_user_bucket_open_unique` index. Per-recipient isolation
+ * records that as a fan-out failure and leaves the event claimable, so a later
+ * sweep re-processes it and the arrival is counted then — never lost, but
+ * transiently uncounted.
  */
 async function upsertDigestBucket(
   db: Db,
@@ -834,8 +847,11 @@ async function writeDeferred(
       subject = rendered.subject;
       body = ctx.typeRow.retainBody ? rendered.body : null;
     } catch {
-      // A render failure must not lose the deferred intent; release falls back
-      // to a metadata-only message.
+      // A render failure must not lose the deferred intent — the row is still
+      // written (with `body: null`), and `quiet-hours-release` classifies it
+      // terminally as `unretained_body` in the shared redelivery path (F4,
+      // ADR-0130). There is deliberately no metadata-only fallback message to
+      // release: a subject-only send would deliver empty copy.
     }
   }
 
@@ -1128,7 +1144,13 @@ async function fanOutToRecipient(
     if (group.group === "in_app") {
       // In-app aggregation is separate from digesting (design §6): a `digest`
       // decision still upserts the feed row; `in_app` never writes a dispatch.
-      if (decision.kind === "send" || decision.kind === "digest") {
+      //
+      // A quiet-hours `defer` is a *sending* concern (design §4 rule 7, ADR-0128
+      // PRE-1): it delays the channels that reach the user outside the app, but
+      // the badge is the app's own state and must be written immediately — a
+      // deferred in-app row would hide activity the user can only discover by
+      // polling. The outbound half still defers (see `dispatchOutbound`).
+      if (decision.kind === "send" || decision.kind === "digest" || decision.kind === "defer") {
         const templates = ctx.templates.get("in_app") ?? [];
         const template = selectTemplate(templates, context.prefs.locale);
         if (template !== undefined) {
@@ -1183,7 +1205,7 @@ async function processEvent(
     loadTemplates(db, event.eventKey),
   ]);
 
-  const recipients = await resolveRecipients({
+  const resolvedRecipients = await resolveRecipients({
     typeRow,
     tenantId: event.tenantId,
     eventId,
@@ -1191,6 +1213,22 @@ async function processEvent(
     subjectUserId,
     repository: options.recipients,
   });
+
+  // The subject of an event always hears about it (design §2). `resolveRecipients`
+  // drops the actor — including when the actor *is* the subject (U2) — so the
+  // consumer re-adds the subject here: a user who triggered their own event still
+  // owns its outcome and must see the in-app badge for it. Only audience-derived
+  // recipients keep the actor exclusion, and only for a type that is a genuine
+  // one-off: a type carrying a `dedupe` key is a repeated external alert (a new
+  // device, a changed event) that the actor's own action caused, and its badge
+  // is left to the resolved audience so a user is not badged for their own
+  // sign-in (design §4.1 — the alert travels out-of-band with the "not you?"
+  // action).
+  const subjectAlwaysNotified = typeRow.dedupe.keyTemplate === null;
+  const recipients: readonly string[] =
+    subjectAlwaysNotified && subjectUserId !== null && !resolvedRecipients.includes(subjectUserId)
+      ? [...resolvedRecipients, subjectUserId]
+      : resolvedRecipients;
 
   const ctx: EventContext = {
     event,

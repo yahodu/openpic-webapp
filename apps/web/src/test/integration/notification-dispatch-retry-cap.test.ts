@@ -71,7 +71,7 @@ const MAX_ATTEMPTS = 2;
 interface StoredDispatch {
   readonly status?: unknown;
   readonly attempts?: unknown;
-  readonly lastError?: { readonly retryable?: unknown };
+  readonly lastError?: { readonly retryable?: unknown; readonly code?: unknown };
 }
 
 /** A transport that rejects every send with a retryable transport error. */
@@ -281,6 +281,64 @@ describe("retry attempts are bounded by pipeline.maxAttempts (F2)", () => {
       });
       expect(nextTick.affected).toBe(0);
       expect(transport.calls).toBe(2);
+    });
+  });
+
+  it("F2b: a row that has reached the cap reaches a terminal, non-retryable classification", async () => {
+    await withTestDb(async (test) => {
+      const recipient = newUserId();
+      const actor = newUserId();
+      await seedRecipient(test.db, recipient);
+      await seedMaxAttempts(test.db, MAX_ATTEMPTS);
+      invalidatePlatformSettings();
+
+      const transport = alwaysFailingTransport();
+
+      // The fan-out's first attempt fails retryably: attempts = 1 (< cap 2).
+      await deliverWith(test.db, transport, recipient, actor);
+      expect(await emailDispatch(test.db)).toMatchObject({ status: "failed", attempts: 1 });
+
+      // The retry brings the row to the cap (attempts = 2).
+      const firstRetry = await retryDueDispatches({
+        db: test.db,
+        clock: fixedClock("2026-03-01T10:02:00.000Z"),
+        transport,
+        limit: 100,
+      });
+      expect(firstRetry.affected).toBe(0);
+      expect(await emailDispatch(test.db)).toMatchObject({ status: "failed", attempts: 2 });
+
+      // At the cap the row is not selected and must be observably terminal, so a
+      // backlog metric keyed on `lastError.retryable` does not report a
+      // permanently growing queue.
+      const atCap = await retryDueDispatches({
+        db: test.db,
+        clock: fixedClock("2026-03-01T10:10:00.000Z"),
+        transport,
+        limit: 100,
+      });
+      expect(atCap.affected).toBe(0);
+      expect(transport.calls).toBe(2);
+
+      const capped = await emailDispatch(test.db);
+      expect(capped).toMatchObject({ status: "failed", attempts: 2 });
+      expect(capped?.lastError).toBeDefined();
+      expect(capped?.lastError).toMatchObject({
+        retryable: false,
+        code: "attempts_exhausted",
+      });
+
+      // And it stays terminal on the following tick, still with no transport call.
+      const nextTick = await retryDueDispatches({
+        db: test.db,
+        clock: fixedClock("2026-03-01T10:20:00.000Z"),
+        transport,
+        limit: 100,
+      });
+      expect(nextTick.affected).toBe(0);
+      expect(transport.calls).toBe(2);
+      expect(await emailDispatch(test.db)).toMatchObject({ status: "failed", attempts: 2 });
+      expect(await rowCount(test.db)).toBe(1);
     });
   });
 });

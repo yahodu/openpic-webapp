@@ -13,10 +13,32 @@
  *
  * The daily cap (`maxDigestEmailsPerDay`, default 3) is enforced **per
  * recipient per local day**, shared across digest types (ADR-0120 A4): the
- * count is the recipient's `flushed` buckets since local midnight in
- * `notificationPreferences.quietHours.timeZone` (UTC fallback, ADR-0120 A3). A
- * due bucket beyond the cap is **deferred**, not dropped — it stays `open` and
- * is not counted as `hasMore`.
+ * count is the recipient's **delivered** flushes since local midnight in
+ * `notificationPreferences.quietHours.timeZone` (UTC fallback, ADR-0120 A3) —
+ * a flush whose send failed never reached the recipient, so it does not consume
+ * the allowance (F1c, ADR-0134), while one that failed and was then
+ * **redelivered by the retry sweep** does (F1c-r2, ADR-0141). A due bucket
+ * beyond the cap is **deferred**, not dropped — it stays `open` and is not
+ * counted as `hasMore`.
+ *
+ * A due bucket is **claimed** before it is sent (F2, ADR-0143): one atomic
+ * conditional transition takes an unclaimed (or stale-claimed) bucket, so two
+ * **overlapping** `flushDueDigests` runs deliver at most one summary per bucket
+ * — the loser leaves the bucket alone. The claim is a lease, so a run that dies
+ * mid-send can never strand a bucket: a claim older than
+ * {@link FLUSH_CLAIM_STALE_MS} is reclaimable.
+ *
+ * A bucket is closed only when the recorded failure has an owner (F1b,
+ * ADR-0134): a **retryable** transport failure is redelivered by the ledger row,
+ * while a **non-retryable** one leaves the bucket `open` for a later flush. The
+ * re-attempts of a permanent (unrecoverable) failure are bounded (F1b-r2,
+ * ADR-0137): once the bucket's unrecoverable failure count reaches
+ * `pipeline.maxAttempts` it is closed terminally (`flushOutcome: "failed"`), so
+ * the flush cron stops selecting it instead of retrying a "never retry" failure
+ * forever. The same bound covers the **unrecorded** failure (F1, ADR-0145): a
+ * bucket whose destination never resolves (`failed_unrecorded`) is refetched and
+ * re-rendered on every tick with no ledger row to own a retry, so it shares the
+ * one unrecoverable-failure counter and ceiling instead of looping to TTL.
  */
 import type { Db, ObjectId as ObjectIdValue } from "mongodb";
 
@@ -41,6 +63,18 @@ const FALLBACK_LOCALE = "en-IN";
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
+
+/**
+ * How long a flush claim is honoured before another run may reclaim the bucket
+ * (F2, ADR-0143).
+ *
+ * The claim is what stops two **overlapping** `flushDueDigests` runs from both
+ * sending the same summary. It mirrors the outbox consumer's
+ * `STALE_CLAIM_MS` (`@/server/domain/domain-events`): a claim older than this is
+ * treated as abandoned, so a run that dies mid-send can never strand a bucket
+ * permanently — the next tick reclaims and re-attempts it.
+ */
+const FLUSH_CLAIM_STALE_MS = 5 * MINUTE_MS;
 
 /** The input to {@link computeDigestFlushAt} (ADR-0120 module contract). */
 export interface DigestFlushAtInput {
@@ -80,6 +114,14 @@ interface DigestBucket {
   readonly lastItemAt: Date;
   readonly flushAt: Date;
   readonly status: string;
+  /**
+   * How many times this bucket's flush has failed **unrecoverably** (schema
+   * §19.6) — a **non-retryable** transport failure, or an **unrecorded** failure
+   * (no ledger row owns a retry). Once it reaches
+   * `platformSettings.pipeline.maxAttempts` the bucket is closed terminally
+   * (F1b-r2, ADR-0137; extended to `failed_unrecorded` by F1, ADR-0145).
+   */
+  readonly nonRetryableFailures?: number;
 }
 
 /** The scheduling half of the digest contract (design §19.6). */
@@ -115,6 +157,7 @@ function asBucket(value: unknown): DigestBucket | null {
     lastItemAt,
     flushAt,
     status,
+    nonRetryableFailures,
   } = value;
   if (
     _id === undefined ||
@@ -145,6 +188,7 @@ function asBucket(value: unknown): DigestBucket | null {
     lastItemAt,
     flushAt,
     status,
+    ...(typeof nonRetryableFailures === "number" ? { nonRetryableFailures } : {}),
   };
 }
 
@@ -208,13 +252,36 @@ function startOfLocalDay(instant: Date, timeZone: string): Date {
   return new Date(midnightWallClock - parts.offsetMs);
 }
 
-/** Count the recipient's digest emails sent since local midnight (ADR-0120 A4). */
+/**
+ * Count the recipient's **delivered** digest emails since local midnight
+ * (ADR-0120 A4, amended by ADR-0134 and ADR-0141).
+ *
+ * A digest email counts once it has actually reached the recipient:
+ *
+ * - a `flushOutcome: "sent"` flush was delivered on the first attempt, so its
+ *   `flushedAt` is the delivery instant; or
+ * - a bucket whose summary failed retryably (`flushOutcome: "failed"`) and was
+ *   then **redelivered by the retry sweep** carries `redeliveredAt` — the
+ *   summary is received then, so it consumes the allowance exactly like a
+ *   first-attempt success (F1c-r2, ADR-0141).
+ *
+ * A summary that never reached the recipient — a failed flush not yet
+ * redelivered, or a terminal non-retryable failure — burns no allowance
+ * (F1c, ADR-0134).
+ */
 async function countFlushedToday(db: Db, userId: ObjectIdValue, now: Date): Promise<number> {
   const timeZone = await recipientTimeZone(db, userId);
   const since = startOfLocalDay(now, timeZone);
   return platformRepo(db)
     .collection(COLLECTIONS.notificationDigests)
-    .countDocuments({ userId, status: "flushed", flushedAt: { $gte: since } });
+    .countDocuments({
+      userId,
+      status: "flushed",
+      $or: [
+        { flushOutcome: "sent", flushedAt: { $gte: since } },
+        { redeliveredAt: { $gte: since } },
+      ],
+    });
 }
 
 /** Load the active email template for a digest type, when one exists. */
@@ -284,18 +351,34 @@ async function renderSummary(
   }
 }
 
-/** The outcome of flushing one bucket. */
-type FlushOne = "sent" | "failed_recorded" | "failed_unrecorded";
+/**
+ * The outcome of flushing one bucket:
+ *
+ * - `sent` — the transport accepted the summary.
+ * - `failed_retryable` — the transport rejected the send retryably; the
+ *   `failed` ledger row owns the redelivery (`lastError.retryable: true`),
+ *   so the caller closes the bucket (F1, ADR-0130).
+ * - `failed_terminal` — the transport rejected the send **non-retryably**; the
+ *   ledger row is recorded but no cron will ever re-select it, so nothing owns
+ *   the redelivery and the bucket must stay `open` (F1b, ADR-0134) — until the
+ *   bounded non-retryable failure count reaches `pipeline.maxAttempts`, when the
+ *   caller closes it terminally (F1b-r2, ADR-0137).
+ * - `failed_unrecorded` — no ledger row at all (an unresolvable destination or
+ *   an unbuildable message); nothing owns a retry, so the bucket stays `open`.
+ */
+type FlushOne = "sent" | "failed_retryable" | "failed_terminal" | "failed_unrecorded";
 
 /**
- * Flush one due bucket: render, send, write the ledger row, mark the bucket.
+ * Flush one due bucket: render, send, write the ledger row, classify the
+ * failure's owner.
  *
- * A transport failure is **durably recorded on the ledger row** and reported as
- * `failed_recorded` — the row (not the bucket) owns the redelivery, mirroring
- * ADR-0127/ADR-0130, so the flush cron marks the bucket `flushed` and never
- * re-selects it. A failure with no ledger row (an unresolvable destination or
- * an unbuildable message) is `failed_unrecorded`: nothing owns a retry, so the
- * bucket stays `open` for a later flush.
+ * A transport failure is **durably recorded on the ledger row**. Whether that
+ * row owns the redelivery decides what happens to the bucket: a **retryable**
+ * failure is owned by `notification-dispatch-retry` (ADR-0127/ADR-0130), so the
+ * caller closes the bucket; a **non-retryable** failure has no owner, so the
+ * bucket stays `open` and a later flush re-attempts the summary (F1b, ADR-0134).
+ * A failure with no ledger row (an unresolvable destination or an unbuildable
+ * message) is `failed_unrecorded` — also left `open`.
  */
 async function flushOneBucket(
   db: Db,
@@ -343,9 +426,16 @@ async function flushOneBucket(
       deliveredAt: null,
       failedAt: now,
       notificationId: null,
+      // The `failed` row owns the redelivery of a retryable flush; link it back
+      // to the bucket it flushes so the redelivery can credit the bucket once
+      // the summary actually reaches the recipient (F1c-r2, ADR-0141).
+      digestBucketId: bucket._id,
       expireAt,
     });
-    return "failed_recorded";
+    // The ledger row owns the redelivery only when the failure is retryable
+    // (`notification-dispatch-retry` selects `lastError.retryable: true`). A
+    // non-retryable failure has no owner, so the bucket must stay selectable.
+    return outcome.failure.retryable ? "failed_retryable" : "failed_terminal";
   }
 
   await platformRepo(db)
@@ -392,9 +482,20 @@ async function flushOneBucket(
  * `limit` (ADR-0120 A1, amended by ADR-0130). A bucket beyond the recipient's
  * daily cap is left `open` (deferred) and is **not** counted as `hasMore`.
  *
- * A transport failure is durably recorded on the ledger row and the bucket is
- * marked `flushed` (F1, ADR-0130): the ledger row is the single owner of the
- * redelivery, so the flush cron never re-selects the bucket.
+ * Each selected bucket is **claimed before it is sent** (F2, ADR-0143), so two
+ * overlapping runs cannot both deliver the same summary; a run that loses the
+ * claim counts the bucket `skipped` and leaves it untouched for the winner.
+ *
+ * A transport failure is durably recorded on the ledger row, and the bucket is
+ * marked `flushed` **only when that row owns the redelivery** — i.e. the failure
+ * is retryable (F1, ADR-0130). A non-retryable failure has no owner, so the
+ * bucket stays `open` and a later tick re-attempts the summary (F1b, ADR-0134) —
+ * but only up to `pipeline.maxAttempts` times, after which it is closed
+ * terminally (F1b-r2, ADR-0137). A closed bucket records whether the summary
+ * actually went out on the flush (`flushOutcome: "sent" | "failed"`), and only a
+ * delivered summary — a `"sent"` flush, or a `"failed"` one later redelivered by
+ * `notification-dispatch-retry` (F1c-r2, ADR-0141) — consumes the recipient's
+ * daily allowance (F1c, ADR-0134).
  *
  * @param options - Database/clock/transport seams and the per-run limit.
  * @returns The §10.2 run outcome.
@@ -404,9 +505,12 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
   const clock = options.clock ?? systemClock;
   const limit = options.limit ?? 1000;
   const now = clock.now();
+  // A claim at or before this instant is abandoned and may be reclaimed (F2).
+  const staleBefore = new Date(now.getTime() - FLUSH_CLAIM_STALE_MS);
 
   const settings = await getPlatformSettings({ db, clock });
   const maxPerDay = settings.notifications.maxDigestEmailsPerDay;
+  const maxAttempts = settings.pipeline.maxAttempts;
 
   const raw: unknown = await platformRepo(db)
     .collection(COLLECTIONS.notificationDigests)
@@ -425,14 +529,100 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
   let hasMore = due.length > limit;
   const sentByUser = new Map<string, number>();
 
-  /** Mark a bucket closed so the flush cron never re-selects it (F1). */
-  const markFlushed = (bucket: DigestBucket): Promise<unknown> =>
+  /**
+   * Mark a bucket closed so the flush cron never re-selects it (F1).
+   *
+   * `flushOutcome` records **why** it closed, distinctly from `status`
+   * (F1c, ADR-0134): only a delivered summary consumes the recipient's daily
+   * allowance, so {@link countFlushedToday} counts a close whose `flushedAt`
+   * is a delivered `"sent"` flush **or** whose `redeliveredAt` falls in the
+   * local day (F1c-r2, ADR-0141). The flush claim is released with the close
+   * (F2, ADR-0143): a `flushed` bucket is already out of the selectable set,
+   * and the release keeps the lease from outliving the work it guarded.
+   */
+  const markFlushed = (bucket: DigestBucket, flushOutcome: "sent" | "failed"): Promise<unknown> =>
     platformRepo(db)
       .collection(COLLECTIONS.notificationDigests)
       .updateOne(
         { _id: bucket._id, status: "open" },
-        { $set: { status: "flushed", flushedAt: now } }
+        {
+          $set: { status: "flushed", flushOutcome, flushedAt: now },
+          $unset: { flushClaimedAt: "" },
+        }
       );
+
+  /**
+   * Atomically claim one due bucket for this run, before its summary is sent
+   * (F2, ADR-0143).
+   *
+   * One conditional `findOneAndUpdate` on `{ _id, status: "open" }` that also
+   * requires the bucket to be unclaimed (or to hold a claim older than
+   * {@link FLUSH_CLAIM_STALE_MS}) transitions it to claimed in a single atomic
+   * step, so of two **overlapping** runs exactly one can win the bucket and only
+   * the winner calls {@link flushOneBucket}. The status is deliberately left
+   * `"open"`: the bucket stays inside both partial indexes (schema §19.6), and a
+   * claimed-but-abandoned bucket still serves the fan-out's `{ userId, bucketKey,
+   * status: "open" }` upsert instead of blocking the unique key until its lease
+   * goes stale.
+   *
+   * @returns The claimed bucket, or `null` when another run already holds it.
+   */
+  const claimBucket = async (bucket: DigestBucket): Promise<DigestBucket | null> => {
+    const raw: unknown = await platformRepo(db)
+      .collection(COLLECTIONS.notificationDigests)
+      .findOneAndUpdate(
+        {
+          _id: bucket._id,
+          status: "open",
+          $or: [{ flushClaimedAt: { $exists: false } }, { flushClaimedAt: { $lte: staleBefore } }],
+        },
+        { $set: { flushClaimedAt: now } },
+        { returnDocument: "after" }
+      );
+    return asBucket(raw);
+  };
+
+  /**
+   * Release a claim without changing the bucket's status, so the bucket is
+   * immediately selectable again (F2, ADR-0143).
+   *
+   * Used on every path that leaves the bucket `open`: a non-retryable failure
+   * below `pipeline.maxAttempts` (F1b, ADR-0134) and a failure recorded nowhere
+   * both must stay re-attemptable by the very next tick, not only after the lease
+   * goes stale.
+   */
+  const releaseClaim = (bucket: DigestBucket): Promise<unknown> =>
+    platformRepo(db)
+      .collection(COLLECTIONS.notificationDigests)
+      .updateOne({ _id: bucket._id }, { $unset: { flushClaimedAt: "" } });
+
+  /**
+   * Record one **unrecoverable** flush failure against the bucket and return the
+   * resulting count (schema §19.6, F1b-r2, ADR-0137; extended to
+   * `failed_unrecorded` by F1, ADR-0145).
+   *
+   * "Unrecoverable" covers both permanent-failure classes the flush cron must
+   * not keep retrying: a **non-retryable** transport failure (whose ledger row
+   * owns no redelivery) and an **unrecorded** failure (which writes no ledger
+   * row at all). Sharing one counter and one ceiling means a bucket that
+   * alternates between the two classes is still bounded, and the terminal close
+   * is reached by whichever combination of failures accumulates to
+   * `pipeline.maxAttempts`.
+   *
+   * The increment is a single atomic `$inc`, so concurrent flush workers can
+   * never lose a failure recorded for the same bucket.
+   */
+  const recordUnrecoverableFailure = async (bucket: DigestBucket): Promise<number> => {
+    const updated: unknown = await platformRepo(db)
+      .collection(COLLECTIONS.notificationDigests)
+      .findOneAndUpdate(
+        { _id: bucket._id, status: "open" },
+        { $inc: { nonRetryableFailures: 1 } },
+        { returnDocument: "after" }
+      );
+    const count = isRecord(updated) ? updated.nonRetryableFailures : undefined;
+    return typeof count === "number" ? count : (bucket.nonRetryableFailures ?? 0) + 1;
+  };
 
   for (const bucket of due) {
     scanned += 1;
@@ -451,20 +641,65 @@ export async function flushDueDigests(options: DigestFlushOptions): Promise<Cron
       break;
     }
 
-    const result = await flushOneBucket(db, bucket, now, options.transport, clock);
+    // Claim the bucket before the send (F2, ADR-0143): of two overlapping runs
+    // only the winner of this atomic transition may hand the summary to the
+    // transport, so the bucket's `open -> flushed` transition delivers at most
+    // one summary. The loser leaves the bucket exactly as it found it.
+    const claimed = await claimBucket(bucket);
+    if (claimed === null) {
+      skipped += 1;
+      continue;
+    }
+
+    const result = await flushOneBucket(db, claimed, now, options.transport, clock);
     if (result === "sent") {
       affected += 1;
       sentByUser.set(key, sentToday + 1);
-      await markFlushed(bucket);
-    } else if (result === "failed_recorded") {
+      await markFlushed(claimed, "sent");
+    } else if (result === "failed_retryable") {
       // The failure is durably on the ledger row, which owns the redelivery
       // (ADR-0127/ADR-0130); close the bucket so the flush cron cannot re-send.
+      // A summary that never went out does not consume the daily allowance
+      // (F1c, ADR-0134), so `sentByUser` is deliberately left unchanged.
       errors += 1;
-      sentByUser.set(key, sentToday + 1);
-      await markFlushed(bucket);
+      await markFlushed(claimed, "failed");
+    } else if (result === "failed_terminal") {
+      // No owner took the redelivery on a non-retryable failure, so the bucket
+      // stays `open` for a later attempt (F1b, ADR-0134) — but the retries are
+      // **bounded** (F1b-r2, ADR-0137): once the non-retryable failure count
+      // reaches `pipeline.maxAttempts` the bucket is closed terminally
+      // (`status: "flushed"`, `flushOutcome: "failed"`) so the flush cron's
+      // `status: "open"` read stops selecting it.
+      errors += 1;
+      const failures = await recordUnrecoverableFailure(claimed);
+      if (failures >= maxAttempts) {
+        await markFlushed(claimed, "failed");
+      } else {
+        // Still under the bound, so the bucket is selectable for the F1b retry:
+        // release the claim now rather than making the next tick wait out the
+        // lease.
+        await releaseClaim(claimed);
+      }
     } else {
-      // No ledger row owns a retry: leave the bucket `open` for a later flush.
+      // No owner took the redelivery — a failure recorded nowhere at all (an
+      // unresolvable destination or an unbuildable message). Nothing durably
+      // owns a retry, so a later flush re-attempts the summary (F1b, ADR-0134)
+      // — but those re-attempts are **bounded** (F1, ADR-0145): the failure is
+      // counted against the same unrecoverable-failure ceiling as a
+      // non-retryable transport failure, and once it reaches
+      // `pipeline.maxAttempts` the bucket is closed terminally
+      // (`status: "flushed"`, `flushOutcome: "failed"`) so the flush cron's
+      // `status: "open"` read stops re-selecting and re-rendering it.
       errors += 1;
+      const failures = await recordUnrecoverableFailure(claimed);
+      if (failures >= maxAttempts) {
+        await markFlushed(claimed, "failed");
+      } else {
+        // Still under the bound, so the bucket is selectable for the F1b retry:
+        // release the claim now rather than making the next tick wait out the
+        // lease.
+        await releaseClaim(claimed);
+      }
     }
   }
 
