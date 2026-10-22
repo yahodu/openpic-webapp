@@ -54,6 +54,10 @@ band:
 | `all`                       | `now−90d` | `null`    |
 | `archived`                  | `now−90d` | `now−30d` |
 
+The `unread` row is the only read-state-sensitive band: it additionally
+restricts to `readAt: null` (everything still unread), while `active`, `all` and
+`archived` stay read-state-agnostic.
+
 A supplied positive `windowDays` (the `window` query parameter) replaces the
 filter-derived `from` with `now − min(windowDays, 90) days` and leaves `to`
 untouched; it is ignored for `archived` (the band is fixed) and for a
@@ -143,8 +147,11 @@ falls back to the default `active` band (never `400`).
 `auth.otp.*` rows must never be returned and never counted, even when one is
 stored directly (a fan-out bug, a migration, a manual insert). The exclusion set
 is derived from the catalogue's `channelGroups.in_app.enabled === false` types
-(schema §19.1), which yields the two `auth.otp.*` keys today, and the read path
-must not trust the fan-out's own refusal to write them (design §4 rule 6).
+(schema §19.1), which yields five types today — the two `auth.otp.*` keys
+(`auth.otp.email.requested`, `auth.otp.mobile.requested`) plus
+`account.deletion.completed`, `privacy.erasure.completed` and
+`attendee.consent.receipt` — and the read path must not trust the fan-out's own
+refusal to write them (design §4 rule 6).
 
 ### PRE-1 — quiet hours never suppress the in-app badge
 
