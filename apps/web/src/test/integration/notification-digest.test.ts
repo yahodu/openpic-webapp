@@ -18,6 +18,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — digest bucket accumulation and the daily cap
@@ -51,7 +52,7 @@ const NOTIFICATION_DIGESTS = "notificationDigests";
 const USER = "user";
 
 /** A fixed instant so every stored timestamp is exact. */
-const T0 = "2026-03-01T10:00:00.000Z";
+const T0 = fixtureInstant("10:00:00.000Z");
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -362,7 +363,7 @@ describe("digest daily-cap day boundary (I7)", () => {
       const transport = memoryMessageTransport();
       const recipients = fixedRecipients(attendee);
 
-      // Three digests sent on the recipient's local day 2026-03-01.
+      // Three digests sent on the recipient's local day (the fixture anchor day).
       for (let index = 0; index < 3; index += 1) {
         await insertArrival(test.db, new ObjectId().toHexString(), attendee);
         await runFanOutAt(test.db, transport, recipients, at(T0, index * MINUTE));
@@ -376,14 +377,15 @@ describe("digest daily-cap day boundary (I7)", () => {
       expect(capped.affected).toBe(3);
       expect(transport.outbox).toHaveLength(3);
 
-      // A fourth bucket flushes at 19:30Z = 01:00 IST on 2026-03-02 even though it
-      // is still 2026-03-01 in UTC: a fresh local day earns a fresh allowance.
+      // A fourth bucket flushes at 19:30Z = 01:00 IST the next local day even
+      // though it is still the anchor day in UTC: a fresh local day earns a
+      // fresh allowance.
       await insertArrival(test.db, new ObjectId().toHexString(), attendee);
-      await runFanOutAt(test.db, transport, recipients, "2026-03-01T19:00:00.000Z");
+      await runFanOutAt(test.db, transport, recipients, fixtureInstant("19:00:00.000Z"));
 
       const nextDay = await flushDueDigests({
         db: test.db,
-        clock: fixedClock("2026-03-01T19:30:00.000Z"),
+        clock: fixedClock(fixtureInstant("19:30:00.000Z")),
         transport,
         limit: 100,
       });
