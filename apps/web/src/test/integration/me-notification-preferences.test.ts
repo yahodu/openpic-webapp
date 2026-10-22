@@ -53,6 +53,29 @@ import {
  *   stored row and B's merged read are unchanged after user A patches.
  * - `GET` is a pure read: a caller with no stored document is served the
  *   catalogue defaults **without** the read upserting a row.
+ *
+ * ## Pins added by t_c638e64f (review findings R1 & R2 of t_d619efde)
+ *
+ * Two boundaries of the shipped `PATCH` are **characterised** here, not
+ * asserted against an aspiration:
+ *
+ * - **R1 — the locked-group guard is enforced on `byType` only.** A `global`
+ *   opt-out of the never-opt-outable `in_app` group, and a `byEvent` opt-out of
+ *   a transactional type, are both accepted (`200`) and stored verbatim in the
+ *   document/echo, while `resolved[]` keeps reporting the group
+ *   `effective: "on"` / `optOutAllowed: false` (the stored value is a no-op).
+ *   Contract §7.4 names `details.typeKey` for `opt_out_not_allowed`, which a
+ *   `global` patch cannot supply, so accept-and-ignore is the
+ *   contract-consistent reading; these pins record the **current** semantics.
+ * - **R2 — `PATCH` is a non-atomic read-modify-write.** Only its deterministic
+ *   half is pinned: two sequential patches touching different scopes both
+ *   survive a following `GET`. The concurrent lost-update case is deliberately
+ *   **not** pinned (it is non-deterministic) and is recorded as R2 of the
+ *   `t_d619efde` review for a future Implementer decision. The card's literal
+ *   second patch (`byType: { "event.details.updated": { mobile: "off" } }`) is
+ *   itself `422 opt_out_not_allowed` — that type's `mobile` group is
+ *   `enabled: false, optOutAllowed: false` — so the `byType` half uses the
+ *   opt-outable `email` group instead; the scope-isolation intent is unchanged.
  */
 
 const PREFERENCES_PATH = "/api/v1/me/notification-preferences";
@@ -61,6 +84,15 @@ const PREFERENCES_COLLECTION = "notificationPreferences";
 /** The identifier `event.details.updated` is opt-outable for, and `billing.payment.failed` is not. */
 const OPT_OUTABLE_TYPE = "event.details.updated";
 const TRANSACTIONAL_TYPE = "billing.payment.failed";
+
+/**
+ * A second opt-outable type (`email` enabled, `optOutAllowed: true`, non-transactional)
+ * left un-overridden by `byType`, so the surviving `global` scope is observable.
+ */
+const GLOBAL_SCOPE_TYPE = "event.starting_soon";
+
+/** A deterministic §7.4 `byEvent` key (a Mongo ObjectId hex), used by the R1 pin. */
+const TRANSACTIONAL_EVENT_ID = "6702ff000000000000000001";
 
 let app: TestApp;
 
@@ -446,5 +478,91 @@ describe("PATCH /api/v1/me/notification-preferences (§7.4 sparse patch)", () =>
     const stored = await storedPreferences(session.userId);
     expect(stored).toEqual(before);
     expect(stored.quietHours).toEqual(before.quietHours);
+  });
+});
+
+describe("PATCH /api/v1/me/notification-preferences — locked-group boundary (R1, t_c638e64f)", () => {
+  it("accepts a global opt-out of the locked in_app group (200) but resolved keeps it on", async () => {
+    const session = await app.signIn(makeIdentity("op98-r1-global-locked"));
+    await seedPreferences(session.userId);
+
+    const response = await patchPreferences(patchRequest(session, { global: { in_app: "off" } }));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PreferencesBody;
+
+    // The conflicting `global` value is echoed verbatim in the merged document…
+    expect(body.global).toEqual({ in_app: "off", email: "on", mobile: "on" });
+    // …but `in_app` is never opt-outable, so every type still resolves it on.
+    expect(resolvedChannel(body, OPT_OUTABLE_TYPE, "in_app")).toEqual({
+      effective: "on",
+      optOutAllowed: false,
+      source: "default",
+    });
+
+    // The no-op value is nonetheless persisted — the echo documents it.
+    const stored = await storedPreferences(session.userId);
+    expect(stored.global).toMatchObject({ in_app: "off" });
+  });
+
+  it("accepts a byEvent opt-out of a transactional type (200) but it still resolves transactional", async () => {
+    const session = await app.signIn(makeIdentity("op98-r1-byevent-transactional"));
+    await seedPreferences(session.userId);
+
+    const response = await patchPreferences(
+      patchRequest(session, {
+        byEvent: { [TRANSACTIONAL_EVENT_ID]: { email: "off" } },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PreferencesBody;
+
+    expect(body.byEvent).toEqual({ [TRANSACTIONAL_EVENT_ID]: { email: "off" } });
+    // A transactional type is never opt-outable; the stored override is a no-op.
+    expect(resolvedChannel(body, TRANSACTIONAL_TYPE, "email")).toEqual({
+      effective: "on",
+      optOutAllowed: false,
+      source: "transactional",
+    });
+
+    const stored = await storedPreferences(session.userId);
+    expect(stored.byEvent).toMatchObject({
+      [TRANSACTIONAL_EVENT_ID]: { email: "off" },
+    });
+  });
+});
+
+describe("PATCH /api/v1/me/notification-preferences — sequential two-scope persistence (R2, t_c638e64f)", () => {
+  it("keeps both overrides when a second patch touches a different scope than the first", async () => {
+    const session = await app.signIn(makeIdentity("op98-r2-two-scope"));
+    await seedPreferences(session.userId);
+
+    const first = await patchPreferences(patchRequest(session, { global: { email: "off" } }));
+    expect(first.status).toBe(200);
+
+    const second = await patchPreferences(
+      patchRequest(session, { byType: { [OPT_OUTABLE_TYPE]: { email: "off" } } })
+    );
+    expect(second.status).toBe(200);
+
+    const response = await getPreferences(getRequest(session));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PreferencesBody;
+
+    // The second patch did not clobber the first patch's `global` scope…
+    expect(body.global.email).toBe("off");
+    expect(resolvedChannel(body, GLOBAL_SCOPE_TYPE, "email")).toEqual({
+      effective: "off",
+      optOutAllowed: true,
+      source: "global",
+    });
+    // …and its own `byType` scope persisted too.
+    expect(body.byType).toEqual({ [OPT_OUTABLE_TYPE]: { email: "off" } });
+    expect(resolvedChannel(body, OPT_OUTABLE_TYPE, "email")).toEqual({
+      effective: "off",
+      optOutAllowed: true,
+      source: "type",
+    });
   });
 });
