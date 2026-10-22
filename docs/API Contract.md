@@ -2424,6 +2424,8 @@ Auth `user` · Rate `read.normal` · Sorted `createdAt` desc (index `{userId:1, 
       "groupCount": 38,
       "actionTarget": null,
       "actions": [],
+      "actionResolvedVia": null,
+      "actionResolvedAt": null,
       "readAt": null,
       "eventId": "6702ff...",
       "tenantId": null,
@@ -2452,6 +2454,8 @@ Auth `user` · Rate `read.normal` · Sorted `createdAt` desc (index `{userId:1, 
       "actionResolvedVia": null,
       "actionResolvedAt": null,
       "readAt": null,
+      "eventId": "6702ff...",
+      "tenantId": null,
       "createdAt": "...",
       "updatedAt": "..."
     }
@@ -4300,8 +4304,8 @@ export interface AppNotification {
   groupCount: number; // live rolling counter, not a history
   actionTarget: { kind: string; id: Id; state: "open" | "resolved" } | null;
   actions: NotificationAction[];
-  actionResolvedVia?: ResolvedVia | null;
-  actionResolvedAt?: IsoDateTime | null;
+  actionResolvedVia: ResolvedVia | null;
+  actionResolvedAt: IsoDateTime | null;
   readAt: IsoDateTime | null;
   eventId: Id | null;
   tenantId: Id | null;

@@ -175,6 +175,13 @@ interface RecipientSeed {
     readonly byType: Record<string, Record<string, string>>;
     readonly byEvent: Record<string, Record<string, string>>;
   }>;
+  /** Quiet hours; disabled by default so the injected clock never defers. */
+  readonly quietHours?: {
+    readonly enabled: boolean;
+    readonly start: string;
+    readonly end: string;
+    readonly timeZone: string;
+  };
 }
 
 /** Insert the `user`, `userProfiles` and `notificationPreferences` trio. */
@@ -201,7 +208,12 @@ async function seedRecipient(database: Db, seed: RecipientSeed): Promise<void> {
     global: { in_app: "on", email: "on", mobile: "on", ...seed.prefs?.global },
     byType: { ...seed.prefs?.byType },
     byEvent: { ...seed.prefs?.byEvent },
-    quietHours: { enabled: false, start: "22:00", end: "07:00", timeZone: "Asia/Kolkata" },
+    quietHours: seed.quietHours ?? {
+      enabled: false,
+      start: "22:00",
+      end: "07:00",
+      timeZone: "Asia/Kolkata",
+    },
     locale: "en-IN",
   });
 }
@@ -718,6 +730,62 @@ describe("runNotificationFanOut — matches once per batch (I8)", () => {
       );
       expect(matchRows).toHaveLength(1);
       expect(matchRows[0]?.groupCount).toBe(5);
+    });
+  });
+});
+
+describe("runNotificationFanOut — quiet hours never suppress the in-app badge (PRE-1)", () => {
+  /**
+   * PRE-1, routed to the OP-97 feed lane by ADR-0128.
+   *
+   * Quiet hours are a *sending* concern: they defer the channels that reach the
+   * user outside the app (email, mobile). They must never suppress the in-app
+   * row, because the badge is the app's own state — deferring it hides activity
+   * the user can only discover by polling, and `in_app` is never opt-outable
+   * (design §4 rule 7). Before this pin, an `in_app` group whose resolved
+   * decision was `defer` wrote no feed row at all, so a welcome landing inside
+   * quiet hours produced no badge — and the OP-97 e2e journey (E1) was
+   * time-of-day dependent.
+   *
+   * The injected clock is `2026-03-01T00:00:00.000Z` (05:30 `Asia/Kolkata`),
+   * inside the 22:00→07:00 window, so the email half must still be deferred
+   * while the in-app row is written.
+   */
+  it("writes the in-app row while the same event's email is only deferred", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = new ObjectId().toHexString();
+      const accountHolder = newUserId();
+      await seedRecipient(test.db, {
+        userId: accountHolder,
+        quietHours: { enabled: true, start: "22:00", end: "07:00", timeZone: "Asia/Kolkata" },
+      });
+
+      const transport = memoryMessageTransport();
+      await insertEvent(test.db, {
+        eventKey: "account.welcome",
+        tenantId,
+        actorRef: { kind: "user", id: accountHolder },
+        subjectRef: { kind: "user", id: accountHolder },
+        payload: { actionUrl: "https://app.openpic.in/welcome" },
+      });
+
+      await runNotificationFanOut(runOptions(test.db, transport, fixedRecipients()));
+
+      const notifications = await notificationsOf(test.db);
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]).toMatchObject({ typeKey: "account.welcome", readAt: null });
+      expect(String(notifications[0]?.userId)).toBe(accountHolder);
+
+      // The outbound half is still governed by quiet hours: nothing went out and
+      // the email dispatch is parked as `deferred` for the release cron.
+      expect(transport.outbox).toHaveLength(0);
+      const dispatches = await dispatchesOf(test.db);
+      expect(dispatches).toHaveLength(1);
+      expect(dispatches[0]).toMatchObject({
+        channel: "email",
+        status: "deferred",
+        typeKey: "account.welcome",
+      });
     });
   });
 });

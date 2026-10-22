@@ -1144,7 +1144,13 @@ async function fanOutToRecipient(
     if (group.group === "in_app") {
       // In-app aggregation is separate from digesting (design §6): a `digest`
       // decision still upserts the feed row; `in_app` never writes a dispatch.
-      if (decision.kind === "send" || decision.kind === "digest") {
+      //
+      // A quiet-hours `defer` is a *sending* concern (design §4 rule 7, ADR-0128
+      // PRE-1): it delays the channels that reach the user outside the app, but
+      // the badge is the app's own state and must be written immediately — a
+      // deferred in-app row would hide activity the user can only discover by
+      // polling. The outbound half still defers (see `dispatchOutbound`).
+      if (decision.kind === "send" || decision.kind === "digest" || decision.kind === "defer") {
         const templates = ctx.templates.get("in_app") ?? [];
         const template = selectTemplate(templates, context.prefs.locale);
         if (template !== undefined) {
@@ -1199,7 +1205,7 @@ async function processEvent(
     loadTemplates(db, event.eventKey),
   ]);
 
-  const recipients = await resolveRecipients({
+  const resolvedRecipients = await resolveRecipients({
     typeRow,
     tenantId: event.tenantId,
     eventId,
@@ -1207,6 +1213,22 @@ async function processEvent(
     subjectUserId,
     repository: options.recipients,
   });
+
+  // The subject of an event always hears about it (design §2). `resolveRecipients`
+  // drops the actor — including when the actor *is* the subject (U2) — so the
+  // consumer re-adds the subject here: a user who triggered their own event still
+  // owns its outcome and must see the in-app badge for it. Only audience-derived
+  // recipients keep the actor exclusion, and only for a type that is a genuine
+  // one-off: a type carrying a `dedupe` key is a repeated external alert (a new
+  // device, a changed event) that the actor's own action caused, and its badge
+  // is left to the resolved audience so a user is not badged for their own
+  // sign-in (design §4.1 — the alert travels out-of-band with the "not you?"
+  // action).
+  const subjectAlwaysNotified = typeRow.dedupe.keyTemplate === null;
+  const recipients: readonly string[] =
+    subjectAlwaysNotified && subjectUserId !== null && !resolvedRecipients.includes(subjectUserId)
+      ? [...resolvedRecipients, subjectUserId]
+      : resolvedRecipients;
 
   const ctx: EventContext = {
     event,
