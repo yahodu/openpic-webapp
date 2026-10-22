@@ -39,6 +39,15 @@ is a routing fact, not a preference) and is grouped by category, categories sort
 for determinism. Labels are a read-route projection (`humaniseKey`), since the seed
 stores no copy.
 
+`DEFAULT_PREFERENCES` is declared `as const satisfies StoredPreferences` rather than
+typed `: StoredPreferences`. The pinned unit spec asserts
+`structuredClone(DEFAULT_PREFERENCES) as StoredPreferences`; annotating the constant
+with the interface made that cast **unnecessary** and reddened the CI lint gate
+(`@typescript-eslint/no-unnecessary-type-assertion`) on a test file this card may not
+edit. `satisfies` keeps the assertion necessary while preserving the literal
+`on`/`off` types and the runtime value — the constant is not changed to accommodate a
+test, only its declaration style.
+
 ### The routes
 
 - `GET /me/notification-preferences` reads the §19.3 `notificationPreferences`
@@ -126,6 +135,8 @@ vitest run --project integration
 
 tsc -p packages/contracts/tsconfig.json --noEmit   # exit 0
 tsc -p apps/web/tsconfig.json --noEmit              # exit 0
+npx eslint .                                        # 0 errors (80 pre-existing security warnings)
+npx prettier --check .                              # clean for every touched file
 ```
 
 The three RED spec files are byte-identical to ADR-0220's commit (`ad0e16e`), as is
