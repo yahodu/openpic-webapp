@@ -132,14 +132,14 @@ export interface PreferencesPatch {
  * `global` is all `on` (the send happens unless an override says otherwise), the
  * sparse maps are empty, quiet hours are disabled and the locale is `en-IN`.
  */
-export const DEFAULT_PREFERENCES: StoredPreferences = {
+export const DEFAULT_PREFERENCES = {
   global: { in_app: "on", email: "on", mobile: "on" },
   byType: {},
   byEvent: {},
   quietHours: { enabled: false, start: "22:00", end: "07:00", timeZone: "UTC" },
   digest: {},
   locale: "en-IN",
-};
+} as const satisfies StoredPreferences;
 
 /** `HH:MM` 24-hour, `00:00`–`23:59` only. */
 const CLOCK_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
