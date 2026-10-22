@@ -55,7 +55,7 @@ const catalogueItemSchema = z.object({
 });
 
 /** The `{ data }` envelope (contract §7.6). */
-export const notificationTypesResponseSchema = z.object({ data: z.array(catalogueItemSchema) });
+const notificationTypesResponseSchema = z.object({ data: z.array(catalogueItemSchema) });
 
 /**
  * Project one stored type onto the §7.6 item shape.

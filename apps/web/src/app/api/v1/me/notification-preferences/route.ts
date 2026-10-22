@@ -83,7 +83,7 @@ const resolvedChannelSchema = z.object({
 });
 
 /** The merged document every response carries (contract §7.4). */
-export const preferencesResponseSchema = z.object({
+const preferencesResponseSchema = z.object({
   global: z.record(z.string(), z.enum(["on", "off"])),
   byType: z.record(z.string(), z.record(z.string(), z.enum(["on", "off"]))),
   byEvent: z.record(z.string(), z.record(z.string(), z.enum(["on", "off"]))),
