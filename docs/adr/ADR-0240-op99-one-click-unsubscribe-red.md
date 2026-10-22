@@ -153,6 +153,13 @@ credential — the same reason the launcher generates its throwaways. The value 
 a per-run test fixture, not a credential. The format is pinned by U1–U3, so a
 format change fails there first.
 
+**gitleaks.** gitleaks scans the whole push range, not just the tip, so the
+pre-fix commit that carried the fixture's secret-shaped literal still trips
+`generic-api-key` after the runtime derivation landed. The exact non-secret value
+is therefore allowlisted in `.gitleaks.toml` (the same treatment as the
+`insightface-antelopev2-2026-03` docs identifier) until the branch is
+squash-merged; the merged tree carries only the derived value.
+
 ## Assumptions resolved unilaterally (flagged for review)
 
 1. **The unsubscribe surface is email-only.** `List-Unsubscribe` and the email
