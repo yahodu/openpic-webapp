@@ -1,3 +1,9 @@
+## [1.23.2](https://github.com/yahodu/openpic-webapp/compare/v1.23.1...v1.23.2) (2026-10-22)
+
+### Bug Fixes
+
+- **notifications:** OP-97 bound the feed by the badge's TTL predicate so the panel agrees with the bell (F3) ([#249](https://github.com/yahodu/openpic-webapp/issues/249)) ([d7f9304](https://github.com/yahodu/openpic-webapp/commit/d7f9304e801103c5314f1ff893cd0862b2dc2b86)), closes [#244](https://github.com/yahodu/openpic-webapp/issues/244)
+
 ## [1.23.1](https://github.com/yahodu/openpic-webapp/compare/v1.23.0...v1.23.1) (2026-10-22)
 
 ### Bug Fixes

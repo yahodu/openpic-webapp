@@ -184,6 +184,31 @@ still holds — this update is an append to an existing record and consumes **no
 new ADR number** (no allocation from the `0300`–`0319` cell), creates no new
 `ADR-0NNN-*.md` file, and leaves `docs/adr/README.md` byte-identical.
 
+### 2b. Update 2026-10-22 — the L1 gap closed: the `new_branch_flow.yml` env values are now pinned
+
+Item 5 above is a point-in-time snapshot and is left as written. The **gap it
+describes is now closed**: the follow-up TEST pin `t_0be682ca` (PR
+[#250](https://github.com/yahodu/openpic-webapp/pull/250), **squash-merged as
+`3ccbbf26843826fb4a1ef407b78a69b62412780d`**, merged 2026-10-22T08:36:19Z, an
+ancestor of `origin/main`) extended the real-workflow pin so the F2-class value
+assertion now covers `new_branch_flow.yml`'s `create-draft-pr` sites as well as
+`pr_checks.yml`'s two jobs.
+
+Three assertions pin the transported value at those sites, each requiring both
+`envValue` and `envValueContext`:
+
+- `BRANCH` → `${{ github.ref_name }}` / `github.ref_name`
+- `HEAD_REF` → `${{ github.ref_name }}` / `github.ref_name`
+- `TITLE` → `${{ steps.title.outputs.title }}` / `steps.outputs`
+
+A neutered literal at any of the three now yields `envValueContext: null` and
+**reddens the pin** (it would otherwise pass the sweep, which fails open). The
+**security** invariant is unchanged — the value assertion is a _functional_
+guard: what is newly detected is the neutering of the draft PR's branch/title,
+not a change to the untrusted-context contract. The `Schema: n/a · Contract:
+n/a` line above still holds; this is an append to an existing record, consumes
+**no new ADR number**, and leaves `docs/adr/README.md` byte-identical.
+
 ### 3. Review sign-off
 
 The round-1 (**artifact-lens**) review of the OP-101 F1 GREEN (`t_173447df`)
@@ -201,6 +226,28 @@ returned **APPROVED**, zero changes requested, zero reviewer edits:
   job `119700623207` shows `env: TITLE` → `✅ PR title is valid`.
 - **Behaviour preserved:** 9/9 changed lines are a pure transport change (no
   regex, message or exit-code change). Honesty audit clean.
+
+The round-1 (**artifact-lens**) review of the L1 pin (`t_0be682ca`, PR #250)
+also returned **APPROVED**, zero changes requested, zero reviewer edits to the
+deliverable:
+
+- **Merged:** `git merge-base --is-ancestor 3ccbbf26 origin/main` holds; local
+  `main` == `origin/main`; the merge changed **only**
+  `apps/web/src/test/unit/workflow-shell-safety.test.ts`, and that blob
+  (`9783db580ba1a177f4580670533fcb5d2d4d5687`) is byte-identical at branch tip
+  (`8b69071`), merge commit (`3ccbbf26`) and `main`.
+- **Suite green at the merged tree:** `vitest run --project unit -t "the
+repository's real"` → **9 passed**; full unit → **89 files / 1568 tests
+  passed**, 0 failed; `prettier --check` of the spec → exit 0;
+  `tsc -p apps/web/tsconfig.json --noEmit` → exit 0; eslint per-file **2 → 2
+  warnings** (no new warning); PR #250 CI **14/14 SUCCESS**.
+- **Adversarial vacuity probe (reviewer):** the real scanner
+  (`node --experimental-strip-types`) over a copy with all three `env:` values
+  replaced by literals → sweep `[]` (still fails open) **but** the new pin shape
+  goes red (`envValue` → the literal, `envValueContext` → `null`) for all three
+  variables; the real file → `[]` with all three at their expected values.
+- Review comment:
+  https://github.com/yahodu/openpic-webapp/pull/250#issuecomment-6336526193
 
 ### 4. Where it runs
 
