@@ -111,6 +111,79 @@ permits backticks and `$( … )` in a ref. Whether and when the set moves is a
 enumerated in `UNTRUSTED_CONTEXTS` precisely so the choice is visible and
 reviewable.
 
+### 2a. Update 2026-10-22 — the boundary **moved**: the `github.ref_name` extension landed
+
+The baseline paragraph above is a point-in-time snapshot and is left as written.
+The **scheduled move happened**: the extension shipped on `main` and the
+`UNTRUSTED_CONTEXTS` set no longer matches §2's description of it.
+
+1. **The extension landed.** The TEST pin `t_db64743b` (PR [#241](https://github.com/yahodu/openpic-webapp/pull/241),
+   branch tip `bf7c3aa`) and its GREEN sibling `t_c87fd29e` (PR [#245](https://github.com/yahodu/openpic-webapp/pull/245),
+   **squash-merged as `86f0feea765bcd79c631c1ca3d2ab4ea198d5075`**, merged
+   2026-10-22T08:08:32Z, an ancestor of `origin/main`) landed the permanent
+   broadening. `UNTRUSTED_CONTEXTS` is now:
+
+   ```
+   github.event · github.head_ref · github.base_ref · github.ref_name · github.ref · steps.<id>.outputs.<name> · inputs.*
+   ```
+
+   (7 patterns; note `\bgithub.ref\b` does **not** also match `github.ref_name`,
+   the word boundary past `ref` being a `_`.) Only **`github.repository`** and
+   **`secrets.*`** remain exempt. `t_db64743b` also repaired the four
+   `new_branch_flow.yml` sites it reddened (lines 29, 49, 63, 64) by transporting
+   `BRANCH` / `HEAD_REF` / `TITLE` through `env:` (a 13-line, behaviour-preserving
+   change), so `scanWorkflowFiles` returns `[]` on the repository's workflows
+   again.
+
+2. **The F2 finding landed in the same change.**
+   `inspectJobEnvTransport` now also reports the supplying `env:` entry's
+   **value** — `JobEnvTransport.envValue` and its untrusted context
+   `envValueContext` — so a `TITLE: "literal"` that merely satisfies
+   `suppliedByEnv` no longer passes the transport check; a caller can require
+   `report.ok && report.envValueContext !== null`. `readsShellVariable` is now
+   **word-bounded**, so `$TITLE_BACKUP` is not a read of `$TITLE`. (This reverses
+   the corresponding bullet in **Alternatives**, which rejected asserting the
+   `env:` value; F2 revisited it and the assertion now lives in the pin, not in
+   the transport helper's `ok`.)
+
+3. **Round-1 review sign-off of the pin (`t_db64743b`, PR #241):** **APPROVED**,
+   artifact lens, verified on the pinned worktree at `bf7c3aa` — the real-workflow
+   invariant red on exactly `new_branch_flow.yml` 29/49/63/64; full unit project
+   `1 failed | 1548 passed (1549)` (the one failure being that expected real-workflow
+   red at the pin); the F2 neutering reproduced adversarially (a literal `env:`
+   value makes `envValueContext` `null` and the pin red); `prettier` clean;
+   `eslint` `0 errors` with **no new warning** (helper 8→8, spec 2→2); diff limited
+   to the two contract files. Review comment:
+   https://github.com/yahodu/openpic-webapp/pull/241#issuecomment-6335788609
+
+4. **Round-1 review sign-off of the GREEN (`t_c87fd29e`, PR #245):** **APPROVED**,
+   zero changes requested, zero reviewer edits to the deliverable —
+   `git merge-base --is-ancestor 86f0fee origin/main` holds and the branch tip
+   tree equals the merge tree (`git diff --stat 87f8631 86f0fee` empty); only
+   `.github/workflows/new_branch_flow.yml` changed vs the pin head `bf7c3aa`
+   (13 lines, pure `env:` transport at the four sites), both pin files
+   byte-identical to `bf7c3aa`, and PR #241 closed as a draft, never merged;
+   targeted `vitest run --project unit -t "the repository's real"` → 6 passed;
+   full unit → 89 files / 1565 tests, 0 failed; `prettier --check` exit 0; PR #245
+   CI 14/14 SUCCESS; adversarial probe — reverting site 29 to a `run:`
+   interpolation is flagged (`new_branch_flow.yml` line 31, `github.ref_name`),
+   a neutered `env:` literal yields `envValueContext: null`, the real file → `[]`.
+   Review comment:
+   https://github.com/yahodu/openpic-webapp/pull/245#issuecomment-6336042707
+
+5. **Known, accepted coverage gap (non-blocking, routed):** the real-workflow pin
+   asserts the `env:` **value** only for `pr_checks.yml`'s two jobs, so the
+   F2-class neutering is not test-enforced for `new_branch_flow.yml`'s four new
+   sites — the guard fails open there (a literal `env:` value passes the sweep and
+   is never value-checked). The security invariant is intact; the value assertion
+   for those four sites is a separate TEST follow-up (`t_0be682ca`), not part of
+   this record.
+
+`Schema: n/a · Contract: n/a (test-only tooling + CI workflow; no application code)`
+still holds — this update is an append to an existing record and consumes **no
+new ADR number** (no allocation from the `0300`–`0319` cell), creates no new
+`ADR-0NNN-*.md` file, and leaves `docs/adr/README.md` byte-identical.
+
 ### 3. Review sign-off
 
 The round-1 (**artifact-lens**) review of the OP-101 F1 GREEN (`t_173447df`)
