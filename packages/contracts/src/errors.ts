@@ -93,6 +93,22 @@ export const ACCOUNT_ERROR_CODES = ["confirmation_mismatch", "deletion_already_e
 export type AccountErrorCode = (typeof ACCOUNT_ERROR_CODES)[number];
 
 /**
+ * Notification-surface codes (contract §7.4, Appendix A.8).
+ *
+ * `unknown_type_key` (a `PATCH /me/notification-preferences` naming a `typeKey`
+ * outside the §7.6 enumeration) and `opt_out_not_allowed` (disabling a channel
+ * group the type cannot opt out of) are named by Appendix A.8 but are not
+ * members of {@link ERROR_CODES}, which the server error catalogue pins to
+ * exactly the base Appendix A rows. They are appended to the client-facing enum
+ * ({@link API_ERROR_CODES}) and transported from their own table (both `422`,
+ * non-retryable) so both stay exact. Append-only.
+ */
+export const NOTIFICATION_ERROR_CODES = ["unknown_type_key", "opt_out_not_allowed"] as const;
+
+/** A member of the closed {@link NOTIFICATION_ERROR_CODES} set. */
+export type NotificationErrorCode = (typeof NOTIFICATION_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -154,6 +170,7 @@ export const API_ERROR_CODES = [
   ...PIPELINE_ERROR_CODES,
   ...INTERNAL_ERROR_CODES,
   ...ACCOUNT_ERROR_CODES,
+  ...NOTIFICATION_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -170,7 +187,8 @@ export type AppErrorCode =
   | RequestShapeErrorCode
   | PipelineErrorCode
   | InternalErrorCode
-  | AccountErrorCode;
+  | AccountErrorCode
+  | NotificationErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
