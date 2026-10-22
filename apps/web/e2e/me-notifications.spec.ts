@@ -94,7 +94,11 @@ test.describe("in-app notification feed (E1)", () => {
     const notificationId = page.data[0]?.id ?? "";
 
     const read = await request.post(`/api/v1/me/notifications/${notificationId}/read`, {
-      headers: { cookie: sessionCookie, origin: E2E_BASE_URL },
+      headers: {
+        cookie: sessionCookie,
+        origin: E2E_BASE_URL,
+        "x-requested-with": "XMLHttpRequest",
+      },
     });
     expect(read.status()).toBe(204);
 
