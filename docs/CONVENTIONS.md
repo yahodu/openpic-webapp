@@ -189,7 +189,14 @@ history and are never moved.
 
 - **The ledger.** The live range table is `docs/adr/README.md` § "ADR number
   allocation" (ADR-0300) — the single source of truth. Do not copy or re-derive
-  the ranges anywhere else, including here.
+  the ranges anywhere else, including here. **The `Next free` column is a
+  reservation counter, not a landed-file count.** A number is _taken_ once it is
+  landed on `main` **or** allocated to any in-flight card/ref of that lane (an
+  open PR/branch, or a live card assigned the number). Lanes reserve at
+  allocation time — the cell always names the number the next _new_ card in the
+  lane will receive, so a card that consumes `0NNN` writes the next number above
+  `0NNN`. Two concurrent cards in one lane therefore never compute the same
+  "next free" (ADR-0300 §7).
 - **The guard.** `pnpm test:unit` fails on a duplicate `ADR-NNNN` prefix or a
   malformed `ADR-*.md` name
   (`apps/web/src/test/unit/adr-numbering.test.ts`). It is the mechanical backstop
