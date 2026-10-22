@@ -68,6 +68,27 @@ Adopt **per-lane reserved ranges** as the binding allocation policy for
    | OP-101 CI lane-shape                | `0280`–`0299`                   | `0280`    |
    | unallocated (future lanes)          | `0320`+ (20 per lane, in order) | `0320`    |
 
+7. **Semantics of the `Next free` cell** (2026-10-22, card `t_815703d7`). The
+   `Next free` cell in [README](README.md) § "ADR number allocation" is a
+   **reservation counter**, not a count of landed files. A number in a lane's
+   range is **taken** — and therefore not "next free" — once **either** (a) an
+   `ADR-0NNN-*.md` with that prefix is on `main`, **or** (b) the number is
+   allocated to any card or ref of that lane which has not yet landed (an
+   _in-flight_ allocation: an open branch/PR of the lane, or a live card of the
+   lane that has been assigned the number). In-flight allocations **reserve**
+   the number: the counter is monotonic and a number is never reissued to
+   another lane nor rewound when an allocation is abandoned (gaps are expected
+   and cheap — item 3). The cell always names **the number the next
+   newly-started card in the lane will receive**, so a card that writes the
+   ledger _excludes its own just-made allocation_: a card consuming `0NNN`
+   writes the next unallocated number above `0NNN`. Rationale: the lane-local
+   counter is shared across a lane's **concurrent** cards, so "taken" must
+   include in-flight allocations — otherwise two cards in one lane compute the
+   same "next free" and collide. That is exactly the 2026-10-22 OP-96 `0147`
+   race: PR #235 wrote its own in-flight number as the cell while the sibling
+   fixture-clock card counted `0147` as taken. This is what makes the integer
+   knowable before the branch exists (item 1).
+
 ## Consequences
 
 - Two lanes can no longer collide: the integer a lane will use is knowable before
