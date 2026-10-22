@@ -33,7 +33,7 @@ the rejected alternatives are recorded in
 
 | Holder (lane)                       | Reserved range                  | Next free |
 | ----------------------------------- | ------------------------------- | --------- |
-| board-wide / process (orchestrator) | `0300`–`0319`                   | `0303`    |
+| board-wide / process (orchestrator) | `0300`–`0319`                   | `0304`    |
 | OP-96 notifications follow-up       | `0146`–`0179`                   | `0149`    |
 | OP-97 in-app feed                   | `0180`–`0199`                   | `0180`    |
 | OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
@@ -50,8 +50,11 @@ ADRs from their reserved range above.
 
 _Board-wide / process numbers consumed so far:_ `0300` (ADR-0300, the allocation
 policy), `0301` (ADR-0301, the split `audit` gate — card `t_1bf1ea8d`, PR
-[#230](https://github.com/yahodu/openpic-webapp/pull/230)), and `0302` (ADR-0302,
-the guard's contract — `t_2ae626e9`). Next free in the block is `0303`.
+[#230](https://github.com/yahodu/openpic-webapp/pull/230)), `0302` (ADR-0302,
+the guard's contract — `t_2ae626e9`), and `0303` (ADR-0303, the
+workflow-shell-safety guard + the `pr_checks.yml` `env:` transport and the OP-101
+F1 GREEN review sign-off — card `t_734fb1a0`, PR #240 merge `c44c311`). Next free
+in the block is `0304`.
 
 | ADR                                                                                | Title                                                                                                                   | Status                    |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -197,6 +200,7 @@ the guard's contract — `t_2ae626e9`). Next free in the block is `0303`.
 | [0300](ADR-0300-adr-number-range-allocation-policy.md)                             | ADR numbers are drawn from per-lane reserved ranges, never the shared high-water mark                                   | Accepted                  |
 | [0301](ADR-0301-ci-audit-dev-vs-prod-scope.md)                                     | Split the `audit` gate: blocking `pnpm audit --prod`, non-blocking `pnpm audit --dev`                                   | Accepted                  |
 | [0302](ADR-0302-adr-number-guard-contract.md)                                      | The `docs/adr/` number guard: its mechanical contract and its deliberate scope boundary                                 | Accepted                  |
+| [0303](ADR-0303-workflow-shell-safety-guard.md)                                    | The workflow-shell-safety guard and the `pr_checks.yml` env transport: contract, scope boundary and sign-off            | Accepted                  |
 
 Template: Context · Decision · Consequences · Alternatives.
 
