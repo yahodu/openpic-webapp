@@ -19,7 +19,7 @@ import {
   type FeedFilter,
   type StoredFeedRow,
 } from "@/server/notifications/feed";
-import { summarizeUnread } from "@/server/notifications/unread-count";
+import { buildLiveNotificationFilter, summarizeUnread } from "@/server/notifications/unread-count";
 import { platformRepo } from "@/server/repos";
 
 /**
@@ -144,7 +144,15 @@ export const GET = defineRoute({
       createdAtFilter.$lt = window.to;
     }
 
-    const match: Document = { userId, typeKey: typeKeyFilter, createdAt: createdAtFilter };
+    // The TTL bound is the one the unread count applies
+    // (`buildUnreadCountFilter`), reused rather than re-spelled so the list and
+    // the badge agree about a row the TTL monitor has not swept yet (F3).
+    const match: Document = {
+      userId,
+      typeKey: typeKeyFilter,
+      createdAt: createdAtFilter,
+      ...buildLiveNotificationFilter(now),
+    };
     if (filter === "unread") {
       // The `unread` band is the whole 90-day horizon *restricted to unread rows*;
       // the other three bands differ only by their `createdAt` window.
