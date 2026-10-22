@@ -34,7 +34,7 @@ the rejected alternatives are recorded in
 | Holder (lane)                       | Reserved range                  | Next free |
 | ----------------------------------- | ------------------------------- | --------- |
 | board-wide / process (orchestrator) | `0300`–`0319`                   | `0303`    |
-| OP-96 notifications follow-up       | `0146`–`0179`                   | `0146`    |
+| OP-96 notifications follow-up       | `0146`–`0179`                   | `0148`    |
 | OP-97 in-app feed                   | `0180`–`0199`                   | `0180`    |
 | OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
 | OP-98 notification preferences      | `0220`–`0239`                   | `0220`    |
