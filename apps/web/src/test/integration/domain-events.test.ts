@@ -23,6 +23,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration contract — the `domainEvents` transactional outbox (OP-88,
@@ -59,7 +60,7 @@ import {
 const DOMAIN_EVENTS = "domain_events";
 
 /** A fixed instant so timestamps are exact, not run-dependent. */
-const T0 = "2026-03-01T00:00:00.000Z";
+const T0 = fixtureInstant("00:00:00.000Z");
 
 /** The ISO instant `plusMs` after `T0` — used to cross the 30 s TTL window. */
 function at(plusMs: number): string {
@@ -202,7 +203,9 @@ describe("claimPendingEvents — stale lease recovery", () => {
       await seedEnabledNotificationType(test);
       await emitDomainEvent(makeDomainEventInput(), { db: test.db, clock: fixedClock(T0) });
 
-      const claimedAt = new Date("2026-06-01T00:00:00.000Z");
+      // An arbitrary claim instant — only the 5-minute staleness window around
+      // it is under test, so it is anchored to the fixture clock (ADR-0148).
+      const claimedAt = new Date(T0);
 
       const first = await claimPendingEvents("notifications", 10, {
         db: test.db,

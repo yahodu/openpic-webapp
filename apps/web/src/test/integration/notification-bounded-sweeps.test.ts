@@ -26,6 +26,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — the three sweeps bound the **read**, not just the
@@ -56,14 +57,14 @@ const NOTIFICATION_DIGESTS = "notificationDigests";
 const USER = "user";
 
 /** A fixed instant so every stored timestamp is exact. */
-const T0 = "2026-03-01T10:00:00.000Z";
+const T0 = fixtureInstant("10:00:00.000Z");
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
 /** An instant inside the quiet window (23:00 UTC). */
-const INSIDE = "2026-03-01T23:00:00.000Z";
+const INSIDE = fixtureInstant("23:00:00.000Z");
 /** The window end the deferral targets (07:00 UTC the next day). */
-const WINDOW_END = "2026-03-02T07:00:00.000Z";
+const WINDOW_END = fixtureInstant("07:00:00.000Z", 1);
 
 /** The due backlog used by every case; strictly greater than `limit`. */
 const BACKLOG = 10;

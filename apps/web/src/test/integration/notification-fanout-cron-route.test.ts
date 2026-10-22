@@ -12,6 +12,7 @@ import { invalidateNotificationTypeCache } from "@/server/notifications/notifica
 
 import { makeEnv, toProcessEnv } from "../factories/env";
 import { MONGO_READY_HOOK_TIMEOUT_MS, requireMongoTestUri, waitForMongoReady } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — the AUTHENTICATED surface of the notification fan-out
@@ -160,7 +161,7 @@ function signedPost(body: string, secret: string, signedAt: Date): Request {
 
 /** Insert a `notifications: "pending"` outbox row and return its id. */
 async function insertPendingEvent(tenantId: string): Promise<ObjectId> {
-  const now = new Date("2026-03-01T00:00:00.000Z");
+  const now = new Date(fixtureInstant("00:00:00.000Z"));
   const result = await getDb()
     .collection(DOMAIN_EVENTS)
     .insertOne({

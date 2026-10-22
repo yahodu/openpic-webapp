@@ -27,6 +27,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — **overlapping** digest-flush runs deliver a bucket's
@@ -92,7 +93,7 @@ const SINGLETON_ID = "singleton";
 const TYPE_KEY = "attendee.matches.new";
 
 /** A fixed instant so every stored timestamp is exact. */
-const T0 = "2026-03-01T10:00:00.000Z";
+const T0 = fixtureInstant("10:00:00.000Z");
 const MINUTE = 60_000;
 
 /**

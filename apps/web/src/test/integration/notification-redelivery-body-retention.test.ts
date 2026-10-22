@@ -24,6 +24,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — a body-less dispatch is never re-sent empty
@@ -54,7 +55,7 @@ const USER = "user";
 const TYPE_KEY = "auth.otp.email.requested";
 
 /** A fixed instant so every stored timestamp is exact. */
-const T0 = "2026-03-01T10:00:00.000Z";
+const T0 = fixtureInstant("10:00:00.000Z");
 
 /** Fields of a stored dispatch row this spec inspects (schema §19.5). */
 interface StoredDispatch {
@@ -207,7 +208,7 @@ describe("a retried body-less dispatch is never sent empty (F4)", () => {
       // The retry sweep must not deliver a subject-only / empty-body message.
       const retry = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:02:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:02:00.000Z")),
         transport,
         limit: 100,
       });
@@ -230,7 +231,7 @@ describe("a retried body-less dispatch is never sent empty (F4)", () => {
       // A following tick still leaves it alone.
       const nextTick = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:10:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:10:00.000Z")),
         transport,
         limit: 100,
       });
