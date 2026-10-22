@@ -44,8 +44,15 @@ import {
  *   exactly as the Appendix A catalogue names it (`reason: "transactional"` for
  *   a transactional type).
  * - `unknown_type_key` carries `details.typeKey`.
- * - A rejected patch **writes nothing**: an opt-out of a locked channel must not
- *   leave a phantom override in the stored document.
+ * - A rejected patch **writes nothing** on *every* rejection path, not only the
+ *   transactional one: an opt-out of a locked channel, an unrecognised
+ *   `typeKey` and a malformed quiet-hours clock each must leave the stored
+ *   document byte-identical, with no phantom override.
+ * - The surface is scoped by the caller's `userId` **only**: a patch by one
+ *   identity must never read or write another identity's document, so user B's
+ *   stored row and B's merged read are unchanged after user A patches.
+ * - `GET` is a pure read: a caller with no stored document is served the
+ *   catalogue defaults **without** the read upserting a row.
  */
 
 const PREFERENCES_PATH = "/api/v1/me/notification-preferences";
@@ -228,6 +235,22 @@ describe("GET /api/v1/me/notification-preferences (§7.4 merged read)", () => {
       source: "default",
     });
   });
+
+  it("does not create a stored document when the caller has none (read is not an upsert)", async () => {
+    const session = await app.signIn(makeIdentity("op98-read-no-create"));
+    await app.db.collection(PREFERENCES_COLLECTION).deleteOne({ userId: session.userId });
+
+    const response = await getPreferences(getRequest(session));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PreferencesBody;
+    expect(body.byType).toEqual({});
+
+    const count = await app.db
+      .collection(PREFERENCES_COLLECTION)
+      .countDocuments({ userId: session.userId });
+    expect(count).toBe(0);
+  });
 });
 
 describe("PATCH /api/v1/me/notification-preferences (§7.4 sparse patch)", () => {
@@ -266,6 +289,44 @@ describe("PATCH /api/v1/me/notification-preferences (§7.4 sparse patch)", () =>
       effective: "off",
       optOutAllowed: true,
       source: "type",
+    });
+  });
+
+  it("isolates a patch to the caller: another user's document and read are untouched", async () => {
+    const userA = await app.signIn(makeIdentity("op98-isolation-a"));
+    const userB = await app.signIn(makeIdentity("op98-isolation-b"));
+    await seedPreferences(userA.userId);
+    await seedPreferences(userB.userId);
+
+    const beforeB = await storedPreferences(userB.userId);
+
+    const patched = await patchPreferences(
+      patchRequest(userA, { byType: { [OPT_OUTABLE_TYPE]: { email: "off" } } })
+    );
+    expect(patched.status).toBe(200);
+    expect(
+      resolvedChannel((await patched.json()) as PreferencesBody, OPT_OUTABLE_TYPE, "email")
+    ).toEqual({ effective: "off", optOutAllowed: true, source: "type" });
+
+    const readA = await getPreferences(getRequest(userA));
+    expect(readA.status).toBe(200);
+    expect(
+      resolvedChannel((await readA.json()) as PreferencesBody, OPT_OUTABLE_TYPE, "email")
+    ).toEqual({ effective: "off", optOutAllowed: true, source: "type" });
+
+    const afterB = await storedPreferences(userB.userId);
+    expect(afterB).toEqual(beforeB);
+    expect(afterB.global).toEqual(beforeB.global);
+    expect(afterB.byType).toEqual(beforeB.byType);
+
+    const readB = await getPreferences(getRequest(userB));
+    expect(readB.status).toBe(200);
+    const bodyB = (await readB.json()) as PreferencesBody;
+    expect(bodyB.byType).toEqual({});
+    expect(resolvedChannel(bodyB, OPT_OUTABLE_TYPE, "email")).toEqual({
+      effective: "on",
+      optOutAllowed: true,
+      source: "default",
     });
   });
 
@@ -337,6 +398,22 @@ describe("PATCH /api/v1/me/notification-preferences (§7.4 sparse patch)", () =>
     expect(body.error.details).toMatchObject({ typeKey: "not.a.real.type" });
   });
 
+  it("the unknown_type_key rejection writes no phantom override", async () => {
+    const session = await app.signIn(makeIdentity("op98-unknown-type-side-effect"));
+    await seedPreferences(session.userId);
+
+    const before = await storedPreferences(session.userId);
+
+    const response = await patchPreferences(
+      patchRequest(session, { byType: { "not.a.real.type": { email: "off" } } })
+    );
+
+    expect(response.status).toBe(422);
+    const stored = await storedPreferences(session.userId);
+    expect(stored).toEqual(before);
+    expect(stored.byType).toEqual({});
+  });
+
   it("rejects a quiet-hours clock that is not HH:MM with 422 validation_failed", async () => {
     const session = await app.signIn(makeIdentity("op98-clock"));
     await seedPreferences(session.userId);
@@ -353,5 +430,21 @@ describe("PATCH /api/v1/me/notification-preferences (§7.4 sparse patch)", () =>
     expect(body.error.code).toBe("validation_failed");
     const fields = body.error.details?.fields ?? [];
     expect(fields.some((field) => field.path === "quietHours.start")).toBe(true);
+  });
+
+  it("the bad-clock validation_failed rejection leaves the stored quiet hours unchanged", async () => {
+    const session = await app.signIn(makeIdentity("op98-clock-side-effect"));
+    await seedPreferences(session.userId);
+
+    const before = await storedPreferences(session.userId);
+
+    const response = await patchPreferences(
+      patchRequest(session, { quietHours: { start: "24:00" } })
+    );
+
+    expect(response.status).toBe(422);
+    const stored = await storedPreferences(session.userId);
+    expect(stored).toEqual(before);
+    expect(stored.quietHours).toEqual(before.quietHours);
   });
 });
