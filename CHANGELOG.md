@@ -1,3 +1,9 @@
+## [1.23.0](https://github.com/yahodu/openpic-webapp/compare/v1.22.7...v1.23.0) (2026-10-22)
+
+### Features
+
+- **notifications:** OP-97 in-app feed, read state and unread-count hot path ([#233](https://github.com/yahodu/openpic-webapp/issues/233)) ([f95c50f](https://github.com/yahodu/openpic-webapp/commit/f95c50f4e0196a655f50627b93dfc397819cbfb0)), closes [#215](https://github.com/yahodu/openpic-webapp/issues/215) [#215](https://github.com/yahodu/openpic-webapp/issues/215) [#216](https://github.com/yahodu/openpic-webapp/issues/216) [#216](https://github.com/yahodu/openpic-webapp/issues/216)
+
 ## [1.22.7](https://github.com/yahodu/openpic-webapp/compare/v1.22.6...v1.22.7) (2026-10-22)
 
 ### Bug Fixes
