@@ -1,3 +1,9 @@
+## [1.22.7](https://github.com/yahodu/openpic-webapp/compare/v1.22.6...v1.22.7) (2026-10-22)
+
+### Bug Fixes
+
+- **ci:** OP-101 transport PR title/branch through the step env ([#240](https://github.com/yahodu/openpic-webapp/issues/240)) ([c44c311](https://github.com/yahodu/openpic-webapp/commit/c44c311a6b3645eb93656f9023c82707ca6a7a31)), closes [#237](https://github.com/yahodu/openpic-webapp/issues/237)
+
 ## [1.22.6](https://github.com/yahodu/openpic-webapp/compare/v1.22.5...v1.22.6) (2026-10-20)
 
 ### Bug Fixes
