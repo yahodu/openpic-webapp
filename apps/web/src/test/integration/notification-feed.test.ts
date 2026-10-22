@@ -471,3 +471,52 @@ describe("GET /api/v1/me/notifications — OTP defence in depth (I7)", () => {
     expect(idsOf(filtered)).toEqual([]);
   });
 });
+
+describe("GET /api/v1/me/notifications — TTL-expired rows (F3)", () => {
+  /**
+   * F3, routed to this lane by the OP-97 GREEN review (`t_58825ec3`).
+   *
+   * The feed's `createdAt` band is the only bound the route applies
+   * (`route.ts`'s `createdAtFilter`), while the shared `summarizeUnread`
+   * additionally requires `expireAt > now`. A row past its TTL that the ~60 s
+   * TTL monitor has not yet swept therefore appears in the list (and in
+   * `?filter=unread`) while `summary.unreadCount` — the badge, and the
+   * `GET /unread-count` endpoint — already excludes it: the panel and the bell
+   * disagree about the same row on the same request.
+   *
+   * The intended behaviour is that the list agrees with the badge: a row whose
+   * `expireAt` has passed is not a live notification and must not be listed.
+   * This pin is expected to be RED against the merged implementation and is
+   * handed to the GREEN card rather than relaxed.
+   */
+  it("F3: never lists a row whose expireAt has already passed, so the list agrees with the badge", async () => {
+    const session = await app.signIn(makeIdentity("op97-feed-expired"));
+    const createdAt = daysAgo(1);
+    const live = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt,
+    });
+    const expired = await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "event.details.updated",
+      createdAt,
+      expireAt: daysAgo(1),
+    });
+
+    const active = await fetchFeed(session);
+    const unread = await fetchFeed(session, "?filter=unread");
+    const all = await fetchFeed(session, "?filter=all");
+
+    // The live row proves each band is otherwise non-empty, so the exclusion
+    // below is the TTL bound and not an empty response.
+    expect(idsOf(active)).toEqual([live.toString()]);
+    expect(idsOf(unread)).toEqual([live.toString()]);
+    expect(idsOf(all)).toEqual([live.toString()]);
+    expect(idsOf(all)).not.toContain(expired.toString());
+
+    // The badge already drops the expired row; the list must agree.
+    expect(all.summary.unreadCount).toBe(1);
+    expect(unread.summary.unreadCount).toBe(1);
+  });
+});

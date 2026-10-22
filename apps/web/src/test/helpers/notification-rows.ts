@@ -1,4 +1,4 @@
-import { ObjectId, type Db } from "mongodb";
+import { ObjectId, type Db, type Document } from "mongodb";
 
 /**
  * `notifications` feed-row fixtures (OP-97, schema §19.4).
@@ -56,17 +56,16 @@ export const ROW_CREATED_AT = new Date("2026-03-01T00:00:00.000Z");
 export const ROW_EXPIRES_AT = new Date("2026-05-30T00:00:00.000Z");
 
 /**
- * Insert one stored feed row and return its id.
+ * Build the schema-shaped stored document for one fixture row.
  *
- * @param database - The database under test.
  * @param input - The fields to state; everything else is deterministic.
- * @returns The inserted `_id`.
+ * @param _id - The id to store on the row.
+ * @returns The stored document.
  */
-export async function insertFeedRow(database: Db, input: FeedRowInput): Promise<ObjectId> {
-  const _id = new ObjectId();
+function feedRowDocument(input: FeedRowInput, _id: ObjectId): Document {
   const createdAt = input.createdAt ?? ROW_CREATED_AT;
 
-  await database.collection(NOTIFICATIONS_COLLECTION).insertOne({
+  return {
     _id,
     userId: input.userId,
     tenantId: input.tenantId ?? null,
@@ -85,7 +84,43 @@ export async function insertFeedRow(database: Db, input: FeedRowInput): Promise<
     createdAt,
     updatedAt: input.updatedAt ?? createdAt,
     expireAt: input.expireAt ?? new Date(createdAt.getTime() + 90 * 24 * 60 * 60 * 1000),
-  });
+  };
+}
 
+/**
+ * Insert one stored feed row and return its id.
+ *
+ * @param database - The database under test.
+ * @param input - The fields to state; everything else is deterministic.
+ * @returns The inserted `_id`.
+ */
+export async function insertFeedRow(database: Db, input: FeedRowInput): Promise<ObjectId> {
+  const _id = new ObjectId();
+  await database.collection(NOTIFICATIONS_COLLECTION).insertOne(feedRowDocument(input, _id));
   return _id;
+}
+
+/**
+ * Insert many stored feed rows in one round trip and return their ids.
+ *
+ * The batch sibling of {@link insertFeedRow}. A read-heavy seed — the unread
+ * count's I4 explain pin seeds 200 read rows to make the partial index the
+ * winning plan — is dominated by one round trip per row, which pushes that
+ * pin past vitest's default 5 s `testTimeout` under load (F1). One `insertMany`
+ * stores the same row shape but makes the seed a single write, so the pin
+ * measures the query plan rather than the seeding wall-clock.
+ *
+ * @param database - The database under test.
+ * @param inputs - The rows to state, in the order the returned ids appear.
+ * @returns The inserted `_id`s, in input order.
+ */
+export async function insertFeedRows(
+  database: Db,
+  inputs: readonly FeedRowInput[]
+): Promise<ObjectId[]> {
+  const documents = inputs.map((input) => feedRowDocument(input, new ObjectId()));
+  if (documents.length > 0) {
+    await database.collection(NOTIFICATIONS_COLLECTION).insertMany(documents);
+  }
+  return documents.map((document) => document._id as ObjectId);
 }
