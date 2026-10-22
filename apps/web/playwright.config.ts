@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 import { E2E_BASE_URL, E2E_PORT, PRODUCTION_BASE_URL, PRODUCTION_PORT } from "./e2e/ports";
+import { E2E_UNSUBSCRIBE_SIGNING_SECRET } from "./e2e/unsubscribe-token";
 
 /**
  * Playwright config with two API projects (OP-85):
@@ -57,7 +58,15 @@ export default defineConfig({
       // then starts the standalone server (see `e2e/start-server.mjs`).
       command: "node e2e/start-server.mjs",
       url: `${E2E_BASE_URL}/api/v1/health`,
-      env: { APP_ENV: "e2e", PORT: E2E_PORT, HOSTNAME: "127.0.0.1" },
+      env: {
+        APP_ENV: "e2e",
+        PORT: E2E_PORT,
+        HOSTNAME: "127.0.0.1",
+        // Fixed so the e2e suite can mint an unsubscribe token itself
+        // (OP-99, ADR-0240); the launcher only generates a throwaway when
+        // this is absent.
+        UNSUBSCRIBE_SIGNING_SECRET: E2E_UNSUBSCRIBE_SIGNING_SECRET,
+      },
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
