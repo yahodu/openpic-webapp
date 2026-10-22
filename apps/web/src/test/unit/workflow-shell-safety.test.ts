@@ -52,15 +52,20 @@ import {
  *
  * `UntrustedRunInterpolation = { file; line; expression; context }` — the raw
  * inner expression and the untrusted token that made it untrusted.
- * `JobEnvTransport = { job; variable; readInShell; suppliedByEnv; ok }` where
- * `ok === (readInShell && suppliedByEnv)`.
+ * `JobEnvTransport = { job; variable; readInShell; suppliedByEnv; envValue;
+ * envValueContext; ok }` where `ok === (readInShell && suppliedByEnv)` and the
+ * value fields report the `env:` entry itself.
  *
- * **Deliberate scope boundary (assumption).** Only the contexts named by the
- * OP-101 card count as untrusted — `github.event.*`, `github.head_ref`,
- * `github.base_ref`, `inputs.*`. `${{ github.repository }}`, `${{ github.ref_name }}`
- * and `${{ secrets.X }}` are *not* flagged, so the unrelated `new_branch_flow.yml`
- * (`github.ref_name`) and the Discord notifier workflows (secrets/`github.repository`)
- * stay out of this change. Broadening the set is a review decision, not this pin's.
+ * **Scope boundary (OP-101 follow-up, card `t_db64743b`).** The untrusted set
+ * is `github.event.*`, `github.head_ref`, `github.base_ref`, `github.ref_name`,
+ * `github.ref`, a derived `steps.<id>.outputs.<name>` and `inputs.*`.
+ * `github.ref_name`/`github.ref` are in scope because `new_branch_flow.yml`
+ * triggers on branch *creation*, so `github.ref_name` **is** the attacker-chosen
+ * branch name (git permits backticks and `$( … )` in a ref); `steps.…outputs.…`
+ * carries the same payload when the step derived it from the branch. Only
+ * `${{ github.repository }}` and `${{ secrets.X }}` remain unflagged — they are
+ * not attacker-controllable — so the Discord notifier workflows stay out of this
+ * change.
  *
  * **No ADR number is consumed.** This is a pin of an *existing* gap, not a new
  * decision record (ADR-0300 §2; `docs/adr/README.md` OP-101 range `0280`–`0299`).
@@ -206,6 +211,10 @@ describe("scanWorkflowSource — synthetic fixtures", () => {
   it.each<[string, string]>([
     ["github.head_ref", "github.head_ref"],
     ["github.base_ref", "github.base_ref"],
+    ["github.ref_name", "github.ref_name"],
+    ["github.ref", "github.ref"],
+    ["steps.title.outputs.title", "steps.outputs"],
+    ["steps.app-token.outputs.token", "steps.outputs"],
     ["inputs.ticket", "inputs"],
     ["github.event.pull_request.user.login", "github.event"],
     ["github.event.commits[0].message", "github.event"],
@@ -226,27 +235,28 @@ describe("scanWorkflowSource — synthetic fixtures", () => {
     expect(findings).toEqual([{ file: "class.yml", line: 5, expression, context }]);
   });
 
-  it.each<string>([
-    "github.repository",
-    "github.ref_name",
-    "secrets.GITHUB_TOKEN",
-    "steps.title.outputs.title",
-  ])("does not flag the safe context %s used in a run body", (expression) => {
-    // Arrange
-    const source = [
-      "jobs:",
-      "  check:",
-      "    steps:",
-      "      - run: |",
-      '          echo "${{ ' + expression + ' }}"',
-    ].join("\n");
+  // `github.ref_name` and `steps.title.outputs.title` used to live in this safe
+  // list; the OP-101 follow-up moved them into the flagged set above (card
+  // `t_db64743b`, finding F1). Do not add them back.
+  it.each<string>(["github.repository", "secrets.GITHUB_TOKEN"])(
+    "does not flag the safe context %s used in a run body",
+    (expression) => {
+      // Arrange
+      const source = [
+        "jobs:",
+        "  check:",
+        "    steps:",
+        "      - run: |",
+        '          echo "${{ ' + expression + ' }}"',
+      ].join("\n");
 
-    // Act
-    const findings = scanWorkflowSource("safe-context.yml", source);
+      // Act
+      const findings = scanWorkflowSource("safe-context.yml", source);
 
-    // Assert
-    expect(findings).toEqual([]);
-  });
+      // Assert
+      expect(findings).toEqual([]);
+    }
+  );
 
   it("does not treat github.event_name as an untrusted github.event context", () => {
     // Arrange
@@ -345,6 +355,8 @@ describe("inspectJobEnvTransport — synthetic fixtures", () => {
       variable: "TITLE",
       readInShell: true,
       suppliedByEnv: true,
+      envValue: "${{ github.event.pull_request.title }}",
+      envValueContext: "github.event",
       ok: true,
     });
   });
@@ -385,6 +397,8 @@ describe("inspectJobEnvTransport — synthetic fixtures", () => {
       variable: "TITLE",
       readInShell: true,
       suppliedByEnv: false,
+      envValue: null,
+      envValueContext: null,
       ok: false,
     });
   });
@@ -412,6 +426,8 @@ describe("inspectJobEnvTransport — synthetic fixtures", () => {
       variable: "TITLE",
       readInShell: false,
       suppliedByEnv: true,
+      envValue: "${{ github.event.pull_request.title }}",
+      envValueContext: "github.event",
       ok: false,
     });
   });
@@ -445,6 +461,8 @@ describe("inspectJobEnvTransport — synthetic fixtures", () => {
       variable: "TITLE",
       readInShell: true,
       suppliedByEnv: false,
+      envValue: null,
+      envValueContext: null,
       ok: false,
     });
   });
@@ -471,7 +489,93 @@ describe("inspectJobEnvTransport — synthetic fixtures", () => {
       variable: "TITLE",
       readInShell: true,
       suppliedByEnv: false,
+      envValue: null,
+      envValueContext: null,
       ok: false,
+    });
+  });
+
+  it("does not treat $TITLE_BACKUP as a shell read of $TITLE (word boundary)", () => {
+    // Arrange — the env entry supplies TITLE, but the script only reads a
+    // differently named variable, so the guard must not credit the check.
+    const source = [
+      "jobs:",
+      "  check:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - name: Check",
+      "        env:",
+      "          TITLE: ${{ github.event.pull_request.title }}",
+      "        run: |",
+      '          echo "$TITLE_BACKUP"',
+    ].join("\n");
+
+    // Act
+    const report = inspectJobEnvTransport(source, "check", "TITLE");
+
+    // Assert
+    expect(report).toEqual({
+      job: "check",
+      variable: "TITLE",
+      readInShell: false,
+      suppliedByEnv: true,
+      envValue: "${{ github.event.pull_request.title }}",
+      envValueContext: "github.event",
+      ok: false,
+    });
+  });
+
+  it("does not treat ${TITLE_BACKUP} as a shell read of $TITLE either", () => {
+    // Arrange — the braced form must match the variable name exactly.
+    const source = [
+      "jobs:",
+      "  check:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - name: Check",
+      "        env:",
+      "          TITLE: ${{ github.event.pull_request.title }}",
+      "        run: |",
+      '          echo "${TITLE_BACKUP}"',
+    ].join("\n");
+
+    // Act
+    const report = inspectJobEnvTransport(source, "check", "TITLE");
+
+    // Assert
+    expect(report.readInShell).toBe(false);
+    expect(report.ok).toBe(false);
+  });
+
+  it("exposes a null env context when the env value is a hardcoded literal, so a neutered check stays detectable", () => {
+    // Arrange — the value is supplied by env and read in the shell, so `ok` is
+    // true; only the value assertion (envValueContext) catches the neutering.
+    const source = [
+      "jobs:",
+      "  validate-pr-title:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - name: Check PR title",
+      "        env:",
+      '          TITLE: "literal"',
+      "        run: |",
+      '          if [[ ! "$TITLE" =~ ^OP- ]]; then',
+      "            exit 1",
+      "          fi",
+    ].join("\n");
+
+    // Act
+    const report = inspectJobEnvTransport(source, "validate-pr-title", "TITLE");
+
+    // Assert
+    expect(report).toEqual({
+      job: "validate-pr-title",
+      variable: "TITLE",
+      readInShell: true,
+      suppliedByEnv: true,
+      envValue: '"literal"',
+      envValueContext: null,
+      ok: true,
     });
   });
 
@@ -485,6 +589,8 @@ describe("inspectJobEnvTransport — synthetic fixtures", () => {
       variable: "TITLE",
       readInShell: false,
       suppliedByEnv: false,
+      envValue: null,
+      envValueContext: null,
       ok: false,
     });
   });
@@ -515,6 +621,8 @@ describe("the repository's real .github/workflows", () => {
       variable: "BRANCH",
       readInShell: true,
       suppliedByEnv: true,
+      envValue: "${{ github.head_ref }}",
+      envValueContext: "github.head_ref",
       ok: true,
     });
   });
@@ -529,7 +637,30 @@ describe("the repository's real .github/workflows", () => {
       variable: "TITLE",
       readInShell: true,
       suppliedByEnv: true,
+      envValue: "${{ github.event.pull_request.title }}",
+      envValueContext: "github.event",
       ok: true,
     });
+  });
+
+  // F2 (card `t_db64743b`): a `TITLE: "literal"` that still satisfies
+  // readInShell + suppliedByEnv must not pass — the env *value* has to be the
+  // untrusted expression.
+  it("supplies BRANCH's env value from github.head_ref, not a hardcoded literal", () => {
+    // Act
+    const report = inspectJobEnvTransport(prChecks, "validate-branch-name", "BRANCH");
+
+    // Assert
+    expect(report.envValue).toBe("${{ github.head_ref }}");
+    expect(report.envValueContext).toBe("github.head_ref");
+  });
+
+  it("supplies TITLE's env value from github.event.pull_request.title, not a hardcoded literal", () => {
+    // Act
+    const report = inspectJobEnvTransport(prChecks, "validate-pr-title", "TITLE");
+
+    // Assert
+    expect(report.envValue).toBe("${{ github.event.pull_request.title }}");
+    expect(report.envValueContext).toBe("github.event");
   });
 });

@@ -25,9 +25,9 @@ jobs:
 
       - name: Format PR title from branch name
         id: title
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
-          BRANCH="${{ github.ref_name }}"
-
           # Extract ticket (e.g. OP-10) safely with awk
           TICKET=$(echo "$BRANCH" | awk -F'-' '{print $1"-"$2}')
 
@@ -44,9 +44,10 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.ref_name }}
         run: |
           EXISTING=$(gh pr list \
-            --head "${{ github.ref_name }}" \
+            --head "$HEAD_REF" \
             --base main \
             --json number \
             --jq '.[0].number')
@@ -56,10 +57,12 @@ jobs:
         if: steps.check.outputs.existing == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.ref_name }}
+          TITLE: ${{ steps.title.outputs.title }}
         run: |
           gh pr create \
             --draft \
             --base main \
-            --head "${{ github.ref_name }}" \
-            --title "${{ steps.title.outputs.title }}" \
+            --head "$HEAD_REF" \
+            --title "$TITLE" \
             --body-file ".github/pull_request_template.md"

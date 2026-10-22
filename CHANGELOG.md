@@ -1,3 +1,9 @@
+## [1.23.1](https://github.com/yahodu/openpic-webapp/compare/v1.23.0...v1.23.1) (2026-10-22)
+
+### Bug Fixes
+
+- **ci:** OP-101 transport github.ref_name and the derived PR title through env ([#245](https://github.com/yahodu/openpic-webapp/issues/245)) ([86f0fee](https://github.com/yahodu/openpic-webapp/commit/86f0feea765bcd79c631c1ca3d2ab4ea198d5075))
+
 ## [1.23.0](https://github.com/yahodu/openpic-webapp/compare/v1.22.7...v1.23.0) (2026-10-22)
 
 ### Features
