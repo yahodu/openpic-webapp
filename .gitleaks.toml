@@ -7,9 +7,16 @@ useDefault = true
 # Documentation code samples intentionally use identifier-like strings that
 # match the generic-api-key heuristic (e.g. `modelKey: "insightface-antelopev2-2026-03"`).
 # Allowlist the exact non-secret value so the docs can be committed.
+#
+# The second entry is the OP-99 e2e fixture's original signing-secret literal.
+# The fixture no longer commits it (it derives the secret at runtime, see
+# `apps/web/e2e/unsubscribe-token.ts`), but the literal still lives in this
+# branch's pre-fix commit and gitleaks scans the whole push range, so the exact
+# non-secret value must be allowlisted until the branch is squashed on merge.
 [allowlist]
-description = "docs: non-secret model identifier matching generic-api-key"
+description = "non-secret identifiers and test fixtures matching generic-api-key"
 regexTarget = "secret"
 regexes = [
   '''insightface-antelopev2-2026-03''',
+  '''e2e-unsubscribe-signing-secret-0123456789abcd''',
 ]
