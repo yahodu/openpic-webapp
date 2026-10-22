@@ -198,16 +198,25 @@ auto-resumes when the header lands: it then merges the RED tip forward into the
 GREEN branch, re-runs the full suite and requests review. Option 1 is the
 correction; option 2 remains rejected.
 
+**Resolution (recorded 2026-10-22).** Card `t_6f2430cb` landed option 1 on the
+RED branch: commit `97257f5` adds `"x-requested-with": "XMLHttpRequest"` to E1's
+read POST headers — a test-only change, with no CSRF-gate exemption and no other
+spec or production file touched. The GREEN branch then merged the RED tip
+(`dcb1472`) and `origin/main` (`a094b86`), and the disputed red is closed: E1
+passes and the whole suite is green (unit 88 files / 1530 tests, integration 61
+files / 399 tests, `playwright --project=api` 16/16, coverage
+92.41 / 80.74 / 96.14 / 93.07).
+
 ## Consequences
 
 - The feed, the read-state mutations and the badge are implemented to ADR-0131's
   contract; `apps/web/src/test/**` is unmodified apart from the renumbering
   comments the RED branch already carried (merged in `0de60e0`).
-- **E1 is the one red test, and it is disputed** (see the Dispute section): the
-  spec's read POST omits the CSRF header the pinned gate requires, so it is
-  `403` before the route runs. Unit (1493) and integration (387) are green; E1's
-  badge/list half is green on the deployed server, and its read half is green as
-  soon as the header is present.
+- **E1 was the one red test, and it was disputed** (see the Dispute section): the
+  spec's read POST omitted the CSRF header the pinned gate requires, so it was
+  `403` before the route ran. The Test Author's follow-up card `t_6f2430cb` added
+  the header (RED commit `97257f5`, merged in `dcb1472`), and E1 is now green
+  alongside the rest of the suite (unit 1530, integration 399, e2e api 16/16).
 - The badge path is index-supported, cacheable and never counts OTP or
   unexpired rows; the feed never lists an `auth.otp.*` row even if one is stored.
 - **Open, for the Test Author:** (1) PRE-1's fixture collapses actor and subject,
