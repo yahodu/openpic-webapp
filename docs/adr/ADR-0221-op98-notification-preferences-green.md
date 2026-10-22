@@ -119,7 +119,7 @@ vitest run --project integration \
   Test Files  2 passed (2) · Tests  19 passed (19)
 
 vitest run --project unit
-  Test Files  90 passed (90) · Tests  1595 passed (1595)
+  Test Files  90 passed (90) · Tests  1602 passed (1602)
 
 vitest run --project integration
   Test Files  63 passed (63) · Tests  418 passed (418)
