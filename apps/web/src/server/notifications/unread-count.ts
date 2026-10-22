@@ -94,13 +94,32 @@ export interface UnreadCountFilterInput {
 }
 
 /**
+ * The TTL predicate every live-notification read shares: a row is live only
+ * while its `expireAt` is still in the future.
+ *
+ * The feed list, its `summary` and `GET /unread-count` all bind their reads by
+ * this one builder, so the panel and the bell can never disagree about a row
+ * the ~60 s TTL monitor has not swept yet (F3, OP-97).
+ *
+ * @param now - The instant TTL-expired rows are measured against.
+ * @returns `{ expireAt: { $gt: now } }`.
+ */
+export function buildLiveNotificationFilter(now: Date): Document {
+  return { expireAt: { $gt: now } };
+}
+
+/**
  * The exact indexed predicate the unread count runs.
  *
  * @param input - The caller and the current instant.
  * @returns `{ userId, readAt: null, expireAt: { $gt: now } }`.
  */
 export function buildUnreadCountFilter(input: UnreadCountFilterInput): Document {
-  return { userId: input.userId, readAt: null, expireAt: { $gt: input.now } };
+  return {
+    userId: input.userId,
+    readAt: null,
+    ...buildLiveNotificationFilter(input.now),
+  };
 }
 
 /** The aggregated unread state of one caller (contract §7.2). */
