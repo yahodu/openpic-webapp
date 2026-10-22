@@ -35,7 +35,7 @@ the rejected alternatives are recorded in
 | ----------------------------------- | ------------------------------- | --------- |
 | board-wide / process (orchestrator) | `0300`–`0319`                   | `0304`    |
 | OP-96 notifications follow-up       | `0146`–`0179`                   | `0149`    |
-| OP-97 in-app feed                   | `0180`–`0199`                   | `0181`    |
+| OP-97 in-app feed                   | `0180`–`0199`                   | `0182`    |
 | OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
 | OP-98 notification preferences      | `0220`–`0239`                   | `0220`    |
 | OP-99 one-click unsubscribe         | `0240`–`0259`                   | `0240`    |
@@ -199,6 +199,7 @@ in the block is `0304`.
 | [0147](ADR-0147-op96-flush-claim-lease-pins.md)                                    | OP-96 follow-up TEST: pin the digest-flush claim/lease recovery boundary and the retryable-overlap sibling (F1)         | Accepted                  |
 | [0148](ADR-0148-integration-fixture-clock-anchor.md)                               | OP-96 follow-up: anchor the integration fixture clock to the real day (class-wide TTL-deletion flake, F1)               | Accepted                  |
 | [0180](ADR-0180-op97-in-app-feed-read-state-unread-count-green.md)                 | OP-97 GREEN: in-app feed, read state and the unread-count hot path (projection, ETag/304, PRE-1, e2e catalogue seed)    | Accepted                  |
+| [0181](ADR-0181-op97-green-review-signoff.md)                                      | OP-97 GREEN review sign-off: feed, read state and the unread-count hot path verified and merged                         | Accepted                  |
 | [0200](ADR-0200-op94-mobile-skip-channel-pin-green-review-signoff.md)              | OP-94 fan-out follow-up GREEN review sign-off: `mobile` skip-channel pins verified GREEN; one Low routed                | Accepted                  |
 | [0300](ADR-0300-adr-number-range-allocation-policy.md)                             | ADR numbers are drawn from per-lane reserved ranges, never the shared high-water mark                                   | Accepted                  |
 | [0301](ADR-0301-ci-audit-dev-vs-prod-scope.md)                                     | Split the `audit` gate: blocking `pnpm audit --prod`, non-blocking `pnpm audit --dev`                                   | Accepted                  |
@@ -242,3 +243,5 @@ _The OP-96 follow-up (TEST) lane (`t_6c3b5eb8`, branch `OP-96-task-flush-claim-l
 _The OP-96 lane's `Next free` cell is `0149` (card `t_e373a255`). `0146` (PR #225) and `0147` (PR #235) are **landed** on `main`, and `0148` is **allocated in-flight** — the branch `OP-96-task-fixture-clock-future` (`t_ad8bdf4f`) carries `docs/adr/ADR-0148-integration-fixture-clock-anchor.md`. Under [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §7 the cell is a **reservation counter**: an in-flight allocation counts as taken, so the next number a new OP-96 card receives is `0149`, not `0148`._
 
 _The OP-96 follow-up **class-wide fixture-clock** lane (`t_ad8bdf4f`, finding F1; branch `OP-96-task-fixture-clock-future`, worktree `/root/openpic/openpic-webapp/.worktrees/t_ad8bdf4f`) holds `0148`, applying ADR-0146's anchor to the 17 exposed specs that persist and re-read TTL'd rows from a pinned past clock. `0146` is consumed by ADR-0146 (PR #225, `6cc0613`) and `0147` by the sibling `OP-96-task-flush-claim-lease-pins` lane (PR #235, `d48a7ee`), so `0148` is the lowest free number in the `0146`–`0179` range. Because it was based on `6cc0613` and `origin/main` then advanced to `d48a7ee` (which added the `notification-digest-flush-claim-lease.test.ts` spec and the README's `0147` row), the branch merges that main and anchors the newly-arrived spec too, for 17 of 17. The record documents a harness fix only — no production code; see ADR-0148 §Evidence for the probe, the 10/10 load runs and the full-suite result._
+
+_The OP-97 lane's `Next free` cell advanced from `0181` to `0182` (card `t_190f33a2`, branch `OP-97-task-green-review-signoff-docs`, worktree `/root/openpic/openpic-webapp/.worktrees/t_58825ec3`). The sign-off record takes `0181` — the cell's value re-read on a fresh `origin/main` (`cb7fff7`) immediately before committing — so the lane-local counter is now `0182`. `0180` is the GREEN implementation ([ADR-0180](ADR-0180-op97-in-app-feed-read-state-unread-count-green.md), PR #233); no number outside the lane's `0180`–`0199` range is touched._
