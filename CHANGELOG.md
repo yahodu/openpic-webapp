@@ -1,3 +1,9 @@
+## [1.22.6](https://github.com/yahodu/openpic-webapp/compare/v1.22.5...v1.22.6) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 claim a digest bucket before the send so overlapping flushes deliver one summary (F2) ([#221](https://github.com/yahodu/openpic-webapp/issues/221)) ([e57eb58](https://github.com/yahodu/openpic-webapp/commit/e57eb589de2d9fab02146e16fdff3ae8efd6a854)), closes [#219](https://github.com/yahodu/openpic-webapp/issues/219) [#219](https://github.com/yahodu/openpic-webapp/issues/219)
+
 ## [1.22.5](https://github.com/yahodu/openpic-webapp/compare/v1.22.4...v1.22.5) (2026-10-20)
 
 ### Bug Fixes
