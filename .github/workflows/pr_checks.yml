@@ -12,8 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
         run: |
-          BRANCH="${{ github.head_ref }}"
           PATTERN="^OP-[0-9]+-(feature|bug|task)-[a-z0-9_-]+$"
           if [[ ! "$BRANCH" =~ $PATTERN ]]; then
             echo "❌ Invalid branch name: '$BRANCH'"
@@ -27,8 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
         run: |
-          TITLE="${{ github.event.pull_request.title }}"
           TYPES="feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert"
           PATTERN="^($TYPES)(\(.+\))?: OP-[0-9]+ .+$"
           if [[ ! "$TITLE" =~ $PATTERN ]]; then
@@ -113,9 +115,12 @@ jobs:
           fetch-depth: 0
 
       - name: Check env variable documentation
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           # Detect if .env.example changed in this PR
-          ENV_CHANGED=$(git diff origin/${{ github.base_ref }}...HEAD \
+          ENV_CHANGED=$(git diff "origin/$BASE_REF...HEAD" \
             -- '.env.example' | wc -l)
 
           if [[ "$ENV_CHANGED" -eq 0 ]]; then
@@ -126,13 +131,8 @@ jobs:
           echo "⚠️  .env.example was modified. Checking PR documentation..."
           echo ""
           echo "Diff:"
-          git diff origin/${{ github.base_ref }}...HEAD -- '.env.example'
+          git diff "origin/$BASE_REF...HEAD" -- '.env.example'
           echo ""
-
-          PR_BODY=$(cat << 'EOF'
-          ${{ github.event.pull_request.body }}
-          EOF
-          )
 
           if echo "$PR_BODY" | grep -q "No env changes"; then
             echo "❌ .env.example was changed but the PR description still has"
