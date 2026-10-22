@@ -18,7 +18,7 @@ import {
   type SignedInUser,
   type TestApp,
 } from "../helpers/authed-app";
-import { insertFeedRow } from "../helpers/notification-rows";
+import { insertFeedRow, insertFeedRows } from "../helpers/notification-rows";
 
 /**
  * Integration / contract — `GET /api/v1/me/notifications/unread-count` (OP-97,
@@ -63,6 +63,18 @@ const POLL_INTERVAL_SECONDS = 45;
  * (finding F5). A tiny collection risks a `COLLSCAN` win and a flaky pin.
  */
 const EXPLAIN_READ_ROWS = 200;
+
+/**
+ * The explicit per-test timeout for I4 (F1).
+ *
+ * I4 seeds a read-heavy collection and then asserts the query plan. Bulk
+ * seeding (one `insertMany`) removes the per-row round-trip cost that made the
+ * test land at ~5.0 s and time out on a loaded host, but the assertion still
+ * compiles and runs a plan on a shared CI host — the explicit budget keeps a
+ * slow-but-correct plan from being reported as a hang, while remaining far
+ * below any duration a genuine regression would need to hide behind.
+ */
+const EXPLAIN_TEST_TIMEOUT_MS = 30_000;
 
 beforeAll(async () => {
   app = await startTestApp({ prefix: "op97-unread" });
@@ -255,42 +267,48 @@ describe("GET /api/v1/me/notifications/unread-count", () => {
     expect(body.byCategory).toEqual({ account: 1 });
   });
 
-  it("I4: the count query is served by the partial index idx_user_unread", async () => {
-    const session = await app.signIn(makeIdentity("op97-unread-explain"));
-    // A read-heavy collection: the partial index indexes only the unread rows,
-    // so the planner must prefer it over a full-collection scan. The read rows
-    // are seeded deliberately large (not the ~30 that only marginalise the
-    // choice) so the index is not merely *a* candidate but the winning plan —
-    // with a tiny collection the multi-plan runner could in principle prefer a
-    // `COLLSCAN` and flake. The size is what makes the pin deterministic.
-    const readRows = Array.from({ length: EXPLAIN_READ_ROWS }, (_, index) => index);
-    for (const index of readRows) {
-      await insertFeedRow(app.db, {
-        userId: session.userId,
-        typeKey: "account.welcome",
-        readAt: daysAgo(index + 1),
-        createdAt: daysAgo(index + 1),
-      });
-    }
-    for (const index of [1, 2, 3, 4]) {
-      await insertFeedRow(app.db, {
-        userId: session.userId,
-        typeKey: "account.welcome",
-        createdAt: daysAgo(index),
-      });
-    }
-    await ensureIndexes(app.db);
+  it(
+    "I4: the count query is served by the partial index idx_user_unread",
+    async () => {
+      const session = await app.signIn(makeIdentity("op97-unread-explain"));
+      // A read-heavy collection: the partial index indexes only the unread rows,
+      // so the planner must prefer it over a full-collection scan. The read rows
+      // are seeded deliberately large (not the ~30 that only marginalise the
+      // choice) so the index is not merely *a* candidate but the winning plan —
+      // with a tiny collection the multi-plan runner could in principle prefer a
+      // `COLLSCAN` and flake. The size is what makes the pin deterministic.
+      //
+      // F1: the seed is one bulk write, not 204 sequential round trips. The
+      // stored shape is unchanged (same helper row builder), but the seeding
+      // wall-clock no longer competes with the 5 s default `testTimeout`, so a
+      // load-induced timeout can no longer mask a genuine plan regression.
+      await insertFeedRows(app.db, [
+        ...Array.from({ length: EXPLAIN_READ_ROWS }, (_, index) => ({
+          userId: session.userId,
+          typeKey: "account.welcome",
+          readAt: daysAgo(index + 1),
+          createdAt: daysAgo(index + 1),
+        })),
+        ...[1, 2, 3, 4].map((index) => ({
+          userId: session.userId,
+          typeKey: "account.welcome",
+          createdAt: daysAgo(index),
+        })),
+      ]);
+      await ensureIndexes(app.db);
 
-    const now = new Date();
-    const explanation = await app.db
-      .collection("notifications")
-      .find(buildUnreadCountFilter({ userId: session.userId, now }))
-      .explain("executionStats");
+      const now = new Date();
+      const explanation = await app.db
+        .collection("notifications")
+        .find(buildUnreadCountFilter({ userId: session.userId, now }))
+        .explain("executionStats");
 
-    const plan = explanation as unknown as { queryPlanner?: { winningPlan?: unknown } };
-    const stages = planNodes(plan.queryPlanner?.winningPlan).map((node) => node.indexName);
-    expect(stages).toContain("idx_user_unread");
-  });
+      const plan = explanation as unknown as { queryPlanner?: { winningPlan?: unknown } };
+      const stages = planNodes(plan.queryPlanner?.winningPlan).map((node) => node.indexName);
+      expect(stages).toContain("idx_user_unread");
+    },
+    EXPLAIN_TEST_TIMEOUT_MS
+  );
 });
 
 describe("GET /api/v1/me/notifications/unread-count — conditional requests (I5)", () => {

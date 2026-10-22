@@ -789,3 +789,98 @@ describe("runNotificationFanOut — quiet hours never suppress the in-app badge 
     });
   });
 });
+
+describe("runNotificationFanOut — the subject re-add is scoped to dedupe-free types (F2)", () => {
+  /**
+   * F2, routed to this lane by the OP-97 GREEN review (`t_58825ec3`;
+   * ADR-0180 §"the actor/subject layer split").
+   *
+   * After `resolveRecipients` drops the actor — including when the actor *is*
+   * the subject (U2) — the consumer re-adds the subject for **every type whose
+   * `dedupe.keyTemplate === null`**. PRE-1 pins that rule for `account.welcome`;
+   * exactly two seeded types carry a dedupe-key template
+   * (`{typeKey}:{deviceId}`, `{typeKey}:{profileId}`), so the re-add governs the
+   * other 79. These two probes pin both halves of the rule outside
+   * `account.welcome`: a second dedupe-free type still notifies the
+   * actor-as-subject, and a dedupe-carrying type does not.
+   */
+  it("re-adds the actor-as-subject for a second dedupe-free type", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = new ObjectId().toHexString();
+      const organizer = newUserId();
+      await seedRecipient(test.db, { userId: organizer });
+
+      const transport = memoryMessageTransport();
+      await insertEvent(test.db, {
+        eventKey: "event.details.updated",
+        tenantId,
+        actorRef: { kind: "user", id: organizer },
+        subjectRef: { kind: "user", id: organizer },
+        payload: {
+          eventId: new ObjectId().toHexString(),
+          eventName: "Rahul & Priya's Wedding",
+          actionUrl: "https://app.openpic.in/events/abc",
+        },
+      });
+
+      // `event.details.updated` declares no `dedupe`, so the re-add applies even
+      // though the audience resolves to the actor and U2 drops them — the actor
+      // is also the subject and must still see the in-app badge.
+      await runNotificationFanOut(
+        runOptions(
+          test.db,
+          transport,
+          fixedRecipients({ listEventRoleMembers: promised([organizer]) })
+        )
+      );
+
+      const rows = (await notificationsOf(test.db)).filter(
+        (row) => row.typeKey === "event.details.updated"
+      );
+      expect(rows).toHaveLength(1);
+      expect(String(rows[0]?.userId)).toBe(organizer);
+      expect(rows[0]?.readAt ?? null).toBeNull();
+    });
+  });
+
+  it("never re-adds the actor-as-subject for a dedupe-carrying type", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = new ObjectId().toHexString();
+      const accountHolder = newUserId();
+      const peer = newUserId();
+      await seedRecipient(test.db, { userId: accountHolder });
+      await seedRecipient(test.db, { userId: peer });
+
+      const transport = memoryMessageTransport();
+      await insertEvent(test.db, {
+        eventKey: "auth.signin.new_device",
+        tenantId,
+        actorRef: { kind: "user", id: accountHolder },
+        subjectRef: { kind: "user", id: accountHolder },
+        payload: {
+          eventId: new ObjectId().toHexString(),
+          deviceId: "device_1",
+          actionUrl: "https://app.openpic.in/sessions",
+        },
+      });
+
+      // `auth.signin.new_device` carries the `{typeKey}:{deviceId}` template, so
+      // the subject re-add is deliberately skipped: the peer is still notified,
+      // but the account holder is not badged for their own sign-in (design §4.1
+      // — the alert travels out-of-band with the "not you?" action).
+      await runNotificationFanOut(
+        runOptions(
+          test.db,
+          transport,
+          fixedRecipients({ listEventRoleMembers: promised([accountHolder, peer]) })
+        )
+      );
+
+      const rows = (await notificationsOf(test.db)).filter(
+        (row) => row.typeKey === "auth.signin.new_device"
+      );
+      expect(rows.some((row) => String(row.userId) === accountHolder)).toBe(false);
+      expect(rows.filter((row) => String(row.userId) === peer)).toHaveLength(1);
+    });
+  });
+});
