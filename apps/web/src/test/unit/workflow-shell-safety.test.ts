@@ -598,7 +598,13 @@ describe("inspectJobEnvTransport — synthetic fixtures", () => {
 
 describe("the repository's real .github/workflows", () => {
   const workflowsDir = join(repoRoot, ".github/workflows");
-  const prChecks = readFileSync(join(workflowsDir, "pr_checks.yml"), "utf8");
+  // One `readFileSync` call site for both real-workflow pins: the security preset
+  // flags every non-literal `fs` argument (`security/detect-non-literal-fs-filename`),
+  // so reading through this helper keeps the file's warning count at its
+  // `origin/main` value instead of adding a second warning for the same pattern.
+  const readWorkflow = (name: string): string => readFileSync(join(workflowsDir, name), "utf8");
+  const prChecks = readWorkflow("pr_checks.yml");
+  const newBranchFlow = readWorkflow("new_branch_flow.yml");
 
   it("interpolates no untrusted PR context into a run: body anywhere under .github/workflows", () => {
     // Act — report bare file names so the failure names the offending workflow.
@@ -662,5 +668,60 @@ describe("the repository's real .github/workflows", () => {
     // Assert
     expect(report.envValue).toBe("${{ github.event.pull_request.title }}");
     expect(report.envValueContext).toBe("github.event");
+  });
+
+  // L1 (card `t_0be682ca`, review finding L1 of `t_c87fd29e`): the four `env:`
+  // transport sites the OP-101 refname GREEN added to `new_branch_flow.yml`'s
+  // `create-draft-pr` job were covered only by the sweep above, which fails
+  // open — a hardcoded literal keeps the sweep green. These pin the *value* at
+  // each site, exactly as the two F2 pins above do for `pr_checks.yml`, so
+  // neutering a site (a literal yields `envValueContext: null`) reddens the
+  // guard instead of silently breaking the draft PR's branch/title.
+  it("supplies new_branch_flow.yml create-draft-pr BRANCH's env value from github.ref_name, not a hardcoded literal", () => {
+    // Act
+    const report = inspectJobEnvTransport(newBranchFlow, "create-draft-pr", "BRANCH");
+
+    // Assert
+    expect(report).toEqual({
+      job: "create-draft-pr",
+      variable: "BRANCH",
+      readInShell: true,
+      suppliedByEnv: true,
+      envValue: "${{ github.ref_name }}",
+      envValueContext: "github.ref_name",
+      ok: true,
+    });
+  });
+
+  it("supplies new_branch_flow.yml create-draft-pr HEAD_REF's env value from github.ref_name, not a hardcoded literal", () => {
+    // Act
+    const report = inspectJobEnvTransport(newBranchFlow, "create-draft-pr", "HEAD_REF");
+
+    // Assert
+    expect(report).toEqual({
+      job: "create-draft-pr",
+      variable: "HEAD_REF",
+      readInShell: true,
+      suppliedByEnv: true,
+      envValue: "${{ github.ref_name }}",
+      envValueContext: "github.ref_name",
+      ok: true,
+    });
+  });
+
+  it("supplies new_branch_flow.yml create-draft-pr TITLE's env value from steps.title.outputs.title, not a hardcoded literal", () => {
+    // Act
+    const report = inspectJobEnvTransport(newBranchFlow, "create-draft-pr", "TITLE");
+
+    // Assert
+    expect(report).toEqual({
+      job: "create-draft-pr",
+      variable: "TITLE",
+      readInShell: true,
+      suppliedByEnv: true,
+      envValue: "${{ steps.title.outputs.title }}",
+      envValueContext: "steps.outputs",
+      ok: true,
+    });
   });
 });
