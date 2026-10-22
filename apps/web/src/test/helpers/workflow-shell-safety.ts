@@ -32,31 +32,44 @@ import { join } from "node:path";
  * production code; the guard it feeds (`apps/web/src/test/unit/workflow-shell-safety.test.ts`)
  * is a unit spec like the ADR-number guard. Nothing under `.github/` imports it.
  *
- * **Scope boundary.** Only *untrusted* contexts are flagged. A `${{ github.repository }}`,
- * `${{ github.ref_name }}` or `${{ secrets.X }}` interpolation is left alone:
- * those are not attacker-controllable strings here, and broadening the rule
- * would drag unrelated workflows into the same change. Whether *that* boundary
- * should move is a review question, not something this scanner decides — the
- * set is enumerated in {@link UNTRUSTED_CONTEXTS} so the choice is visible.
+ * **Scope boundary.** Only *untrusted* contexts are flagged. `github.ref_name`
+ * and `github.ref` **are** in scope (review finding F1 of OP-101 card
+ * `t_db64743b`): `new_branch_flow.yml` triggers on `create: branches: "**"`, so
+ * `github.ref_name` *is* the attacker-chosen branch name, and git permits
+ * backticks and `$( … )` in a ref. A derived `steps.<id>.outputs.<name>`
+ * interpolation is flagged too, because that step's output can be built from
+ * the same ref. A `${{ github.repository }}` or `${{ secrets.X }}`
+ * interpolation is still left alone: those are not attacker-controllable
+ * strings here. The set is enumerated in {@link UNTRUSTED_CONTEXTS} so the
+ * choice is visible.
  *
  * @see .github/workflows/pr_checks.yml
+ * @see .github/workflows/new_branch_flow.yml
  * @see apps/web/src/test/unit/workflow-shell-safety.test.ts
  */
 
 /**
  * The untrusted contexts this guard refuses to see inside a `run:` body, each
- * with the label reported in a finding. The list is the one named by the OP-101
- * card: `github.event.*` (which covers `github.event.pull_request.*`),
- * `github.head_ref`, `github.base_ref` and workflow `inputs.*`.
+ * with the label reported in a finding. The OP-101 card named
+ * `github.event.*` (which covers `github.event.pull_request.*`),
+ * `github.head_ref`, `github.base_ref` and workflow `inputs.*`; this follow-up
+ * (card `t_db64743b`, finding F1) adds `github.ref_name` / `github.ref` —
+ * `new_branch_flow.yml` triggers on branch creation, so `github.ref_name` is
+ * the attacker-chosen branch name — and a `steps.<id>.outputs.<name>`
+ * interpolation derived from it.
  *
  * The patterns are deliberately word-bounded, so `github.event_name` (a safe
- * enum) does not match `github.event`, and `someinputs.x` does not match
- * `inputs.x`.
+ * enum) does not match `github.event`, `someinputs.x` does not match
+ * `inputs.x`, and `github.ref_name` does not match the shorter `github.ref`
+ * (the `_` after `ref` is a word character, so there is no boundary there).
  */
 const UNTRUSTED_CONTEXTS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
   { pattern: /\bgithub\.event\b/, label: "github.event" },
   { pattern: /\bgithub\.head_ref\b/, label: "github.head_ref" },
   { pattern: /\bgithub\.base_ref\b/, label: "github.base_ref" },
+  { pattern: /\bgithub\.ref_name\b/, label: "github.ref_name" },
+  { pattern: /\bgithub\.ref\b/, label: "github.ref" },
+  { pattern: /\bsteps\.[A-Za-z0-9_-]+\.outputs\./, label: "steps.outputs" },
   { pattern: /\binputs\s*\./, label: "inputs" },
 ];
 
@@ -88,6 +101,22 @@ export interface JobEnvTransport {
 
   /** `true` when an `env:` mapping inside the job supplies the variable. */
   suppliedByEnv: boolean;
+
+  /**
+   * The trimmed value of the `env:` entry that supplies the variable, `${{ … }}`
+   * text included (e.g. `"${{ github.event.pull_request.title }}"`), or `null`
+   * when no such entry exists. Pinning the *value* is review finding F2 of card
+   * `t_db64743b`: a `TITLE: "literal"` that merely satisfies `suppliedByEnv`
+   * neuters the check.
+   */
+  envValue: string | null;
+
+  /**
+   * The untrusted context the {@link JobEnvTransport.envValue} interpolates
+   * (e.g. `"github.event"`, `"github.head_ref"`), or `null` when the entry is
+   * absent or its value is not an untrusted `${{ … }}` expression.
+   */
+  envValueContext: string | null;
 
   /** `true` exactly when both {@link JobEnvTransport.readInShell} and {@link JobEnvTransport.suppliedByEnv} hold. */
   ok: boolean;
@@ -176,12 +205,14 @@ function* runBodies(lines: readonly NumberedLine[]): Generator<NumberedLine> {
 }
 
 /**
- * Collect the keys of every block `env:` mapping in a line list. An `env:`
- * value on the same line (`env: {A: b}`) is ignored: the workflows in this
- * repository use block mappings, and flow mappings would need a real parser.
+ * Collect the `name: value` entries of every block `env:` mapping in a line
+ * list, mapping each entry name to its trimmed single-line value (`${{ … }}`
+ * text included). An `env:` value on the same line (`env: {A: b}`) is ignored:
+ * the workflows in this repository use block mappings, and flow mappings would
+ * need a real parser. On a duplicate name the last entry wins.
  */
-function collectEnvKeys(lines: readonly NumberedLine[]): Set<string> {
-  const keys = new Set<string>();
+function collectEnvEntries(lines: readonly NumberedLine[]): Map<string, string> {
+  const entries = new Map<string, string>();
 
   for (let index = 0; index < lines.length; index += 1) {
     const current = lines[index];
@@ -210,19 +241,37 @@ function collectEnvKeys(lines: readonly NumberedLine[]): Set<string> {
       }
       const entry = ENV_ENTRY_PATTERN.exec(keyLine.text);
       if (entry?.[1] !== undefined) {
-        keys.add(entry[1]);
+        entries.set(entry[1], keyLine.text.slice(entry[0].length).trim());
       }
       keyIndex += 1;
     }
     index = keyIndex - 1;
   }
 
-  return keys;
+  return entries;
 }
 
-/** Does a shell verbatim read `${VAR}` or a bare `$VAR`? No `new RegExp` — the variable is user input. */
+/**
+ * Does a shell verbatim read `${VAR}` or a bare `$VAR`? The match is
+ * word-bounded: `$TITLE_BACKUP` is **not** a read of `$TITLE` (review finding
+ * F2 of card `t_db64743b`). Uses `indexOf` rather than a `RegExp` so the
+ * variable name is matched literally.
+ */
 function readsShellVariable(text: string, variable: string): boolean {
-  return text.includes(`$${variable}`) || text.includes("${" + variable + "}");
+  if (text.includes("${" + variable + "}")) {
+    return true;
+  }
+
+  const bare = `$${variable}`;
+  let at = text.indexOf(bare);
+  while (at !== -1) {
+    const after = text[at + bare.length];
+    if (after === undefined || !/[A-Za-z0-9_]/.test(after)) {
+      return true;
+    }
+    at = text.indexOf(bare, at + 1);
+  }
+  return false;
 }
 
 /** The untrusted context an expression refers to, or `null` when the expression is in scope-safe territory. */
@@ -233,6 +282,26 @@ function untrustedContextOf(expression: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Every `${{ … }}` interpolation in `text` that names an untrusted context,
+ * with the raw inner expression and the context label that made it untrusted.
+ * Shared by {@link scanWorkflowSource} (over `run:` bodies) and the `env:`
+ * value inspection so both use one definition of "untrusted".
+ */
+function untrustedInterpolationsIn(
+  text: string
+): ReadonlyArray<{ expression: string; context: string }> {
+  const found: Array<{ expression: string; context: string }> = [];
+  for (const match of text.matchAll(/\$\{\{([\s\S]*?)\}\}/g)) {
+    const expression = (match[1] ?? "").trim();
+    const context = untrustedContextOf(expression);
+    if (context !== null) {
+      found.push({ expression, context });
+    }
+  }
+  return found;
 }
 
 /**
@@ -313,12 +382,8 @@ export function scanWorkflowSource(file: string, source: string): UntrustedRunIn
   const findings: UntrustedRunInterpolation[] = [];
 
   for (const body of runBodies(toNumberedLines(source))) {
-    for (const match of body.text.matchAll(/\$\{\{([\s\S]*?)\}\}/g)) {
-      const expression = (match[1] ?? "").trim();
-      const context = untrustedContextOf(expression);
-      if (context !== null) {
-        findings.push({ file, line: body.line, expression, context });
-      }
+    for (const { expression, context } of untrustedInterpolationsIn(body.text)) {
+      findings.push({ file, line: body.line, expression, context });
     }
   }
 
@@ -350,8 +415,10 @@ export function scanWorkflowFiles(workflowsDir: string): UntrustedRunInterpolati
  * not count, nor does a `$TITLE` reference outside this job. `readInShell` is
  * satisfied by `"$TITLE"` or `"${TITLE}"` in any `run:` body of the job;
  * `suppliedByEnv` is satisfied by a block `env:` mapping with a `TITLE` key.
- * The value of that entry is deliberately not asserted here — that it is a
- * `${{ … }}` expression is pinned where it is set, not by this scanner.
+ * The *value* of that entry is reported as {@link JobEnvTransport.envValue}
+ * (and its untrusted context as {@link JobEnvTransport.envValueContext}) so a
+ * caller can reject a hardcoded literal that merely satisfies
+ * `suppliedByEnv` — review finding F2 of card `t_db64743b`.
  *
  * @param source - The raw workflow YAML.
  * @param job - The job id, e.g. `"validate-pr-title"` (a two-space-indented key under `jobs:`).
@@ -359,7 +426,8 @@ export function scanWorkflowFiles(workflowsDir: string): UntrustedRunInterpolati
  * @returns The per-job transport report; {@link JobEnvTransport.ok} is the assertion target.
  * @example
  * ```ts
- * inspectJobEnvTransport(source, "validate-pr-title", "TITLE").ok; // true once the fix lands
+ * const report = inspectJobEnvTransport(source, "validate-pr-title", "TITLE");
+ * report.ok && report.envValueContext !== null; // true once the fix lands
  * ```
  */
 export function inspectJobEnvTransport(
@@ -372,13 +440,19 @@ export function inspectJobEnvTransport(
   const readInShell = Array.from(runBodies(block)).some((body) =>
     readsShellVariable(body.text, variable)
   );
-  const suppliedByEnv = collectEnvKeys(block).has(variable);
+  const entries = collectEnvEntries(block);
+  const envValue = entries.get(variable) ?? null;
+  const suppliedByEnv = envValue !== null;
+  const envValueContext =
+    envValue === null ? null : (untrustedInterpolationsIn(envValue)[0]?.context ?? null);
 
   return {
     job,
     variable,
     readInShell,
     suppliedByEnv,
+    envValue,
+    envValueContext,
     ok: readInShell && suppliedByEnv,
   };
 }
