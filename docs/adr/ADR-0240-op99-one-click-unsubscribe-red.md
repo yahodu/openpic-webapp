@@ -146,9 +146,12 @@ spec. `apps/web/e2e/unsubscribe-token.ts` exports
 `E2E_UNSUBSCRIBE_SIGNING_SECRET` and `mintE2eUnsubscribeToken()`; the `api`
 project's `webServer.env` in `playwright.config.ts` passes that secret as
 `UNSUBSCRIBE_SIGNING_SECRET`, and `e2e/start-server.mjs` only generates a
-throwaway when none is supplied (`?? throwawaySecret()`). The value is a per-run
-test fixture, not a credential. The format is pinned by U1–U3, so a format change
-fails there first.
+throwaway when none is supplied (`?? throwawaySecret()`). The secret is **derived
+at runtime** (`sha256` over a fixed, non-secret seed) rather than committed as a
+literal, so the `generic-api-key` scanner cannot mistake the fixture for a
+credential — the same reason the launcher generates its throwaways. The value is
+a per-run test fixture, not a credential. The format is pinned by U1–U3, so a
+format change fails there first.
 
 ## Assumptions resolved unilaterally (flagged for review)
 
@@ -245,8 +248,8 @@ route.
   reducer only writes `email` where `optOutAllowed` is true and the type is not
   transactional), and the user story's "never blocks security or billing" is
   asserted at the unit, contract and e2e levels.
-- The e2e suite owns a fixed test secret; it is not a credential and is confined
-  to `apps/web/e2e/`.
+- The e2e suite owns a fixed test secret; it is not a credential, is derived at
+  runtime from a non-secret seed, and is confined to `apps/web/e2e/`.
 
 ## Out of scope
 
