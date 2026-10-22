@@ -63,6 +63,11 @@ test, only its declaration style.
   row, filters on `category`/`audience`, sets `Cache-Control: private, max-age=600`
   and never projects `retainBody`.
 
+Both route schemas are **module-private** (`const`, not `export`): a Next.js route
+module may only export route fields, and exporting the response schemas failed the
+`next build` Route type check ("not a valid Route export field"). The specs import
+only `GET`/`PATCH`, so nothing needs them exported.
+
 ### The catalogue read and the sanctioned seed fallback (`notification-types-read.ts`)
 
 Both routes read the catalogue through one accessor. When the collection is **empty**
@@ -137,6 +142,7 @@ tsc -p packages/contracts/tsconfig.json --noEmit   # exit 0
 tsc -p apps/web/tsconfig.json --noEmit              # exit 0
 npx eslint .                                        # 0 errors (80 pre-existing security warnings)
 npx prettier --check .                              # clean for every touched file
+npx next build (apps/web)                           # succeeds; both new routes compiled
 ```
 
 The three RED spec files are byte-identical to ADR-0220's commit (`ad0e16e`), as is
