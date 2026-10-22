@@ -21,7 +21,7 @@ import {
  * generically and never hard-codes the 81-key list. The route is `user`-guarded,
  * answers `{ data: [...] }` with the §7.6 projection of every **enabled**
  * `notificationTypes` document, and is cacheable:
- * `Cache-Control: private, max-age=600`.
+ * `Cache-Control: private, max-age=600` on **every** response, filtered or not.
  *
  * The one field that must never reach the wire is `retainBody`: it governs the
  * internal dispatch ledger for OTP types (design rule 6), is not part of the §7.6
@@ -239,4 +239,16 @@ describe("GET /api/v1/notification-types (§7.6) — I4: never exposes retainBod
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, max-age=600");
   });
+
+  it.each(["?category=billing", "?audience=platform_admin"])(
+    "keeps the §7.6 Cache-Control header on the filtered response %s",
+    async (query) => {
+      const session = await app.signIn(makeIdentity("op98-catalogue-cache-filtered"));
+
+      const response = await getCatalogue(catalogueRequest(session, query));
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("private, max-age=600");
+    }
+  );
 });
