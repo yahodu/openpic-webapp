@@ -29,6 +29,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — Better Auth identity lifecycle hooks (OP-89,
@@ -88,7 +89,7 @@ const DOMAIN_EVENTS_COLLECTION = "domain_events";
 const CONTACT_CHANGE_FANOUTS_COLLECTION = "contactChangeFanouts";
 
 /** A fixed instant so `accountCompletedAt` / dedupe buckets are deterministic. */
-const T0 = new Date("2026-03-01T00:00:00.000Z");
+const T0 = new Date(fixtureInstant("00:00:00.000Z"));
 
 /** A per-run unique suffix so emailed identities never share a rate-limit bucket. */
 function uniqueSuffix(): string {

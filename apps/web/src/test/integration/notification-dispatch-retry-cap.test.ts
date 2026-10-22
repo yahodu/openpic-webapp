@@ -27,6 +27,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — retry attempts are bounded by
@@ -61,7 +62,7 @@ const SINGLETON_ID = "singleton";
 const TYPE_KEY = "event.details.updated";
 
 /** A fixed instant so every stored timestamp is exact. */
-const T0 = "2026-03-01T10:00:00.000Z";
+const T0 = fixtureInstant("10:00:00.000Z");
 const MINUTE = 60_000;
 
 /** The configured attempt cap this spec pins (never the default 5). */
@@ -252,7 +253,7 @@ describe("retry attempts are bounded by pipeline.maxAttempts (F2)", () => {
       // One attempt below the cap: the row IS selected and re-attempted.
       const firstRetry = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:02:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:02:00.000Z")),
         transport,
         limit: 100,
       });
@@ -263,7 +264,7 @@ describe("retry attempts are bounded by pipeline.maxAttempts (F2)", () => {
       // At the cap: the row is NOT selected — no transport call, no work.
       const atCap = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:10:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:10:00.000Z")),
         transport,
         limit: 100,
       });
@@ -275,7 +276,7 @@ describe("retry attempts are bounded by pipeline.maxAttempts (F2)", () => {
       // And it stays out of the sweep on the following tick.
       const nextTick = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:20:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:20:00.000Z")),
         transport,
         limit: 100,
       });
@@ -301,7 +302,7 @@ describe("retry attempts are bounded by pipeline.maxAttempts (F2)", () => {
       // The retry brings the row to the cap (attempts = 2).
       const firstRetry = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:02:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:02:00.000Z")),
         transport,
         limit: 100,
       });
@@ -313,7 +314,7 @@ describe("retry attempts are bounded by pipeline.maxAttempts (F2)", () => {
       // permanently growing queue.
       const atCap = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:10:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:10:00.000Z")),
         transport,
         limit: 100,
       });
@@ -331,7 +332,7 @@ describe("retry attempts are bounded by pipeline.maxAttempts (F2)", () => {
       // And it stays terminal on the following tick, still with no transport call.
       const nextTick = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:20:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:20:00.000Z")),
         transport,
         limit: 100,
       });

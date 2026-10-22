@@ -21,6 +21,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 import { server } from "./setup";
 
@@ -79,7 +80,7 @@ const DOMAIN_EVENTS = COLLECTIONS.domainEvents;
 const USER = "user";
 
 /** A fixed instant so every stored timestamp is exact, never run-dependent. */
-const T0 = "2026-03-01T00:00:00.000Z";
+const T0 = fixtureInstant("00:00:00.000Z");
 
 /** The `clocks` used by the consumer under test. */
 const clock = fixedClock(T0);
