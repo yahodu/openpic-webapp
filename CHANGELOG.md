@@ -1,3 +1,9 @@
+## [1.24.0](https://github.com/yahodu/openpic-webapp/compare/v1.23.2...v1.24.0) (2026-10-22)
+
+### Features
+
+- **notifications:** OP-98 notification preferences and public type catalogue ([#247](https://github.com/yahodu/openpic-webapp/issues/247)) ([25292ae](https://github.com/yahodu/openpic-webapp/commit/25292ae103d40844851694705f8713a03a9dc255))
+
 ## [1.23.2](https://github.com/yahodu/openpic-webapp/compare/v1.23.1...v1.23.2) (2026-10-22)
 
 ### Bug Fixes
