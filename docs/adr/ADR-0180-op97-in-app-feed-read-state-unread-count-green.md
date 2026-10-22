@@ -188,6 +188,16 @@ Option 2 is a quiet workaround and was **not** taken; the endpoint keeps the
 project-wide CSRF posture. The test is left red and this dispute is handed back
 to the Test Author via the GREEN card.
 
+**Routing (recorded 2026-10-22).** Per the board's instruction to spin the fix
+off as a gated parent rather than keep the GREEN card parked on a disputed red,
+the one-line spec change is owned by follow-up card **`t_6f2430cb`** (assignee
+`openpic-webapp-testcase-writer`, worktree `.worktrees/t_08538ff6` on branch
+`OP-97-task-in-app-feed-read-state-red`). That card is linked as a **parent of
+the OP-97 GREEN card `t_58825ec3`**, so the GREEN card is dependency-parked and
+auto-resumes when the header lands: it then merges the RED tip forward into the
+GREEN branch, re-runs the full suite and requests review. Option 1 is the
+correction; option 2 remains rejected.
+
 ## Consequences
 
 - The feed, the read-state mutations and the badge are implemented to ADR-0131's
