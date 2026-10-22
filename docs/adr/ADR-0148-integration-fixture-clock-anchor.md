@@ -35,12 +35,17 @@ pass every `ttlMonitorSleepSecs` (default 60); on a saturated host the spec's ow
 widens and a pass is far more likely to land inside it. The product is correct — this is a fixture/clock
 problem, exactly as ADR-0146 concluded.
 
-At the time of this card the real clock is `2026-10-22`, and 23 integration specs still pinned a
+At the time this card started the real clock was `2026-10-22`, and 23 integration specs pinned a
 `2026-*` literal:
 
 ```
 grep -rn '"2026-' apps/web/src/test/integration/*.test.ts   # 23 files
 ```
+
+While this lane was in flight `origin/main` advanced `6cc0613` → `d48a7ee`, which merged PR #235 and
+added one more such spec (`notification-digest-flush-claim-lease.test.ts` — 24 in total). This branch
+merges that main and anchors the new spec too, so the record below covers **17 of the 24**; the 7 left
+alone are exactly the non-exposed set, and `grep -rl '"2026-'` on the merged tree returns those 7.
 
 ## Diagnosis — the exposure rule, and the confirmed set
 
@@ -51,11 +56,11 @@ A spec carries the race **iff both** hold:
 - **(b)** it counts or re-reads that document back after any `await`.
 
 Only (a)+(b) is exposed. This is the rule ADR-0146 and the round-2 review of PR #225 both landed on, and
-the probe in §Evidence confirms it. Applying it to the 23 candidates:
+the probe in §Evidence confirms it. Applying it to the 24 candidates:
 
-### Exposed (16) — fixed by this card
+### Exposed (17) — fixed by this card
 
-All 16 persist TTL'd rows from a past fixture clock and then count/re-read them:
+All 17 persist TTL'd rows from a past fixture clock and then count/re-read them:
 
 - **`domain-events.test.ts`** — emits `domain_events` with `clock: fixedClock(T0)` (`T0 = 2026-03-01`),
   so `expireAt = 2026-08-28` (past); then `events.find({}).toArray()` / `findOne` / `countDocuments`
@@ -69,8 +74,10 @@ All 16 persist TTL'd rows from a past fixture clock and then count/re-read them:
   the spec reads `notificationDigests.find({}).toArray()` and `notification_dispatches.find({})`.
 - **`notification-digest-flush-daily-cap.test.ts`**, **`…-daily-cap-redelivery.test.ts`**,
   **`…-failure.test.ts`**, **`…-non-retryable.test.ts`**, **`…-non-retryable-bound.test.ts`**,
-  **`…-overlap-single-send.test.ts`**, **`…-unrecorded-bound.test.ts`** — each pins `T0 = 2026-03-01`,
-  drives the flush through a past clock and counts the stored bucket / dispatch rows.
+  **`…-overlap-single-send.test.ts`**, **`…-unrecorded-bound.test.ts`** and
+  **`notification-digest-flush-claim-lease.test.ts`** (the spec `origin/main` `d48a7ee` added after this
+  lane started) — each pins `T0 = 2026-03-01`, drives the flush through a past clock and counts the
+  stored bucket / dispatch rows.
 - **`notification-dispatch-retry.test.ts`** and **`…-cap.test.ts`** — `T0 = 2026-03-01` with inline
   `10:02/10:05/10:10/10:20Z` clocks; `find({ typeKey }).toArray()` and
   `countDocuments({ status: "failed" })` after each sweep.
@@ -162,49 +169,59 @@ newCounts   [1, 2, 3]     -- every anchored row retained
 
 This reproduces the reviewer's PR #225 probe independently and confirms the (a)+(b) exposure rule.
 
-**Per-spec load runs.** The 16 touched specs were run as one 16-file batch, **10 consecutive times**
-under artificial load; **10/10 green (16 files / 90 tests each run, 900 test executions, 0 failures)**,
-load average `11.25`–`16.17` at each run:
+**Per-spec load runs.** The 17 touched specs were run as one 17-file batch, **10 consecutive times**
+under artificial load; **10/10 green (17 files / 94 tests each run, 940 test executions, 0 failures)**,
+load average `12.14`–`15.24` at each run:
 
 ```
-L1  exit 0  load 12.68   16 passed (16) / 90 passed (90)
-L2  exit 0  load 14.51   16 passed (16) / 90 passed (90)
-L3  exit 0  load 16.17   16 passed (16) / 90 passed (90)
-L4  exit 0  load 15.01   16 passed (16) / 90 passed (90)
-L5  exit 0  load 14.36   16 passed (16) / 90 passed (90)
-L6  exit 0  load 12.16   16 passed (16) / 90 passed (90)
-L7  exit 0  load 13.89   16 passed (16) / 90 passed (90)
-L8  exit 0  load 12.63   16 passed (16) / 90 passed (90)
-L9  exit 0  load 11.25   16 passed (16) / 90 passed (90)
-L10 exit 0  load 11.75   16 passed (16) / 90 passed (90)
+K1  exit 0  load 12.90   17 passed (17) / 94 passed (94)
+K2  exit 0  load 12.51   17 passed (17) / 94 passed (94)
+K3  exit 0  load 12.14   17 passed (17) / 94 passed (94)
+K4  exit 0  load 13.56   17 passed (17) / 94 passed (94)
+K5  exit 0  load 14.23   17 passed (17) / 94 passed (94)
+K6  exit 0  load 12.85   17 passed (17) / 94 passed (94)
+K7  exit 0  load 13.44   17 passed (17) / 94 passed (94)
+K8  exit 0  load 13.91   17 passed (17) / 94 passed (94)
+K9  exit 0  load 13.76   17 passed (17) / 94 passed (94)
+K10 exit 0  load 15.24   17 passed (17) / 94 passed (94)
 ```
 
-**Non-green run, reported honestly.** Three initial iterations were run while the host was at load
-average **25** — _above_ the card's 13–20 band, self-inflicted by an over-large set of CPU burners. They
-produced the _other_ known saturated-host symptom ADR-0146 recorded, and no fixture/TTL signature:
+An earlier 10-run series on the 16 pre-merge specs (again 10/10 green, `load 11.25`–`16.17`) is
+superseded by the K series above, which includes the 17th spec.
+
+**Non-green runs, reported honestly.** Two further series were run at _higher_ CPU saturation. Both
+produced only the _other_ saturated-host symptom ADR-0146 recorded — Vitest's default 5000 ms per-test
+budget exceeded by CPU starvation — and never a fixture/TTL assertion:
 
 ```
-iter 1  notification-bounded-sweeps.test.ts > F3 …            Error: Test timed out in 5000ms.
-iter 1  notification-digest-flush-daily-cap-redelivery … F1c-r2  Error: Test timed out in 5000ms.
-iter 2  notification-digest.test.ts > I8 …                     Error: Test timed out in 5000ms.
+(12 burners, load 14–18.4)  M-series, 8 runs: 7 green; M6 red at load 17.88 —
+    notification-digest-flush-daily-cap-redelivery … F1c-r2   Error: Test timed out in 5000ms.
+    notification-digest-flush-non-retryable … F1b             Error: Test timed out in 5000ms.
+(16 burners, load 25)       3 iterations:
+    notification-bounded-sweeps … F3                          Error: Test timed out in 5000ms.
+    notification-digest-flush-daily-cap-redelivery … F1c-r2   Error: Test timed out in 5000ms.
+    notification-digest.test.ts … I8                          Error: Test timed out in 5000ms.
 ```
 
-Those are Vitest's default 5000 ms per-test budget being exceeded by CPU starvation (load 25 on 4
-cores), not a deleted row: the failure is a timeout, never the `expected 1 to be 3`-class assertion, and
-they disappear entirely once the load is inside the card's band (L1–L10 above). Per the card, a timeout
-is not a fixable-by-this-card defect and no timeout was widened. The remaining 6 load-run failures were
-retried into the L1–L10 series; there were no others.
+A synthetic `while :` burner on a 4-core host starves the test workers harder than an equal _load
+average_ made mostly of IO-waiting processes, so these timeouts are an artefact of my own over-large
+burner set, not of the production index shape: every failure above is a `timeout`, none is the
+`expected 1 to be 3`-class deleted-row failure, and all vanish at the mid-band load the K series holds.
+Per the card a timeout is a distinct matter (the already-noted `notification-bounded-sweeps` F3
+artefact, and the same 5000 ms symptom ADR-0146 saw); no timeout was widened and no assertion weakened.
 
-**Full integration suite (band load):** `pnpm test:int` → **57 passed (57) files, 361 passed (361)
-tests**, matching the parent baseline exactly — this card adds, removes and skips no test.
+**Full integration suite:** `pnpm test:int` on the merged tree → **58 passed (58) files, 365 passed
+(365) tests** (the merge with `d48a7ee` brings the new claim-lease spec; the parent baseline was 57/361).
+One earlier run at load 16.1 was red on the same `notification-bounded-sweeps` F3 5000 ms timeout; the
+clean run above followed. This card adds, removes and skips no test.
 
 **Unit suite:** `pnpm test:unit` → **86 passed (86) files, 1514 passed (1514) tests** (includes the
-`docs/adr` number guard, which now sees `ADR-0148`). `pnpm typecheck` → exit 0 (root, contracts, web);
-`eslint` on every touched file → exit 0; `prettier --check` → clean.
+`docs/adr` number guard, which now sees `ADR-0147` and `ADR-0148`). `pnpm typecheck` → exit 0 (root,
+contracts, web); `eslint .` → exit 0 (0 errors, 49 pre-existing warnings); `prettier --check .` → clean.
 
 ## Consequences
 
-- The class-wide race is removed at its cause for all 16 exposed specs: their fixtures are future-dated
+- The class-wide race is removed at its cause for all 17 exposed specs: their fixtures are future-dated
   by construction, so the TTL monitor cannot race their assertions at any cadence or machine load.
 - The change is confined to test files plus one test helper; no production behaviour, index, or
   retention setting moves.
@@ -229,7 +246,7 @@ timeout/ordering hack (cannot prevent a server-side delete).
   past", it should use `fixtureInstant(time, -1)`.
 - **The TTL monitor is the only deleter considered**, as in ADR-0146; the probe (a past `expireAt`, the
   exact index shape, the count falling with no test action) is sufficient to explain the observation.
-- **No product defect found.** The 16 specs' contracts are byte-identical; if one had failed for a
+- **No product defect found.** The 17 specs' contracts are byte-identical; if one had failed for a
   product reason, the card requires a RED pin + a separate GREEN card, which did not arise.
 
 ## Out of scope
