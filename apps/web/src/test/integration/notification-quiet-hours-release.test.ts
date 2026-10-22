@@ -41,12 +41,41 @@ const DISPATCHES = COLLECTIONS.dispatches;
 /** The `user` collection (schema §13.1). */
 const USER = "user";
 
-/** An instant inside the quiet window (23:00 UTC). */
-const INSIDE = "2026-03-01T23:00:00.000Z";
+/**
+ * The three fixture instants this spec drives the clock to.
+ *
+ * They are derived from one real-clock anchor rather than written as literals
+ * (ADR-0146). Every row the fan-out persists carries
+ * `expireAt = instant + retention.dispatchDays` (180 days by default), and the
+ * `notification_dispatches` TTL index (`dispatches_expire_at_ttl`,
+ * `expireAfterSeconds: 0`) is evaluated against the **real** clock by mongod's
+ * TTL monitor. A literal instant in the past therefore makes every fixture row
+ * already TTL-expired, and a single monitor pass landing between two fan-outs
+ * deletes the rows the assertion is about to count — a rare, load-correlated
+ * failure that read as "three fan-outs produced one deferred row". Anchoring to
+ * the real clock keeps the scenario byte-for-byte the same (defer at 23:00 UTC,
+ * release at 07:00 UTC the next morning) while placing `expireAt` ~180 days in
+ * the future, so no monitor pass can ever delete a fixture row mid-test.
+ */
+const ANCHOR_DAY = new Date().toISOString().slice(0, 10);
+/** An instant inside the quiet window (23:00 UTC on the anchor day). */
+const INSIDE = `${ANCHOR_DAY}T23:00:00.000Z`;
 /** The window end the deferral must target (07:00 UTC the next day). */
-const WINDOW_END = "2026-03-02T07:00:00.000Z";
+const WINDOW_END = `${nextUtcDay(ANCHOR_DAY)}T07:00:00.000Z`;
 /** An instant before the window end. */
-const BEFORE_END = "2026-03-02T06:00:00.000Z";
+const BEFORE_END = `${nextUtcDay(ANCHOR_DAY)}T06:00:00.000Z`;
+
+/**
+ * The UTC calendar day following the `YYYY-MM-DD` day `day`.
+ *
+ * @param day - A `YYYY-MM-DD` UTC date.
+ * @returns The next UTC day, as `YYYY-MM-DD`.
+ */
+function nextUtcDay(day: string): string {
+  const next = new Date(`${day}T00:00:00.000Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
 
 /** Fields of a stored dispatch row this spec inspects (schema §19.5). */
 interface StoredDispatch {

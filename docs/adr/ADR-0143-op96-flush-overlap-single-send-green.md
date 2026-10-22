@@ -196,3 +196,56 @@ null }` in the `$or`. `$unset` keeps one representation of "unclaimed" (absent) 
   helpers are function-scoped additions inside `flushDueDigests` and are exercised by the pin.
 - `pnpm typecheck` clean · `pnpm run lint` 0 errors (42 pre-existing warnings) · `pnpm run build`
   successful · `pnpm exec prettier --check .` clean.
+
+## Review sign-off (round 1, artifact lens)
+
+**Verdict: APPROVED WITH FINDINGS** (no changes requested). Review lane `t_4cc14cd8`; reviewed head
+`9c64fe710007be50f89c9d1b9e4451813b416cf7` (tree-identical to the merged commit — `git diff --stat 9c64fe7
+e57eb58` is empty), squash-merged as `e57eb589de2d9fab02146e16fdff3ae8efd6a854` at 2026-10-20T23:28:07Z,
+ancestor of `origin/main` `b6b5301`. Review comment:
+<https://github.com/yahodu/openpic-webapp/pull/221#issuecomment-6334162087>.
+
+### What the review reproduced independently
+
+The review re-ran the whole gate on the reviewed head (`TMPDIR=/root/tmp-mongo`) as a cold read of the diff
+rather than trusting this ADR's own §GREEN evidence:
+
+- **Pin (integration):** `Test Files 1 passed (1) · Tests 2 passed (2)` — the loser's own log line proves
+  the mechanism from the job's point of view: success case `scanned: 1, affected: 0, skipped: 1` (loser)
+  beside `scanned: 1, affected: 1, skipped: 0` (winner); failure case `scanned: 1, errors: 1` once and
+  `scanned: 1, affected: 0, skipped: 1` once — no run reports the same bucket as delivered.
+- **Full unit project:** `85 passed (85)` files / `1485 passed (1485)` tests.
+- **Full integration project:** `57 passed (57)` files / `361 passed (361)` tests.
+- **Playwright e2e:** `16 passed`.
+- **`pnpm typecheck`** (root + contracts + apps/web): clean (exit 0).
+- **`eslint .`:** 0 errors / 42 pre-existing warnings (exit 0).
+- **`prettier --check .`:** clean.
+- **CI on the head:** 12 of 13 checks green including the `ci` job; the only red is the repo-wide `audit`
+  job, already red on `origin/main` (since addressed by the OP-101 PRs #228/#230).
+
+### Scope audit
+
+The diff is limited to `apps/web/src/server/notifications/digest.ts`, the frozen pin spec, schema §19.6,
+ADR-0139/ADR-0143 and `docs/adr/README.md`; no existing test, mock, fixture or factory was edited. ADR
+number `0143` is unique on `main` (no duplicate numbers across `docs/adr/`); `docs/adr/README.md` carries
+the `0143` row; §19.6 documents the new optional `flushClaimedAt`.
+
+### Mechanism audit (accepted)
+
+One atomic conditional claim `findOneAndUpdate` on `{ _id, status: "open" }` gated on an absent-or-stale
+`flushClaimedAt`, before the send; the loser counts `skipped` and never sends; the claim is released on
+every `open`-leaving path; `markFlushed` `$unset`s the claim; `status` stays `"open"` so both partial
+indexes and the fan-out upsert keep their semantics; `FLUSH_CLAIM_STALE_MS` is the bounded recovery path.
+The honesty audit was clean: no fixture hardcoding, no test-env conditionals, no `@ts-ignore`/
+`eslint-disable`/`console.*`/TODO.
+
+### Findings (both non-blocking; carded rather than merely flagged)
+
+- **F1 — Low, coverage gap.** The stale-lease recovery boundary (a claim older than `FLUSH_CLAIM_STALE_MS`
+  must be reclaimable; an unexpired claim must not be re-sent) and the **retryable**-overlap sibling
+  (ADR-0139 finding F2-3) are unpinned — this ADR's own §Consequences asks for the bounded-lease pin next
+  round. Routed to Test Author card `t_6c3b5eb8` (`OP-96 follow-up (TEST) — pin the flush-claim lease
+recovery and the retryable-overlap sibling`), child of `t_4cc14cd8`.
+- **F2 — Low, documentation.** This section. The card's ADR section and this ADR's line 155 both promise
+  the GREEN's review sign-off is recorded **inside** this ADR (no second number consumed); that section was
+  missing on `main`. Resolved by this card.

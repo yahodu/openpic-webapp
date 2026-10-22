@@ -200,6 +200,13 @@ history and are never moved.
   `origin/main`. The range ledger is prose (parsing it in CI is brittle), and a PR
   checkout does not guarantee a fetched `origin/main`. Both stay **review-time
   obligations for the reviewer**, recorded here rather than mechanised.
+- **Index-only merge conflicts.** When a PR's only conflict is the ADR index
+  (`docs/adr/README.md`, one row per lane), it resolves at merge time rather than
+  bouncing the card back to the implementer for a further round: take the base
+  version plus the lane's own index blocks (its table row and its lane note), then
+  `prettier --write` to normalise the widened column padding. The reviewer/merger
+  may perform that mechanical refresh; the lane's content, numbering and assertions
+  are untouched by it.
 - **Rejected alternatives** (letters follow ADR-0300, where (a) is the adopted rule
   stated above).
   - **(b) Merger-owned finalisation** — the merger assigns the number when the
