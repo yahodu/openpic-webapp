@@ -325,9 +325,6 @@ describe("GET /api/v1/tenants/{tenantId}/members", () => {
   });
 
   it("answers 401 without a session", async () => {
-    const owner = await app.signIn(makeIdentity("rsvp-owner"));
-    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
-
     const response = await listMembers(
       new Request(new URL(`${TENANTS_PATH}/${CURRENT_ALIAS}/members`, APP_ORIGIN), {
         method: "GET",
@@ -336,7 +333,6 @@ describe("GET /api/v1/tenants/{tenantId}/members", () => {
 
     expect(response.status).toBe(401);
     expect((await errorEnvelope(response)).code).toBe("authentication_required");
-    expect(tenantId).toBeInstanceOf(ObjectId);
   });
 });
 
@@ -401,7 +397,7 @@ describe("PATCH /api/v1/tenants/{tenantId}/members/{userId}", () => {
   });
 
   it.each(["admin", "member"] as const)(
-    "forbids a %s from changing another member's role (owner only)",
+    "forbids a non-owner (%s) from changing another member's role (owner only)",
     async (actorRole) => {
       const owner = await app.signIn(makeIdentity("rsvp-owner"));
       const actor = await app.signIn(makeIdentity("acting-user"));
@@ -441,7 +437,7 @@ describe("PATCH /api/v1/tenants/{tenantId}/members/{userId}", () => {
 
   it("answers 404 for a target who holds no membership in this workspace", async () => {
     const owner = await app.signIn(makeIdentity("rsvp-owner"));
-    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await seedWorkspace({ userId: owner.userId, role: "owner" });
 
     const response = await changeMemberRole(
       memberRequest(owner.cookie, CURRENT_ALIAS, new ObjectId().toHexString(), "PATCH", {
@@ -451,7 +447,6 @@ describe("PATCH /api/v1/tenants/{tenantId}/members/{userId}", () => {
 
     expect(response.status).toBe(404);
     expect((await errorEnvelope(response)).code).toBe("not_found");
-    expect(tenantId).toBeInstanceOf(ObjectId);
   });
 });
 
