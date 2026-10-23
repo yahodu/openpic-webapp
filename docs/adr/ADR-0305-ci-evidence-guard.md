@@ -1,7 +1,7 @@
 # ADR-0305 — The CI-evidence guard: a push-triggered workflow that fails a lane head whose PR conflicts with `main`
 
 - **Status:** Accepted · **Date:** 2026-10-23
-- **Card:** OP-101 CI-evidence guard — RED `t_fe3b946f` (test author) / GREEN `t_22f95e1f` (implementer); branch `OP-101-task-ci-evidence-guard`, worktree `/root/openpic/openpic-webapp/.worktrees/t_fe3b946f`
+- **Card:** OP-101 CI-evidence guard — RED `t_fe3b946f` (test author) / GREEN `t_22f95e1f` (implementer); branch `OP-101-task-ci-evidence-guard`, worktree `/root/openpic/openpic-webapp/.worktrees/t_fe3b946f`, PR [#261](https://github.com/yahodu/openpic-webapp/pull/261)
 - **Relates to:** [ADR-0303](ADR-0303-workflow-shell-safety-guard.md) (the `run:`-body `env:`-transport rule this workflow must satisfy), [ADR-0304](ADR-0304-stale-draft-pr-reconciliation.md) (the stale-draft-PR reconciliation that found all eight closed draft branches conflicting on `docs/adr/README.md`), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (the allocation policy this board-wide number is drawn from)
 - **Schema:** n/a · **Contract:** n/a (CI workflow only; no application code)
 - **Implementation:** `.github/workflows/ci_evidence_guard.yml` · **Spec:** `apps/web/src/test/unit/ci-evidence-guard.test.ts` (scanner `apps/web/src/test/helpers/ci-evidence-guard.ts`)
