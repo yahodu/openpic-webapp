@@ -56,6 +56,9 @@ import {
  * - `scope: "type"` naming a transactional type is `422 opt_out_not_allowed`
  *   (the same code the preferences `PATCH` uses) and naming an unknown type is
  *   `422 unknown_type_key`; both reject **before** any write.
+ * - A locked **non-transactional** type is the same `422 opt_out_not_allowed`,
+ *   but its `details.reason` is `"not_opt_outable"` (the OP-98 `optOutReason`
+ *   precedent), not `"transactional"` — ADR-0240's row is corrected in place.
  * - The suppression's `contactHash` is `sha256:` + the lowercase hex digest of
  *   the user's trimmed, lowercased email address (design §19.6).
  * - `scope: "all"` writes **preferences only** — it creates no suppression,
@@ -107,6 +110,26 @@ function optOutableEmailTypeKeys(): string[] {
     .filter((type) => {
       const email = type.channelGroups.find((group) => group.group === "email");
       return email !== undefined && email.enabled && email.optOutAllowed;
+    })
+    .map((type) => type.typeKey)
+    .sort();
+}
+
+/**
+ * Every `typeKey` that is enabled and **non-transactional** but whose `email`
+ * group is **locked** (`enabled: true, optOutAllowed: false`).
+ *
+ * ADR-0240's rejection table calls these "otherwise locked": they are reachable
+ * (`scope: "type"` tokens naming them are well-formed) yet may not be muted, so
+ * they are answered `422 opt_out_not_allowed` — with `reason: "not_opt_outable"`,
+ * the OP-98 `optOutReason` precedent, **not** `"transactional"`. A concrete
+ * member of the set in the current seed is `account.welcome`.
+ */
+function lockedNonTransactionalEmailTypeKeys(): string[] {
+  return SEED_NOTIFICATION_TYPES.filter((type) => type.enabled && !type.transactional)
+    .filter((type) => {
+      const email = type.channelGroups.find((group) => group.group === "email");
+      return email !== undefined && email.enabled && !email.optOutAllowed;
     })
     .map((type) => type.typeKey)
     .sort();
@@ -413,6 +436,53 @@ describe("POST apply (§7.5)", () => {
 
     expect(body.error.code).toBe("unknown_type_key");
     expect(body.error.details).toMatchObject({ typeKey: "not.a.real.type" });
+    expect(await storedPreferences(session.userId)).toEqual(before);
+  });
+});
+
+describe("locked non-transactional type — 422 opt_out_not_allowed", () => {
+  it("rejects a type-scoped apply naming a locked non-transactional type before writing", async () => {
+    const session = await app.signIn(makeIdentity("op99-locked-nontransactional"));
+    // A concrete member of the 23: `account.welcome` is enabled,
+    // non-transactional, and its email group is enabled but locked
+    // (`optOutAllowed: false`), so it is opt-out-denied though not transactional.
+    const locked = lockedNonTransactionalEmailTypeKeys();
+    expect(locked).toContain("account.welcome");
+    const typeKey = locked[0] ?? "";
+    const before = await storedPreferences(session.userId);
+
+    const response = await applyUnsubscribe(applyRequest(tokenFor(session, "type", typeKey)));
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as ErrorBody;
+
+    expect(body.error.code).toBe("opt_out_not_allowed");
+    expect(body.error.details).toEqual({
+      typeKey,
+      channelGroup: "email",
+      reason: "not_opt_outable",
+    });
+    expect(await storedPreferences(session.userId)).toEqual(before);
+  });
+
+  it("rejects a type-scoped preview naming a locked non-transactional type before writing", async () => {
+    const session = await app.signIn(makeIdentity("op99-locked-nontransactional-preview"));
+    const locked = lockedNonTransactionalEmailTypeKeys();
+    expect(locked).toContain("account.welcome");
+    const typeKey = locked[0] ?? "";
+    const before = await storedPreferences(session.userId);
+
+    const response = await previewUnsubscribe(previewRequest(tokenFor(session, "type", typeKey)));
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as ErrorBody;
+
+    expect(body.error.code).toBe("opt_out_not_allowed");
+    expect(body.error.details).toEqual({
+      typeKey,
+      channelGroup: "email",
+      reason: "not_opt_outable",
+    });
     expect(await storedPreferences(session.userId)).toEqual(before);
   });
 });
