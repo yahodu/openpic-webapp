@@ -189,7 +189,14 @@ history and are never moved.
 
 - **The ledger.** The live range table is `docs/adr/README.md` § "ADR number
   allocation" (ADR-0300) — the single source of truth. Do not copy or re-derive
-  the ranges anywhere else, including here.
+  the ranges anywhere else, including here. **The `Next free` column is a
+  reservation counter, not a landed-file count.** A number is _taken_ once it is
+  landed on `main` **or** allocated to any in-flight card/ref of that lane (an
+  open PR/branch, or a live card assigned the number). Lanes reserve at
+  allocation time — the cell always names the number the next _new_ card in the
+  lane will receive, so a card that consumes `0NNN` writes the next number above
+  `0NNN`. Two concurrent cards in one lane therefore never compute the same
+  "next free" (ADR-0300 §7).
 - **The guard.** `pnpm test:unit` fails on a duplicate `ADR-NNNN` prefix or a
   malformed `ADR-*.md` name
   (`apps/web/src/test/unit/adr-numbering.test.ts`). It is the mechanical backstop
@@ -200,6 +207,13 @@ history and are never moved.
   `origin/main`. The range ledger is prose (parsing it in CI is brittle), and a PR
   checkout does not guarantee a fetched `origin/main`. Both stay **review-time
   obligations for the reviewer**, recorded here rather than mechanised.
+- **Index-only merge conflicts.** When a PR's only conflict is the ADR index
+  (`docs/adr/README.md`, one row per lane), it resolves at merge time rather than
+  bouncing the card back to the implementer for a further round: take the base
+  version plus the lane's own index blocks (its table row and its lane note), then
+  `prettier --write` to normalise the widened column padding. The reviewer/merger
+  may perform that mechanical refresh; the lane's content, numbering and assertions
+  are untouched by it.
 - **Rejected alternatives** (letters follow ADR-0300, where (a) is the adopted rule
   stated above).
   - **(b) Merger-owned finalisation** — the merger assigns the number when the

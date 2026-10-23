@@ -1,3 +1,39 @@
+## [1.25.0](https://github.com/yahodu/openpic-webapp/compare/v1.24.0...v1.25.0) (2026-10-23)
+
+### Features
+
+- **notifications:** OP-99 one-click unsubscribe and first-party suppressions ([#253](https://github.com/yahodu/openpic-webapp/issues/253)) ([0f872dc](https://github.com/yahodu/openpic-webapp/commit/0f872dcb16304d7b1e3f12f993ef76040e504399))
+
+## [1.24.0](https://github.com/yahodu/openpic-webapp/compare/v1.23.2...v1.24.0) (2026-10-22)
+
+### Features
+
+- **notifications:** OP-98 notification preferences and public type catalogue ([#247](https://github.com/yahodu/openpic-webapp/issues/247)) ([25292ae](https://github.com/yahodu/openpic-webapp/commit/25292ae103d40844851694705f8713a03a9dc255))
+
+## [1.23.2](https://github.com/yahodu/openpic-webapp/compare/v1.23.1...v1.23.2) (2026-10-22)
+
+### Bug Fixes
+
+- **notifications:** OP-97 bound the feed by the badge's TTL predicate so the panel agrees with the bell (F3) ([#249](https://github.com/yahodu/openpic-webapp/issues/249)) ([d7f9304](https://github.com/yahodu/openpic-webapp/commit/d7f9304e801103c5314f1ff893cd0862b2dc2b86)), closes [#244](https://github.com/yahodu/openpic-webapp/issues/244)
+
+## [1.23.1](https://github.com/yahodu/openpic-webapp/compare/v1.23.0...v1.23.1) (2026-10-22)
+
+### Bug Fixes
+
+- **ci:** OP-101 transport github.ref_name and the derived PR title through env ([#245](https://github.com/yahodu/openpic-webapp/issues/245)) ([86f0fee](https://github.com/yahodu/openpic-webapp/commit/86f0feea765bcd79c631c1ca3d2ab4ea198d5075))
+
+## [1.23.0](https://github.com/yahodu/openpic-webapp/compare/v1.22.7...v1.23.0) (2026-10-22)
+
+### Features
+
+- **notifications:** OP-97 in-app feed, read state and unread-count hot path ([#233](https://github.com/yahodu/openpic-webapp/issues/233)) ([f95c50f](https://github.com/yahodu/openpic-webapp/commit/f95c50f4e0196a655f50627b93dfc397819cbfb0)), closes [#215](https://github.com/yahodu/openpic-webapp/issues/215) [#215](https://github.com/yahodu/openpic-webapp/issues/215) [#216](https://github.com/yahodu/openpic-webapp/issues/216) [#216](https://github.com/yahodu/openpic-webapp/issues/216)
+
+## [1.22.7](https://github.com/yahodu/openpic-webapp/compare/v1.22.6...v1.22.7) (2026-10-22)
+
+### Bug Fixes
+
+- **ci:** OP-101 transport PR title/branch through the step env ([#240](https://github.com/yahodu/openpic-webapp/issues/240)) ([c44c311](https://github.com/yahodu/openpic-webapp/commit/c44c311a6b3645eb93656f9023c82707ca6a7a31)), closes [#237](https://github.com/yahodu/openpic-webapp/issues/237)
+
 ## [1.22.6](https://github.com/yahodu/openpic-webapp/compare/v1.22.5...v1.22.6) (2026-10-20)
 
 ### Bug Fixes

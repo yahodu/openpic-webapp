@@ -28,6 +28,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — a digest summary that is **delivered by the retry
@@ -73,7 +74,7 @@ const SINGLETON_ID = "singleton";
 const TYPE_KEY = "attendee.matches.new";
 
 /** A fixed instant so every stored timestamp is exact. */
-const T0 = "2026-03-01T10:00:00.000Z";
+const T0 = fixtureInstant("10:00:00.000Z");
 const MINUTE = 60_000;
 
 /** The configured per-recipient daily cap this spec pins (never the default 3). */

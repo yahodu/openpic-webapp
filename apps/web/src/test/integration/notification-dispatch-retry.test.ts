@@ -23,6 +23,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — the dispatch retry cron (OP-96, contract §10.2
@@ -46,7 +47,7 @@ const DISPATCHES = COLLECTIONS.dispatches;
 const USER = "user";
 
 /** A fixed instant so every stored timestamp is exact. */
-const T0 = "2026-03-01T10:00:00.000Z";
+const T0 = fixtureInstant("10:00:00.000Z");
 
 /** Fields of a stored dispatch row this spec inspects (schema §19.5). */
 interface StoredDispatch {
@@ -220,7 +221,7 @@ describe("notification-dispatch-retry (I4)", () => {
       // Run the retry after the backoff has elapsed (base 60s).
       const outcome = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:02:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:02:00.000Z")),
         transport,
         limit: 100,
       });
@@ -249,7 +250,7 @@ describe("notification-dispatch-retry (I4)", () => {
 
       const outcome = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:10:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:10:00.000Z")),
         transport,
         limit: 100,
       });
@@ -286,7 +287,7 @@ describe("notification-dispatch-retry is bounded by `limit` (I9)", () => {
 
       const first = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:02:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:02:00.000Z")),
         transport,
         limit: 2,
       });
@@ -299,7 +300,7 @@ describe("notification-dispatch-retry is bounded by `limit` (I9)", () => {
       // The backlog now fits under `limit`: the remainder retries, nothing is left.
       const rest = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:05:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:05:00.000Z")),
         transport,
         limit: 2,
       });
@@ -323,7 +324,7 @@ describe("notification-dispatch-retry is idempotent (I10)", () => {
 
       const first = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:02:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:02:00.000Z")),
         transport,
         limit: 100,
       });
@@ -334,7 +335,7 @@ describe("notification-dispatch-retry is idempotent (I10)", () => {
       // A sent row is not `failed && retryable` any more: the next run is a no-op.
       const second = await retryDueDispatches({
         db: test.db,
-        clock: fixedClock("2026-03-01T10:10:00.000Z"),
+        clock: fixedClock(fixtureInstant("10:10:00.000Z")),
         transport,
         limit: 100,
       });

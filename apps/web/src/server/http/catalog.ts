@@ -4,6 +4,7 @@ import type {
   AuthErrorCode,
   ErrorCode,
   InternalErrorCode,
+  NotificationErrorCode,
   PipelineErrorCode,
   RequestShapeErrorCode,
   TenancyErrorCode,
@@ -234,6 +235,29 @@ export const INTERNAL_ERROR_TRANSPORT: Readonly<Record<InternalErrorCode, ErrorC
 };
 
 /**
+ * Transport for the notification-surface codes (contract §7.4, Appendix A.8).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the request-shape and
+ * account codes: that table stays the exact base Appendix A copy. The
+ * notification-preferences story owns these rows and feeds them into the same
+ * dispatch table. Both are `422`, non-retryable.
+ */
+export const NOTIFICATION_ERROR_TRANSPORT: Readonly<
+  Record<NotificationErrorCode, ErrorCatalogEntry>
+> = {
+  unknown_type_key: {
+    status: 422,
+    retryable: false,
+    message: "The notification type key is not recognised.",
+  },
+  opt_out_not_allowed: {
+    status: 422,
+    retryable: false,
+    message: "This notification channel cannot be opted out of.",
+  },
+};
+
+/**
  * Transport for the tenancy codes (contract §2.1, Appendix A.1/A.4).
  *
  * Kept out of {@link ERROR_CATALOG} for the same reason as the auth and
@@ -257,7 +281,10 @@ export const TENANCY_ERROR_TRANSPORT: Readonly<Record<TenancyErrorCode, ErrorCat
   },
 };
 
-/** Every client-facing code's transport: Appendix A first, then pipeline + auth + internal + tenancy codes. */
+/**
+ * Every client-facing code's transport: Appendix A first, then the pipeline,
+ * auth, request-shape, internal, account, notification and tenancy tables.
+ */
 const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...ERROR_CATALOG,
   ...PIPELINE_ERROR_TRANSPORT,
@@ -265,6 +292,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...REQUEST_SHAPE_ERROR_TRANSPORT,
   ...INTERNAL_ERROR_TRANSPORT,
   ...ACCOUNT_ERROR_TRANSPORT,
+  ...NOTIFICATION_ERROR_TRANSPORT,
   ...TENANCY_ERROR_TRANSPORT,
 };
 

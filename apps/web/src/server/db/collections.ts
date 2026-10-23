@@ -58,6 +58,13 @@ export const COLLECTIONS = {
    * `notification-digest-flush` cron drains it.
    */
   notificationDigests: "notificationDigests",
+  /**
+   * The first-party do-not-send list (schema §19.6): bounces, complaints,
+   * unsubscribes and DND registrations, keyed `{ channel, contactHash }`. It is
+   * platform-scoped (a suppression follows the contact, not a tenant), so it is
+   * read and written through `platformRepo` (ADR-0241).
+   */
+  notificationSuppressions: "notificationSuppressions",
 } as const;
 
 /** The name of any registered collection. */

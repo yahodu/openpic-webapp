@@ -198,6 +198,26 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     expireAfterSeconds: 0,
   },
 
+  // notificationSuppressions — one row per contact per channel, so the
+  // unsubscribe upsert is idempotent and a second suppression of the same
+  // address cannot be inserted (schema §19.6, ADR-0241).
+  {
+    collection: COLLECTIONS.notificationSuppressions,
+    name: "notification_suppressions_channel_contact_unique",
+    keys: [
+      ["channel", 1],
+      ["contactHash", 1],
+    ],
+    unique: true,
+  },
+  // notificationSuppressions — the admin audit view reads newest-first
+  // (schema §19.6).
+  {
+    collection: COLLECTIONS.notificationSuppressions,
+    name: "notification_suppressions_created_at",
+    keys: [["createdAt", -1]],
+  },
+
   // subscriptions — one live subscription per tenant (cancelled rows excluded).
   {
     collection: COLLECTIONS.subscriptions,
