@@ -327,7 +327,7 @@ describe("POST apply (§7.5)", () => {
     expect(response.status).toBe(200);
 
     const body = (await response.json()) as Parameters<typeof resolvedEmail>[0];
-    expect(resolvedEmail(body, typeKey)).toEqual({ effective: "off", source: "type" });
+    expect(resolvedEmail(body, typeKey)).toMatchObject({ effective: "off", source: "type" });
   });
 
   it("I2: scope marketing creates the suppression and clears marketingOptIn", async () => {

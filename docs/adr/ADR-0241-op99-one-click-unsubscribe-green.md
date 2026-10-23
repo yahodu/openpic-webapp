@@ -176,6 +176,15 @@ TEST card `t_8676455d` (gated on `t_af207345` so the shared spec file is never e
 concurrently), which records the fix in this section. No production change follows from
 it, and this card did not touch the test.
 
+**Correction applied (2026-10-23, `t_8676455d`).** The follow-up TEST card took the
+smallest option: the assertion is now
+`expect(resolvedEmail(body, typeKey)).toMatchObject({ effective: "off", source: "type" })`.
+Only the strictness changed — the opaque extra key `optOutAllowed: true` is tolerated
+instead of stripping it from OP-98's contract-mandated response; the case and every other
+assertion are untouched. OP-98's `.toEqual` pin and this lane's Playwright spec still
+assert the full three-field shape byte-unchanged. No ADR number was consumed; this is a
+test-only correction recorded in place.
+
 Everything else in the suite is green, including the other 13 cases of this very file
 (the sibling of the disputed case, which asserts the _stored_ `byType` document and
 the `source` resolution, passes).
