@@ -3,7 +3,7 @@
 - **Status:** Accepted · **Date:** 2026-10-23
 - **Card:** OP-99 GREEN — _One-click unsubscribe and first-party suppressions_ (`t_3bb9a1a3`) · **RED predecessor:** `t_28ab0e00` ([ADR-0240](ADR-0240-op99-one-click-unsubscribe-red.md)) · **Scope reconciled by:** `t_b8ee4846`
 - **Epic:** `1-Notifications / Unsubscribe` · **Phase:** 1 · **Depends on:** OP-98 (notification preferences, merged `25292ae`)
-- **Branch:** `OP-99-task-one-click-unsubscribe` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_28ab0e00` · **PR:** [#253](https://github.com/yahodu/openpic-webapp/pull/253) (opened by the RED review, turned green here)
+- **Branch:** `OP-99-task-one-click-unsubscribe` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_28ab0e00` · **PR:** [#253](https://github.com/yahodu/openpic-webapp/pull/253) (opened by the RED review; the GREEN lands on this branch — every RED pin is green except the one disputed assertion recorded below)
 - **ADR number:** `0241` — the OP-99 lane holds the reserved range `0240`–`0259` ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md); `docs/adr/README.md` § "Reserved ranges"). `0240` was consumed by [ADR-0240](ADR-0240-op99-one-click-unsubscribe-red.md), so the lane-local counter is `0241`; the README `Next free` cell advances to `0242` in this commit. Drawn from the lane's own range, never from `origin/main`'s high-water mark or the index tail.
 - **Touches:** `apps/web/src/server/notifications/unsubscribe.ts` (new), `apps/web/src/app/api/v1/notifications/unsubscribe/[token]/route.ts` (new), `apps/web/src/server/notifications/preferences.ts` (+`toStoredPreferences`), `apps/web/src/app/api/v1/me/notification-preferences/route.ts` (uses the extracted reader), `apps/web/src/server/db/collections.ts` (+`notificationSuppressions`), `apps/web/src/server/db/indexes.ts` (+2 specs), `docs/adr/README.md` and this record. **No test, mock, fixture or factory is modified** — the two RED vitest specs, the Playwright spec, the e2e token fixture and [ADR-0240](ADR-0240-op99-one-click-unsubscribe-red.md) itself are byte-unchanged.
 
@@ -168,6 +168,13 @@ comparison. The assertion has never been executed against a working route until 
 widen `resolvedEmail`'s declared return type to
 `{ effective: string; optOutAllowed: boolean; source: string }` — matching the e2e
 spec and OP-98. Routed as a follow-up TEST card; this card writes no tests.
+
+**Confirmed by the human (2026-10-23).** The decision recorded on card `t_3bb9a1a3` is
+"decision 1: confirm the dispute" — the assertion is the defect, not the implementation,
+and OP-98's §7.4 response shape stands. The one-line correction lands as the follow-up
+TEST card `t_8676455d` (gated on `t_af207345` so the shared spec file is never edited
+concurrently), which records the fix in this section. No production change follows from
+it, and this card did not touch the test.
 
 Everything else in the suite is green, including the other 13 cases of this very file
 (the sibling of the disputed case, which asserts the _stored_ `byType` document and
