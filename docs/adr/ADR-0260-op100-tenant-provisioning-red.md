@@ -121,9 +121,18 @@ would over-constrain a value the contract shows only by example.
 
 ## Deliberate non-assertions
 
-- `tenant_suspended` → `423` on writes is named only in the GREEN card's scope
-  and has no code in the contract catalogue; it is **out of scope** for this RED
-  (no test pins it, so the GREEN must not treat it as required by the RED).
+- `tenant_suspended` → `423` on writes **is** pinned — by I8, added in the
+  follow-up TEST card `t_83118bad`. The code is a contract catalogue row
+  (Appendix A.1, `docs/API Contract.md` line 3484) and is a member of the doc's
+  `ErrorCode` union (line 3664), so it is not a doc-only invention; its only real
+  gap was the TypeScript transport — the same position `invalid_billing_contact`
+  is in (D4), which this RED did decide to pin. An earlier revision of this ADR
+  wrongly recorded the code as having "no code in the contract catalogue"; that
+  claim is corrected here **in place** (no new ADR number is consumed, following
+  the OP-99 in-place-amendment precedent under `t_28ab0e00`), and suspension is no
+  longer a non-assertion. `GET` on a suspended workspace **remains** a
+  non-assertion: the contract states nothing about reads of a suspended tenant,
+  so pinning one would invent a requirement.
 - `POST /api/v1/tenants` (v2, multi-workspace) is not touched.
 - Nested tenant routes (`/tenants/{t}/events/…`), the `eventMembers` fallback of
   the membership check, filters/rate-limits, and domain-event emission on

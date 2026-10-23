@@ -33,7 +33,9 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  *   I5  a `member` who is a member of the tenant → `403 forbidden` on `PATCH`;
  *   I6  `billingContactUserId` naming a non-member → `422 invalid_billing_contact`;
  *   I7  the first tenant-scoped **write** by a user with no workspace provisions
- *       one (with the caller as owner) — the seam the E1 e2e pins end to end.
+ *       one (with the caller as owner) — the seam the E1 e2e pins end to end;
+ *   I8  a `PATCH` on a **suspended** workspace → `423 tenant_suspended` with no
+ *       partial write (contract Appendix A.1).
  *
  * ## Contract expected of the implementation
  *
@@ -71,9 +73,14 @@ import { makeEnv, toProcessEnv } from "../factories/env";
  * - **A3 — the DTO.** §2.1 mandates `counters.approximate: true`; branding URLs
  *   are `null` until the OP-117 signer exists (GREEN scope §3), so they are
  *   asserted `null` rather than mocked.
- * - **A4 — suspension** (`tenant_suspended` → `423` on writes) is named only in
- *   the GREEN card's scope, has no code in the contract catalogue and is not
- *   pinned here; it is out of scope for this RED (see the handoff).
+ * - **A4 — suspension.** A suspended workspace (`tenants.status: "suspended"`)
+ *   rejects tenant-scoped writes with `423 tenant_suspended` (I8). The code is a
+ *   contract catalogue row — Appendix A.1 (`docs/API Contract.md`, line 3484)
+ *   and the doc's `ErrorCode` union (line 3664) both carry it — so it is not a
+ *   doc-only invention; its only real gap is the TypeScript transport, the same
+ *   doc-only position as `invalid_billing_contact` (A2). `GET` on a suspended
+ *   workspace is deliberately **not** pinned: the contract states nothing about
+ *   reads of a suspended tenant.
  */
 
 const APP_ORIGIN = "http://localhost:3000";
@@ -113,19 +120,17 @@ interface CapturedOtp {
 
 interface Identity {
   readonly email: string;
-  readonly phone: string;
   readonly ip: string;
 }
 
 let identitySeq = 0;
 
-/** A unique email/phone/IP so no two specs share a rate-limit bucket. */
+/** A unique email/IP per identity so no two specs share a rate-limit bucket. */
 function makeIdentity(): Identity {
   identitySeq += 1;
   const serial = String(identitySeq).padStart(4, "0");
   return {
     email: `op100-tenancy-${serial}@example.com`,
-    phone: `+919****1000${serial}`,
     ip: `198.51.100.${String(identitySeq)}`,
   };
 }
@@ -631,5 +636,34 @@ describe("PATCH /api/v1/tenants/{tenantId} (OP-100 update)", () => {
     expect(after.headers.get("x-tenant-id")).toBe(
       (profile?.primaryTenantId as ObjectId).toHexString()
     );
+  });
+
+  it("I8: refuses a write to a suspended workspace with 423 tenant_suspended and persists nothing", async () => {
+    // Contract Appendix A.1: `tenant_suspended` → `423` on writes, details
+    // `{ reason, supportUrl }`. The assertion is held to the contract's strength
+    // (status + code); `details` is left unpinned so the GREEN is not forced into
+    // a particular message. `GET` on a suspended workspace is deliberately NOT
+    // pinned here — the contract states nothing about reads of a suspended
+    // tenant, so pinning one would invent a requirement.
+    const identity = makeIdentity();
+    const { cookie, userId } = await signInAs(identity);
+    const tenantId = await seedWorkspace({
+      userId,
+      role: "owner",
+      slug: "suspended-studio",
+      name: "Suspended Studio",
+      status: "suspended",
+    });
+
+    const response = await tenantPatch(
+      patchTenantRequest(cookie, CURRENT_ALIAS, { name: "Reanimated Studio" })
+    );
+
+    expect(response.status).toBe(423);
+    expect((await errorEnvelope(response)).code).toBe("tenant_suspended");
+
+    // The rejection is total: the suspended workspace's name is untouched.
+    const stored = await database.collection(TENANTS_COLLECTION).findOne({ _id: tenantId });
+    expect(stored?.name).toBe("Suspended Studio");
   });
 });
