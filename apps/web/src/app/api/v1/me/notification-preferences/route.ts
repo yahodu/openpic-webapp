@@ -10,15 +10,9 @@ import { appError } from "@/server/http/errors";
 import { listEnabledNotificationTypes } from "@/server/notifications/notification-types-read";
 import {
   applyPreferencesPatch,
-  DEFAULT_PREFERENCES,
   isValidClockTime,
   mergePreferences,
-  type ChannelGroupName,
-  type DigestPreference,
-  type GroupPreferences,
-  type PreferenceValue,
-  type QuietHoursSettings,
-  type StoredPreferences,
+  toStoredPreferences,
 } from "@/server/notifications/preferences";
 import { platformRepo } from "@/server/repos";
 
@@ -40,10 +34,11 @@ import { platformRepo } from "@/server/repos";
  * (contract §7.4, Appendix A.8); a malformed quiet-hours clock is
  * `422 validation_failed`. Validation happens **before** the upsert, so a
  * rejected patch writes nothing.
+ *
+ * The row-to-document mapping (`toStoredPreferences`) is shared with the
+ * unsubscribe route so both surfaces read a stored document identically
+ * (ADR-0241).
  */
-
-/** The three routing channel groups, in catalogue order (design §1.1). */
-const GROUPS: readonly ChannelGroupName[] = ["in_app", "email", "mobile"];
 
 /** The `HH:MM` 24-hour clock gate on `quietHours.start` / `quietHours.end`. */
 const clockSchema = z.string().refine(isValidClockTime, {
@@ -121,84 +116,6 @@ function preferencesCollection(db: ReturnType<typeof getDb>) {
 /** True for a plain, non-array object record. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Read one group-keyed preference map, keeping only `on` / `off` per group. */
-function asGroupPreferences(value: unknown): GroupPreferences {
-  if (!isRecord(value)) {
-    return {};
-  }
-  const map: Record<string, PreferenceValue> = {};
-  for (const group of GROUPS) {
-    const entry = value[group];
-    if (entry === "on" || entry === "off") {
-      map[group] = entry;
-    }
-  }
-  return map;
-}
-
-/** Read one sparse scope map (`byType` / `byEvent`), keyed by typeKey / eventId. */
-function asScopePreferences(value: unknown): Record<string, GroupPreferences> {
-  if (!isRecord(value)) {
-    return {};
-  }
-  const map: Record<string, GroupPreferences> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    map[key] = asGroupPreferences(entry);
-  }
-  return map;
-}
-
-/** Read the digest cadence map, keeping only the four contract values. */
-function asDigestPreferences(value: unknown): Record<string, DigestPreference> {
-  if (!isRecord(value)) {
-    return {};
-  }
-  const map: Record<string, DigestPreference> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (entry === "instant" || entry === "quiet_period" || entry === "daily" || entry === "off") {
-      map[key] = entry;
-    }
-  }
-  return map;
-}
-
-/** Read the quiet-hours window, defaulting every missing field. */
-function asQuietHours(value: unknown): QuietHoursSettings {
-  if (!isRecord(value)) {
-    return { ...DEFAULT_PREFERENCES.quietHours };
-  }
-  return {
-    enabled: value.enabled === true,
-    start: typeof value.start === "string" ? value.start : DEFAULT_PREFERENCES.quietHours.start,
-    end: typeof value.end === "string" ? value.end : DEFAULT_PREFERENCES.quietHours.end,
-    timeZone:
-      typeof value.timeZone === "string" ? value.timeZone : DEFAULT_PREFERENCES.quietHours.timeZone,
-  };
-}
-
-/**
- * Map a stored MongoDB row onto the typed preferences document.
- *
- * A missing row is the no-override baseline; `global` is completed to all three
- * groups so a sparse stored document still renders a full settings screen.
- *
- * @param row - The stored document (untested driver data), or `null`.
- * @returns The typed stored preferences.
- */
-function toStoredPreferences(row: unknown): StoredPreferences {
-  if (row === null || !isRecord(row)) {
-    return DEFAULT_PREFERENCES;
-  }
-  return {
-    global: { ...DEFAULT_PREFERENCES.global, ...asGroupPreferences(row.global) },
-    byType: asScopePreferences(row.byType),
-    byEvent: asScopePreferences(row.byEvent),
-    quietHours: asQuietHours(row.quietHours),
-    digest: asDigestPreferences(row.digest),
-    locale: typeof row.locale === "string" ? row.locale : DEFAULT_PREFERENCES.locale,
-  };
 }
 
 /** Render the stored `updatedAt` as an ISO string, or `null` when absent. */

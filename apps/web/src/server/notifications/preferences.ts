@@ -154,6 +154,95 @@ export function isValidClockTime(value: string): boolean {
   return CLOCK_TIME.test(value);
 }
 
+/** The three routing channel groups, in catalogue order (design §1.1). */
+const GROUP_NAMES: readonly ChannelGroupName[] = ["in_app", "email", "mobile"];
+
+/** True for a plain, non-array object record. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Read one group-keyed preference map, keeping only `on` / `off` per group. */
+function asGroupPreferences(value: unknown): GroupPreferences {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const map: Record<string, PreferenceValue> = {};
+  for (const group of GROUP_NAMES) {
+    const entry = value[group];
+    if (entry === "on" || entry === "off") {
+      map[group] = entry;
+    }
+  }
+  return map;
+}
+
+/** Read one sparse scope map (`byType` / `byEvent`), keyed by typeKey / eventId. */
+function asScopePreferences(value: unknown): Record<string, GroupPreferences> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const map: Record<string, GroupPreferences> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    map[key] = asGroupPreferences(entry);
+  }
+  return map;
+}
+
+/** Read the digest cadence map, keeping only the four contract values. */
+function asDigestPreferences(value: unknown): Record<string, DigestPreference> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const map: Record<string, DigestPreference> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === "instant" || entry === "quiet_period" || entry === "daily" || entry === "off") {
+      map[key] = entry;
+    }
+  }
+  return map;
+}
+
+/** Read the quiet-hours window, defaulting every missing field. */
+function asQuietHours(value: unknown): QuietHoursSettings {
+  if (!isRecord(value)) {
+    return { ...DEFAULT_PREFERENCES.quietHours };
+  }
+  return {
+    enabled: value.enabled === true,
+    start: typeof value.start === "string" ? value.start : DEFAULT_PREFERENCES.quietHours.start,
+    end: typeof value.end === "string" ? value.end : DEFAULT_PREFERENCES.quietHours.end,
+    timeZone:
+      typeof value.timeZone === "string" ? value.timeZone : DEFAULT_PREFERENCES.quietHours.timeZone,
+  };
+}
+
+/**
+ * Map a stored MongoDB row onto the typed preferences document (schema §19.3).
+ *
+ * A missing row is the no-override baseline; `global` is completed to all three
+ * groups so a sparse stored document still renders a full settings screen, and
+ * untested driver data is narrowed per field rather than trusted. The readers are
+ * exported through this one function so the preferences route and the
+ * unsubscribe route (ADR-0241) interpret a stored document identically.
+ *
+ * @param row - The stored document (untested driver data), or `null`.
+ * @returns The typed stored preferences.
+ */
+export function toStoredPreferences(row: unknown): StoredPreferences {
+  if (row === null || !isRecord(row)) {
+    return DEFAULT_PREFERENCES;
+  }
+  return {
+    global: { ...DEFAULT_PREFERENCES.global, ...asGroupPreferences(row.global) },
+    byType: asScopePreferences(row.byType),
+    byEvent: asScopePreferences(row.byEvent),
+    quietHours: asQuietHours(row.quietHours),
+    digest: asDigestPreferences(row.digest),
+    locale: typeof row.locale === "string" ? row.locale : DEFAULT_PREFERENCES.locale,
+  };
+}
+
 /**
  * Resolve one enabled channel group's effective value and source.
  *
