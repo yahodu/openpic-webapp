@@ -68,9 +68,22 @@ interface TenantMembershipDocument {
   readonly role?: unknown;
 }
 
-/** The `{tenantId}` segment of the matched path, or `null`. */
+/**
+ * The `{tenantId}` segment of the matched path, or `null`.
+ *
+ * The tenant segment is located **by position** — the segment immediately
+ * following the literal `tenants` — rather than by taking the last segment: on a
+ * nested route such as `/tenants/{tenantId}/members` (or `…/members/{userId}`)
+ * the last segment is `members` (or the target user id), not the workspace.
+ * Taking the last segment there would make every nested request answer `404`.
+ * A path with no `tenants` anchor falls back to its last segment.
+ */
 export function tenantIdFromRequest(request: Request): string | null {
   const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
+  const afterTenants = segments.indexOf("tenants") + 1;
+  if (afterTenants > 0 && afterTenants < segments.length) {
+    return segments[afterTenants] ?? null;
+  }
   return segments.at(-1) ?? null;
 }
 

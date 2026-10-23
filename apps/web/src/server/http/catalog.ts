@@ -279,6 +279,11 @@ export const TENANCY_ERROR_TRANSPORT: Readonly<Record<TenancyErrorCode, ErrorCat
     retryable: false,
     message: "The billing contact must be an active member of this workspace.",
   },
+  cannot_demote_owner: {
+    status: 409,
+    retryable: false,
+    message: "The workspace owner cannot be demoted or removed.",
+  },
 };
 
 /**
