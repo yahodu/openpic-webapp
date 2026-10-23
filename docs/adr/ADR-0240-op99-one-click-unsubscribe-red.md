@@ -100,12 +100,23 @@ Response body for both verbs — the `GET` is the `POST` preview:
 
 Rejection paths (all **before** any write):
 
-| Condition                                                      | Status | Code                  | `details`                                                     |
-| -------------------------------------------------------------- | ------ | --------------------- | ------------------------------------------------------------- |
-| malformed / tampered / absent token                            | `400`  | `bad_request`         | —                                                             |
-| expired token                                                  | `410`  | `gone`                | —                                                             |
-| `scope: "type"` names an unknown `typeKey`                     | `422`  | `unknown_type_key`    | `{ typeKey }`                                                 |
-| `scope: "type"` names a transactional or otherwise locked type | `422`  | `opt_out_not_allowed` | `{ typeKey, channelGroup: "email", reason: "transactional" }` |
+| Condition                                                      | Status | Code                  | `details`                                    |
+| -------------------------------------------------------------- | ------ | --------------------- | -------------------------------------------- |
+| malformed / tampered / absent token                            | `400`  | `bad_request`         | —                                            |
+| expired token                                                  | `410`  | `gone`                | —                                            |
+| `scope: "type"` names an unknown `typeKey`                     | `422`  | `unknown_type_key`    | `{ typeKey }`                                |
+| `scope: "type"` names a transactional or otherwise locked type | `422`  | `opt_out_not_allowed` | `{ typeKey, channelGroup: "email", reason }` |
+
+`reason` is `"transactional"` when the named type is transactional and
+`"not_opt_outable"` for any other locked type (an **enabled** type whose
+**enabled** `email` group carries `optOutAllowed: false`), following the OP-98
+`optOutReason` precedent (`apps/web/src/app/api/v1/me/notification-preferences/route.ts:221-226`,
+`optOutReason`). This row originally labelled the whole case
+`reason: "transactional"`, which is wrong for the **23** seed types that are
+enabled and non-transactional but locked (e.g. `account.welcome`,
+`event.created`, `collab.invite.sent`); corrected in place by the test-only card
+`t_af207345` (OP-99 review finding F2), which pins both reasons — see
+[ADR-0241](ADR-0241-op99-one-click-unsubscribe-green.md) § "The route".
 
 `unknown_type_key`, `opt_out_not_allowed` and their `422` transport already exist
 (OP-98, `NOTIFICATION_ERROR_CODES` / `NOTIFICATION_ERROR_TRANSPORT`); `bad_request`
