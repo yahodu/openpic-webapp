@@ -41,6 +41,12 @@ export const COLLECTIONS = {
   sessionDevices: "sessionDevices",
   contactChangeFanouts: "contactChangeFanouts",
   /**
+   * Workspaces (schema §13.3) — the billable tenant every tenant-scoped row
+   * carries. Registered here so `INDEX_SPECS` can declare its indexes without
+   * duplicating the collection name (ADR-0261).
+   */
+  tenants: "tenants",
+  /**
    * Workspace memberships (schema §13.4) read by `GET /me` and the tenant
    * member screens. Registered here so `INDEX_SPECS` can declare its indexes
    * without duplicating the collection name (ADR-0060).
