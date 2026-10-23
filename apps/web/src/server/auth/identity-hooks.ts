@@ -726,7 +726,7 @@ export async function handleTwoFactorToggled(
  *
  * Deduped on the instant (`eventKey:userId:instant`), matching the contact-changed
  * and 2FA schemes, so a redelivered invocation collapses to one row while a
- * genuinely new revoke-all at a later instant re-emits (ADR-0043 §1).
+ * genuinely new revoke-all at a later instant re-emits (ADR-0045 §1).
  *
  * @param event - The user and the revoked session ids.
  * @param deps - The database/outbox/clock seams.
@@ -754,7 +754,7 @@ export async function handleSessionsRevoked(
  * Deduped on the instant (`eventKey:userId:instant`), matching the
  * sessions-revoked, contact-changed and 2FA schemes, so a redelivered
  * invocation collapses to one row while a genuinely new request at a later
- * instant re-emits (ADR-0043 §1, ADR-0070). The subject and actor are both the
+ * instant re-emits (ADR-0045 §1, ADR-0070). The subject and actor are both the
  * deleting user, the convention every identity emit already uses (`userRef`).
  *
  * @param event - The user requesting deletion.

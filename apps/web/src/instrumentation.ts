@@ -30,6 +30,21 @@ export async function register(): Promise<void> {
     if (process.env.APP_ENV === "e2e") {
       const { startE2eMswServer } = await import("./test/mocks/e2e-server");
       await startE2eMswServer();
+
+      // The e2e `api` project boots an *empty* database, so the notification
+      // catalogue is not stored: `emitDomainEvent` would mark every event
+      // `skipped` and the fan-out would resolve no type or template, leaving the
+      // in-app feed permanently empty (the E1-environment gap ADR-0131 records).
+      // Provision the sanctioned catalogue here, gated to `e2e` exactly like the
+      // test-only OTP reader route, so the production write path runs unchanged.
+      // Guarded on `MONGODB_URI` so a boot without a database (a unit spec
+      // exercising the boot guard) never reaches for a connection.
+      if (process.env.MONGODB_URI !== undefined) {
+        const { seedNotificationTemplates, seedNotificationTypes } =
+          await import("./server/notifications/seed-notification-types");
+        await seedNotificationTypes();
+        await seedNotificationTemplates();
+      }
     }
   }
 }

@@ -1,3 +1,87 @@
+## [1.26.0](https://github.com/yahodu/openpic-webapp/compare/v1.25.0...v1.26.0) (2026-10-23)
+
+### Features
+
+- **tenancy:** OP-100 provision tenants, resolve tenantId and expose tenant read/update ([#256](https://github.com/yahodu/openpic-webapp/issues/256)) ([5fd133d](https://github.com/yahodu/openpic-webapp/commit/5fd133d0f9a6dda758ad5f4061aea82b6749a945))
+
+## [1.25.0](https://github.com/yahodu/openpic-webapp/compare/v1.24.0...v1.25.0) (2026-10-23)
+
+### Features
+
+- **notifications:** OP-99 one-click unsubscribe and first-party suppressions ([#253](https://github.com/yahodu/openpic-webapp/issues/253)) ([0f872dc](https://github.com/yahodu/openpic-webapp/commit/0f872dcb16304d7b1e3f12f993ef76040e504399))
+
+## [1.24.0](https://github.com/yahodu/openpic-webapp/compare/v1.23.2...v1.24.0) (2026-10-22)
+
+### Features
+
+- **notifications:** OP-98 notification preferences and public type catalogue ([#247](https://github.com/yahodu/openpic-webapp/issues/247)) ([25292ae](https://github.com/yahodu/openpic-webapp/commit/25292ae103d40844851694705f8713a03a9dc255))
+
+## [1.23.2](https://github.com/yahodu/openpic-webapp/compare/v1.23.1...v1.23.2) (2026-10-22)
+
+### Bug Fixes
+
+- **notifications:** OP-97 bound the feed by the badge's TTL predicate so the panel agrees with the bell (F3) ([#249](https://github.com/yahodu/openpic-webapp/issues/249)) ([d7f9304](https://github.com/yahodu/openpic-webapp/commit/d7f9304e801103c5314f1ff893cd0862b2dc2b86)), closes [#244](https://github.com/yahodu/openpic-webapp/issues/244)
+
+## [1.23.1](https://github.com/yahodu/openpic-webapp/compare/v1.23.0...v1.23.1) (2026-10-22)
+
+### Bug Fixes
+
+- **ci:** OP-101 transport github.ref_name and the derived PR title through env ([#245](https://github.com/yahodu/openpic-webapp/issues/245)) ([86f0fee](https://github.com/yahodu/openpic-webapp/commit/86f0feea765bcd79c631c1ca3d2ab4ea198d5075))
+
+## [1.23.0](https://github.com/yahodu/openpic-webapp/compare/v1.22.7...v1.23.0) (2026-10-22)
+
+### Features
+
+- **notifications:** OP-97 in-app feed, read state and unread-count hot path ([#233](https://github.com/yahodu/openpic-webapp/issues/233)) ([f95c50f](https://github.com/yahodu/openpic-webapp/commit/f95c50f4e0196a655f50627b93dfc397819cbfb0)), closes [#215](https://github.com/yahodu/openpic-webapp/issues/215) [#215](https://github.com/yahodu/openpic-webapp/issues/215) [#216](https://github.com/yahodu/openpic-webapp/issues/216) [#216](https://github.com/yahodu/openpic-webapp/issues/216)
+
+## [1.22.7](https://github.com/yahodu/openpic-webapp/compare/v1.22.6...v1.22.7) (2026-10-22)
+
+### Bug Fixes
+
+- **ci:** OP-101 transport PR title/branch through the step env ([#240](https://github.com/yahodu/openpic-webapp/issues/240)) ([c44c311](https://github.com/yahodu/openpic-webapp/commit/c44c311a6b3645eb93656f9023c82707ca6a7a31)), closes [#237](https://github.com/yahodu/openpic-webapp/issues/237)
+
+## [1.22.6](https://github.com/yahodu/openpic-webapp/compare/v1.22.5...v1.22.6) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 claim a digest bucket before the send so overlapping flushes deliver one summary (F2) ([#221](https://github.com/yahodu/openpic-webapp/issues/221)) ([e57eb58](https://github.com/yahodu/openpic-webapp/commit/e57eb589de2d9fab02146e16fdff3ae8efd6a854)), closes [#219](https://github.com/yahodu/openpic-webapp/issues/219) [#219](https://github.com/yahodu/openpic-webapp/issues/219)
+
+## [1.22.5](https://github.com/yahodu/openpic-webapp/compare/v1.22.4...v1.22.5) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 round-3 GREEN — bound the repeated failed_unrecorded digest-flush re-attempt (F1) ([#220](https://github.com/yahodu/openpic-webapp/issues/220)) ([1981d85](https://github.com/yahodu/openpic-webapp/commit/1981d8599f9deb6a87c74f82fc9e8f63cf531673)), closes [#219](https://github.com/yahodu/openpic-webapp/issues/219)
+
+## [1.22.4](https://github.com/yahodu/openpic-webapp/compare/v1.22.3...v1.22.4) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 count a retry-redelivered digest against the daily cap (F1c-r2) ([#219](https://github.com/yahodu/openpic-webapp/issues/219)) ([4424e74](https://github.com/yahodu/openpic-webapp/commit/4424e74f61013c8f23c1dad49b8f6b2847470d2b))
+
+## [1.22.3](https://github.com/yahodu/openpic-webapp/compare/v1.22.2...v1.22.3) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 round-3 GREEN — bound the repeated non-retryable digest-flush failure (F1b-r2) ([#218](https://github.com/yahodu/openpic-webapp/issues/218)) ([509b559](https://github.com/yahodu/openpic-webapp/commit/509b55994ffe123b59001c8fd1433305a91d5fec))
+
+## [1.22.2](https://github.com/yahodu/openpic-webapp/compare/v1.22.1...v1.22.2) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 round-2 GREEN — owner-gated digest flush, terminal capped rows, delivered-only daily cap ([#217](https://github.com/yahodu/openpic-webapp/issues/217)) ([2c779b3](https://github.com/yahodu/openpic-webapp/commit/2c779b3a5d212fa0e62147bc054a502af721d690)), closes [#6](https://github.com/yahodu/openpic-webapp/issues/6)
+
+## [1.22.1](https://github.com/yahodu/openpic-webapp/compare/v1.22.0...v1.22.1) (2026-10-20)
+
+### Bug Fixes
+
+- **notifications:** OP-96 bound digest-flush ownership, retries and sweep reads (F1-F4) ([#216](https://github.com/yahodu/openpic-webapp/issues/216)) ([fde586b](https://github.com/yahodu/openpic-webapp/commit/fde586bc7d5d8b7e7e388bf59e37404dc124747e))
+
+## [1.22.0](https://github.com/yahodu/openpic-webapp/compare/v1.21.1...v1.22.0) (2026-10-20)
+
+### Features
+
+- **notifications:** OP-96 digest buckets, dispatch retry and quiet-hours release crons ([#203](https://github.com/yahodu/openpic-webapp/issues/203)) ([bb70cef](https://github.com/yahodu/openpic-webapp/commit/bb70ceff07679345a2aa20466c073eb225fc063b))
+
 ## [1.21.1](https://github.com/yahodu/openpic-webapp/compare/v1.21.0...v1.21.1) (2026-10-06)
 
 ### Bug Fixes

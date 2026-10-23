@@ -2396,13 +2396,13 @@ Implements notification design Parts I and §19. **Novu holds no routing, no tem
 
 Auth `user` · Rate `read.normal` · Sorted `createdAt` desc (index `{userId:1, createdAt:-1}`)
 
-| Param      | Default               | Notes                                                                                                                                       |
-| ---------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `limit`    | `20`                  | max `50`                                                                                                                                    |
-| `filter`   | `active`              | `active` (last 30 days) \| `unread` \| `all` (last 90 days) \| `archived` (30–90 days)                                                      |
-| `category` | —                     | repeatable: `authentication`, `account`, `billing`, `usage`, `event`, `collaboration`, `pipeline`, `matching`, `compliance`, `platform_ops` |
-| `eventId`  | —                     | scope to one event                                                                                                                          |
-| `window`   | derived from `filter` | never exceeds 90 days (the TTL horizon)                                                                                                     |
+| Param      | Default               | Notes                                                                                                                                                                                  |
+| ---------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `limit`    | `20`                  | max `50`                                                                                                                                                                               |
+| `filter`   | `active`              | `active` (last 30 days) \| `unread` (everything still unread inside the last 90 days — the `all` band restricted to `readAt: null`) \| `all` (last 90 days) \| `archived` (30–90 days) |
+| `category` | —                     | repeatable: `authentication`, `account`, `billing`, `usage`, `event`, `collaboration`, `pipeline`, `matching`, `compliance`, `platform_ops`                                            |
+| `eventId`  | —                     | scope to one event                                                                                                                                                                     |
+| `window`   | derived from `filter` | never exceeds 90 days (the TTL horizon)                                                                                                                                                |
 
 ```json
 {
@@ -2424,6 +2424,8 @@ Auth `user` · Rate `read.normal` · Sorted `createdAt` desc (index `{userId:1, 
       "groupCount": 38,
       "actionTarget": null,
       "actions": [],
+      "actionResolvedVia": null,
+      "actionResolvedAt": null,
       "readAt": null,
       "eventId": "6702ff...",
       "tenantId": null,
@@ -2452,6 +2454,8 @@ Auth `user` · Rate `read.normal` · Sorted `createdAt` desc (index `{userId:1, 
       "actionResolvedVia": null,
       "actionResolvedAt": null,
       "readAt": null,
+      "eventId": "6702ff...",
+      "tenantId": null,
       "createdAt": "...",
       "updatedAt": "..."
     }
@@ -2484,7 +2488,7 @@ Body `{ "before": "2026-09-25T09:00:00.000Z", "category": "matching", "eventId":
 
 ### `GET /api/v1/me/notifications/unread-count`
 
-Auth `user` · Rate `read.hot` · **Polled every 30 s** · Supports `ETag`/`If-None-Match` → `304`
+Auth `user` · Rate `read.hot` · **Polled every 30 s** · Supports a weak `ETag`/`If-None-Match` → `304`
 
 ```json
 {
@@ -2498,7 +2502,7 @@ Auth `user` · Rate `read.hot` · **Polled every 30 s** · Supports `ETag`/`If-N
 
 ```http
 Cache-Control: no-store
-ETag: "3-important-1790086920"
+ETag: W/"3-important-1790086920"
 ```
 
 Implementation contract:
@@ -4300,8 +4304,8 @@ export interface AppNotification {
   groupCount: number; // live rolling counter, not a history
   actionTarget: { kind: string; id: Id; state: "open" | "resolved" } | null;
   actions: NotificationAction[];
-  actionResolvedVia?: ResolvedVia | null;
-  actionResolvedAt?: IsoDateTime | null;
+  actionResolvedVia: ResolvedVia | null;
+  actionResolvedAt: IsoDateTime | null;
   readAt: IsoDateTime | null;
   eventId: Id | null;
   tenantId: Id | null;
@@ -4726,7 +4730,7 @@ Deliberately unresolved. Each has a **default the implementation should assume**
 | --- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | G1  | Should attendees be able to download originals on the Free tier?                           | `originals.download.enabled: true` on `free`, `true` from `starter`.                                                   | Attendee-side conversion data exists.                                                                                      |
 | G2  | Attendee gallery pagination size — 40 is a guess balancing thumbnail bytes against scroll. | 40, max 100.                                                                                                           | Real p95 gallery sizes are measured.                                                                                       |
-| G3  | Does `attendee.matches.new` digest cadence default to `quiet_period` or `daily`?           | `quiet_period` (15 min quiet, 6 h hard flush, ≤3 emails/day/event).                                                    | Email complaint or unsubscribe rate on the type rises.                                                                     |
+| G3  | Does `attendee.matches.new` digest cadence default to `quiet_period` or `daily`?           | `quiet_period` (15 min quiet, 6 h hard flush, ≤3 emails/day/recipient).                                                | Email complaint or unsubscribe rate on the type rises.                                                                     |
 | G4  | Should the organizer get a per-attendee view (who matched, how many)?                      | **No** — privacy default. Aggregate counts only.                                                                       | An organizer explicitly requests it _and_ legal signs off.                                                                 |
 | G5  | Proration credit on upgrade.                                                               | None. Full new-plan charge immediately (billing §4.5).                                                                 | Upgrade abandonment correlates with the charge.                                                                            |
 | G6  | Yearly billing.                                                                            | Deferred. Schema and API already support it — one `prices[]` push.                                                     | Pricing decides.                                                                                                           |

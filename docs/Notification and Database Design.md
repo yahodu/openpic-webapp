@@ -323,7 +323,7 @@ db.notifications.findOneAndUpdate(
 
 `readAt: null` is in the filter on purpose: once the attendee has read "38 new photos", the next arrival must start a **fresh** counter rather than resurrecting a read row — otherwise the unread badge silently under-counts. This is the one place an upsert filter carries read state, and it is intentional.
 
-**Digest window for matches:** flush 15 minutes after the last arrival, hard-flush at 6 hours, cap 3 emails/day/event. Rationale: photo uploads arrive in bursts (a photographer dumps 800 images at once), so a quiet-period flush naturally produces one email per burst rather than one per image or one per fixed hour.
+**Digest window for matches:** flush 15 minutes after the last arrival, hard-flush at 6 hours, cap 3 emails/day/recipient (shared across digest types). Rationale: photo uploads arrive in bursts (a photographer dumps 800 images at once), so a quiet-period flush naturally produces one email per burst rather than one per image or one per fixed hour.
 
 ---
 
@@ -1937,6 +1937,7 @@ One row per (notification, channel) attempt — **including skips**.
 | `attempts`, `lastError`                         |                                                                                                                                    | Retry accounting                                                                                                                                                           |
 | `queuedAt`, `sentAt`, `deliveredAt`, `failedAt` | date                                                                                                                               | Receipt timeline from provider webhooks                                                                                                                                    |
 | `notificationId`                                | ObjectId \| null                                                                                                                   | Links to the in-app row, when there is one                                                                                                                                 |
+| `digestBucketId`                                | ObjectId \| null                                                                                                                   | Set on a digest flush's `failed` row: links it back to its `notificationDigests` bucket so a successful **retry redelivery** can credit the bucket (F1c-r2, ADR-0141)      |
 | `expireAt`                                      | date                                                                                                                               | TTL 180 days                                                                                                                                                               |
 
 **Indexes:**
@@ -1954,7 +1955,30 @@ One row per (notification, channel) attempt — **including skips**.
 // notificationDigests — open buckets awaiting flush
 { userId, typeKey, bucketKey: "attendee.matches.new:6702abc",
   itemCount: 38, sampleItems: [ /* first 5, for the summary line */ ],
-  firstItemAt, lastItemAt, flushAt, status: "open" | "flushed", expireAt }
+  firstItemAt, lastItemAt, flushAt, status: "open" | "flushed", expireAt,
+  // bounded unrecoverable flush failures — a non-retryable transport failure or
+  // an unrecorded failure (no ledger row owns a retry): at pipeline.maxAttempts
+  // the bucket is closed terminally (status "flushed", flushOutcome "failed") so
+  // the flush cron stops re-attempting a "never retry" failure
+  // (F1b-r2, ADR-0137; extended to failed_unrecorded by F1, ADR-0145)
+  nonRetryableFailures: 0,
+  // on close: why the flush attempt ended — only a "sent" flush counts against
+  // maxDigestEmailsPerDay as a first-attempt success
+  flushOutcome: "sent" | "failed",
+  // set when a "failed" flush's ledger row (digestBucketId) is redelivered
+  // successfully by the retry sweep: the summary reached the recipient then, so
+  // it also counts against maxDigestEmailsPerDay (F1c-r2, ADR-0141)
+  redeliveredAt: Date,
+  // flush claim (F2, ADR-0143), absent unless a flush run holds the bucket: set
+  // by the run that atomically took the bucket before sending, unset when it
+  // closes or releases the bucket. Two OVERLAPPING flush runs therefore deliver
+  // at most one summary per bucket: the loser's conditional transition does not
+  // match. A claim older than the lease (5 min, mirroring the outbox consumer's
+  // stale-claim rule) is reclaimable, so a run that dies mid-send can never
+  // strand a bucket. Status stays "open" while claimed, so the bucket keeps
+  // serving the fan-out's {userId, bucketKey} upsert and stays inside both
+  // partial indexes below.
+  flushClaimedAt: Date }
 ```
 
 **Indexes:** `{userId:1, bucketKey:1}` unique partial on `status:"open"` · `{status:1, flushAt:1}` partial on `open` (the flush cron) · `{expireAt:1}` TTL 0

@@ -21,6 +21,7 @@ import {
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 import { server } from "./setup";
 
@@ -79,7 +80,7 @@ const DOMAIN_EVENTS = COLLECTIONS.domainEvents;
 const USER = "user";
 
 /** A fixed instant so every stored timestamp is exact, never run-dependent. */
-const T0 = "2026-03-01T00:00:00.000Z";
+const T0 = fixtureInstant("00:00:00.000Z");
 
 /** The `clocks` used by the consumer under test. */
 const clock = fixedClock(T0);
@@ -174,6 +175,13 @@ interface RecipientSeed {
     readonly byType: Record<string, Record<string, string>>;
     readonly byEvent: Record<string, Record<string, string>>;
   }>;
+  /** Quiet hours; disabled by default so the injected clock never defers. */
+  readonly quietHours?: {
+    readonly enabled: boolean;
+    readonly start: string;
+    readonly end: string;
+    readonly timeZone: string;
+  };
 }
 
 /** Insert the `user`, `userProfiles` and `notificationPreferences` trio. */
@@ -200,7 +208,12 @@ async function seedRecipient(database: Db, seed: RecipientSeed): Promise<void> {
     global: { in_app: "on", email: "on", mobile: "on", ...seed.prefs?.global },
     byType: { ...seed.prefs?.byType },
     byEvent: { ...seed.prefs?.byEvent },
-    quietHours: { enabled: false, start: "22:00", end: "07:00", timeZone: "Asia/Kolkata" },
+    quietHours: seed.quietHours ?? {
+      enabled: false,
+      start: "22:00",
+      end: "07:00",
+      timeZone: "Asia/Kolkata",
+    },
     locale: "en-IN",
   });
 }
@@ -579,11 +592,12 @@ describe("runNotificationFanOut — transport failure isolation (I5)", () => {
       );
       expect(healthyEmail?.status).toBe("sent");
 
-      // A retryable failure must leave the event claimable for the retry sweep.
+      // A per-dispatch failure is owned by the dispatch row (ADR-0127); the
+      // event is done and the `notification-dispatch-retry` cron re-sends.
       const storedEvent = await test.db
         .collection<StoredEvent>(DOMAIN_EVENTS)
         .findOne({ _id: eventId });
-      expect(storedEvent?.dispatch?.notifications).toBe("pending");
+      expect(storedEvent?.dispatch?.notifications).toBe("done");
     });
   });
 });
@@ -716,6 +730,157 @@ describe("runNotificationFanOut — matches once per batch (I8)", () => {
       );
       expect(matchRows).toHaveLength(1);
       expect(matchRows[0]?.groupCount).toBe(5);
+    });
+  });
+});
+
+describe("runNotificationFanOut — quiet hours never suppress the in-app badge (PRE-1)", () => {
+  /**
+   * PRE-1, routed to the OP-97 feed lane by ADR-0128.
+   *
+   * Quiet hours are a *sending* concern: they defer the channels that reach the
+   * user outside the app (email, mobile). They must never suppress the in-app
+   * row, because the badge is the app's own state — deferring it hides activity
+   * the user can only discover by polling, and `in_app` is never opt-outable
+   * (design §4 rule 7). Before this pin, an `in_app` group whose resolved
+   * decision was `defer` wrote no feed row at all, so a welcome landing inside
+   * quiet hours produced no badge — and the OP-97 e2e journey (E1) was
+   * time-of-day dependent.
+   *
+   * The injected clock is `2026-03-01T00:00:00.000Z` (05:30 `Asia/Kolkata`),
+   * inside the 22:00→07:00 window, so the email half must still be deferred
+   * while the in-app row is written.
+   */
+  it("writes the in-app row while the same event's email is only deferred", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = new ObjectId().toHexString();
+      const accountHolder = newUserId();
+      await seedRecipient(test.db, {
+        userId: accountHolder,
+        quietHours: { enabled: true, start: "22:00", end: "07:00", timeZone: "Asia/Kolkata" },
+      });
+
+      const transport = memoryMessageTransport();
+      await insertEvent(test.db, {
+        eventKey: "account.welcome",
+        tenantId,
+        actorRef: { kind: "user", id: accountHolder },
+        subjectRef: { kind: "user", id: accountHolder },
+        payload: { actionUrl: "https://app.openpic.in/welcome" },
+      });
+
+      await runNotificationFanOut(runOptions(test.db, transport, fixedRecipients()));
+
+      const notifications = await notificationsOf(test.db);
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]).toMatchObject({ typeKey: "account.welcome", readAt: null });
+      expect(String(notifications[0]?.userId)).toBe(accountHolder);
+
+      // The outbound half is still governed by quiet hours: nothing went out and
+      // the email dispatch is parked as `deferred` for the release cron.
+      expect(transport.outbox).toHaveLength(0);
+      const dispatches = await dispatchesOf(test.db);
+      expect(dispatches).toHaveLength(1);
+      expect(dispatches[0]).toMatchObject({
+        channel: "email",
+        status: "deferred",
+        typeKey: "account.welcome",
+      });
+    });
+  });
+});
+
+describe("runNotificationFanOut — the subject re-add is scoped to dedupe-free types (F2)", () => {
+  /**
+   * F2, routed to this lane by the OP-97 GREEN review (`t_58825ec3`;
+   * ADR-0180 §"the actor/subject layer split").
+   *
+   * After `resolveRecipients` drops the actor — including when the actor *is*
+   * the subject (U2) — the consumer re-adds the subject for **every type whose
+   * `dedupe.keyTemplate === null`**. PRE-1 pins that rule for `account.welcome`;
+   * exactly two seeded types carry a dedupe-key template
+   * (`{typeKey}:{deviceId}`, `{typeKey}:{profileId}`), so the re-add governs the
+   * other 79. These two probes pin both halves of the rule outside
+   * `account.welcome`: a second dedupe-free type still notifies the
+   * actor-as-subject, and a dedupe-carrying type does not.
+   */
+  it("re-adds the actor-as-subject for a second dedupe-free type", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = new ObjectId().toHexString();
+      const organizer = newUserId();
+      await seedRecipient(test.db, { userId: organizer });
+
+      const transport = memoryMessageTransport();
+      await insertEvent(test.db, {
+        eventKey: "event.details.updated",
+        tenantId,
+        actorRef: { kind: "user", id: organizer },
+        subjectRef: { kind: "user", id: organizer },
+        payload: {
+          eventId: new ObjectId().toHexString(),
+          eventName: "Rahul & Priya's Wedding",
+          actionUrl: "https://app.openpic.in/events/abc",
+        },
+      });
+
+      // `event.details.updated` declares no `dedupe`, so the re-add applies even
+      // though the audience resolves to the actor and U2 drops them — the actor
+      // is also the subject and must still see the in-app badge.
+      await runNotificationFanOut(
+        runOptions(
+          test.db,
+          transport,
+          fixedRecipients({ listEventRoleMembers: promised([organizer]) })
+        )
+      );
+
+      const rows = (await notificationsOf(test.db)).filter(
+        (row) => row.typeKey === "event.details.updated"
+      );
+      expect(rows).toHaveLength(1);
+      expect(String(rows[0]?.userId)).toBe(organizer);
+      expect(rows[0]?.readAt ?? null).toBeNull();
+    });
+  });
+
+  it("never re-adds the actor-as-subject for a dedupe-carrying type", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = new ObjectId().toHexString();
+      const accountHolder = newUserId();
+      const peer = newUserId();
+      await seedRecipient(test.db, { userId: accountHolder });
+      await seedRecipient(test.db, { userId: peer });
+
+      const transport = memoryMessageTransport();
+      await insertEvent(test.db, {
+        eventKey: "auth.signin.new_device",
+        tenantId,
+        actorRef: { kind: "user", id: accountHolder },
+        subjectRef: { kind: "user", id: accountHolder },
+        payload: {
+          eventId: new ObjectId().toHexString(),
+          deviceId: "device_1",
+          actionUrl: "https://app.openpic.in/sessions",
+        },
+      });
+
+      // `auth.signin.new_device` carries the `{typeKey}:{deviceId}` template, so
+      // the subject re-add is deliberately skipped: the peer is still notified,
+      // but the account holder is not badged for their own sign-in (design §4.1
+      // — the alert travels out-of-band with the "not you?" action).
+      await runNotificationFanOut(
+        runOptions(
+          test.db,
+          transport,
+          fixedRecipients({ listEventRoleMembers: promised([accountHolder, peer]) })
+        )
+      );
+
+      const rows = (await notificationsOf(test.db)).filter(
+        (row) => row.typeKey === "auth.signin.new_device"
+      );
+      expect(rows.some((row) => String(row.userId) === accountHolder)).toBe(false);
+      expect(rows.filter((row) => String(row.userId) === peer)).toHaveLength(1);
     });
   });
 });

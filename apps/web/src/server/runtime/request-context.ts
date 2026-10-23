@@ -34,6 +34,8 @@ export interface RequestContext {
   readonly sessionId?: string;
   /** The tenant scope, when known. */
   readonly tenantId?: string;
+  /** The caller's role in the resolved tenant scope, when known. */
+  readonly tenantRole?: "owner" | "admin" | "member";
 }
 
 /**

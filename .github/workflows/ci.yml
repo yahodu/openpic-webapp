@@ -51,8 +51,65 @@ jobs:
       - name: E2E tests
         run: pnpm test:e2e
 
+  # The dependency audit is its own check on purpose: when it was the last step
+  # of the `ci` job, an advisory reddened the whole project gate and a genuine
+  # unit/integration/typecheck regression was indistinguishable from it. It
+  # deliberately does not `needs: ci` so it reports independently.
+  #
+  # The gate is split by dependency class (ADR-0301). A moderate+ advisory in
+  # the *shipped* tree is a supply-chain incident and must block the lane, so
+  # `audit` stays blocking and audits `--prod` only. A dev-only advisory with no
+  # upstream fix path used to redden `main` and the whole lane until a lockfile/
+  # overrides bump landed — an endless chase for code that is never deployed —
+  # so the dev/test toolchain is audited by the separate non-blocking
+  # `audit-dev` job below: reported in the run log, never gating.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
       - name: Dependency audit
-        run: pnpm audit --audit-level=moderate
+        run: pnpm audit --prod --audit-level=moderate
+
+  # Non-blocking on purpose (ADR-0301): dev/test toolchain advisories —
+  # mongodb-memory-server(-core), vitest, esbuild, rollup, … — are reported here
+  # but must not be able to block a merge. `continue-on-error: true` keeps the
+  # run green while the advisory output stays in the job log. Like `audit` (and
+  # unlike a dependent step) it has no `needs:` so it reports independently.
+  audit-dev:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Dependency audit (dev toolchain, non-blocking)
+        run: pnpm audit --dev --audit-level=moderate
 
   secret-scan:
     runs-on: ubuntu-latest

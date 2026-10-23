@@ -30,7 +30,7 @@
 
 import { createHash } from "node:crypto";
 
-import type { Db, ObjectId as ObjectIdValue } from "mongodb";
+import type { Db, Document, ObjectId as ObjectIdValue } from "mongodb";
 import { ObjectId } from "mongodb";
 
 import { TransportError } from "@/server/adapters/transport-error";
@@ -209,6 +209,10 @@ interface EventContext {
   readonly now: Date;
   readonly notificationExpireAt: Date;
   readonly dispatchExpireAt: Date;
+  /** `platformSettings.notifications.digestQuietMinutes` (bucket flush push-forward). */
+  readonly digestQuietMinutes: number;
+  /** `platformSettings.notifications.digestHardFlushHours` (bucket flush cap). */
+  readonly digestHardFlushHours: number;
 }
 
 /** True for a plain (non-array) object. */
@@ -620,8 +624,14 @@ interface DispatchRow {
   readonly typeKey: string;
   readonly channelGroup: string;
   readonly channel: ResolvedChannel;
-  readonly status: "queued" | "sent" | "failed" | "skipped";
+  readonly status: "queued" | "sent" | "failed" | "skipped" | "deferred";
   readonly skipReason: SkipReason | null;
+  /** The quiet-hours window end a `deferred` row is released after (ADR-0120). */
+  readonly until: Date | null;
+  /** The rendered subject, re-sent by the retry/release crons (ADR-0120 assumption 6). */
+  readonly subject: string | null;
+  /** The rendered body, retained when the type's `retainBody` allows it. */
+  readonly body: string | null;
   readonly contactHash: string | null;
   readonly templateVersion: number | null;
   readonly dedupeKey: string | null;
@@ -661,6 +671,9 @@ function dispatchBase(
     channel,
     status: "queued",
     skipReason: null,
+    until: null,
+    subject: null,
+    body: null,
     contactHash: null,
     templateVersion: null,
     dedupeKey: null,
@@ -677,8 +690,13 @@ function dispatchBase(
   };
 }
 
-/** The channel a group would target, used for a skip recorded before candidate selection. */
-function groupChannel(group: ChannelGroup): ResolvedChannel {
+/**
+ * The channel a group would target, used for a skip recorded before candidate selection.
+ *
+ * @internal Test seam only (ADR-0111) — consumers must use `runNotificationFanOut` /
+ * `resolveChannel`.
+ */
+export function groupChannel(group: ChannelGroup): ResolvedChannel {
   if (group.group !== "mobile") return group.group;
   // Mirror the resolver's default candidate order so a recorded skip names the
   // same first candidate `resolveChannel` would have tried.
@@ -711,21 +729,155 @@ async function writeSkip(
   });
 }
 
-/** Persist the queued row for an outbound digest, deferring the actual send. */
-async function writeDigestQueued(
+/**
+ * Upsert one open `notificationDigests` bucket for a digest arrival (design
+ * §6/§19.6, ADR-0120).
+ *
+ * Each arrival pushes `flushAt` forward to `lastItemAt + quietMinutes`, capped
+ * at `firstItemAt + hardFlushHours` — via one atomic pipeline upsert, so an
+ * arrival that matches the open bucket can never reset its `firstItemAt` or
+ * lose a count. `sampleItems` keeps the last five arrivals.
+ *
+ * The upsert is **not** equivalent to a unique-index dedupe (F5, ADR-0134): two
+ * arrivals whose query phases both miss the `{userId, bucketKey, status:
+ * "open"}` filter both attempt the insert, and the loser raises `E11000` on the
+ * `notification_digests_user_bucket_open_unique` index. Per-recipient isolation
+ * records that as a fan-out failure and leaves the event claimable, so a later
+ * sweep re-processes it and the arrival is counted then — never lost, but
+ * transiently uncounted.
+ */
+async function upsertDigestBucket(
   db: Db,
   ctx: EventContext,
-  userId: string,
+  context: RecipientContext,
   group: ChannelGroup,
-  channel: ResolvedChannel
+  bucketKey: string
 ): Promise<void> {
-  const row = dispatchBase(ctx, userId, group, channel, { status: "queued" });
-  await platformRepo(db).collection(COLLECTIONS.dispatches).insertOne(row);
+  const now = ctx.now;
+  const userId = toObjectId(context.userId);
+  const quietMs = ctx.digestQuietMinutes * 60_000;
+  const capMs = ctx.digestHardFlushHours * 60 * 60_000;
+  const sample = { ...ctx.event.payload };
+
+  const pipeline: Document[] = [
+    {
+      $set: {
+        userId,
+        tenantId: ctx.tenantId,
+        typeKey: ctx.typeRow.typeKey,
+        bucketKey,
+        channel: groupChannel(group),
+        channelGroup: group.group,
+        status: "open",
+        expireAt: ctx.dispatchExpireAt,
+        firstItemAt: { $ifNull: ["$firstItemAt", now] },
+        lastItemAt: now,
+        itemCount: { $add: [{ $ifNull: ["$itemCount", 0] }, 1] },
+        sampleItems: {
+          $slice: [{ $concatArrays: [{ $ifNull: ["$sampleItems", []] }, [sample]] }, -5],
+        },
+        createdAt: { $ifNull: ["$createdAt", now] },
+        updatedAt: now,
+      },
+    },
+    {
+      $set: {
+        flushAt: {
+          $min: [{ $add: ["$lastItemAt", quietMs] }, { $add: ["$firstItemAt", capMs] }],
+        },
+      },
+    },
+  ];
+
+  await platformRepo(db)
+    .collection(COLLECTIONS.notificationDigests)
+    .updateOne({ userId, bucketKey, status: "open" }, pipeline, { upsert: true });
 
   getLogger().info("notification.digested", {
     event: "notification.digested",
     typeKey: ctx.typeRow.typeKey,
+    bucketKey,
+  });
+}
+
+/** The channel a quiet-hours deferral targets (mirrors the resolver's candidate order). */
+function deferChannel(group: ChannelGroup, context: RecipientContext): ResolvedChannel {
+  if (group.group !== "mobile") return group.group;
+
+  const { contacts, profile } = context;
+  const hasPhone = contacts.phoneNumber !== null && contacts.phoneNumberVerified;
+  for (const candidate of group.candidates ?? DEFAULT_MOBILE_CANDIDATES) {
+    if (!hasPhone) break;
+    if (candidate === "whatsapp" && profile.contactCapabilities.whatsappCapable === true) {
+      return "whatsapp";
+    }
+    if (candidate === "sms") return "sms";
+  }
+  return groupChannel(group);
+}
+
+/**
+ * Persist a durable quiet-hours deferral (design §5, ADR-0120/ADR-0093).
+ *
+ * The row is `status: "deferred"` with the window-end `until` — never a
+ * terminal `skipped` row — so `quiet-hours-release` can select it once the
+ * window has ended. The rendered copy is stamped on the row (per the type's
+ * `retainBody`) so the release can re-send exactly what was deferred.
+ */
+async function writeDeferred(
+  db: Db,
+  ctx: EventContext,
+  context: RecipientContext,
+  group: ChannelGroup,
+  decision: Extract<ChannelDecision, { readonly kind: "defer" }>
+): Promise<void> {
+  const channel = deferChannel(group, context);
+  const templates = ctx.templates.get(group.group) ?? [];
+  const template = selectTemplate(templates, context.prefs.locale);
+
+  let subject: string | null = null;
+  let body: string | null = null;
+  if (template !== undefined && channel !== "in_app") {
+    try {
+      const rendered = renderTemplate(
+        [template],
+        renderVarsFor(template, ctx.event.eventKey, ctx.event.payload),
+        context.prefs.locale
+      );
+      subject = rendered.subject;
+      body = ctx.typeRow.retainBody ? rendered.body : null;
+    } catch {
+      // A render failure must not lose the deferred intent — the row is still
+      // written (with `body: null`), and `quiet-hours-release` classifies it
+      // terminally as `unretained_body` in the shared redelivery path (F4,
+      // ADR-0130). There is deliberately no metadata-only fallback message to
+      // release: a subject-only send would deliver empty copy.
+    }
+  }
+
+  const destination =
+    channel === "email"
+      ? context.contacts.email
+      : channel === "in_app"
+        ? null
+        : context.contacts.phoneNumber;
+
+  const row = dispatchBase(ctx, context.userId, group, channel, {
+    status: "deferred",
+    skipReason: null,
+    until: new Date(decision.until),
+    subject,
+    body,
+    contactHash: destination === null ? null : contactHashOf(destination),
+    templateVersion: template?.version ?? null,
+  });
+  await platformRepo(db).collection(COLLECTIONS.dispatches).insertOne(row);
+
+  getLogger().info("notification.deferred", {
+    event: "notification.deferred",
+    typeKey: ctx.typeRow.typeKey,
     channel,
+    until: decision.until,
   });
 }
 
@@ -803,13 +955,13 @@ async function dispatchOutbound(
     return { retryableFailure: false };
   }
   if (decision.kind === "defer") {
-    await writeSkip(db, ctx, userId, group, groupChannel(group), decision.reason);
+    await writeDeferred(db, ctx, context, group, decision);
     return { retryableFailure: false };
   }
   if (decision.kind === "digest") {
-    // Outbound digest accumulation: a queued row is recorded, the bucket flush is
-    // the (out-of-scope) digest cron. The in-app feed row is written elsewhere.
-    await writeDigestQueued(db, ctx, userId, group, groupChannel(group));
+    // Outbound digest accumulation: one open bucket is upserted, the flush cron
+    // renders the summary. The in-app feed row is written elsewhere.
+    await upsertDigestBucket(db, ctx, context, group, decision.bucketKey);
     return { retryableFailure: false };
   }
 
@@ -872,8 +1024,22 @@ async function dispatchOutbound(
       code: failure.code,
       contactHashPrefix: hash?.slice(0, 8) ?? null,
     });
-    return { retryableFailure: failure.retryable };
+    // The failure is durably recorded on the dispatch row, which the
+    // `notification-dispatch-retry` cron owns (OP-96, ADR-0120). Re-claiming the
+    // outbox event would re-fan the whole event and double-send, so the event is
+    // not left pending for a per-dispatch failure.
+    return { retryableFailure: false };
   }
+
+  // Persist the rendered copy so the retry / quiet-hours-release crons can
+  // re-send exactly what was (or would have been) delivered (ADR-0120
+  // assumption 6). The body is retained only when the type permits it.
+  await platformRepo(db)
+    .collection(COLLECTIONS.dispatches)
+    .updateOne(
+      { _id: insertedId },
+      { $set: { subject: rendered.subject, body: ctx.typeRow.retainBody ? rendered.body : null } }
+    );
 
   if (destination === null) {
     // Defensive: the resolver only sends when a destination exists; a null here
@@ -944,7 +1110,9 @@ async function dispatchOutbound(
       retryable: failure.retryable,
       contactHashPrefix: hash?.slice(0, 8) ?? null,
     });
-    return { retryableFailure: failure.retryable };
+    // Recorded on the dispatch row and owned by the `notification-dispatch-retry`
+    // cron (OP-96, ADR-0120); re-claiming the outbox event would double-send.
+    return { retryableFailure: false };
   }
 }
 
@@ -976,7 +1144,13 @@ async function fanOutToRecipient(
     if (group.group === "in_app") {
       // In-app aggregation is separate from digesting (design §6): a `digest`
       // decision still upserts the feed row; `in_app` never writes a dispatch.
-      if (decision.kind === "send" || decision.kind === "digest") {
+      //
+      // A quiet-hours `defer` is a *sending* concern (design §4 rule 7, ADR-0128
+      // PRE-1): it delays the channels that reach the user outside the app, but
+      // the badge is the app's own state and must be written immediately — a
+      // deferred in-app row would hide activity the user can only discover by
+      // polling. The outbound half still defers (see `dispatchOutbound`).
+      if (decision.kind === "send" || decision.kind === "digest" || decision.kind === "defer") {
         const templates = ctx.templates.get("in_app") ?? [];
         const template = selectTemplate(templates, context.prefs.locale);
         if (template !== undefined) {
@@ -1031,7 +1205,7 @@ async function processEvent(
     loadTemplates(db, event.eventKey),
   ]);
 
-  const recipients = await resolveRecipients({
+  const resolvedRecipients = await resolveRecipients({
     typeRow,
     tenantId: event.tenantId,
     eventId,
@@ -1039,6 +1213,22 @@ async function processEvent(
     subjectUserId,
     repository: options.recipients,
   });
+
+  // The subject of an event always hears about it (design §2). `resolveRecipients`
+  // drops the actor — including when the actor *is* the subject (U2) — so the
+  // consumer re-adds the subject here: a user who triggered their own event still
+  // owns its outcome and must see the in-app badge for it. Only audience-derived
+  // recipients keep the actor exclusion, and only for a type that is a genuine
+  // one-off: a type carrying a `dedupe` key is a repeated external alert (a new
+  // device, a changed event) that the actor's own action caused, and its badge
+  // is left to the resolved audience so a user is not badged for their own
+  // sign-in (design §4.1 — the alert travels out-of-band with the "not you?"
+  // action).
+  const subjectAlwaysNotified = typeRow.dedupe.keyTemplate === null;
+  const recipients: readonly string[] =
+    subjectAlwaysNotified && subjectUserId !== null && !resolvedRecipients.includes(subjectUserId)
+      ? [...resolvedRecipients, subjectUserId]
+      : resolvedRecipients;
 
   const ctx: EventContext = {
     event,
@@ -1049,6 +1239,8 @@ async function processEvent(
     now,
     notificationExpireAt: addDays(now, settings.retention.notificationDays),
     dispatchExpireAt: addDays(now, settings.retention.dispatchDays),
+    digestQuietMinutes: settings.notifications.digestQuietMinutes,
+    digestHardFlushHours: settings.notifications.digestHardFlushHours,
   };
 
   let retryableFailure = false;
@@ -1075,8 +1267,12 @@ async function processEvent(
  * Drain up to `batch` pending notification events (design §2–§5, ADR-0090).
  *
  * Claims pending outbox rows for the `notifications` consumer, fans each out to
- * its resolved recipients, and marks it `done` — or leaves it claimable via
- * `markFailed` when any recipient hit a retryable failure.
+ * its resolved recipients, and marks it `done`. A per-dispatch failure (render,
+ * no destination, transport) is durably recorded on the `notificationDispatches`
+ * row and redelivered by the `notification-dispatch-retry` cron (OP-96,
+ * ADR-0120), so it does **not** leave the event claimable — re-fanning the event
+ * would double-send. Only an unexpected per-recipient error (which produced no
+ * dispatch row) leaves the event claimable via `markFailed`.
  *
  * @param options - Database/clock/transport/recipient seams.
  * @returns The run summary.

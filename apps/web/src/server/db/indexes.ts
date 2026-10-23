@@ -152,6 +152,71 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+  // notification_dispatches — the quiet-hours release sweep selects
+  // `{ status: "deferred", until <= now }`; the partial index scopes it to the
+  // deferred rows only (ADR-0120 §Quiet-hours deferral; ADR-0124). `dispatches`
+  // is tenant-scoped, so the compound index leads with `tenantId` (§21 P3).
+  {
+    collection: COLLECTIONS.dispatches,
+    name: "dispatches_status_until_deferred",
+    keys: [
+      ["tenantId", 1],
+      ["status", 1],
+      ["until", 1],
+    ],
+    partialFilterExpression: { status: "deferred" },
+  },
+
+  // notificationDigests — one open bucket per (user, bucketKey); a flushed
+  // bucket leaves the partial index and frees the key (schema §19.6, ADR-0120).
+  {
+    collection: COLLECTIONS.notificationDigests,
+    name: "notification_digests_user_bucket_open_unique",
+    keys: [
+      ["userId", 1],
+      ["bucketKey", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { status: "open" },
+  },
+  // notificationDigests — the flush cron reads open buckets whose flushAt has
+  // passed, in flushAt order (schema §19.6, ADR-0120).
+  {
+    collection: COLLECTIONS.notificationDigests,
+    name: "notification_digests_status_flush_at_open",
+    keys: [
+      ["status", 1],
+      ["flushAt", 1],
+    ],
+    partialFilterExpression: { status: "open" },
+  },
+  // notificationDigests — retention via the TTL monitor (§22).
+  {
+    collection: COLLECTIONS.notificationDigests,
+    name: "notification_digests_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
+  // notificationSuppressions — one row per contact per channel, so the
+  // unsubscribe upsert is idempotent and a second suppression of the same
+  // address cannot be inserted (schema §19.6, ADR-0241).
+  {
+    collection: COLLECTIONS.notificationSuppressions,
+    name: "notification_suppressions_channel_contact_unique",
+    keys: [
+      ["channel", 1],
+      ["contactHash", 1],
+    ],
+    unique: true,
+  },
+  // notificationSuppressions — the admin audit view reads newest-first
+  // (schema §19.6).
+  {
+    collection: COLLECTIONS.notificationSuppressions,
+    name: "notification_suppressions_created_at",
+    keys: [["createdAt", -1]],
+  },
 
   // subscriptions — one live subscription per tenant (cancelled rows excluded).
   {
@@ -342,6 +407,33 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     name: "contact_change_fanouts_expire_at_ttl",
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
+  },
+  // tenants — the schema §13.3 unique handle. It is the guard the provisioning
+  // collision retry relies on: `generateTenantSlug` owns only the 8-character
+  // string, and this index is what makes a duplicate slug impossible even under
+  // concurrency (ADR-0260 D2, ADR-0261).
+  {
+    collection: COLLECTIONS.tenants,
+    name: "tenants_slug_unique",
+    keys: [["slug", 1]],
+    unique: true,
+  },
+  // tenants — the provisioning fast path reads the caller's owned workspace by
+  // `ownerUserId` before it inserts anything (schema §13.3).
+  {
+    collection: COLLECTIONS.tenants,
+    name: "tenants_owner_user",
+    keys: [["ownerUserId", 1]],
+  },
+  // tenants — the admin workspace list reads newest-first per status
+  // (schema §13.3).
+  {
+    collection: COLLECTIONS.tenants,
+    name: "tenants_status_created_at",
+    keys: [
+      ["status", 1],
+      ["createdAt", -1],
+    ],
   },
   // tenant_members — one membership per (tenant, user); the schema §13.4
   // composite identity, and the index behind `GET /tenants/{t}/members`

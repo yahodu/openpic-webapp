@@ -41,11 +41,30 @@ export const COLLECTIONS = {
   sessionDevices: "sessionDevices",
   contactChangeFanouts: "contactChangeFanouts",
   /**
+   * Workspaces (schema §13.3) — the billable tenant every tenant-scoped row
+   * carries. Registered here so `INDEX_SPECS` can declare its indexes without
+   * duplicating the collection name (ADR-0261).
+   */
+  tenants: "tenants",
+  /**
    * Workspace memberships (schema §13.4) read by `GET /me` and the tenant
    * member screens. Registered here so `INDEX_SPECS` can declare its indexes
    * without duplicating the collection name (ADR-0060).
    */
   tenantMembers: "tenantMembers",
+  /**
+   * Digest aggregation buckets (schema §12/§19.6, ADR-0120). One open bucket per
+   * `{ userId, bucketKey }` accumulates a digest type's occurrences until the
+   * `notification-digest-flush` cron drains it.
+   */
+  notificationDigests: "notificationDigests",
+  /**
+   * The first-party do-not-send list (schema §19.6): bounces, complaints,
+   * unsubscribes and DND registrations, keyed `{ channel, contactHash }`. It is
+   * platform-scoped (a suppression follows the contact, not a tenant), so it is
+   * read and written through `platformRepo` (ADR-0241).
+   */
+  notificationSuppressions: "notificationSuppressions",
 } as const;
 
 /** The name of any registered collection. */
