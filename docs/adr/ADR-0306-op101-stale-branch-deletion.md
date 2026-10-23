@@ -161,3 +161,53 @@ is preserved and handed to the lane that owns it.
   test decides.
 - **Force-push `main` or rewrite refs.** Out of scope and rejected: the cleanup
   deletes refs, it does not rewrite `main`'s history.
+
+## Review sign-off — 2026-10-23 (card t_c362aaf8, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of the stale-branch deletion
+(`t_c362aaf8`, dashboard-created; PR
+[#265](https://github.com/yahodu/openpic-webapp/pull/265)) returned **APPROVED
+WITH FINDINGS**, zero changes requested, zero reviewer edits to the
+deliverable:
+
+- **Merged, and reviewed what landed.** PR #265 `MERGED` at
+  `2026-10-23T11:40:21Z`, merge commit `050dae8`; reviewed head `7d9788c`;
+  `git merge-base --is-ancestor 050dae8 origin/main` holds and
+  `git diff 7d9788c 050dae8` is empty, so the reviewed tree is the landed tree.
+  `gh pr checks 265` all pass — `ci`, `unit_test`, `test_coverage`, `lint`,
+  `audit`, `audit-dev`, `secret-scan`, `env-changes`, `validate-branch-name`,
+  `validate-pr-title`, `CodeQL`, `Analyze ×2`, `Assert CI evidence for the
+pushed head`; local `main` == `origin/main` == `050dae8`.
+- **The acceptance criterion reproduced.** `gh api …/branches` → 1 entry,
+  `main`; `git ls-remote --heads origin` → one ref, `refs/heads/main`;
+  `gh pr list --state open` → 0. The board DB held no non-terminal task other
+  than the review card itself, so no live work depended on a deleted ref.
+- **The content test reproduced independently** over all 29 recorded tip SHAs
+  (objects still present locally): every branch-unique path `ABSENT` from
+  `main` is a renumbered `docs/adr/ADR-*.md` record or the
+  `docs/API Contract.md` space-in-filename artifact ⇒ **no branch carries a
+  code file `main` lacks**. At the assertion level a newline-tolerant
+  `it()`/`describe()`/`test()` title extraction finds **7** branch-only titles
+  across 4 branches, each present on `main` under a renumbered citation —
+  `TRUSTED_CLIENT_IP_HEADER` `ADR-0031`→`0032`; `index spec pins — OP-89
+identity lifecycle` and `OP-89 new-device read cap` `ADR-0046`→`0050`;
+  `section 4-6 surface seam — createIdentityLifecycleSeams` and `section 2
+surface — the contact-verified Better Auth adapter` `ADR-0043 §3`→`0045 §3` —
+  and `main` carries more titles than the branch in every case (48→52, 20→20,
+  33→47, 41/43→47). The subset conclusion holds.
+- **Preconditions reproduced.** 24 of the 29 recorded branches carry a CLOSED
+  never-merged PR and 5 carry none, matching §Evidence.
+- **Findings (Info-only, none blocking):** §Evidence's "exactly **one**"
+  branch-only assertion line understates the inventory (7 titles, all
+  renumbering duplicates; the subset verdict is unaffected) — recorded here
+  because this ADR is merged and therefore frozen; the card title's **31**
+  branches vs the repo's 30 is reconciled by PR
+  [#264](https://github.com/yahodu/openpic-webapp/pull/264)'s head branch
+  `OP-101-task-stale-draft-pr-review-signoff`, which merged at
+  `2026-10-23T11:29:57Z` — the same second this card was created — and was
+  auto-deleted on merge, so the requester's snapshot counted it; and
+  `docs/adr/README.md` remains a standing serialization hotspot.
+- **Caveat:** equivalence was verified at path / module / title level, not
+  pin-by-pin semantics.
+- Review comment: PR #265
+  [`#issuecomment-6364107789`](https://github.com/yahodu/openpic-webapp/pull/265#issuecomment-6364107789).
