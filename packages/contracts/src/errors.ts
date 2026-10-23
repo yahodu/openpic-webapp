@@ -121,8 +121,16 @@ export type NotificationErrorCode = (typeof NOTIFICATION_ERROR_CODES)[number];
  * appended to the client-facing enum ({@link API_ERROR_CODES}) and transported
  * from their own table so both stay exact. Append-only, like every other code
  * (ADR-0261).
+ *
+ * `cannot_demote_owner` (contract §2.2 / Appendix A.5, `409`) is appended here
+ * by OP-101: it protects the workspace owner from being demoted or removed, and
+ * it is likewise absent from {@link ERROR_CODES} for the same reason.
  */
-export const TENANCY_ERROR_CODES = ["tenant_suspended", "invalid_billing_contact"] as const;
+export const TENANCY_ERROR_CODES = [
+  "tenant_suspended",
+  "invalid_billing_contact",
+  "cannot_demote_owner",
+] as const;
 
 /** A member of the closed {@link TENANCY_ERROR_CODES} set. */
 export type TenancyErrorCode = (typeof TENANCY_ERROR_CODES)[number];
