@@ -1,3 +1,9 @@
+## [1.25.0](https://github.com/yahodu/openpic-webapp/compare/v1.24.0...v1.25.0) (2026-10-23)
+
+### Features
+
+- **notifications:** OP-99 one-click unsubscribe and first-party suppressions ([#253](https://github.com/yahodu/openpic-webapp/issues/253)) ([0f872dc](https://github.com/yahodu/openpic-webapp/commit/0f872dcb16304d7b1e3f12f993ef76040e504399))
+
 ## [1.24.0](https://github.com/yahodu/openpic-webapp/compare/v1.23.2...v1.24.0) (2026-10-22)
 
 ### Features
