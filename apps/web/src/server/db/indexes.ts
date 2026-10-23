@@ -408,6 +408,33 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+  // tenants — the schema §13.3 unique handle. It is the guard the provisioning
+  // collision retry relies on: `generateTenantSlug` owns only the 8-character
+  // string, and this index is what makes a duplicate slug impossible even under
+  // concurrency (ADR-0260 D2, ADR-0261).
+  {
+    collection: COLLECTIONS.tenants,
+    name: "tenants_slug_unique",
+    keys: [["slug", 1]],
+    unique: true,
+  },
+  // tenants — the provisioning fast path reads the caller's owned workspace by
+  // `ownerUserId` before it inserts anything (schema §13.3).
+  {
+    collection: COLLECTIONS.tenants,
+    name: "tenants_owner_user",
+    keys: [["ownerUserId", 1]],
+  },
+  // tenants — the admin workspace list reads newest-first per status
+  // (schema §13.3).
+  {
+    collection: COLLECTIONS.tenants,
+    name: "tenants_status_created_at",
+    keys: [
+      ["status", 1],
+      ["createdAt", -1],
+    ],
+  },
   // tenant_members — one membership per (tenant, user); the schema §13.4
   // composite identity, and the index behind `GET /tenants/{t}/members`
   // (ADR-0060).

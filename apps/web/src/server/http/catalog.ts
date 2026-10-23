@@ -7,6 +7,7 @@ import type {
   NotificationErrorCode,
   PipelineErrorCode,
   RequestShapeErrorCode,
+  TenancyErrorCode,
 } from "@openpic/contracts";
 
 /**
@@ -256,7 +257,34 @@ export const NOTIFICATION_ERROR_TRANSPORT: Readonly<
   },
 };
 
-/** Every client-facing code's transport: Appendix A first, then pipeline + auth + internal codes. */
+/**
+ * Transport for the tenancy codes (contract §2.1, Appendix A.1/A.4).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the auth and
+ * request-shape codes: that table stays the exact base Appendix A copy the
+ * HTTP-pipeline story pinned. `tenant_suspended` is the A.1 row for a suspended
+ * workspace (`423`, no retry, `{ reason, supportUrl }`) and
+ * `invalid_billing_contact` the A.4 row for a billing contact that is not an
+ * active member (`422`, no retry). The tenancy story owns both rows and feeds
+ * them into the same dispatch table (ADR-0261).
+ */
+export const TENANCY_ERROR_TRANSPORT: Readonly<Record<TenancyErrorCode, ErrorCatalogEntry>> = {
+  tenant_suspended: {
+    status: 423,
+    retryable: false,
+    message: "This workspace is suspended.",
+  },
+  invalid_billing_contact: {
+    status: 422,
+    retryable: false,
+    message: "The billing contact must be an active member of this workspace.",
+  },
+};
+
+/**
+ * Every client-facing code's transport: Appendix A first, then the pipeline,
+ * auth, request-shape, internal, account, notification and tenancy tables.
+ */
 const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...ERROR_CATALOG,
   ...PIPELINE_ERROR_TRANSPORT,
@@ -265,6 +293,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...INTERNAL_ERROR_TRANSPORT,
   ...ACCOUNT_ERROR_TRANSPORT,
   ...NOTIFICATION_ERROR_TRANSPORT,
+  ...TENANCY_ERROR_TRANSPORT,
 };
 
 /**
