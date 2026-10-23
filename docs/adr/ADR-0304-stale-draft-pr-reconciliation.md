@@ -126,3 +126,46 @@ them.
 - **Delete the head branches.** Rejected: closing is reversible and keeps the
   branch blob available for the step-2/3 comparison; deleting the branch throws
   away the only artifact the reconciliation cites.
+
+## Review sign-off — 2026-10-23 (card `t_e43b1ff0`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of the reconciliation card (`t_e43b1ff0`,
+dashboard-created; PR [#259](https://github.com/yahodu/openpic-webapp/pull/259))
+returned **APPROVED WITH FINDINGS**, zero changes requested, zero reviewer edits
+to the deliverable:
+
+- **Merged, and reviewed what landed.** PR #259 `MERGED` at
+  `2026-10-23T06:30:23Z`, merge commit `f148dc7` (squash); local `main` ==
+  `origin/main` == `f148dc7` at review time, and
+  `git merge-base --is-ancestor f148dc7 origin/main` holds.
+- **The eight drafts closed, none merged.** `gh pr list --state open` → `[]`;
+  #160, #163, #170, #164, #185, #191, #200, #215 are each `state=CLOSED`,
+  `mergedAt=null`, `mergeCommit=null`, closed `06:20:39Z`–`06:20:58Z`, each
+  carrying a superseded-by-`main` close comment with its evidence. No commit was
+  added to `main` by any of them.
+- **The subset verdict reproduced independently** over every test file each head
+  changes, against `origin/main`: the only differences are ADR-0300
+  renumberings — never a dropped assertion. PR #200's added ADR files
+  `0100`–`0105` map to `main`'s `0120`–`0125` with byte-identical suffixes;
+  #163/#170's two `describe()` titles citing `ADR-0043 §3` exist on `main` as
+  `ADR-0045 §3`; #215's `I4: …idx_user_unread` exists on `main` (formatted as a
+  multi-line `it(` call); #163's `ADR-0043` file vs `main`'s `ADR-0045` differs
+  only in the H1 number. Merging any of the eight would have regressed `main` to
+  a pre-GREEN copy.
+- **This ADR and the ledger landed intact.** `docs/adr/ADR-0304-…md` present on
+  `main` (128 lines); the board-wide `Next free` cell advanced `0304` → `0305`;
+  the index row for `0304` was added; no number outside `0300`–`0319` was
+  touched.
+- **Findings routed (not defects in this deliverable):** High → `t_2d14ac1f`
+  (orchestrator): four heads never ran `CI`/`PR Checks` and read green; High →
+  `t_c69ee0f5` (orchestrator): the decomposer's rows are missing from the board
+  DB while a duplicate card ran the same goal.
+- **Info (no card):** step 3's title criterion reads verbatim-strict but is in
+  practice _verbatim modulo the ADR-number suffix_ (step 5 and the evidence table
+  already resolve this), and a regex-based title check additionally
+  false-negatives on multi-line `it(` calls. `docs/adr/README.md` remains a
+  standing serialization hotspot (8/8 closed PRs + #259 touched it).
+- **Caveat:** equivalence was verified at file / module / title level, not
+  pin-by-pin semantics.
+- Review comment: PR #259
+  [`#issuecomment-6359007435`](https://github.com/yahodu/openpic-webapp/pull/259#issuecomment-6359007435).
