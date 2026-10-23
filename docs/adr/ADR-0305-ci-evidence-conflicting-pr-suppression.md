@@ -74,11 +74,22 @@ signal the lane protocol needs.
 with `docs/adr/README.md` among the conflicting paths (OP-97 also conflicts on 5
 other files, OP-96 on 6). The shared ledger is the systemic trigger.
 
-**Timing.** For each branch, the branch's last `CI` run is strictly **earlier**
-than the first `origin/main` commit whose change conflicts with that branch; the
-four run-less heads were then pushed (or the PR opened) _after_ the branch had
-already become conflicting, so the `synchronize`/`opened` event was suppressed.
-The four heads that ran were pushed _before_ their branch became conflicting.
+**Timing.** For each of the eight branches, the branch's last `CI`/`PR Checks`
+run is strictly **earlier** than the first `origin/main` commit whose change
+conflicts with that branch's tip. The four run-less heads were committed _after_
+that point, so their `opened`/`synchronize` event was suppressed; the four heads
+that ran were committed _before_ it, while the PR was still mergeable.
+
+| PR  | branch                                                     | last CI/PR Checks run             | first conflicting `main` commit | head committed       | verdict                     |
+| --- | ---------------------------------------------------------- | --------------------------------- | ------------------------------- | -------------------- | --------------------------- |
+| 215 | `OP-97-task-in-app-feed-read-state-red`                    | 2026-10-20T13:16:50Z (`0de60e06`) | `2c779b3a` 2026-10-20T13:52:25Z | 2026-10-22T07:10:39Z | after conflict → **no run** |
+| 200 | `OP-96-task-digest-retry-quiet-hours-crons-red`            | **none, ever**                    | `b7c1f19f` 2026-10-06T00:34:29Z | 2026-10-06T01:16:06Z | after conflict → **no run** |
+| 170 | `OP-89-task-identity-lifecycle-hooks-followup-pins`        | 2026-10-05T18:21:42Z (`fa020aac`) | `ba431c2c` 2026-10-05T18:33:13Z | 2026-10-05T18:37:14Z | after conflict → **no run** |
+| 164 | `OP-90-task-get-patch-me-red`                              | 2026-10-05T17:43:16Z (`588b4b35`) | `6b9cd6e8` 2026-10-05T17:43:44Z | 2026-10-05T17:56:34Z | after conflict → **no run** |
+| 191 | `OP-95-task-otp-delivery-through-notification-service-red` | 2026-10-05T23:31:44Z (`aa0f9b35`) | `5ec8633d` 2026-10-05T23:34:05Z | 2026-10-05T23:31:34Z | before conflict → ran       |
+| 185 | `OP-93-task-channel-resolution-and-template-renderer-red`  | 2026-10-05T22:01:04Z (`81c40e49`) | `3970d763` 2026-10-05T22:11:48Z | 2026-10-05T22:00:54Z | before conflict → ran       |
+| 163 | `OP-89-task-identity-lifecycle-hooks-followup-red`         | 2026-10-05T17:40:50Z (`281f1c2d`) | `6b9cd6e8` 2026-10-05T17:43:44Z | 2026-10-05T17:40:42Z | before conflict → ran       |
+| 160 | `OP-89-task-identity-lifecycle-hooks-red`                  | 2026-10-05T16:52:37Z (`b1b2ac2b`) | `8b85b74a` 2026-10-05T17:26:07Z | 2026-10-05T16:52:18Z | before conflict → ran       |
 
 **Candidates ruled out.**
 
