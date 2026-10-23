@@ -1,5 +1,8 @@
 # CI Evidence Guard — the enforcement arm of ADR-0305 (OP-101).
 #
+# The decision this workflow enforces is recorded in
+# docs/adr/ADR-0305-ci-evidence-conflicting-pr-suppression.md.
+#
 # Why this workflow exists
 # ------------------------
 # GitHub creates NO `pull_request` workflow run while a PR has a merge
