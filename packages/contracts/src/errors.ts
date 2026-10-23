@@ -93,6 +93,25 @@ export const ACCOUNT_ERROR_CODES = ["confirmation_mismatch", "deletion_already_e
 export type AccountErrorCode = (typeof ACCOUNT_ERROR_CODES)[number];
 
 /**
+ * Tenancy codes (contract §2.1, Appendix A.1 `tenant_suspended` and A.4
+ * `invalid_billing_contact`).
+ *
+ * Both are contract catalogue rows — Appendix A.1 carries
+ * `tenant_suspended | 423 | no | { reason, supportUrl }` and Appendix A.4
+ * carries `invalid_billing_contact | 422 | no | —`, and both are members of the
+ * document's `ErrorCode` union — but neither is a member of
+ * {@link ERROR_CODES}, which the server error catalogue
+ * (`@/server/http/catalog`) pins to exactly the base Appendix A table. They are
+ * appended to the client-facing enum ({@link API_ERROR_CODES}) and transported
+ * from their own table so both stay exact. Append-only, like every other code
+ * (ADR-0261).
+ */
+export const TENANCY_ERROR_CODES = ["tenant_suspended", "invalid_billing_contact"] as const;
+
+/** A member of the closed {@link TENANCY_ERROR_CODES} set. */
+export type TenancyErrorCode = (typeof TENANCY_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -145,7 +164,7 @@ export const EDGE_ERROR_CODES = ["csrf_failed"] as const;
 /** A member of the {@link EDGE_ERROR_CODES} set. */
 export type EdgeErrorCode = (typeof EDGE_ERROR_CODES)[number];
 
-/** Every code a client-facing error envelope may carry (business + edge + auth + pipeline + internal). */
+/** Every code a client-facing error envelope may carry (business + edge + auth + pipeline + internal + tenancy). */
 export const API_ERROR_CODES = [
   ...ERROR_CODES,
   ...EDGE_ERROR_CODES,
@@ -154,6 +173,7 @@ export const API_ERROR_CODES = [
   ...PIPELINE_ERROR_CODES,
   ...INTERNAL_ERROR_CODES,
   ...ACCOUNT_ERROR_CODES,
+  ...TENANCY_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -170,7 +190,8 @@ export type AppErrorCode =
   | RequestShapeErrorCode
   | PipelineErrorCode
   | InternalErrorCode
-  | AccountErrorCode;
+  | AccountErrorCode
+  | TenancyErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
