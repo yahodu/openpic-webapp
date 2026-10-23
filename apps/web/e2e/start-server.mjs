@@ -31,7 +31,8 @@ const throwawaySecret = () => randomBytes(32).toString("base64url");
 process.env.BETTER_AUTH_SECRET = throwawaySecret();
 process.env.INTERNAL_API_SECRET = throwawaySecret();
 process.env.CRON_SECRET = throwawaySecret();
-process.env.UNSUBSCRIBE_SIGNING_SECRET = throwawaySecret();
+process.env.UNSUBSCRIBE_SIGNING_SECRET =
+  process.env.UNSUBSCRIBE_SIGNING_SECRET ?? throwawaySecret();
 process.env.MEDIA_SIGNING_SECRET_CURRENT = throwawaySecret();
 process.env.LOG_TRANSPORTS = "stdout";
 
