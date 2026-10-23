@@ -39,7 +39,7 @@ the rejected alternatives are recorded in
 | OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
 | OP-98 notification preferences      | `0220`–`0239`                   | `0220`    |
 | OP-99 one-click unsubscribe         | `0240`–`0259`                   | `0240`    |
-| OP-100 tenancy                      | `0260`–`0279`                   | `0261`    |
+| OP-100 tenancy                      | `0260`–`0279`                   | `0262`    |
 | OP-101 CI lane-shape                | `0280`–`0299`                   | `0280`    |
 | unallocated (future lanes)          | `0320`+ (20 per lane, in order) | `0320`    |
 
@@ -195,6 +195,7 @@ the guard's contract — `t_2ae626e9`). Next free in the block is `0303`.
 | [0301](ADR-0301-ci-audit-dev-vs-prod-scope.md)                                     | Split the `audit` gate: blocking `pnpm audit --prod`, non-blocking `pnpm audit --dev`                                   | Accepted                  |
 | [0302](ADR-0302-adr-number-guard-contract.md)                                      | The `docs/adr/` number guard: its mechanical contract and its deliberate scope boundary                                 | Accepted                  |
 | [0260](ADR-0260-op100-tenant-provisioning-red.md)                                  | OP-100 RED: tenant provisioning, `tenantId` resolution and tenant read/update                                           | Accepted                  |
+| [0261](ADR-0261-op100-tenant-provisioning-green.md)                                | OP-100 GREEN: transactional provisioning, the reusable tenant stage, and the tenancy error transport                    | Accepted                  |
 
 Template: Context · Decision · Consequences · Alternatives.
 
@@ -227,3 +228,15 @@ _The OP-101 CI lane-shape follow-up's **review sign-off** (`t_a3d52d6e`, review 
 _The OP-94 fan-out **mobile skip-channel** follow-up lane's **GREEN review sign-off** (`t_b9bb5e0a`, review lane) holds `0200`, recording the round-1 (artifact-lens) verdict on PR #210: APPROVED WITH FINDINGS, squash-merged to `main` as `4144983`, with the one Low ADR-0111 §2 documentation drift routed to docs card `t_c6bb196d`. The record was first drafted as `0146` (then the lowest number free against `main` `4144983`) and renumbered to `0200` under the binding per-lane reserved-range allocation (ADR-0300, merged as `23c236d`), which gives the OP-94 fan-out lane `0200`–`0219` while `0146`–`0179` belongs to OP-96. The same card corrects ADR-0111 §2 to show the landed `Omit<typeof fanOutModule, "groupChannel"> & { … }` seam accessor and records why the `Omit` is required for the lint gate._
 
 _The **OP-100 tenancy** lane holds `0260` (the provisioning / `tenantId`-resolution / tenant read-update RED contract, card `t_a5def1f1`, branch `OP-100-task-tenant-provisioning`); its GREEN successor is `t_2d03b293`, gated on the RED card and continuing the same branch. The number was taken as the next unused number inside the lane's binding reserved range `0260`–`0279` (ADR-0300), not from the shared high-water mark; `0261` is next free. The record flags two decisions for review: the provisioning trigger (the alias never provisions; the first tenant-scoped **write** does) and the new `invalid_billing_contact` catalogue code._
+
+_The same lane's **GREEN** (`t_2d03b293`, same branch/PR #256) holds `0261`,
+implementing the ADR-0260 contract unchanged: transactional idempotent/race-safe
+`ensureTenantForUser`, the reusable `tenantStage` (alias resolution, active-member
+check, uniform `404`, `X-Tenant-Id`), and `GET`/`PATCH
+/api/v1/tenants/{tenantId}`. It takes the next unused number inside the lane's
+range `0260`–`0279` (ADR-0300), leaving `0262` next free. It also settles the two
+decisions the RED left open: provisioning is a single MongoDB transaction whose
+losing attempt is rolled back by the server, and the two catalogue codes
+(`tenant_suspended`, `invalid_billing_contact`) are transported from a new
+append-only `TENANCY_ERROR_TRANSPORT` rather than mutating the pinned
+`ERROR_CATALOG`._
