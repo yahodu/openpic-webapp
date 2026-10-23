@@ -1,3 +1,9 @@
+## [1.26.0](https://github.com/yahodu/openpic-webapp/compare/v1.25.0...v1.26.0) (2026-10-23)
+
+### Features
+
+- **tenancy:** OP-100 provision tenants, resolve tenantId and expose tenant read/update ([#256](https://github.com/yahodu/openpic-webapp/issues/256)) ([5fd133d](https://github.com/yahodu/openpic-webapp/commit/5fd133d0f9a6dda758ad5f4061aea82b6749a945))
+
 ## [1.25.0](https://github.com/yahodu/openpic-webapp/compare/v1.24.0...v1.25.0) (2026-10-23)
 
 ### Features
