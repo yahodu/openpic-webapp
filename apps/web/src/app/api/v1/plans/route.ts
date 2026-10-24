@@ -31,9 +31,10 @@ import { platformRepo } from "@/server/repos";
  * (`/admin/plans`, §9.3) is where full documents, including `externalRefs`, are
  * read.
  *
- * The `ETag` is a function of the served plans' **versions** (ADR-0320), so a
- * matching `If-None-Match` answers a bodyless `304` and an entitlement change
- * invalidates every cached copy.
+ * The `ETag` is a function of the served plans (ADR-0323), so a matching
+ * `If-None-Match` answers a bodyless `304` and any change to the served
+ * catalogue — a version bump, a copy edit or a price edit, and each
+ * `currency`/`billingCycle` variant independently — changes the tag.
  */
 
 /** The §3.1 cache policy: publicly cacheable for five minutes. */
@@ -61,7 +62,7 @@ export const GET = defineRoute({
       .toArray();
 
     const data = documents.map((document) => projectPlan(planSchema.parse(document), filter));
-    const etag = planCatalogueETag(data.map((plan) => ({ key: plan.key, version: plan.version })));
+    const etag = planCatalogueETag(data);
     const headers = { "cache-control": CACHE_CONTROL, etag };
 
     if (ifNoneMatchSatisfied(ctx.request, etag)) {

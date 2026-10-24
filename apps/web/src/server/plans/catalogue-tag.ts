@@ -19,9 +19,9 @@ const DIGEST_LENGTH = 32;
 /**
  * Hash a catalogue fingerprint into a strong entity tag.
  *
- * @param fingerprint - The canonical string the tag is derived from (e.g. a
- *   join of the plans' `(key, version)` pairs, or the JSON of the served
- *   add-ons).
+ * @param fingerprint - The canonical string the tag is derived from (e.g. the
+ *   JSON of the served plans or add-ons, whose key order the strict projection
+ *   schemas fix).
  * @returns A strong `ETag` header value.
  */
 export function hashCatalogueTag(fingerprint: string): string {
