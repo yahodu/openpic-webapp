@@ -41,11 +41,14 @@ const memberRoleBodySchema = z.object({ role: z.enum(["admin", "member"]) });
 /** The `204` body placeholder: the pipeline serves no body for this status. */
 const noContentSchema = z.null();
 
-/** The `{userId}` segment of the matched path, or `null` when malformed. */
-function targetUserIdFromRequest(request: Request): ObjectId | null {
+/** The `{userId}` segment of the matched path; a malformed id denies `404`. */
+function targetUserIdFromRequest(request: Request): ObjectId {
   const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
   const raw = segments.at(-1) ?? "";
-  return OBJECT_ID_HEX.test(raw) ? new ObjectId(raw) : null;
+  if (!OBJECT_ID_HEX.test(raw)) {
+    throw appError("not_found");
+  }
+  return new ObjectId(raw);
 }
 
 /** The workspace scope, the caller's owner gate and the target membership. */
@@ -69,9 +72,6 @@ async function resolveMemberTarget(ctx: HandlerContext): Promise<MemberTarget> {
   }
 
   const targetUserId = targetUserIdFromRequest(ctx.request);
-  if (targetUserId === null) {
-    throw appError("not_found");
-  }
 
   const membership = (await platformRepo(getDb())
     .collection(COLLECTIONS.tenantMembers)

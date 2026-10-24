@@ -32,10 +32,11 @@ export interface TenantScope {
 }
 
 /**
- * Read the scope the tenant stage published, or fail loudly.
+ * Read the scope the tenant stage published.
  *
- * The stage runs before every handler declared here, so a missing scope is a
- * programming error rather than a client-reachable state.
+ * The stage runs before every handler declared here and always publishes both
+ * fields (or denies the request), so the scope is guaranteed present when a
+ * handler reads it.
  *
  * @param ctx - The handler context.
  * @returns The resolved workspace id and the caller's role.

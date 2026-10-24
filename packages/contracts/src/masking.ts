@@ -58,9 +58,8 @@ export function maskEmail(address: string): string {
  * maskPhone("+919876543210"); // "+91•••••3210"
  */
 export function maskPhone(e164: string): string {
-  const plus = e164.startsWith("+") ? "+" : "";
   const digits = e164.replace(/\D/g, "");
   const countryCode = digits.slice(0, 2);
   const lastFour = digits.slice(-4);
-  return `${plus}${countryCode}${PHONE_MASK}${lastFour}`;
+  return `+${countryCode}${PHONE_MASK}${lastFour}`;
 }

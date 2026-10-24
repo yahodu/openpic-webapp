@@ -69,22 +69,19 @@ interface TenantMembershipDocument {
 }
 
 /**
- * The `{tenantId}` segment of the matched path, or `null`.
+ * The `{tenantId}` segment of the matched path, or `""`.
  *
  * The tenant segment is located **by position** — the segment immediately
  * following the literal `tenants` — rather than by taking the last segment: on a
  * nested route such as `/tenants/{tenantId}/members` (or `…/members/{userId}`)
  * the last segment is `members` (or the target user id), not the workspace.
  * Taking the last segment there would make every nested request answer `404`.
- * A path with no `tenants` anchor falls back to its last segment.
+ * A path with no `tenants` anchor yields `""`, which fails the id-shape check
+ * below and denies with the same `404`.
  */
-export function tenantIdFromRequest(request: Request): string | null {
+export function tenantIdFromRequest(request: Request): string {
   const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
-  const afterTenants = segments.indexOf("tenants") + 1;
-  if (afterTenants > 0 && afterTenants < segments.length) {
-    return segments[afterTenants] ?? null;
-  }
-  return segments.at(-1) ?? null;
+  return segments[segments.indexOf("tenants") + 1] ?? "";
 }
 
 /**
@@ -98,6 +95,7 @@ export function tenantStage(options: TenantStageOptions = {}): RouteStage {
   return async (ctx, request) => {
     const db = options.db ?? getDb();
     const logger = requestLogger(request, { route: ctx.route });
+    // The auth stage runs before this one and always publishes the principal.
     const userId = ctx.principal;
     if (userId === undefined) {
       throw appError("authentication_required");
@@ -108,7 +106,7 @@ export function tenantStage(options: TenantStageOptions = {}): RouteStage {
      *
      * The variable carries an explicit `never` return annotation (not just the
      * arrow's) so TypeScript's control-flow analysis treats a call as
-     * terminating and the checks below narrow `segment`/`primary`.
+     * terminating and the checks below narrow `primary`.
      */
     const deny: (reason: string) => never = (reason) => {
       logger.warn("tenant access denied", { event: "tenancy.access_denied", reason });
@@ -116,9 +114,6 @@ export function tenantStage(options: TenantStageOptions = {}): RouteStage {
     };
 
     const segment = tenantIdFromRequest(request);
-    if (segment === null) {
-      deny("missing_tenant_segment");
-    }
 
     const userObjectId = new ObjectId(userId);
     let tenantId: ObjectId;
@@ -134,10 +129,7 @@ export function tenantStage(options: TenantStageOptions = {}): RouteStage {
       // The alias never provisions on a read; the first tenant-scoped write
       // does, and then the write applies to the workspace it just created.
       if (primary === null && options.provisionOnMissing === true) {
-        const provisioned = await ensureTenantForUser(
-          userObjectId,
-          options.db === undefined ? {} : { db: options.db }
-        );
+        const provisioned = await ensureTenantForUser(userObjectId, { db });
         primary = provisioned.tenantId;
       }
 

@@ -35,45 +35,27 @@ export interface MembershipDocument {
   readonly status?: unknown;
   readonly joinedAt?: unknown;
   readonly removedAt?: unknown;
-  readonly invitedByUserId?: unknown;
+  readonly invitedByUserId?: ObjectId;
 }
 
 /** The Better Auth user fields the projection reads. */
 interface UserDocument {
   readonly _id?: ObjectId;
-  readonly email?: unknown;
+  readonly email?: string;
 }
 
 /** The `userProfiles` fields the projection reads (schema §13.2). */
 interface UserProfileDocument {
   readonly userId?: ObjectId;
-  readonly displayName?: unknown;
-}
-
-/** Read a stored value as a hex id string, or `null`. */
-function toHexOrNull(value: unknown): string | null {
-  if (value instanceof ObjectId) {
-    return value.toHexString();
-  }
-  return typeof value === "string" ? value : null;
-}
-
-/** Read a stored date as an ISO-8601 string, falling back to the epoch. */
-function toIso(value: unknown): string {
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-  if (typeof value === "string") {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString();
-    }
-  }
-  return new Date(0).toISOString();
+  readonly displayName?: string;
 }
 
 /**
  * Project one membership row onto the §2.2 DTO.
+ *
+ * Stored values are read straight from the schema §13.4 document shapes, so the
+ * only normalisation needed is the two §2.2 conventions the wire fixes: the
+ * contact is masked, and a missing invited-by becomes `null`.
  *
  * @param membership - The stored `tenantMembers` row.
  * @param user - The member's Better Auth user document, when it exists.
@@ -82,17 +64,18 @@ function toIso(value: unknown): string {
  */
 export function projectMember(
   membership: MembershipDocument,
-  user: UserDocument | null,
-  profile: UserProfileDocument | null
+  user: UserDocument | undefined,
+  profile: UserProfileDocument | undefined
 ): Member {
   return {
-    userId: toHexOrNull(membership.userId) ?? "",
-    displayName: typeof profile?.displayName === "string" ? profile.displayName : "",
-    emailMasked: maskEmail(typeof user?.email === "string" ? user.email : ""),
+    userId: String(membership.userId),
+    displayName: profile?.displayName ?? "",
+    emailMasked: maskEmail(user?.email ?? ""),
     role: asTenantRole(membership.role),
     status: membership.status === "removed" ? "removed" : "active",
-    joinedAt: toIso(membership.joinedAt),
-    invitedByUserId: toHexOrNull(membership.invitedByUserId),
+    joinedAt: new Date(membership.joinedAt as string | number | Date).toISOString(),
+    invitedByUserId:
+      membership.invitedByUserId === undefined ? null : membership.invitedByUserId.toHexString(),
     avatarUrl: null,
   };
 }
@@ -101,13 +84,12 @@ export function projectMember(
  * List every membership of a workspace as the §2.2 DTO.
  *
  * The rows are read in one `find`, and the users/profiles they reference in two
- * `$in` reads — three round trips total, independent of the member count. Rows
- * whose user document has gone missing are still listed (their contact masks to
- * the fully-masked form) so the screen never silently drops a membership.
+ * `$in` reads — three round trips total, independent of the member count. The
+ * result is ordered by join time so the listing is stable between calls.
  *
  * @param db - The database to read.
  * @param tenantId - The resolved workspace id.
- * @returns The projected members, ordered by join time then user id.
+ * @returns The projected members, ordered by join time.
  */
 export async function listWorkspaceMembers(db: Db, tenantId: ObjectId): Promise<Member[]> {
   const repo = platformRepo(db);
@@ -116,13 +98,7 @@ export async function listWorkspaceMembers(db: Db, tenantId: ObjectId): Promise<
     .find({ tenantId })
     .toArray()) as MembershipDocument[];
 
-  const userIds = memberships
-    .map((membership) => membership.userId)
-    .filter((userId): userId is ObjectId => userId instanceof ObjectId);
-
-  if (memberships.length === 0) {
-    return [];
-  }
+  const userIds = memberships.map((membership) => membership.userId);
 
   const [users, profiles]: [UserDocument[], UserProfileDocument[]] = await Promise.all([
     repo
@@ -135,24 +111,13 @@ export async function listWorkspaceMembers(db: Db, tenantId: ObjectId): Promise<
       .toArray(),
   ]);
 
-  const userById = new Map(users.map((user) => [toHexOrNull(user._id), user]));
-  const profileByUserId = new Map(
-    profiles.map((profile) => [toHexOrNull(profile.userId), profile])
-  );
+  const userById = new Map(users.map((user) => [String(user._id), user]));
+  const profileByUserId = new Map(profiles.map((profile) => [String(profile.userId), profile]));
 
   return memberships
     .map((membership) => {
-      const userId = toHexOrNull(membership.userId);
-      return projectMember(
-        membership,
-        userId === null ? null : (userById.get(userId) ?? null),
-        userId === null ? null : (profileByUserId.get(userId) ?? null)
-      );
+      const userId = String(membership.userId);
+      return projectMember(membership, userById.get(userId), profileByUserId.get(userId));
     })
-    .sort((left, right) => {
-      if (left.joinedAt !== right.joinedAt) {
-        return left.joinedAt < right.joinedAt ? -1 : 1;
-      }
-      return left.userId < right.userId ? -1 : left.userId > right.userId ? 1 : 0;
-    });
+    .sort((left, right) => left.joinedAt.localeCompare(right.joinedAt));
 }
