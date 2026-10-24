@@ -198,3 +198,66 @@ out in the PR body so it can be split if the reviewer prefers.
 - **Re-implement tenant resolution inside the member routes.** Rejected by
   ADR-0280: §0.4 requires one uniform denial, and the reusable stage already
   provides it.
+
+## Review sign-off — 2026-10-24 (card `t_2e576e70`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of the OP-101 GREEN (`t_2e576e70`,
+dashboard-created; PR [#268](https://github.com/yahodu/openpic-webapp/pull/268))
+returned **APPROVED WITH FINDINGS**, zero changes requested, zero reviewer edits
+to the deliverable:
+
+- **Merged, and reviewed what landed.** PR #268 `MERGED` at
+  `2026-10-24T20:26:24Z`, merge commit `b88a779` (squash); reviewed head
+  `1fb8de5`; `git merge-base --is-ancestor b88a779 origin/main` holds and
+  `git diff --stat 1fb8de5 b88a779` is **empty**, so the reviewed tree is the
+  landed tree. Local `main` == `origin/main` == `67feede` at review time.
+- **The gates reproduced independently** at the reviewed head: unit **95 files /
+  1686 tests**, integration **66 files / 479 tests** (`TMPDIR=/root/tmp-mongo`),
+  coverage **80.02% branches (2440/3049)** with **2165 tests passing**, `tsc`
+  clean on all three projects, `eslint` 0 errors on every touched path,
+  `prettier --check` clean, and the ADR-numbering guard **29/29**.
+- **F1 (Medium) — a corrupt `joinedAt` 500s the whole listing.** `members.ts:76`
+  (`new Date(joinedAt).toISOString()` in `projectMember`) throws
+  `RangeError: Invalid time value` on an absent or unparseable `joinedAt`, so one
+  bad `tenantMembers` row fails `GET /tenants/{t}/members` for every caller. This is
+  one of the branches §D6 removed. Routed to `t_2d85f947` (pin) + `t_082fa536`
+  (restore).
+- **F2 (Low) — the §D2 invariant is mis-stated.** The anchor lookup does **not**
+  yield `""` for a path with no `tenants` segment: `indexOf` returns `-1`, so the
+  expression yields `segments[0]` (probe: `/api/v1/foo/abc → "api"`,
+  `/api/v1/tenants → ""`). No functional defect today — the `OBJECT_ID_HEX` check
+  denies the value — but the `route-stage.ts:79` comment and §D2 claim otherwise.
+  Routed to `t_082fa536`.
+- **F3 (Low) — the audit lines are implemented but unpinned.**
+  `member.role_changed` / `member.removed` (`[userId]/route.ts:107`, `:133`)
+  satisfy the card's `security_and_logging_requirements`, but no pin asserts them
+  or their absence on the `403`/`409`/`422` refusal paths. Routed to `t_2d85f947`.
+- **F4 (Low) — the one authorised test edit is accepted.** The branch changed
+  `packages/contracts/src/masking.test.ts` once (§D5a, dropping the
+  provably-unsatisfiable `ra@gmail.com` `it.each` case). The unsatisfiability was
+  independently reproduced at the head before acceptance, and the masking
+  contract itself stays pinned. Accepted; no card.
+- **F5 (Low) — this header and the README note name the wrong branch.** Both say
+  `wt/t_2e576e70`; the card's branch was `OP-101-task-tenant-members-green`
+  (`wt/t_2e576e70` is the worktree path). Recorded here under the frozen-record
+  rule; a follow-up DOCS card corrects the two references.
+- **F6 (Low) — board configuration, fixed by the reviewer.** `t_fc7396d9` pointed
+  at the **shared main checkout** and `t_2d85f947` was created `scratch`/`null`
+  (an empty directory with no repo); both were corrected in the board DB to the
+  OP-101 lane worktree before dispatch. No deliverable impact.
+- **F7/F8 (Info, no card).** The listing is unpaginated (`GET /members` returns
+  every membership row), and `maskPhone` always prefixes `+` (no §2.2 path
+  returns a phone). Both are acceptable under the pinned contract.
+- **Review artifacts:** issue comment `6389134946` on PR #268, plus inline
+  comments on `members.ts:76` and `route-stage.ts:79`.
+- **Caveat:** the review covered the artifact as delivered — status codes, wire
+  shapes, masking, the owner gate, the audit lines and the coverage gate — not
+  the behaviour of products downstream of OP-101.
+
+**Post-review status (recorded after the follow-up lanes ran).** F1 and F2 were
+pinned by `t_2d85f947` and restored by `t_082fa536`
+(PR [#272](https://github.com/yahodu/openpic-webapp/pull/272)): the tolerant time
+normaliser, the listing's total order and the explicit anchor guard. F3's pins
+ride the same lane. Nothing in §D1–§D7 is retracted — §D6 documents the
+reduction as it stood at this head, and the follow-up records (`ADR-0282`,
+`ADR-0283`) document what followed.
