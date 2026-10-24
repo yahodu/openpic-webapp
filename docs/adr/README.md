@@ -42,7 +42,7 @@ the rejected alternatives are recorded in
 | OP-100 tenancy                      | `0260`–`0279`                   | `0263`    |
 | OP-101 CI lane-shape                | `0280`–`0299`                   | `0282`    |
 | OP-102 plans & billing lane         | `0320`–`0339`                   | `0324`    |
-| OP-103 entitlements lane            | `0340`–`0359`                   | `0342`    |
+| OP-103 entitlements lane            | `0340`–`0359`                   | `0343`    |
 | unallocated (future lanes)          | `0360`+ (20 per lane, in order) | `0360`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -229,6 +229,7 @@ be a run on the head SHA — card `t_f141ecd8`, branch
 | [0323](ADR-0323-op102-plans-etag-representation-green.md)                          | OP-102 follow-up GREEN: derive the `GET /plans` ETag from the served representation                                     | Accepted                  |
 | [0340](ADR-0340-op103-entitlements-red.md)                                         | OP-103 RED: the generic entitlement check, consumption and release — verdicts, atomic counters, no plan-name branches   | Accepted                  |
 | [0341](ADR-0341-op103-entitlements-green.md)                                       | OP-103 GREEN: the entitlement service, atomic counters, the `402`/`403` denial split and the registry extensions        | Accepted                  |
+| [0342](ADR-0342-op103-nontenant-scope-red.md)                                      | OP-103 follow-up RED: the non-`tenant` entitlement scope uses `ctx.counts` and the counter-advance fallback denies (F1) | Accepted                  |
 
 Template: Context · Decision · Consequences · Alternatives.
 
