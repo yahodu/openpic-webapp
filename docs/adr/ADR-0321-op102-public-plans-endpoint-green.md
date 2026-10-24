@@ -141,6 +141,11 @@ errors, Prettier clean, and `apps/web/e2e/plans.spec.ts` re-run against a real
    the Consequences section above claims. Routed as a TEST pin plus a GREEN: a
    tag derived from the versions **and** the served representation satisfies
    every existing pin, so the correction belongs to that GREEN.
+   → **Corrected by [ADR-0323](ADR-0323-op102-plans-etag-representation-green.md)**
+   (GREEN `t_0ad1baa2`): `planCatalogueETag` now digests the served plans, so the
+   tag changes for every `currency`/`billingCycle` variant and every copy/price
+   edit. ADR-0320 §2's "copy-only edits leave the tag unchanged" is superseded by
+   that record.
 
 ### Info
 
