@@ -1,7 +1,7 @@
 # ADR-0321 — OP-102 GREEN: project the catalogue onto the §3.1/§3.6 served shapes and wire both public reads onto the pipeline
 
 - **Status:** Accepted · **Date:** 2026-10-24
-- **Card:** OP-102 GREEN (`t_1156c7ad`) · **Branch:** `wt/t_1156c7ad` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_1156c7ad`
+- **Card:** OP-102 GREEN (`t_1156c7ad`) · **Branch:** `OP-102-task-public-plans-endpoint-green` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_1156c7ad`
 - **Relates to:** [ADR-0320](ADR-0320-op102-public-plans-endpoint-red.md) (the binding RED contract), [ADR-0014](ADR-0014-plans-catalogue-schema-and-seed.md) (the `plans` schema/seed), [ADR-0006](ADR-0006-cursor-pagination-and-etag.md) (ETag plumbing), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §3.1 (plans), §3.6 (add-ons), §0.10 (ETags), §0.11 (rate-limit classes), §0.15 (never-return) · **Schema:** §14.1, §14.2
 
@@ -144,9 +144,11 @@ errors, Prettier clean, and `apps/web/e2e/plans.spec.ts` re-run against a real
 
 ### Info
 
-- The branch field above reads `wt/t_1156c7ad`, while the card's branch is
-  `OP-102-task-public-plans-endpoint-green` (the worktree path is correct); the
-  same string appears in the README lane paragraph.
+- The branch field above read `wt/t_1156c7ad` (the template default), while the
+  card's branch is `OP-102-task-public-plans-endpoint-green`. The reviewer
+  corrected both this field and the same string in the README lane paragraph
+  while resolving the merge of `origin/main` into this branch — the same class of
+  correction main took for the OP-101 paragraph in #274.
 - `GET /addons`' conditional path (`If-None-Match` → `304`) is pinned by no test:
   the E1 e2e covers `/plans` only and the I4 integration specs never send
   `If-None-Match`. Routed as a TEST card.
