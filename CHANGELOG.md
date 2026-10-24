@@ -1,3 +1,9 @@
+## [1.28.0](https://github.com/yahodu/openpic-webapp/compare/v1.27.0...v1.28.0) (2026-10-24)
+
+### Features
+
+- **plans:** OP-102 public plans and add-on catalogue endpoints ([#271](https://github.com/yahodu/openpic-webapp/issues/271)) ([045041b](https://github.com/yahodu/openpic-webapp/commit/045041be42f984e3e05e0239a0cead34f59de283))
+
 ## [1.27.0](https://github.com/yahodu/openpic-webapp/compare/v1.26.0...v1.27.0) (2026-10-24)
 
 ### Features
