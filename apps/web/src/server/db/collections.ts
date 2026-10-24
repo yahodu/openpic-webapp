@@ -72,6 +72,19 @@ export const COLLECTIONS = {
    * read and written through `platformRepo` (ADR-0241).
    */
   notificationSuppressions: "notificationSuppressions",
+  /**
+   * Metered-usage counters (schema §14.2). One row per
+   * `{ tenantId, entitlementKey, periodKey }` records the usage consumed in the
+   * current reset period; the entitlement service advances it with a
+   * conditional `$inc` inside the caller's transaction (ADR-0341).
+   */
+  usageCounters: "usageCounters",
+  /**
+   * Additive entitlement top-ups (schema §14.2). A grant raises a key's
+   * effective limit for a bounded window; a refunded top-up is a negative
+   * delta, never a mutation of the plan (ADR-0341).
+   */
+  entitlementGrants: "entitlementGrants",
 } as const;
 
 /** The name of any registered collection. */
