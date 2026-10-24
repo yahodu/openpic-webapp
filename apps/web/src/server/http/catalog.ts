@@ -2,6 +2,7 @@ import type {
   AccountErrorCode,
   AppErrorCode,
   AuthErrorCode,
+  EntitlementErrorCode,
   ErrorCode,
   InternalErrorCode,
   NotificationErrorCode,
@@ -287,6 +288,33 @@ export const TENANCY_ERROR_TRANSPORT: Readonly<Record<TenancyErrorCode, ErrorCat
 };
 
 /**
+ * Transport for the entitlement-enforcement codes (contract §0.14, Appendix
+ * A.5).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the tenancy codes:
+ * that table stays the exact base Appendix A copy. Both rows are `403`,
+ * non-retryable — `plan_limit_exceeded` for a hard limit and
+ * `feature_not_available` for a disabled feature gate; the `402`
+ * (`payment_required`) is already a base {@link ERROR_CATALOG} member. The
+ * entitlement story owns these rows and feeds them into the same dispatch table
+ * (ADR-0341).
+ */
+export const ENTITLEMENT_ERROR_TRANSPORT: Readonly<
+  Record<EntitlementErrorCode, ErrorCatalogEntry>
+> = {
+  plan_limit_exceeded: {
+    status: 403,
+    retryable: false,
+    message: "This action exceeds the limit for your current plan.",
+  },
+  feature_not_available: {
+    status: 403,
+    retryable: false,
+    message: "This feature is not available on your current plan.",
+  },
+};
+
+/**
  * Every client-facing code's transport: Appendix A first, then the pipeline,
  * auth, request-shape, internal, account, notification and tenancy tables.
  */
@@ -299,6 +327,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...ACCOUNT_ERROR_TRANSPORT,
   ...NOTIFICATION_ERROR_TRANSPORT,
   ...TENANCY_ERROR_TRANSPORT,
+  ...ENTITLEMENT_ERROR_TRANSPORT,
 };
 
 /**

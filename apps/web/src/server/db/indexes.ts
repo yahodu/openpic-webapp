@@ -67,6 +67,8 @@ export const TENANT_SCOPED_COLLECTIONS: ReadonlySet<string> = new Set([
   COLLECTIONS.eventImages,
   COLLECTIONS.accessLinks,
   COLLECTIONS.mediaAssets,
+  COLLECTIONS.usageCounters,
+  COLLECTIONS.entitlementGrants,
 ]);
 
 /**
@@ -471,6 +473,33 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     name: "contact_change_fanouts_event_id_unique",
     keys: [["eventId", 1]],
     unique: true,
+  },
+
+  // usage_counters — one counter row per (tenant, key, period). This unique
+  // index is what makes the entitlement service's conditional `$inc` upsert
+  // race-safe: two concurrent first-uses cannot both insert a row, and the
+  // loser retries as an update (schema §14.2; ADR-0341).
+  {
+    collection: COLLECTIONS.usageCounters,
+    name: "usage_counters_tenant_key_period_unique",
+    keys: [
+      ["tenantId", 1],
+      ["entitlementKey", 1],
+      ["periodKey", 1],
+    ],
+    unique: true,
+  },
+  // entitlement_grants — the entitlement service reads every active grant for a
+  // key by (tenant, key) window, so the compound index leads with `tenantId`
+  // (schema §14.2; ADR-0341).
+  {
+    collection: COLLECTIONS.entitlementGrants,
+    name: "entitlement_grants_tenant_key_valid_from",
+    keys: [
+      ["tenantId", 1],
+      ["entitlementKey", 1],
+      ["validFrom", 1],
+    ],
   },
 ];
 

@@ -136,6 +136,25 @@ export const TENANCY_ERROR_CODES = [
 export type TenancyErrorCode = (typeof TENANCY_ERROR_CODES)[number];
 
 /**
+ * Entitlement-enforcement codes (contract §0.14, Appendix A.5).
+ *
+ * `plan_limit_exceeded` (`403`, `{ entitlementKey, limit, used, periodKey,
+ * scope, reason: "plan_limit", upgradePath, requestedDays? }`) and
+ * `feature_not_available` (`403`, `{ entitlementKey, upgradePath }`) are
+ * contract catalogue rows, but neither is a member of {@link ERROR_CODES}, which
+ * the server error catalogue pins to exactly the base Appendix A table. They are
+ * appended to the client-facing enum ({@link API_ERROR_CODES}) and transported
+ * from their own table so both stay exact. Append-only, like every other code.
+ *
+ * (`payment_required` needs no entry here: it is already a base
+ * {@link ERROR_CODES} member and a `402`.)
+ */
+export const ENTITLEMENT_ERROR_CODES = ["plan_limit_exceeded", "feature_not_available"] as const;
+
+/** A member of the closed {@link ENTITLEMENT_ERROR_CODES} set. */
+export type EntitlementErrorCode = (typeof ENTITLEMENT_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -199,6 +218,7 @@ export const API_ERROR_CODES = [
   ...ACCOUNT_ERROR_CODES,
   ...NOTIFICATION_ERROR_CODES,
   ...TENANCY_ERROR_CODES,
+  ...ENTITLEMENT_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -217,7 +237,8 @@ export type AppErrorCode =
   | InternalErrorCode
   | AccountErrorCode
   | NotificationErrorCode
-  | TenancyErrorCode;
+  | TenancyErrorCode
+  | EntitlementErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
