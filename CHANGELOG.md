@@ -1,3 +1,9 @@
+## [1.29.1](https://github.com/yahodu/openpic-webapp/compare/v1.29.0...v1.29.1) (2026-10-24)
+
+### Bug Fixes
+
+- **entitlements:** OP-103 make releaseEntitlement agree with the decision off tenant scope ([#286](https://github.com/yahodu/openpic-webapp/issues/286)) ([cfb8486](https://github.com/yahodu/openpic-webapp/commit/cfb848637d332a46608e3d5005b11f59848bd671))
+
 ## [1.29.0](https://github.com/yahodu/openpic-webapp/compare/v1.28.1...v1.29.0) (2026-10-24)
 
 ### Features

@@ -592,13 +592,19 @@ export async function consumeEntitlement(
  * The reversal for a delete (contract §0.14 C6): decrements the counter,
  * clamped at zero, and returns the resulting verdict. Never denies.
  *
+ * Only a `tenant`-scoped key decrements a `usageCounters` row, because only a
+ * `tenant`-scoped key reads one: for `event`/`attendee` scope the caller's
+ * `ctx.counts` is the sole usage source, so the release neither writes a counter
+ * nor reports its value — it mirrors the consume decision (ADR-0342, ADR-0347).
+ *
  * @param session - The caller's transaction; the counter write joins it.
  * @param tenantId - The tenant the usage belongs to.
  * @param entitlementKey - The metered key.
  * @param amount - The amount to release (default `1`).
  * @param ctx - Caller context (counts).
  * @param options - Database/clock seams.
- * @returns The allowed verdict, with the post-release `used`.
+ * @returns The allowed verdict, with the post-release `used` for a
+ *   `tenant`-scoped key or the clamped `ctx.counts` otherwise.
  */
 export async function releaseEntitlement(
   session: ClientSession,
@@ -610,6 +616,12 @@ export async function releaseEntitlement(
 ): Promise<EntitlementVerdict> {
   const seams = resolveSeams(options, session);
   const resolved = await resolveEntitlement(tenantId, entitlementKey, ctx, seams);
+
+  if (resolved.scope !== "tenant") {
+    const counts = ctx.counts ?? 0;
+    return allowedVerdict(resolved, amount > counts ? 0 : counts);
+  }
+
   const used = await releaseCounter(resolved, amount, seams);
   return allowedVerdict(resolved, used);
 }
