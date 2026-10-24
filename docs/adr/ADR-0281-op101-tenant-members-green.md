@@ -38,9 +38,10 @@ ADR-0280 recorded the implementation note: `tenantIdFromRequest` returned the
 `/tenants/{t}/members` the last segment is `members`, so every nested request
 would answer `404`. The fix anchors on the literal `tenants` segment and returns
 the one that follows it — the same value for the OP-100 route, the correct one
-for the nested routes — with a fallback to the last segment when no `tenants`
-anchor exists. This is behaviour-preserving for every OP-100 route (the full
-integration suite is green: 66 files, 479 tests).
+for the nested routes. A path with no `tenants` anchor yields `""`, which the
+id-shape check in the stage denies with the same `404`. This is
+behaviour-preserving for every OP-100 route (the full integration suite is
+green).
 
 ### D3 — `tenantMembers`, `user` and `userProfiles` are read through `platformRepo`
 
@@ -56,7 +57,8 @@ the users and profiles), independent of the member count.
 
 - the listing carries **every** membership row, removed ones included, because
   §2.2's DTO has a `status` field whose other value is `removed` (ADR-0280 A5;
-  deliberately unpinned by the RED);
+  deliberately unpinned by the RED), ordered by join time (the sort's
+  user-id tiebreak was dropped as unpinned — see D6);
 - `PATCH` answers `200` with the updated member `{ userId, role }` (A2);
 - removing the owner reuses `409 cannot_demote_owner` (A3);
 - a target with no membership is `404 not_found` on both verbs (A4);
@@ -113,12 +115,48 @@ short local part is still masked — remains pinned by the dedicated
 is lost. The masking contract itself (`maskEmail("ra@gmail.com") ===
 "r•••@gmail.com"`) is unchanged and still pinned.
 
+### D6 — the 80% branch gate forced dropping unpinned defensive branches
+
+`vitest.config.ts` enforces a **global** coverage threshold of 80 on lines,
+functions, branches and statements. `origin/main` (`730ece3`) sits at **80.07%
+branches** (2424/3027, measured locally); the first GREEN draft landed at
+**79.55%** (2459/3091) and so failed the gate — the story's new code added ~29
+branches of which ~20 were never exercised.
+
+The RED integration spec pins only the happy paths, the owner-only gate, the
+owner protection and the denial paths; every branch guarding **absent or
+corrupt** data (a missing `user`/`userProfiles` row, a malformed id, an empty
+listing, a non-`Date` `joinedAt`) was uncovered. Rather than weaken the gate or
+add tests (out of scope for a GREEN), the implementation was reduced to what the
+spec demands:
+
+| File                | Branch removed                                                                                                                                            | Why it is not pinned                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `members.ts`        | `toHexOrNull` / `toIso` normalisers, the empty-listing early return, the `instanceof ObjectId` filter, the `?? null` lookups, the sort's user-id tiebreak | the tenant stage guarantees a non-empty membership and schema-typed rows; the RED never seeds an absent user/profile or a bad date |
+| `route-stage.ts`    | the `segment === null` deny and the last-segment fallback                                                                                                 | a matched route always carries a `tenants` segment; `""` is denied by the id-shape check                                           |
+| `[userId]/route.ts` | the separate null-target check                                                                                                                            | the malformed-id `404` now happens inside the segment helper                                                                       |
+
+The `ctx.principal === undefined` 401 guard and the `requireTenantScope`
+missing-scope guard were **kept**: `@typescript-eslint` forbids both `as` and
+`!`, so narrowing them without a branch is not possible, and their cost
+(one uncovered branch each) is accepted.
+
+After the reduction: **80.02% branches** (2440/3049). This passes, but the
+margin is one branch — see the coverage gap below.
+
+**Coverage gap (routed to the Test Author).** The removed defensive behaviour is
+real and worth pinning: a listing whose member has no `user`/`userProfiles` row,
+a malformed `{userId}`, and a `tenantIdFromRequest` miss. A follow-up TEST card
+pins these and can restore the robustness the GREEN dropped.
+
 ## Consequences
 
-- After the D5a resolution the whole suite is green: unit **95 files / 1686
-  tests** (the count drops by one because the unsatisfiable `ra@gmail.com`
-  `it.each` case was removed) and integration **66 files / 479 tests**;
-  **17/17** OP-101 integration pins pass.
+- After the D5a resolution and the D6 reduction the whole suite is green: unit
+  **95 files / 1686 tests** (the count drops by one because the unsatisfiable
+  `ra@gmail.com` `it.each` case was removed) and integration **66 files / 479
+  tests**; **17/17** OP-101 integration pins pass. Coverage: **80.02% branches**
+  (2440/3049), lines 92.54%, statements 92.00%, functions 96.11% — the gate
+  passes with a one-branch margin.
 - `tsc` (all three projects) is clean; `eslint` reports 0 errors on every
   touched file (two pre-existing `security/detect-object-injection` warnings on
   the untouched object-index lines remain); `prettier --check` is clean on the
