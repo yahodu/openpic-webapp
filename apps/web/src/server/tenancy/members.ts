@@ -51,11 +51,37 @@ interface UserProfileDocument {
 }
 
 /**
+ * Read a stored date as an ISO-8601 string, falling back to the epoch.
+ *
+ * A row whose `joinedAt` is absent or unparseable must not fail the whole
+ * listing (one corrupt row would otherwise turn `GET /members` into a `500`
+ * for every caller of the workspace). It degrades to `1970-01-01T00:00:00.000Z`
+ * instead, which keeps `joinedAt` a total, always-comparable ISO string for the
+ * listing's sort (ADR-0282 §D2).
+ *
+ * @param value - The raw `joinedAt` value from the membership row.
+ * @returns The instant as an ISO-8601 string, or the epoch when unusable.
+ */
+function toIso(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+  return new Date(0).toISOString();
+}
+
+/**
  * Project one membership row onto the §2.2 DTO.
  *
  * Stored values are read straight from the schema §13.4 document shapes, so the
  * only normalisation needed is the two §2.2 conventions the wire fixes: the
- * contact is masked, and a missing invited-by becomes `null`.
+ * contact is masked, and a missing invited-by becomes `null`. `joinedAt` is
+ * normalised through {@link toIso} so a corrupt row cannot throw.
  *
  * @param membership - The stored `tenantMembers` row.
  * @param user - The member's Better Auth user document, when it exists.
@@ -73,7 +99,7 @@ export function projectMember(
     emailMasked: maskEmail(user?.email ?? ""),
     role: asTenantRole(membership.role),
     status: membership.status === "removed" ? "removed" : "active",
-    joinedAt: new Date(membership.joinedAt as string | number | Date).toISOString(),
+    joinedAt: toIso(membership.joinedAt),
     invitedByUserId:
       membership.invitedByUserId === undefined ? null : membership.invitedByUserId.toHexString(),
     avatarUrl: null,
@@ -85,11 +111,12 @@ export function projectMember(
  *
  * The rows are read in one `find`, and the users/profiles they reference in two
  * `$in` reads — three round trips total, independent of the member count. The
- * result is ordered by join time so the listing is stable between calls.
+ * result is ordered by join time, then by user id, so the listing is total and
+ * stable between calls.
  *
  * @param db - The database to read.
  * @param tenantId - The resolved workspace id.
- * @returns The projected members, ordered by join time.
+ * @returns The projected members, ordered by join time then user id.
  */
 export async function listWorkspaceMembers(db: Db, tenantId: ObjectId): Promise<Member[]> {
   const repo = platformRepo(db);
@@ -119,5 +146,8 @@ export async function listWorkspaceMembers(db: Db, tenantId: ObjectId): Promise<
       const userId = String(membership.userId);
       return projectMember(membership, userById.get(userId), profileByUserId.get(userId));
     })
-    .sort((left, right) => left.joinedAt.localeCompare(right.joinedAt));
+    .sort(
+      (left, right) =>
+        left.joinedAt.localeCompare(right.joinedAt) || left.userId.localeCompare(right.userId)
+    );
 }
