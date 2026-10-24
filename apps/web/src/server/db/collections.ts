@@ -27,6 +27,13 @@ export const COLLECTIONS = {
   providerWebhookEvents: "provider_webhook_events",
   idempotencyKeys: "idempotency_keys",
   plans: "plans",
+  /**
+   * The public add-on catalogue (contract §3.6; ADR-0320). Platform-scope
+   * policy-as-data, a peer of `plans`: an add-on is a top-up keyed by
+   * `addonKey` with an embedded `prices[]`, served by `GET /api/v1/addons`.
+   * Registered here so the route reads it by name rather than a bare literal.
+   */
+  addons: "addons",
   notificationTypes: "notification_types",
   notificationTemplates: "notification_templates",
   domainEvents: "domain_events",
