@@ -1,6 +1,6 @@
 import type { Document, WithId } from "mongodb";
 import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { GET as getEntitlements } from "@/app/api/v1/tenants/[tenantId]/entitlements/route";
@@ -145,6 +145,20 @@ beforeAll(async () => {
   // the cold connect belongs in this hook, never inside a timed spec.
   app = await startTestApp({ prefix: "op104-endpoints" });
 }, MONGO_READY_HOOK_TIMEOUT_MS);
+
+beforeEach(async () => {
+  // One database is booted for the whole file (`beforeAll`), so a reused plan
+  // key (`"free"`/`"starter"`) would otherwise collide across tests: the first
+  // inserted document wins `findOne({ key })` and a later seed is ignored
+  // (ADR-0361 D2). Wipe the collections each test seeds. The database is
+  // private to this file (`startTestApp` prefixes it), so nothing else is hit.
+  await Promise.all([
+    app.db.collection(COLLECTIONS.plans).deleteMany({}),
+    app.db.collection(COLLECTIONS.subscriptions).deleteMany({}),
+    app.db.collection(COLLECTIONS.entitlementGrants).deleteMany({}),
+    app.db.collection(COLLECTIONS.usageCounters).deleteMany({}),
+  ]);
+});
 
 afterAll(async () => {
   await app.cleanup();
@@ -305,13 +319,17 @@ async function seedCounter(fields: {
   entitlementKey: string;
   periodKey: string;
   value: number;
+  /** Pass `null` to seed a row with no `updatedAt` at all. */
+  updatedAt?: Date | null;
 }): Promise<void> {
   await app.db.collection(COLLECTIONS.usageCounters).insertOne({
     tenantId: fields.tenantId,
     entitlementKey: fields.entitlementKey,
     periodKey: fields.periodKey,
     value: fields.value,
-    updatedAt: new Date("2026-09-15T10:00:00.000Z"),
+    ...(fields.updatedAt === null
+      ? {}
+      : { updatedAt: fields.updatedAt ?? new Date("2026-09-15T10:00:00.000Z") }),
   });
 }
 
@@ -348,15 +366,28 @@ async function errorEnvelope(response: Response): Promise<{ code: string }> {
   return parsed.error as { code: string };
 }
 
-/** Find one entitlement row by key in a §3.5 body. */
-async function entitlementRow(response: Response, key: string): Promise<Record<string, unknown>> {
-  const payload = await body(response);
+/** Find one entitlement row by key in an already-parsed §3.5 body. */
+function entitlementRowFrom(
+  payload: Record<string, unknown>,
+  key: string
+): Record<string, unknown> {
   const rows = payload.entitlements as Record<string, unknown>[];
   const row = rows.find((entry) => entry.key === key);
   if (row === undefined) {
     throw new Error(`expected an entitlement row for ${key}, got ${JSON.stringify(rows)}`);
   }
   return row;
+}
+
+/**
+ * Find one entitlement row by key in a §3.5 body.
+ *
+ * A Fetch `Response` body is single-use, so callers that also assert on the
+ * parsed payload must use {@link entitlementRowFrom} with the payload they
+ * already read (ADR-0361 D1).
+ */
+async function entitlementRow(response: Response, key: string): Promise<Record<string, unknown>> {
+  return entitlementRowFrom(await body(response), key);
 }
 
 /** The raw `usageCounters` rows for one tenant. */
@@ -497,7 +528,9 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
     expect(payload).toMatchObject({ activePlanKey: "starter", subscriptionStatus: "active" });
 
-    const row = await entitlementRow(response, "storage.bytes");
+    // A Fetch `Response` body is single-use: find the row in the payload we
+    // already parsed instead of reading the same response a second time (D1).
+    const row = entitlementRowFrom(payload, "storage.bytes");
     expect(row).toMatchObject({
       limit: 100,
       effectiveLimit: 150,
@@ -548,6 +581,127 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     );
 
     expect(row.effectiveLimit).toBe(100);
+  });
+
+  it("serves an active grant's non-null `validUntil` window beside its delta (view.ts:166)", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-grant-window",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    // The window still covers "now": validFrom in the past, validUntil far ahead.
+    const validUntil = new Date("2099-01-01T00:00:00.000Z");
+    await seedGrant({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: 50,
+      validFrom: new Date("2020-01-01T00:00:00.000Z"),
+      validUntil,
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+    expect(response.status).toBe(200);
+
+    const row = entitlementRowFrom(await body(response), "storage.bytes");
+    expect(row).toMatchObject({
+      limit: 100,
+      effectiveLimit: 150,
+      unlimited: false,
+      grants: [{ delta: 50, source: "purchase", validUntil: validUntil.toISOString() }],
+    });
+  });
+
+  it("serves `used` and a null `remaining` for a tenant-scoped unlimited quota (view.ts:188)", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-unlimited",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "events.active": {
+          limit: null,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: currentMonthKey(),
+      value: 7,
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+    expect(response.status).toBe(200);
+
+    const row = entitlementRowFrom(await body(response), "events.active");
+    expect(row).toMatchObject({
+      key: "events.active",
+      limit: null,
+      effectiveLimit: null,
+      used: 7,
+      remaining: null,
+      periodKey: currentMonthKey(),
+      scope: "tenant",
+      enforcement: "hard",
+      unlimited: true,
+    });
+  });
+
+  it("serves an empty `entitlements` array (still 200) when the resolved plan has no document (view.ts:224)", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-no-plan",
+    });
+    // No `plans` document and no subscription: the resolved key is "free" but
+    // `findOne({ key: "free" })` returns null — a real defence, not dead code.
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+    expect(response.status).toBe(200);
+
+    const payload = await body(response);
+    expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
+    expect(payload).toMatchObject({
+      activePlanKey: "free",
+      subscribedPlanKey: "free",
+      subscriptionStatus: "none",
+      blockReason: null,
+      entitlements: [],
+    });
   });
 
   it("lists an event-scoped entitlement with its plan limits but without `used`", async () => {
@@ -747,6 +901,67 @@ describe("GET /api/v1/tenants/{tenantId}/usage", () => {
     expect(response.status).toBe(200);
     const rows = (await body(response)).data as Record<string, unknown>[];
     expect(rows.map((row) => row.periodKey)).toEqual(["2026-10"]);
+  });
+
+  it("serves every period when no `?periodKey=` filter is supplied (view.ts:264)", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-all",
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-10",
+      value: 1,
+    });
+
+    // No `periodKey` argument: the query parameter is absent, so the filter is
+    // `{}` and both periods come back.
+    const response = await getUsage(usageRequest(owner.cookie, tenantId.toHexString()));
+    expect(response.status).toBe(200);
+
+    const payload = await body(response);
+    expect(() => usageBodySchema.parse(payload)).not.toThrow();
+    const rows = payload.data as Record<string, unknown>[];
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.periodKey).sort()).toEqual(["2026-09", "2026-10"]);
+  });
+
+  it("omits `updatedAt` from a served row whose counter row has none (view.ts:277)", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-no-updated",
+    });
+    // `updatedAt: null` seeds a row with no `updatedAt` field at all.
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 4,
+      updatedAt: null,
+    });
+
+    const response = await getUsage(usageRequest(owner.cookie, tenantId.toHexString(), "2026-09"));
+    expect(response.status).toBe(200);
+
+    const rows = (await body(response)).data as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 4,
+    });
+    expect(rows[0]).not.toHaveProperty("updatedAt");
   });
 
   it("is readable by an admin (contract §3.5 `owner`|`admin`)", async () => {
