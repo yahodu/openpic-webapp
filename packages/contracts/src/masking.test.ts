@@ -103,7 +103,12 @@ describe("maskEmail", () => {
     expect(maskEmail("rahul@example.co.uk")).toBe(`r${EMAIL_MASK}@example.co.uk`);
   });
 
-  it.each(["r@gmail.com", "ra@gmail.com", "rahul@gmail.com", "rahul.menon@example.co.uk"])(
+  // `ra@gmail.com` is deliberately not in this list: its one-character local
+  // secret ("a") is unavoidably contained by the preserved domain (`gmail`) of
+  // the mask the file's own `toBe` pins for it, so a `not.toContain` check is
+  // unsatisfiable. That input's masking is still pinned by the dedicated
+  // `maskEmail("ra@gmail.com") === "r•••@gmail.com"` test above.
+  it.each(["r@gmail.com", "rahul@gmail.com", "rahul.menon@example.co.uk"])(
     "U1: returns a §0.13 masked contact that never carries the original address (%s)",
     (address) => {
       const masked = maskEmail(address);

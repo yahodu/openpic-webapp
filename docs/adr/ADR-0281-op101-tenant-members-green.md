@@ -90,14 +90,35 @@ domain happens to share.
 
 The defect is the missing length guard on a one-character local secret — the
 assertion is meaningful only when the secret is longer than a single character.
-The proposed correction (for the Test Author, not made here) is to guard with
+The proposed correction (for the Test Author) is to guard with
 `if (localSecret.length > 1)` or to drop `ra@gmail.com` from that `it.each`
-list. This card does **not** touch the test: the pin is left red and reported.
+list.
+
+### D5a — resolution: the human authorised the drop and the assertion is removed (2026-10-24)
+
+The dispute was escalated (`kanban_block(needs_input)`) and routed to the Test
+Author via card `t_e920efc2`. The human (`dashboard`) then explicitly authorised
+the second proposed correction on this card — "You can drop `ra@gmail.com` if
+you want." Because `t_e920efc2` was gated on this GREEN card and could therefore
+never dispatch while this card was blocked, waiting for it would have deadlocked
+the lane. Under that explicit human authorisation the disputed input was removed
+from the `it.each` list in `packages/contracts/src/masking.test.ts` (with an
+inline comment explaining why). Nothing else in the test file changed.
+
+This is the **only** test edit on this branch, and it removes a single
+provably-unsatisfiable assertion. The intent the removed case carried — that a
+short local part is still masked — remains pinned by the dedicated
+`expect(maskEmail("ra@gmail.com")).toBe("r•••@gmail.com")` and
+`expect(maskEmail("r@gmail.com")).toBe("r•••@gmail.com")` tests, so no coverage
+is lost. The masking contract itself (`maskEmail("ra@gmail.com") ===
+"r•••@gmail.com"`) is unchanged and still pinned.
 
 ## Consequences
 
-- 13/14 unit pins and **17/17** integration pins pass; the one red is the
-  dispute in D5.
+- After the D5a resolution the whole suite is green: unit **95 files / 1686
+  tests** (the count drops by one because the unsatisfiable `ra@gmail.com`
+  `it.each` case was removed) and integration **66 files / 479 tests**;
+  **17/17** OP-101 integration pins pass.
 - `tsc` (all three projects) is clean; `eslint` reports 0 errors on every
   touched file (two pre-existing `security/detect-object-injection` warnings on
   the untouched object-index lines remain); `prettier --check` is clean on the
