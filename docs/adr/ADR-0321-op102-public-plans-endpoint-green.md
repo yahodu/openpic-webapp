@@ -26,6 +26,7 @@ how the stored documents are projected, where the served schemas live, how the
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `@/server/plans/plan-display`    | `formatBytes`, `formatEntitlementDisplay` (pinned by U1)                                                                                                                                   |
 | `@/server/plans/plan-etag`       | `planCatalogueETag` (pinned by U2)                                                                                                                                                         |
+| `@/server/plans/catalogue-tag`   | `hashCatalogueTag` — the shared `sha256` → strong-ETag digest both tags use (round-1 review)                                                                                               |
 | `@/server/plans/plan-projection` | `servedPriceSchema`, `servedEntitlementSchema`, `servedPlanSchema`, `servedPlanListSchema`, `projectPrice`, `projectEntitlement`, `projectPlan` + their types (the §3.1 served shapes)     |
 | `@/server/plans/addons`          | `addonQuantitySchema`, `storedAddonSchema`, `servedAddonSchema`, `servedAddonListSchema`, `projectAddon`, `addonDisplay`, `addonCatalogueETag` + their types (ADR-0320's schema of record) |
 | `@/app/api/v1/plans/route`       | `GET` (public, `{ data: Plan[] }`)                                                                                                                                                         |
@@ -107,3 +108,45 @@ alongside `plans` rather than written as a bare literal.
   separate endpoint is what keeps the `I1` `.strict()` Plan-list parse valid.
 - **A per-key `display` copy table.** Rejected in ADR-0320; the generic formatter
   stays total so an unknown key still renders.
+
+## Round-1 review (`t_1156c7ad`, reviewer `openpic-webapp-reviewer`)
+
+Verdict: **approved with findings**, no test, mock or fixture edited by the
+reviewer. Independently re-run on this head: unit **97 files / 1704 tests**,
+integration **68 files / 493 tests**, e2e **21 passed**, `pnpm test:coverage`
+exit `0` (branches 80.07%), `tsc` clean on all three projects, ESLint `0`
+errors, Prettier clean, and `apps/web/e2e/plans.spec.ts` re-run against a real
+`next start` (the `ETag` and the bodyless `304` travel on the same response).
+
+### Reviewer refactor (behaviour-preserving)
+
+- `@/server/plans/catalogue-tag` extracts the `sha256` → `slice(0, 32)` →
+  `strongETag` digest that `plan-etag.ts` and `addons.ts` each carried verbatim,
+  plus the single `DIGEST_LENGTH` constant. Both tags are byte-identical before
+  and after (proved by the U2 pins, the I4 spec and the E1 conditional GET) and
+  the new module is branch-free, so the repo's `branches: 80` threshold is
+  unaffected (`test:coverage` exit `0`).
+
+### Finding routed to the board (not fixed here)
+
+1. **The `/plans` tag is not a function of the representation it tags.**
+   `planCatalogueETag` derives the tag from `(key, version)` only, while the body
+   varies with `currency`/`billingCycle` (pinned by I1) and with copy/prices —
+   and `seedPlans` bumps `version` only on an entitlement change
+   ([ADR-0014](ADR-0014-plans-catalogue-schema-and-seed.md) §6). Two
+   consequences: a `currency=USD` revalidation can be answered `304` off an
+   `ETag` minted for `currency=INR` (the client then reuses the other variant's
+   body), and a price/copy edit never invalidates a revalidating client — a `304`
+   refreshes `max-age`, so the staleness is **not** bounded by five minutes as
+   the Consequences section above claims. Routed as a TEST pin plus a GREEN: a
+   tag derived from the versions **and** the served representation satisfies
+   every existing pin, so the correction belongs to that GREEN.
+
+### Info
+
+- The branch field above reads `wt/t_1156c7ad`, while the card's branch is
+  `OP-102-task-public-plans-endpoint-green` (the worktree path is correct); the
+  same string appears in the README lane paragraph.
+- `GET /addons`' conditional path (`If-None-Match` → `304`) is pinned by no test:
+  the E1 e2e covers `/plans` only and the I4 integration specs never send
+  `If-None-Match`. Routed as a TEST card.
