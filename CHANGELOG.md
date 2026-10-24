@@ -1,3 +1,9 @@
+## [1.28.1](https://github.com/yahodu/openpic-webapp/compare/v1.28.0...v1.28.1) (2026-10-24)
+
+### Bug Fixes
+
+- **plans:** OP-102 derive the GET /plans ETag from the served representation ([#275](https://github.com/yahodu/openpic-webapp/issues/275)) ([76eeb97](https://github.com/yahodu/openpic-webapp/commit/76eeb976b99e0a11aedc3610896e6060e4aeddd8))
+
 ## [1.28.0](https://github.com/yahodu/openpic-webapp/compare/v1.27.0...v1.28.0) (2026-10-24)
 
 ### Features
