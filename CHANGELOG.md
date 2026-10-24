@@ -1,3 +1,9 @@
+## [1.27.0](https://github.com/yahodu/openpic-webapp/compare/v1.26.0...v1.27.0) (2026-10-24)
+
+### Features
+
+- **tenancy:** OP-101 tenant members management ([#268](https://github.com/yahodu/openpic-webapp/issues/268)) ([b88a779](https://github.com/yahodu/openpic-webapp/commit/b88a779f5224053e2deae8f7d60d85eca2d02017))
+
 ## [1.26.0](https://github.com/yahodu/openpic-webapp/compare/v1.25.0...v1.26.0) (2026-10-23)
 
 ### Features
