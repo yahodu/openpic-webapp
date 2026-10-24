@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-23
 - **Card:** OP-101 GREEN (`t_2e576e70`) · **RED predecessor:** `t_a0aa3cb0` ([ADR-0280](ADR-0280-op101-tenant-members-red.md)) · **Dependency:** OP-100 (`t_2d03b293`, merged as PR #256 / `5fd133d`)
-- **Branch:** `wt/t_2e576e70` · **Workspace:** `/root/openpic/openpic-webapp/.worktrees/t_2e576e70`
+- **Branch:** `OP-101-task-tenant-members-green` · **Workspace:** `/root/openpic/openpic-webapp/.worktrees/t_2e576e70`
 - **Spec sources:** ADR-0280 (the executable contract); API contract §2.2 (tenant members), §0.13 (masked contact), §0.15 (never-return), §0.4 (tenancy in URLs); schema §13.3/§13.4; contract Appendix A.5 (`cannot_demote_owner`, `409`)
 
 ## Context
