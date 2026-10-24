@@ -1,9 +1,6 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
-import { strongETag } from "@/server/http/etag";
-
+import { hashCatalogueTag } from "./catalogue-tag";
 import { projectPrice, servedPriceSchema } from "./plan-projection";
 import { priceSchema } from "./plans";
 
@@ -66,9 +63,6 @@ export const servedAddonListSchema = z.object({ data: z.array(servedAddonSchema)
 /** A served add-on (contract §3.6). */
 export type Addon = z.infer<typeof servedAddonSchema>;
 
-/** The hex digest length kept in the add-on catalogue tag. */
-const DIGEST_LENGTH = 32;
-
 /**
  * The human `display` string for one add-on.
  *
@@ -118,10 +112,5 @@ export function projectAddon(addon: StoredAddon, currency: string | null): Addon
  * @returns A strong `ETag` header value.
  */
 export function addonCatalogueETag(addons: readonly Addon[]): string {
-  const digest = createHash("sha256")
-    .update(JSON.stringify(addons))
-    .digest("hex")
-    .slice(0, DIGEST_LENGTH);
-
-  return strongETag(digest);
+  return hashCatalogueTag(JSON.stringify(addons));
 }
