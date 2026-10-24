@@ -1,3 +1,9 @@
+## [1.29.0](https://github.com/yahodu/openpic-webapp/compare/v1.28.1...v1.29.0) (2026-10-24)
+
+### Features
+
+- **entitlements:** OP-103 generic entitlement check, consumption and counters ([#277](https://github.com/yahodu/openpic-webapp/issues/277)) ([e63b854](https://github.com/yahodu/openpic-webapp/commit/e63b85464f42ceba769248745af39493eac8deec))
+
 ## [1.28.1](https://github.com/yahodu/openpic-webapp/compare/v1.28.0...v1.28.1) (2026-10-24)
 
 ### Bug Fixes
