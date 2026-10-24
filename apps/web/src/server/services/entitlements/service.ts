@@ -425,7 +425,16 @@ function hourBucket(now: Date): string {
   return now.toISOString().slice(0, 13);
 }
 
-/** Emit `usage.action.blocked` (once per tenant/key/hour) and log the denial. */
+/**
+ * Emit `usage.action.blocked` (once per tenant/key/hour) and log the denial.
+ *
+ * The emit is a best-effort side effect: a rejection is swallowed and recorded
+ * as a `warn` line (`entitlement.denied.emit_failed`) so the lost
+ * `usage.action.blocked` row stays observable, but a broken outbox can never
+ * replace the denial `AppError` the caller is about to throw (OP-103 follow-up
+ * F2; contract §0.14). This mirrors the `safeEmit` seam in
+ * `@/server/auth/identity-hooks`.
+ */
 async function recordDenial(
   tenantId: string,
   verdict: EntitlementDeniedVerdict,
@@ -457,11 +466,20 @@ async function recordDenial(
     dedupeKey: `${tenantId}:${verdict.entitlementKey}:${hourBucket(deps.clock.now())}`,
   };
 
-  if (deps.emit === undefined) {
-    await emitDomainEvent(input, { db: deps.db, clock: deps.clock });
-    return;
+  try {
+    if (deps.emit === undefined) {
+      await emitDomainEvent(input, { db: deps.db, clock: deps.clock });
+    } else {
+      await deps.emit(input);
+    }
+  } catch (error) {
+    getLogger().warn("entitlement.denied.emit_failed", {
+      event: "entitlement.denied.emit_failed",
+      tenantId,
+      entitlementKey: verdict.entitlementKey,
+      err: error,
+    });
   }
-  await deps.emit(input);
 }
 
 /** Map a denied verdict onto the Appendix A `AppError` (contract §0.14). */
@@ -503,7 +521,8 @@ function denialError(tenantId: string, verdict: EntitlementDeniedVerdict): AppEr
  * Re-checks, then advances the counter atomically. On a denial it emits the
  * durable `usage.action.blocked` event **outside** the caller's session (the
  * throw aborts that transaction, and the blocked record must survive it) and
- * throws the Appendix A `AppError`.
+ * throws the Appendix A `AppError`. A rejected blocked-emit is swallowed (and
+ * logged at `warn`) so it can never replace that denial.
  *
  * @param session - The caller's transaction; every read and write joins it.
  * @param tenantId - The tenant the usage belongs to.
