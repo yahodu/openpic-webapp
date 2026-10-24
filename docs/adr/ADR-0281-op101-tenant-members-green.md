@@ -149,6 +149,22 @@ real and worth pinning: a listing whose member has no `user`/`userProfiles` row,
 a malformed `{userId}`, and a `tenantIdFromRequest` miss. A follow-up TEST card
 pins these and can restore the robustness the GREEN dropped.
 
+### D7 — a new zod advisory forced an in-range dependency bump
+
+After this lane's first CI run, GitHub published **GHSA-mrhx-c7xc-m3w5** (high,
+`zod < 4.6.6`, memory exhaustion while validating oversized constrained
+collections). It reddens the blocking `pnpm audit --prod --audit-level=moderate`
+job (`ci.yml`) **repo-wide, `main` included** — it is not caused by this story.
+
+`zod` is a direct dependency of both `apps/web` and `packages/contracts` at
+`^4.6.5`, and the whole graph resolves a single `zod` version, so the fix is an
+in-range bump to `^4.6.6` (lockfile resolves `4.6.7`, still inside better-auth's
+`^4.0.0` peer range). `pnpm audit --prod` is clean again; the non-blocking
+`audit-dev` job still reports dev-toolchain advisories by design (ADR-0301).
+
+This is the only change on the branch unrelated to tenant members; it is called
+out in the PR body so it can be split if the reviewer prefers.
+
 ## Consequences
 
 - After the D5a resolution and the D6 reduction the whole suite is green: unit
