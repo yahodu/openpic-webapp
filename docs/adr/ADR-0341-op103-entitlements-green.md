@@ -210,3 +210,93 @@ a tier — and the service decides purely from the stored spec. The U7 guard
 - `test:coverage`: all thresholds pass — global branches `80.39 %` / lines
   `92.7 %`, and the `services/**` branch threshold at `90.09 %` (168 test files
   / 2232 tests).
+
+## Review sign-off — 2026-10-24 (card `t_429ad6f8`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of the OP-103 GREEN (`t_429ad6f8`,
+dashboard-created; PR [#277](https://github.com/yahodu/openpic-webapp/pull/277))
+returned **APPROVED WITH FINDINGS**, zero changes requested, zero reviewer edits
+to the deliverable:
+
+- **Merged, and reviewed what landed.** PR #277 `MERGED` at
+  `2026-10-24T22:29:09Z`, merge commit `e63b854` (squash); reviewed head
+  `c5186c8`; `git merge-base --is-ancestor e63b854 origin/main` holds and the
+  reviewed tree equals the merged tree, so what was reviewed is what landed.
+  Local `main` == `origin/main` == `c50ef7c` at review time.
+- **The gates reproduced independently** at the reviewed head: unit **99 files /
+  1730 tests**, integration **70 files / 508 tests** (`TMPDIR=/root/tmp-mongo`;
+  the entitlements spec re-run **5×** → **9/9** each, no flake), `test:coverage`
+  exit 0 with `apps/web/src/server/services/entitlements` at **90.09 % branches**
+  (gate 90 %) and global branches **80.42 %** / lines **92.72 %**, `tsc` clean on
+  all three projects, `eslint` 0 errors with no new warnings, `prettier --check`
+  clean, and the ADR-numbering guard **29/29**.
+- **The three acceptance criteria.** (1) _"There are no plan-name branches"_ —
+  **SATISFIED**: the U7 guard passes and an independent grep of
+  `apps/web/src/server/services/entitlements/**` finds no
+  `starter`/`professional`/`enterprise` literal and no plan-key comparison; the
+  only plan key is the schema-sanctioned `"free"` fallback. (2) _"Concurrent
+  consumption never exceeds the limit"_ — **SATISFIED** for the pinned metered
+  path: `I1` admits exactly 3 of 10 concurrent consumes against a remaining 3
+  (counter == 3) and denies the other 7 with `plan_limit_exceeded`, under the
+  unique `{tenantId, entitlementKey, periodKey}` index. (3) _"The 402 vs 403
+  reason is correct"_ — **SATISFIED**: `U5` `402 payment_required`, `I1` `403
+plan_limit_exceeded`, `U4` `403 feature_not_available`; the denial `details`
+  match Appendix A exactly.
+- **No test, mock, fixture or factory was touched.** `git diff 2ed83d9..HEAD --
+apps/web/src/test/` is empty apart from the OP-102 file that arrived with the
+  `origin/main` merge.
+- **The one non-blocking CI job.** `audit-dev` is `continue-on-error`
+  (`.github/workflows/ci.yml:94`), pre-existing dev-toolchain advisories; no
+  blocking check failed.
+- **F1 (Medium) — the non-`tenant` scope is decided from `ctx.counts` but
+  enforced against the tenant-scoped counter.** `resolveEntitlement` read the
+  `usageCounters` row only for `tenant` scope, while `consumeEntitlement`
+  advanced that same tenant-scoped row for every scope. When the two disagree the
+  call returns an **allowed** verdict with `used > limit` and a negative
+  `remaining`. Probe (throwaway, deleted; fake `Db`, `events.duration_days`,
+  `limit: 3`, seeded counter `value: 5`, `ctx.counts: 0`):
+  `{allowed: true, limit: 3, used: 5, remaining: -2}`. Outside the pinned scope
+  (ADR-0340 §7 exercises tenant-scoped keys only). Routed to TEST card
+  `t_a2dd4b1a` + GREEN card `t_06da2c9f`.
+- **F2 (Medium) — a failing outbox emit replaces the denial `AppError`.** The
+  denial path awaited `recordDenial(...)` (which emits `usage.action.blocked`)
+  before throwing, so a rejecting emitter surfaced in place of the Appendix A
+  error. Probe (throwaway, deleted; `emit` rejecting with `outbox write failed`):
+  thrown = `{code: null, status: null, message: "outbox write failed"}` instead
+  of `403 plan_limit_exceeded` — the route would see an unmapped error and the
+  client would lose the denial reason the §0.14 upgrade CTA depends on. The
+  reason mapping itself was correct. Routed to TEST card `t_4ce9a410` + GREEN
+  card `t_2d83385c`.
+- **Info (recorded, no card).** `soft`/`policy` enforcement is treated as a hard
+  block (schema §14.1 prose vs its own §14.2 pseudo-code; ADR-0340 defers it);
+  §0.14 prose says both denial bodies carry `{limit, used, periodKey, scope}`
+  while Appendix A's `payment_required` row omits them (the code follows
+  Appendix A — correct); the U7 literal set deliberately excludes `"free"` (the
+  schema-sanctioned fallback); `docs/adr/README.md` remains the shared-ledger
+  hotspot; the four sequential reads in `resolveEntitlement` could pair `grants`
+  and the counter under one `Promise.all` (minor).
+- **Review artifacts:** issue comment on PR #277 plus inline comments on the two
+  finding sites.
+- **Caveat:** the review covered the artifact as delivered — the three acceptance
+  criteria, the denial mapping, the counter atomicity and the coverage gate — not
+  the behaviour of the routes that will call this service.
+
+**Post-review status (recorded after the follow-up lanes ran).** Both follow-ups
+completed on the board and each opened a **non-draft** PR; cited by card id and
+PR number only: F1 — TEST `t_a2dd4b1a` (pins, PR
+[#280](https://github.com/yahodu/openpic-webapp/pull/280)), GREEN `t_06da2c9f`
+(PR [#281](https://github.com/yahodu/openpic-webapp/pull/281)); F2 — TEST
+`t_4ce9a410` (pins, PR [#282](https://github.com/yahodu/openpic-webapp/pull/282)),
+GREEN `t_2d83385c` (PR [#283](https://github.com/yahodu/openpic-webapp/pull/283)).
+The F1 GREEN makes `consumeEntitlement` treat `ctx.counts` as the sole usage
+source for `event`/`attendee` scope and removes the stale-counter fallback; the
+F2 GREEN keeps the denial `AppError` when the blocked-event emit rejects, logging
+`entitlement.denied.emit_failed` at warn. **At this writing none of the four PRs
+has merged into `main`** (`main` is at `c50ef7c`), so the follow-up records are
+referenced here by card id and PR number only, never by an unmerged ADR number.
+The F1 GREEN also surfaced a further unpinned asymmetry — `releaseEntitlement`
+still writes the `usageCounters` row for every scope (the same pollution class
+F1 covers for `consume`) and echoes the counter rather than `ctx.counts` — now
+routed to its own TEST/GREEN pair. Nothing in §Context–§Alternatives above is
+retracted: those sections document the state at the GREEN head, and the
+follow-ups' own records document what followed.
