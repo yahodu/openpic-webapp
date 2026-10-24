@@ -11,6 +11,7 @@ import {
 import { GET as listMembers } from "@/app/api/v1/tenants/[tenantId]/members/route";
 import { GET as tenantGet } from "@/app/api/v1/tenants/[tenantId]/route";
 import { COLLECTIONS } from "@/server/db/collections";
+import { createLogger, memoryTransport, setLogger } from "@/server/logging";
 
 import { body } from "../helpers/auth-requests";
 import {
@@ -100,6 +101,9 @@ const MEMBER_DTO_KEYS = [
   "status",
   "userId",
 ];
+
+/** The only audit events a member mutation may emit (ADR-0281 §D4). */
+const MEMBER_AUDIT_EVENTS: readonly string[] = ["member.role_changed", "member.removed"];
 
 let app: TestApp;
 
@@ -241,6 +245,41 @@ async function findMembership(
   userId: ObjectId
 ): Promise<WithId<Document> | null> {
   return app.db.collection(COLLECTIONS.tenantMembers).findOne({ tenantId, userId });
+}
+
+/**
+ * Insert a raw `tenantMembers` row exactly as supplied, with no defaults.
+ *
+ * Unlike {@link insertTenantMember} this never stamps `joinedAt`, so a spec can
+ * seed the absent/unparseable/typed rows the schema does not normally allow.
+ */
+async function insertRawMembership(row: Record<string, unknown>): Promise<void> {
+  await app.db.collection(COLLECTIONS.tenantMembers).insertOne({ ...row });
+}
+
+/** The Better Auth-owned user collection (schema §13.1). */
+const USER_COLLECTION = "user";
+
+/**
+ * Install a memory-backed process logger and return its sink.
+ *
+ * The member handlers emit their audit lines through {@link getLogger}, so the
+ * `setLogger` seam is the only way a spec can observe them (OP-68). The sink
+ * outlives the test that installs it, which is harmless: no other spec in this
+ * file asserts logging.
+ */
+function installMemoryLogger(): ReturnType<typeof memoryTransport> {
+  const sink = memoryTransport();
+  setLogger(
+    createLogger({
+      level: "info",
+      transports: [sink],
+      service: "openpic-web",
+      env: "test",
+      version: "test-sha",
+    })
+  );
+  return sink;
 }
 
 describe("GET /api/v1/tenants/{tenantId}/members", () => {
@@ -532,5 +571,325 @@ describe("DELETE /api/v1/tenants/{tenantId}/members/{userId}", () => {
 
     expect(response.status).toBe(404);
     expect((await errorEnvelope(response)).code).toBe("not_found");
+  });
+});
+
+/**
+ * OP-101 follow-up pins (ADR-0281 §D6).
+ *
+ * The GREEN held the global 80% branch gate by trimming the defensive branches
+ * that guard **absent or corrupt** member data. These suites pin the behaviour
+ * so those branches can be restored without dropping the gate: the listing is
+ * tolerant of a member whose `user`/`userProfiles` row or `joinedAt` is
+ * missing or unparseable, a malformed `{userId}` is a uniform `404`, a path
+ * with no tenant segment is a uniform `404`, the listing order is total, and
+ * every mutation's audit line is emitted on success and on success only.
+ */
+describe("GET /api/v1/tenants/{tenantId}/members — absent and corrupt rows", () => {
+  it("still lists a member whose `user` document has gone missing, with the contact fully masked", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const ghost = await app.signIn(makeIdentity("ghost-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, ghost, "Ghost Member");
+    // The Better Auth `user` row is gone; the membership (and its profile) stay.
+    await app.db.collection(USER_COLLECTION).deleteOne({ _id: ghost.userId });
+
+    const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    const entries = payload.data as Record<string, unknown>[];
+    const entry = entries.find((candidate) => candidate.userId === ghost.userId.toHexString());
+    expect(entry).toBeDefined();
+    // §0.15: a raw/undefined contact must never reach the wire; the fully
+    // masked form is the only safe projection of an absent address.
+    expect(entry).toMatchObject({
+      displayName: "Ghost Member",
+      emailMasked: "•••",
+      role: "member",
+      status: "active",
+    });
+    expect(findForbiddenFields(payload, "default")).toEqual([]);
+    expect(JSON.stringify(payload)).not.toContain(ghost.identity.email);
+  });
+
+  it("still lists a member whose `userProfiles` document is missing, with an empty display name", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, member, "Priya Sharma");
+    await app.db.collection(COLLECTIONS.userProfiles).deleteOne({ userId: member.userId });
+
+    const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+    expect(response.status).toBe(200);
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    const entry = entries.find((candidate) => candidate.userId === member.userId.toHexString());
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({ displayName: "", role: "member", status: "active" });
+    // The `user` row still exists, so the contact is masked from its address.
+    expect(entry?.emailMasked).toBe("m•••@example.com");
+  });
+
+  it.each([
+    ["absent", undefined],
+    ["unparseable", "not-a-date"],
+  ])(
+    "does not fail the whole listing when one membership's `joinedAt` is %s; the row degrades to the epoch",
+    async (_label, joinedAt) => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      const member = await app.signIn(makeIdentity("maya-member"));
+      const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+      await insertRawMembership({
+        tenantId,
+        userId: member.userId,
+        role: "member",
+        status: "active",
+        ...(joinedAt === undefined ? {} : { joinedAt }),
+      });
+
+      const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+      expect(response.status).toBe(200);
+      const entries = (await body(response)).data as Record<string, unknown>[];
+      const entry = entries.find((candidate) => candidate.userId === member.userId.toHexString());
+      expect(entry).toBeDefined();
+      expect(entry?.joinedAt).toBe("1970-01-01T00:00:00.000Z");
+    }
+  );
+
+  it("normalises a `joinedAt` stored as an ISO-8601 string to the same instant", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await insertRawMembership({
+      tenantId,
+      userId: member.userId,
+      role: "member",
+      status: "active",
+      joinedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+    expect(response.status).toBe(200);
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    const entry = entries.find((candidate) => candidate.userId === member.userId.toHexString());
+    expect(entry?.joinedAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+});
+
+describe("GET /api/v1/tenants/{tenantId}/members — ordering", () => {
+  it("orders members by join time ascending", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const earlier = await app.signIn(makeIdentity("earlier-user"));
+    const later = await app.signIn(makeIdentity("later-user"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    // Insert the later joiner first, so insertion order cannot be the answer.
+    await insertRawMembership({
+      tenantId,
+      userId: later.userId,
+      role: "member",
+      status: "active",
+      joinedAt: "2026-02-01T00:00:00.000Z",
+    });
+    await insertRawMembership({
+      tenantId,
+      userId: earlier.userId,
+      role: "member",
+      status: "active",
+      joinedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+    expect(response.status).toBe(200);
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    // The owner joined last (now), so the order is total and time-ascending.
+    expect(entries.map((entry) => entry.userId)).toEqual([
+      earlier.userId.toHexString(),
+      later.userId.toHexString(),
+      owner.userId.toHexString(),
+    ]);
+  });
+
+  it("breaks ties in `joinedAt` by user id so the listing is stable", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    const ids = [new ObjectId(), new ObjectId(), new ObjectId()].sort((left, right) =>
+      left.toHexString().localeCompare(right.toHexString())
+    );
+    const joinedAt = "2026-01-01T00:00:00.000Z";
+    // Insert in descending id order: the expected (ascending-id) order is the
+    // reverse of insertion, so a stable tie on `joinedAt` alone is not enough.
+    for (const userId of [...ids].reverse()) {
+      await insertRawMembership({ tenantId, userId, role: "member", status: "active", joinedAt });
+    }
+
+    const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+    expect(response.status).toBe(200);
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    expect(entries.map((entry) => entry.userId)).toEqual([
+      ...ids.map((id) => id.toHexString()),
+      owner.userId.toHexString(),
+    ]);
+  });
+});
+
+describe("members/{userId} — malformed target id", () => {
+  it.each(["not-an-id", "1234", "0123456789abcdef0123456"])(
+    "answers 404 not_found (never 500, never 403) for the malformed id %s on PATCH",
+    async (malformed) => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      await seedWorkspace({ userId: owner.userId, role: "owner" });
+
+      const response = await changeMemberRole(
+        memberRequest(owner.cookie, CURRENT_ALIAS, malformed, "PATCH", { role: "admin" })
+      );
+
+      expect(response.status).toBe(404);
+      expect((await errorEnvelope(response)).code).toBe("not_found");
+    }
+  );
+
+  it("answers 404 not_found (never 500, never 403) for a malformed id on DELETE", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    await seedWorkspace({ userId: owner.userId, role: "owner" });
+
+    const response = await removeMember(
+      memberRequest(owner.cookie, CURRENT_ALIAS, "not-an-id", "DELETE")
+    );
+
+    expect(response.status).toBe(404);
+    expect((await errorEnvelope(response)).code).toBe("not_found");
+  });
+});
+
+describe("GET /api/v1/tenants/{tenantId}/members — paths with no usable tenant segment", () => {
+  it.each([
+    ["/api/v1/foo/abc/members", "a path with no `tenants` anchor"],
+    ["/api/v1/tenants", "a path that stops at the `tenants` anchor"],
+  ])("answers the uniform 404 not_found for %s (%s)", async (pathname) => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    await seedWorkspace({ userId: owner.userId, role: "owner" });
+
+    // The tenant segment is located by position; whatever the helper returns
+    // for a path without one, the stage must deny with the same 404 the
+    // id-shape check produces — never a 500 and never a 403 (§0.4).
+    const response = await listMembers(
+      new Request(new URL(pathname, APP_ORIGIN), {
+        method: "GET",
+        headers: { cookie: owner.cookie },
+      })
+    );
+
+    expect(response.status).toBe(404);
+    expect((await errorEnvelope(response)).code).toBe("not_found");
+  });
+});
+
+describe("member mutations — audit logging", () => {
+  it("emits `member.role_changed` with the workspace, target and new role on a successful PATCH", async () => {
+    const sink = installMemoryLogger();
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, member, "Priya Sharma");
+
+    const response = await changeMemberRole(
+      memberRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "PATCH", {
+        role: "admin",
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(sink.entries.find((entry) => entry.event === "member.role_changed")).toMatchObject({
+      level: "info",
+      event: "member.role_changed",
+      tenantId: tenantId.toHexString(),
+      userId: member.userId.toHexString(),
+      role: "admin",
+    });
+  });
+
+  it("emits `member.removed` with the workspace and target on a successful DELETE", async () => {
+    const sink = installMemoryLogger();
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, member, "Priya Sharma");
+
+    const response = await removeMember(
+      memberRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "DELETE")
+    );
+
+    expect(response.status).toBe(204);
+    expect(sink.entries.find((entry) => entry.event === "member.removed")).toMatchObject({
+      level: "info",
+      event: "member.removed",
+      tenantId: tenantId.toHexString(),
+      userId: member.userId.toHexString(),
+    });
+  });
+
+  it.each([
+    ["the owner's own role (409)", "owner", { role: "admin" }, 409],
+    ["a role outside admin|member (422)", "member", { role: "owner" }, 422],
+  ])(
+    "emits neither audit event when a PATCH is refused with %s",
+    async (_label, targetKind, payload, status) => {
+      const sink = installMemoryLogger();
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      const member = await app.signIn(makeIdentity("maya-member"));
+      const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+      await addMember(tenantId, member, "Priya Sharma");
+      const target = targetKind === "owner" ? owner : member;
+
+      const response = await changeMemberRole(
+        memberRequest(owner.cookie, CURRENT_ALIAS, target.userId.toHexString(), "PATCH", payload)
+      );
+
+      expect(response.status).toBe(status);
+      expect(
+        sink.entries.filter((entry) => MEMBER_AUDIT_EVENTS.includes(String(entry.event)))
+      ).toEqual([]);
+    }
+  );
+
+  it("emits neither audit event when a non-owner is refused (403)", async () => {
+    const sink = installMemoryLogger();
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const actor = await app.signIn(makeIdentity("acting-user"));
+    const target = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, actor, "Acting User", "admin");
+    await addMember(tenantId, target, "Priya Sharma");
+
+    const response = await changeMemberRole(
+      memberRequest(actor.cookie, CURRENT_ALIAS, target.userId.toHexString(), "PATCH", {
+        role: "admin",
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(
+      sink.entries.filter((entry) => MEMBER_AUDIT_EVENTS.includes(String(entry.event)))
+    ).toEqual([]);
+  });
+
+  it("emits no `member.removed` when removing the owner is refused (409)", async () => {
+    const sink = installMemoryLogger();
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    await seedWorkspace({ userId: owner.userId, role: "owner" });
+
+    const response = await removeMember(
+      memberRequest(owner.cookie, CURRENT_ALIAS, owner.userId.toHexString(), "DELETE")
+    );
+
+    expect(response.status).toBe(409);
+    expect(
+      sink.entries.filter((entry) => MEMBER_AUDIT_EVENTS.includes(String(entry.event)))
+    ).toEqual([]);
   });
 });
