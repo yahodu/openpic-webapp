@@ -297,6 +297,6 @@ referenced here by card id and PR number only, never by an unmerged ADR number.
 The F1 GREEN also surfaced a further unpinned asymmetry — `releaseEntitlement`
 still writes the `usageCounters` row for every scope (the same pollution class
 F1 covers for `consume`) and echoes the counter rather than `ctx.counts` — now
-routed to its own TEST/GREEN pair (`t_cc32c3d2` / `t_b21f15aa`). Nothing in §Context–§Alternatives above is
-retracted: those sections document the state at the GREEN head, and the
-follow-ups' own records document what followed.
+routed to its own TEST/GREEN pair (`t_cc32c3d2` / `t_b21f15aa`). Nothing in
+§Context–§Alternatives above is retracted: those sections document the state at
+the GREEN head, and the follow-ups' own records document what followed.
