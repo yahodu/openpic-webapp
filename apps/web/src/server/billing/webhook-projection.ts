@@ -39,6 +39,15 @@ import { getPlatformSettings, type PlatformSettings } from "@/server/settings/pl
  *    row, the subscription patch and the domain events in **one transaction**
  *    (§23 — money and access move together).
  *
+ * Ordering is enforced **inside** that transaction, not by the read that
+ * precedes it: the `subscriptions` write is conditional on
+ * `lastProviderEventAt` still being absent or older than this event's instant
+ * (ADR-0443). The pre-transaction read is only a cheap short-circuit — two
+ * concurrent projections for one subscription both pass it, so the conditional
+ * write is what actually decides which one may apply, and a zero-match write
+ * aborts the transaction so the loser persists no ledger row and emits no
+ * domain event.
+ *
  * The applier is exported so OP-111's `webhook-projection-sweep` re-projects a
  * row the route left at `processedAt: null`; the route's post-response
  * `after()` work calls the same seam.
@@ -549,7 +558,12 @@ async function applyProjection(
     return ignore(row, "nothing_to_apply");
   }
 
-  await applyDecision(db, clock, now, row, subscription, event, eventAt, decision);
+  const outcome = await applyDecision(db, clock, now, row, subscription, event, eventAt, decision);
+  if (outcome === "ignored") {
+    // The conditional write found the watermark already at/behind a newer
+    // event's instant: a concurrent projection committed first (§10.1 step 6).
+    return ignore(row, "out_of_order");
+  }
   return "applied";
 }
 
@@ -592,8 +606,36 @@ function ledgerDocument(
 }
 
 /**
+ * Raised inside the projection transaction when the conditional subscription
+ * write matched **no** document.
+ *
+ * That means the stored watermark had already advanced to (or past) this
+ * event's instant — a newer projection for the same subscription committed
+ * first — so this event may not apply. Throwing aborts the transaction, which
+ * is what keeps the loser's ledger row and domain events from persisting; the
+ * caller maps it to an `out_of_order` `ignored` result.
+ */
+class OutOfOrderProjectionError extends Error {
+  constructor() {
+    super("subscription watermark already advanced past this event");
+    this.name = "OutOfOrderProjectionError";
+  }
+}
+
+/**
  * Write the decision: ledger insert + subscription patch + domain events, all in
  * one transaction (§23).
+ *
+ * The subscription write is the ordering guard, not merely an update: it is
+ * conditional on the stored `lastProviderEventAt` being absent, `null`, or
+ * strictly older than `eventAt` (§10.1 step 6, ADR-0443). A zero-match write
+ * throws {@link OutOfOrderProjectionError} — before the ledger insert and the
+ * emits — so the transaction aborts without persisting anything from an event
+ * that must not apply, and `withTransaction`'s retry re-evaluates the same
+ * condition against the latest committed row.
+ *
+ * @returns `"applied"` once the transaction committed, or `"ignored"` when the
+ *   watermark had already moved past this event.
  */
 async function applyDecision(
   db: Db,
@@ -604,44 +646,68 @@ async function applyDecision(
   event: NormalizedProviderEvent,
   eventAt: Date,
   decision: ProjectionDecision
-): Promise<void> {
+): Promise<"applied" | "ignored"> {
   const subscriptions = platformRepo(db).collection(COLLECTIONS.subscriptions);
   const ledger = platformRepo(db).collection(COLLECTIONS.billingTransactions);
   const tenantId = String(subscription.tenantId);
   const subscriptionId = subscription._id.toHexString();
 
-  await withTransaction(async (session: ClientSession) => {
-    if (decision.transaction !== null) {
-      await ledger.insertOne(
-        ledgerDocument(row, subscription, event, eventAt, now, decision.transaction),
-        { session }
-      );
-    }
-    if (decision.subscriptionPatch !== null) {
-      await subscriptions.updateOne(
-        { _id: subscription._id },
-        {
-          $set: {
-            ...decision.subscriptionPatch,
-            lastProviderEventAt: eventAt,
-            updatedAt: now,
+  try {
+    await withTransaction(async (session: ClientSession) => {
+      if (decision.subscriptionPatch !== null) {
+        // The watermark check is fused into the write: only a row whose
+        // watermark is still behind this event may take the patch. A
+        // concurrent newer projection that committed first makes this match
+        // zero documents, whatever order the two transactions reach the
+        // engine in.
+        const guarded = await subscriptions.updateOne(
+          {
+            _id: subscription._id,
+            $or: [
+              { lastProviderEventAt: { $exists: false } },
+              { lastProviderEventAt: null },
+              { lastProviderEventAt: { $lt: eventAt } },
+            ],
           },
-        },
-        { session }
-      );
+          {
+            $set: {
+              ...decision.subscriptionPatch,
+              lastProviderEventAt: eventAt,
+              updatedAt: now,
+            },
+          },
+          { session }
+        );
+        if (guarded.matchedCount === 0) {
+          throw new OutOfOrderProjectionError();
+        }
+      }
+      if (decision.transaction !== null) {
+        await ledger.insertOne(
+          ledgerDocument(row, subscription, event, eventAt, now, decision.transaction),
+          { session }
+        );
+      }
+      for (const eventKey of decision.emittedKeys) {
+        await emitDomainEvent(
+          {
+            eventKey,
+            tenantId,
+            actorRef: { kind: "system", id: event.provider },
+            subjectRef: { kind: "subscription", id: subscriptionId },
+            payload: { subscriptionId },
+            dedupeKey: `${eventKey}:${decision.transaction?.idempotencyKey ?? String(row._id)}`,
+          },
+          { db, clock, session }
+        );
+      }
+    });
+  } catch (error: unknown) {
+    if (error instanceof OutOfOrderProjectionError) {
+      return "ignored";
     }
-    for (const eventKey of decision.emittedKeys) {
-      await emitDomainEvent(
-        {
-          eventKey,
-          tenantId,
-          actorRef: { kind: "system", id: event.provider },
-          subjectRef: { kind: "subscription", id: subscriptionId },
-          payload: { subscriptionId },
-          dedupeKey: `${eventKey}:${decision.transaction?.idempotencyKey ?? String(row._id)}`,
-        },
-        { db, clock, session }
-      );
-    }
-  });
+    throw error;
+  }
+
+  return "applied";
 }
