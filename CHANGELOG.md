@@ -1,3 +1,9 @@
+## [1.37.0](https://github.com/yahodu/openpic-webapp/compare/v1.36.0...v1.37.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-108 provider webhook inbox and payment projection ([#311](https://github.com/yahodu/openpic-webapp/issues/311)) ([7d39082](https://github.com/yahodu/openpic-webapp/commit/7d390829894d13da5054a0e84d6e0bd83bc2801d))
+
 ## [1.36.0](https://github.com/yahodu/openpic-webapp/compare/v1.35.2...v1.36.0) (2026-10-25)
 
 ### Features
