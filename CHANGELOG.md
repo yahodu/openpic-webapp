@@ -1,3 +1,9 @@
+## [1.40.0](https://github.com/yahodu/openpic-webapp/compare/v1.39.0...v1.40.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-110 retry charge, cancel, transactions, invoices and add-ons ([#339](https://github.com/yahodu/openpic-webapp/issues/339)) ([7ab9780](https://github.com/yahodu/openpic-webapp/commit/7ab97807f0763107ac6a3a4e2acd99c88fea1670))
+
 ## [1.39.0](https://github.com/yahodu/openpic-webapp/compare/v1.38.0...v1.39.0) (2026-10-25)
 
 ### Features
