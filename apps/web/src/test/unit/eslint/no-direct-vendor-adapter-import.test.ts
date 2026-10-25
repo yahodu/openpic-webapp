@@ -33,6 +33,29 @@ import rule from "../../../../../../eslint-rules/no-direct-vendor-adapter-import
  * Everywhere else (route handlers, services, jobs, sibling payment modules) the
  * caller must depend on the vendor-neutral port or the composition root.
  *
+ * OP-105 follow-up — the two edges the 14 base cases left open (ADR-0389
+ * §Consequences, "Unpinned edges recorded for the Test Author"). The shipped
+ * rule reports only a `Literal` source (`checkSource` returns early for
+ * anything else), so this spec additionally pins:
+ *
+ *   - a dynamic `import()` whose source is a **no-expression template literal**
+ *     (`` import(`@/server/adapters/cashfree/cashfree-provider`) ``) — a
+ *     `TemplateLiteral` with zero expressions and a single cooked string that
+ *     statically resolves into the adapter. It slips past the rule today, so
+ *     these cases are the RED of the follow-up pair and must be reported once
+ *     the GREEN lands (the rule's own JSDoc claims dynamic `import()` "cannot
+ *     slip past the boundary");
+ *   - a template literal **with** an interpolation (`` import(`./adapters/${name}`) ``),
+ *     which is unresolvable and must NOT be reported — no false positives;
+ *   - `export * from "…/cashfree/…"`, which the shipped `ExportAllDeclaration`
+ *     visitor already reports. That pin is a green-from-the-start regression
+ *     guard (it locks the visitor against a future refactor), not a RED.
+ *
+ * A CommonJS `require("../adapters/cashfree/…")` is deliberately NOT pinned:
+ * `apps/web/src` is ESM-only, the boundary is registered for `apps/web/src/**`,
+ * and the rule's scope is ESM import/export syntax — a CJS form is out of scope
+ * for this rule and needs its own `no-restricted-require`.
+ *
  * Contract the implementation owes:
  *   - module: eslint-rules/no-direct-vendor-adapter-import.mjs (default export,
  *     carrying the JSDoc `@type {import("eslint").Rule.RuleModule}` annotation
@@ -95,6 +118,21 @@ ruleTester.run("no-direct-vendor-adapter-import", rule, {
       code: 'import { createNovuTransport } from "@/server/adapters/novu/novu-transport";',
       filename: `${WEB_SRC}/server/services/billing.ts`,
     },
+    {
+      // Follow-up characterization: a template literal WITH an interpolation is
+      // unresolvable, so the rule must stay quiet — no false positives.
+      name: "a dynamic import with an interpolated template literal is unresolvable and not reported",
+      code: "const provider = await import(`./adapters/${name}`);",
+      filename: `${WEB_SRC}/server/services/billing.ts`,
+    },
+    {
+      // Follow-up characterization: even a partially-static template literal
+      // whose cooked prefix already looks like the adapter directory is
+      // unresolvable, so a naive prefix match must not flag it.
+      name: "a dynamic import with an interpolated template literal is not reported even when its prefix looks like the adapter path",
+      code: "const provider = await import(`@/server/adapters/cashfree/${file}`);",
+      filename: `${WEB_SRC}/server/services/billing.ts`,
+    },
   ],
   invalid: [
     {
@@ -137,6 +175,33 @@ ruleTester.run("no-direct-vendor-adapter-import", rule, {
       name: "a job must not import the vendor adapter",
       code: 'import { createCashfreeProvider } from "@/server/adapters/cashfree/cashfree-provider";',
       filename: `${WEB_SRC}/server/jobs/reconcile.ts`,
+      errors: [{ messageId: "noDirectVendorAdapterImport" }],
+    },
+    {
+      // Follow-up RED: a no-expression template literal is a `TemplateLiteral`
+      // with a single cooked string and statically resolves into the adapter,
+      // yet the shipped `checkSource` reports only `Literal` sources, so this
+      // case FAILS until the GREEN reads `node.quasis`.
+      name: "a service must not bypass the boundary with a no-expression template-literal dynamic import",
+      code: "const provider = await import(`@/server/adapters/cashfree/cashfree-provider`);",
+      filename: `${WEB_SRC}/server/services/billing.ts`,
+      errors: [{ messageId: "noDirectVendorAdapterImport" }],
+    },
+    {
+      // Follow-up RED: the same hole via a relative specifier, which must resolve
+      // into the adapter exactly like the literal relative import above.
+      name: "a service must not reach the vendor adapter by relative path in a no-expression template-literal dynamic import",
+      code: "const provider = await import(`../adapters/cashfree/cashfree-provider`);",
+      filename: `${WEB_SRC}/server/services/billing.ts`,
+      errors: [{ messageId: "noDirectVendorAdapterImport" }],
+    },
+    {
+      // Follow-up characterization (green from the start): `export * from` is
+      // already reported by the shipped `ExportAllDeclaration` visitor. This pin
+      // is a regression guard for that visitor, NOT a RED.
+      name: "a service must not re-export everything from the vendor adapter",
+      code: 'export * from "@/server/adapters/cashfree/cashfree-provider";',
+      filename: `${WEB_SRC}/server/services/billing.ts`,
       errors: [{ messageId: "noDirectVendorAdapterImport" }],
     },
   ],
