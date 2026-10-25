@@ -166,6 +166,23 @@ export interface ChargeOnceResult {
   readonly externalRefs: readonly ProviderRef[];
 }
 
+/** What {@link PaymentProvider.cancelMandate} needs (OP-109, ADR-0460 §1). */
+export interface CancelMandateInput {
+  /** The mandate to release. */
+  readonly ref: ProviderRef;
+}
+
+/**
+ * What {@link PaymentProvider.cancelMandate} answers.
+ *
+ * The cancelled mandate's normalized status — for a recurring mandate that is
+ * `cancelled` + `revoked` — so a caller can store it on the subscription row
+ * without re-reading the vendor.
+ */
+export interface CancelMandateResult {
+  readonly status: NormalizedStatus;
+}
+
 /**
  * How an adapter is configured.
  *
@@ -191,12 +208,18 @@ export interface PaymentProviderConfig {
  * `normalizeStatus` / `normalizeFailureCategory` are the two "vendor strings
  * never leave the adapter" functions of §10.1.1; `verifyWebhook` /
  * `parseWebhook` are steps 1–2 and 3 of the §10.1 handler order.
+ *
+ * `cancelMandate` is the one shared cancel seam: OP-109's upgrade releases the
+ * old mandate with it and OP-110's `POST /billing/cancel` cancels the live one,
+ * so its name and wire shape are pinned once (ADR-0460 §1).
  */
 export interface PaymentProvider {
   /** Create a recurring mandate and return the hosted authorization URL. */
   createMandate(input: CreateMandateInput): Promise<CreateMandateResult>;
   /** Charge an existing mandate on demand, keyed by the caller's idempotency key. */
   chargeOnce(input: ChargeOnceInput): Promise<ChargeOnceResult>;
+  /** Cancel a recurring mandate, answering its normalized (terminal) status. */
+  cancelMandate(input: CancelMandateInput): Promise<CancelMandateResult>;
   /** Read the mandate's live status, normalized. */
   fetchStatus(ref: ProviderRef): Promise<FetchStatusResult>;
   /** Verify a webhook signature over the raw body, within the replay window. */

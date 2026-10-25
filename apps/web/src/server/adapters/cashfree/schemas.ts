@@ -60,7 +60,22 @@ export const cashfreeSubscriptionStatusResponseSchema = z.object({
   next_schedule_date: z.string().nullable(),
 });
 
-/** The `POST /pg/subscriptions/{id}/payments` (on-demand charge) response body. */
+/**
+ * The `POST /pg/subscriptions/{id}/manage` (Manage Subscription) request body
+ * (OP-109, ADR-0460 §1).
+ *
+ * Strict, like {@link cashfreeChargeRequestSchema}: the port exposes exactly the
+ * `CANCEL` action, so the body is a fixed two-field projection and an
+ * unrecognised key is a projection bug rather than vendor drift. Cashfree's
+ * v2025-01-01 reference also documents `PAUSE`/`ACTIVATE`/`CHANGE_PLAN`, but no
+ * lane calls them, so the literal keeps the vendor vocabulary out of the port
+ * (ADR-0380 §1).
+ */
+export const cashfreeManageSubscriptionRequestSchema = z
+  .object({ subscription_id: z.string().min(1), action: z.literal("CANCEL") })
+  .strict();
+
+/** The Cashfree `POST /pg/subscriptions/{id}/payments` (on-demand charge) response body. */
 export const cashfreeChargeResponseSchema = z.object({
   payment_id: z.string().min(1),
   cf_payment_id: z.string().min(1),
@@ -133,4 +148,7 @@ export type CashfreeSubscriptionStatusResponse = z.infer<
 >;
 export type CashfreeChargeRequest = z.infer<typeof cashfreeChargeRequestSchema>;
 export type CashfreeChargeResponse = z.infer<typeof cashfreeChargeResponseSchema>;
+export type CashfreeManageSubscriptionRequest = z.infer<
+  typeof cashfreeManageSubscriptionRequestSchema
+>;
 export type CashfreeWebhookEvent = z.infer<typeof cashfreeWebhookEventSchema>;

@@ -29,6 +29,7 @@ import { z } from "zod";
 
 import { UpstreamContractError } from "@/server/adapters/transport-error";
 import type {
+  CancelMandateResult,
   ChargeOnceInput,
   ChargeOnceResult,
   CreateMandateInput,
@@ -78,6 +79,18 @@ const CHECKOUT_EXPIRES_AT = "2099-12-31T23:59:59.000Z";
 
 /** The status a ref this provider minted is reported as by {@link fetchStatus}. */
 const MEMORY_STATUS: NormalizedStatus = { status: "active", mandateStatus: "active" };
+
+/**
+ * The status a cancelled mandate is reported as by {@link cancelMandate}.
+ *
+ * Terminal and deterministic — the in-process adapter holds no state, so a
+ * cancel always answers the same pair the Cashfree `CANCELLED` status
+ * normalizes to.
+ */
+const MEMORY_CANCELLED_STATUS: NormalizedStatus = {
+  status: "cancelled",
+  mandateStatus: "revoked",
+};
 
 /**
  * The status pair for each value of *our own* subscription-status vocabulary.
@@ -261,6 +274,13 @@ export function memoryPaymentProvider(
       // replay of one intent is observably one charge with no stored state.
       const id = `mem_pay_${digest(input.idempotencyKey)}`;
       return Promise.resolve({ externalRefs: [refFor(env, "payment", id)] });
+    },
+
+    cancelMandate(): Promise<CancelMandateResult> {
+      // Cancelling a mandate is terminal and deterministic: no vendor is
+      // reached, so the answer is always the same `cancelled` + `revoked` pair
+      // (`normalizeStatus` of a cancelled subscription).
+      return Promise.resolve({ status: MEMORY_CANCELLED_STATUS });
     },
 
     fetchStatus(): Promise<FetchStatusResult> {

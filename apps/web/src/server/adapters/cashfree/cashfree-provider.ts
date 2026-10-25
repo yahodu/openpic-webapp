@@ -27,6 +27,8 @@ import {
   UpstreamContractError,
 } from "@/server/adapters/transport-error";
 import type {
+  CancelMandateInput,
+  CancelMandateResult,
   ChargeOnceInput,
   ChargeOnceResult,
   CreateMandateInput,
@@ -51,6 +53,7 @@ import {
   cashfreeChargeResponseSchema,
   cashfreeCreateSubscriptionRequestSchema,
   cashfreeCreateSubscriptionResponseSchema,
+  cashfreeManageSubscriptionRequestSchema,
   cashfreeSubscriptionStatusResponseSchema,
   cashfreeWebhookEventSchema,
 } from "./schemas";
@@ -601,6 +604,29 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
       return {
         externalRefs: [refFor(config.env, "payment", response.cf_payment_id)],
       };
+    },
+
+    async cancelMandate(input: CancelMandateInput): Promise<CancelMandateResult> {
+      const request = cashfreeManageSubscriptionRequestSchema.safeParse({
+        subscription_id: input.ref.id,
+        action: "CANCEL",
+      });
+      if (!request.success) {
+        throw new TransportError(
+          "The manage-subscription request did not match the pinned Cashfree contract.",
+          { retryable: false, code: "invalid_request", cause: request.error }
+        );
+      }
+
+      const response = await call({
+        operation: "cancelMandate",
+        url: `${baseUrl}/pg/subscriptions/${encodeURIComponent(input.ref.id)}/manage`,
+        method: "POST",
+        schema: cashfreeCreateSubscriptionResponseSchema,
+        body: request.data,
+      });
+
+      return { status: normalizeWireStatus("cancelMandate", response.subscription_status) };
     },
 
     async fetchStatus(ref: ProviderRef): Promise<FetchStatusResult> {
