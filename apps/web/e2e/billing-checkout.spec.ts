@@ -48,6 +48,18 @@ const CSRF_HEADERS = {
   "x-requested-with": "XMLHttpRequest",
 };
 
+/**
+ * The sorted own keys of a JSON object value.
+ *
+ * §0.15 is a rule about **fields**, so the never-return check has to look at key
+ * names: a `not.toMatch(/cashfree/i)` sweep over the serialised body is a rule
+ * about *strings* — it would pass a `cf_subscription_id` leak, because neither
+ * that key nor a realistic value contains the vendor name.
+ */
+function keysOf(value: unknown): string[] {
+  return value !== null && typeof value === "object" ? Object.keys(value).sort() : [];
+}
+
 test.describe("POST /api/v1/tenants/current/billing/checkout", () => {
   test("E1: an owner checks out and the subscription read shows it as incomplete", async ({
     request,
@@ -93,22 +105,30 @@ test.describe("POST /api/v1/tenants/current/billing/checkout", () => {
 
     // Assert — the §3.3 envelope, with the opaque hosted-mandate URL.
     expect(checkout.status()).toBe(201);
-    const envelope = (await checkout.json()) as {
-      subscriptionId?: unknown;
-      status?: unknown;
-      checkout?: { kind?: unknown; url?: unknown; expiresAt?: unknown };
-      paymentMethodKind?: unknown;
-    };
+    const envelope = (await checkout.json()) as Record<string, unknown>;
+    const checkoutView = envelope.checkout as
+      { kind?: unknown; url?: unknown; expiresAt?: unknown } | undefined;
     expect(envelope.status).toBe("incomplete");
     expect(envelope.paymentMethodKind).toBe("mandate_upi");
     expect(typeof envelope.subscriptionId).toBe("string");
-    expect(envelope.checkout?.kind).toBe("redirect");
-    expect(typeof envelope.checkout?.url).toBe("string");
-    expect(String(envelope.checkout?.url).startsWith(MEMORY_CHECKOUT_PREFIX)).toBe(true);
-    expect(checkout.headers().location).toBe(envelope.checkout?.url);
+    expect(checkoutView?.kind).toBe("redirect");
+    expect(typeof checkoutView?.url).toBe("string");
+    expect(String(checkoutView?.url).startsWith(MEMORY_CHECKOUT_PREFIX)).toBe(true);
+    expect(checkout.headers().location).toBe(checkoutView?.url);
 
-    // No vendor field may reach the client (§3.3, §0.15).
-    expect(JSON.stringify(envelope)).not.toMatch(/cashfree/i);
+    // No vendor field may reach the client (§3.3, §0.15). This is a rule about
+    // **fields**, so the pin is the exact §0.5 key set of the bare single
+    // resource at both levels — not a substring sweep that a `cf_subscription_id`
+    // key (or any other vendor-side id) would slip through.
+    expect(keysOf(envelope)).toEqual([
+      "amountMinor",
+      "checkout",
+      "currency",
+      "paymentMethodKind",
+      "status",
+      "subscriptionId",
+    ]);
+    expect(keysOf(envelope.checkout)).toEqual(["expiresAt", "kind", "url"]);
 
     // The state is `incomplete` and stays there: only a verified webhook may
     // move it to `active`.

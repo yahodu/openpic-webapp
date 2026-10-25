@@ -87,6 +87,9 @@ import { server } from "./setup";
 
 const TENANTS_PATH = "/api/v1/tenants";
 
+/** The Better Auth-owned, platform-scope `user` collection (schema §13.1). */
+const BETTER_AUTH_USER = "user";
+
 /** An RFC 3339 UTC timestamp string. */
 const isoDateTime = z
   .string()
@@ -117,6 +120,9 @@ const STARTER_AMOUNT_MINOR = 49_900;
 
 /** The fixed vendor decision expiry every fixture carries (already UTC `Z`). */
 const FIXTURE_EXPIRES_AT = "2026-11-01T05:00:46.000Z";
+
+/** The phone number on file for the mandate-customer pins (a fixed value). */
+const ACCOUNT_PHONE = "9812345670";
 
 /** The payments selection this suite drives the route with. */
 const PAYMENTS_ENV: Record<string, string> = {
@@ -155,6 +161,14 @@ async function updateProfile(userId: ObjectId, fields: Record<string, unknown>):
   const result = await app.db
     .collection(COLLECTIONS.userProfiles)
     .updateOne({ userId }, { $set: { ...fields, updatedAt: new Date() } });
+  expect(result.matchedCount).toBe(1);
+}
+
+/** Replace fields on the acting account's Better Auth `user` row (schema §13.1). */
+async function updateAccount(userId: ObjectId, fields: Record<string, unknown>): Promise<void> {
+  const result = await app.db
+    .collection(BETTER_AUTH_USER)
+    .updateOne({ _id: userId }, { $set: fields });
   expect(result.matchedCount).toBe(1);
 }
 
@@ -320,6 +334,64 @@ function countProviderCalls(): { readonly calls: () => number } {
     })
   );
   return { calls: () => calls };
+}
+
+/** The `customer_details` block the adapter sends (§3.3 derives it server-side). */
+interface MandateCustomerDetails {
+  readonly customer_name: string;
+  readonly customer_email: string;
+  readonly customer_phone: string;
+}
+
+/**
+ * Capture the mandate request the adapter sends, answering it successfully.
+ *
+ * §3.3 sends no customer in the request, so the vendor wire body is the only
+ * place the provenance of `customer_details` is observable.
+ */
+function captureMandateRequest(): { readonly customer: () => MandateCustomerDetails } {
+  let captured: unknown = null;
+  server.use(
+    http.post(CAShFREE_CREATE_URL, async ({ request }) => {
+      captured = await request.json();
+      return HttpResponse.json(
+        makeCashfreeCreateSubscriptionResponse({ subscription_expiry_time: FIXTURE_EXPIRES_AT })
+      );
+    })
+  );
+  return {
+    customer: () => cashfreeCreateSubscriptionRequestSchema.parse(captured).customer_details,
+  };
+}
+
+/**
+ * Insert a **retired** (`active: false`) clone of the `starter` plan.
+ *
+ * §3.1 excludes a retired plan from the catalogue, so it is not for sale; the
+ * clone keeps `selfServe: true` and a sellable price with its vendor ref, so
+ * `active` is the only fact that makes the request unsellable. A distinct key
+ * keeps the shared seed untouched.
+ */
+async function seedRetiredPlan(): Promise<string> {
+  const starter = await app.db.collection(COLLECTIONS.plans).findOne({ key: "starter" });
+  if (starter === null) {
+    throw new Error("the seeded starter plan is missing");
+  }
+  const key = "retired-starter";
+  await app.db.collection(COLLECTIONS.plans).insertOne({
+    key,
+    name: "Retired Starter",
+    description: starter.description,
+    marketingFeatures: starter.marketingFeatures,
+    tierRank: 9,
+    selfServe: true,
+    salesAssisted: false,
+    active: false,
+    version: 1,
+    prices: starter.prices,
+    entitlements: starter.entitlements,
+  });
+  return key;
 }
 
 describe("POST /api/v1/tenants/{tenantId}/billing/checkout", () => {
@@ -723,5 +795,286 @@ describe("POST /api/v1/tenants/{tenantId}/billing/checkout", () => {
     expect(response.status).toBe(404);
     expect(await errorEnvelope(response)).toMatchObject({ code: "not_found" });
     expect(provider.calls()).toBe(0);
+  });
+
+  it("I7: two concurrent checkouts with different Idempotency-Keys answer 201 and 409 and call the provider once", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-double-submit",
+    });
+    const tenantPath = tenantId.toHexString();
+    const provider = countProviderCalls();
+
+    // Two owners' clicks land together. §3.3 says a live subscription is the
+    // `409 subscription_already_active`, and the one-live-row partial index
+    // (`subscriptions_active_tenant_unique`, `{cancelledAt: null}`) is what
+    // arbitrates the race — so exactly one caller may create a mandate, and the
+    // loser must never surface the raw duplicate-key error as a `500`.
+    const [one, two] = await Promise.all([
+      startCheckout(
+        checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+      ),
+      startCheckout(
+        checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+      ),
+    ]);
+
+    const statuses = [one.status, two.status].sort((left, right) => left - right);
+    expect(statuses).toEqual([201, 409]);
+
+    const winner = one.status === 201 ? one : two;
+    const loser = one.status === 201 ? two : one;
+    const winnerBody = await body(winner);
+    const error = await errorEnvelope(loser);
+    expect(error).toMatchObject({ code: "subscription_already_active" });
+
+    // Exactly one mandate left the building, and the workspace holds exactly one
+    // live row: the winner's `incomplete` row, still carrying its hosted link.
+    expect(provider.calls()).toBe(1);
+    const live = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .find({ tenantId: tenantPath, cancelledAt: null })
+      .toArray();
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({
+      status: "incomplete",
+      mandateStatus: "pending",
+      cancelReason: null,
+    });
+    expect(live[0]?.checkout).toMatchObject({ url: expect.any(String) });
+    expect(String(live[0]?._id)).toBe(winnerBody.subscriptionId);
+
+    // The refusal names the row that won the race, and nothing was retired on
+    // the way in.
+    expect(error.details).toMatchObject({ subscriptionId: winnerBody.subscriptionId });
+    expect(
+      await app.db
+        .collection(COLLECTIONS.subscriptions)
+        .countDocuments({ tenantId: tenantPath, status: "expired" })
+    ).toBe(0);
+  });
+
+  it("I7b: a checkout that loses the race never retires the winner's in-flight row", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-in-flight",
+    });
+    const tenantPath = tenantId.toHexString();
+
+    // Hold the first request's vendor call open, so the first row is provably
+    // still in flight (inserted, hosted link not yet stored) when the second
+    // request arrives — the exact window in which a loser used to observe a
+    // link-less live row, answer `restart` and expire the winner's mandate.
+    let calls = 0;
+    let releaseFirst: () => void = () => undefined;
+    const inFlight = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    server.use(
+      http.post(CAShFREE_CREATE_URL, async () => {
+        calls += 1;
+        if (calls === 1) {
+          await inFlight;
+        }
+        return HttpResponse.json(
+          makeCashfreeCreateSubscriptionResponse({ subscription_expiry_time: FIXTURE_EXPIRES_AT })
+        );
+      })
+    );
+
+    const first = startCheckout(
+      checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+    );
+
+    // The row is inserted before the vendor call, so its appearance is the
+    // deterministic signal that the first request is past its decision point.
+    const deadline = Date.now() + 10_000;
+    while (
+      (await app.db
+        .collection(COLLECTIONS.subscriptions)
+        .countDocuments({ tenantId: tenantPath })) === 0
+    ) {
+      if (Date.now() > deadline) {
+        throw new Error("the first checkout never stored its incomplete row");
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 5);
+      });
+    }
+
+    const second = startCheckout(
+      checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+    );
+    await second;
+    releaseFirst();
+    const early = await first;
+
+    expect(early.status).toBe(201);
+    const earlyBody = await body(early);
+
+    // The row the first caller named must still be the live one; the second
+    // request may not expire or cancel it, leave a second live row behind, or
+    // reach the vendor a second time.
+    const live = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .find({ tenantId: tenantPath, cancelledAt: null })
+      .toArray();
+    expect(
+      live.map((row) => ({
+        id: String(row._id),
+        status: row.status,
+        cancelReason: row.cancelReason,
+      }))
+    ).toEqual([{ id: earlyBody.subscriptionId, status: "incomplete", cancelReason: null }]);
+    expect(live[0]?.checkout).toMatchObject({ url: expect.any(String) });
+    expect(
+      await app.db
+        .collection(COLLECTIONS.subscriptions)
+        .countDocuments({ tenantId: tenantPath, status: "expired" })
+    ).toBe(0);
+    expect(calls).toBe(1);
+  });
+
+  it("I8: a retired plan is refused as not sold, not as a sales-assisted tier", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-retired-plan",
+    });
+    const planKey = await seedRetiredPlan();
+    const provider = countProviderCalls();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+        body: checkoutBody({ planKey }),
+      })
+    );
+
+    // §3.1 excludes a retired plan (`active: false`) from the catalogue, so it
+    // is not for sale: the same not-sold refusal a *missing* plan gets, naming
+    // the request field — not the sales-assisted refusal, whose `contactSalesUrl`
+    // points a buyer at sales for a tier they can no longer buy at all.
+    expect(response.status).toBe(422);
+    const error = await errorEnvelope(response);
+    expect(error).toMatchObject({ code: "validation_failed" });
+    expect(error.details).toMatchObject({
+      fields: [expect.objectContaining({ path: "planKey" })],
+    });
+    expect(error.details).not.toHaveProperty("contactSalesUrl");
+    expect(provider.calls()).toBe(0);
+  });
+
+  const CUSTOMER_NAME_CASES: readonly {
+    readonly slug: string;
+    readonly description: string;
+    readonly displayName: string | null;
+    readonly accountName: string | null;
+    readonly expected: string;
+  }[] = [
+    {
+      slug: "op107-customer-profile-name",
+      description: "the profile's display name",
+      displayName: "Ada Lovelace",
+      accountName: "Account Holder",
+      expected: "Ada Lovelace",
+    },
+    {
+      slug: "op107-customer-account-name",
+      description: "the account's name when the profile has none",
+      displayName: null,
+      accountName: "Account Holder",
+      expected: "Account Holder",
+    },
+    {
+      slug: "op107-customer-placeholder-name",
+      description: "the placeholder when neither is set",
+      displayName: null,
+      accountName: null,
+      expected: "OpenPic customer",
+    },
+  ];
+
+  it.each(CUSTOMER_NAME_CASES)("I9: names the mandate customer after $description", async (row) => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: row.slug,
+    });
+    await updateProfile(owner.userId, { displayName: row.displayName });
+    await updateAccount(owner.userId, { name: row.accountName, phoneNumber: ACCOUNT_PHONE });
+    const mandate = captureMandateRequest();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(response.status).toBe(201);
+    const customer = mandate.customer();
+    expect(customer.customer_name).toBe(row.expected);
+    // The account row stays the source of the address and the number.
+    expect(customer.customer_email).toBe(owner.identity.email);
+    expect(customer.customer_phone).toBe(ACCOUNT_PHONE);
+  });
+
+  it("I9b: the mandate customer's email never falls back to the display-name placeholder", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-customer-email-fallback",
+    });
+    await updateAccount(owner.userId, { email: null });
+    const mandate = captureMandateRequest();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(response.status).toBe(201);
+    const customer = mandate.customer();
+    // The vendor requires a non-empty `customer_email`, but a display name in
+    // an address field is not an address: the fallback is the platform's own
+    // no-reply address (ADR-0421 follow-up).
+    expect(customer.customer_email).toBe("no-reply@openpic.in");
+    expect(customer.customer_email).not.toBe(customer.customer_name);
+  });
+
+  it("I9c: the mandate customer's phone falls back to the documented placeholder", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-customer-phone-fallback",
+    });
+    await updateAccount(owner.userId, { phoneNumber: null });
+    const mandate = captureMandateRequest();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(mandate.customer().customer_phone).toBe("0000000000");
   });
 });
