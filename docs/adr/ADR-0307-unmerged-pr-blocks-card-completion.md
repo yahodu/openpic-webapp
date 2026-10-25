@@ -34,7 +34,7 @@ as landed:
 
 - [ADR-0401](ADR-0401-op106-subscription-read-green.md) §"Post-review status" read
   _"**F1, F2 and F3 have since been pinned** by the OP-106 follow-up TEST card
-  `t_09e53bea` …"_ and cited PR #299 as _"open at the time of writing"_ — an honest
+  `t_09e53bea` …"_ and cited PR #299 as still unmerged at the time — an honest
   caveat, but the sentence's subject was already the pinned fact;
 - [ADR-0402](ADR-0402-op106-subscription-read-followup-pins.md) — the pins' own
   record, committed on that very branch — was unreachable from `main` entirely.
