@@ -2,6 +2,7 @@ import type {
   AccountErrorCode,
   AppErrorCode,
   AuthErrorCode,
+  BillingErrorCode,
   EntitlementErrorCode,
   ErrorCode,
   InternalErrorCode,
@@ -315,6 +316,41 @@ export const ENTITLEMENT_ERROR_TRANSPORT: Readonly<
 };
 
 /**
+ * Transport for the billing-checkout codes (contract §3.3, Appendix A.2/A.4).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the tenancy and
+ * entitlement codes: that table stays the exact base Appendix A copy.
+ * `invalid_return_url` (`422`, `{ allowedOrigins }`) and `plan_not_self_serve`
+ * (`422`, `{ contactSalesUrl }`) are request-shaped refusals;
+ * `subscription_already_active` (`409`) reports the live row that blocks the
+ * checkout; `upstream_unavailable` (`502`, **retryable**,
+ * `{ provider, retryAfterSeconds }`) is the payment-provider failure the client
+ * may retry (ADR-0421).
+ */
+export const BILLING_ERROR_TRANSPORT: Readonly<Record<BillingErrorCode, ErrorCatalogEntry>> = {
+  invalid_return_url: {
+    status: 422,
+    retryable: false,
+    message: "The return URL is not on an allowed origin.",
+  },
+  plan_not_self_serve: {
+    status: 422,
+    retryable: false,
+    message: "This plan is not available for self-serve checkout.",
+  },
+  subscription_already_active: {
+    status: 409,
+    retryable: false,
+    message: "This workspace already has a subscription.",
+  },
+  upstream_unavailable: {
+    status: 502,
+    retryable: true,
+    message: "The payment provider is temporarily unavailable.",
+  },
+};
+
+/**
  * Every client-facing code's transport: Appendix A first, then the pipeline,
  * auth, request-shape, internal, account, notification and tenancy tables.
  */
@@ -328,6 +364,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...NOTIFICATION_ERROR_TRANSPORT,
   ...TENANCY_ERROR_TRANSPORT,
   ...ENTITLEMENT_ERROR_TRANSPORT,
+  ...BILLING_ERROR_TRANSPORT,
 };
 
 /**
