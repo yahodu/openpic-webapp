@@ -101,5 +101,40 @@ assert the log entry and the thrown error, never a helper signature.
 
 ## Review sign-off
 
-_Pending. This card ends with `kanban_complete` to release the gated GREEN `t_92de5343`;
-the pins are reviewed inside that PR._
+_Reviewed inside the GREEN's PR [#297](https://github.com/yahodu/openpic-webapp/pull/297) at
+head `f2e8ae7` — round 3 (contract lens), verdict **APPROVED**; the PR is squash-merged to
+`main` (merge commit `2669c30`, verified an ancestor of `origin/main`)._
+
+This card ends with `kanban_complete` rather than `kanban_request_review` by design: the
+pins are reviewed as a frozen deliverable inside the GREEN's PR, per the lane's RED→GREEN
+precedent. That review ran on `t_92de5343` and is recorded here.
+
+- **Lens history on the same card.** Round 1 (artifact) and round 2 (execution) both
+  returned `changes_requested` on the recurring **shared ADR-ledger collision** — the pair
+  was minted at `0382` in round 1 and renumbered to `0383`/`0384` in round 2, each time
+  after a sibling card reached the trunk first. Round 3 (contract) verified the renumber to
+  **`0386`/`0387`**, the lane `Next free` cell then reading **`0388`**, and found **no
+  duplicate ADR number** on the merged tree (the repo guard `adr-numbering` **29/29**).
+- **The pins are byte-identical to this card's head.** The spec
+  `apps/web/src/test/integration/payments-cashfree-drift-log.test.ts` still hashes
+  `sha256 e86ae726cb14…95411` at `94f5af0` and on the merged tree (re-measured on
+  `origin/main`), and was **re-run green** on the merged head: **4 passed (4)**.
+- **Independently reproduced on the merged tree:** pins **4 passed (4)**; full unit
+  **108 files / 1859 passed | 3 skipped**; full integration **76 files / 545 passed**;
+  combined `--coverage` **184 files / 2404 passed | 3 skipped, exit 0** →
+  **92.39 / 81.14 / 95.9 / 92.88**; `tsc` exit `0`; ESLint 0 errors / 0 warnings on the
+  touched files; `prettier --check` clean.
+- **Contract mapping (round 3).** Exactly one `payments.upstream_contract_violation` per
+  wire path, each carrying the pinned `operation` (`parseWebhook` / `fetchStatus`); the
+  public port `normalizeStatus` untouched; no drift line for a status inside the table; no
+  secret, signature or payload in the line; TSDoc on the new helper.
+- **Findings recorded Info-only, no code change:** the `normalizeWireStatus` `catch` is
+  broader than today's single throw, and `createMandate`'s response
+  `subscription_status` is still not table-validated. Both are recorded as observations;
+  neither is carded.
+
+Nothing in this record above is retracted — the pins shipped exactly as decided, and the
+follow-ups' own records document what came after. Follow-up work is cited by **card id
+only** (no ADR number asserted, since its record may renumber while open): the boundary-lint
+pair `t_d3a8bf6f` (TEST) → `t_b7f8adfd` (GREEN), and the board process card `t_e5485868`,
+which owns the durable fix for the recurring ADR-ledger collision.
