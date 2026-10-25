@@ -33,7 +33,7 @@ the rejected alternatives are recorded in
 
 | Holder (lane)                       | Reserved range                  | Next free |
 | ----------------------------------- | ------------------------------- | --------- |
-| board-wide / process (orchestrator) | `0300`–`0319`                   | `0307`    |
+| board-wide / process (orchestrator) | `0300`–`0319`                   | `0308`    |
 | OP-96 notifications follow-up       | `0146`–`0179`                   | `0149`    |
 | OP-97 in-app feed                   | `0180`–`0199`                   | `0183`    |
 | OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
@@ -64,7 +64,13 @@ F1 GREEN review sign-off — card `t_734fb1a0`, PR #240 merge `c44c311`), and `0
 `OP-101-task-stale-draft-pr-reconciliation`), and `0305` (ADR-0305, the CI-evidence
 rule — a PR conflicting with `main` starts no `pull_request` run, so evidence must
 be a run on the head SHA — card `t_f141ecd8`, branch
-`OP-101-task-ci-evidence-guard-adr`). Next free in the block is `0306`.
+`OP-101-task-ci-evidence-guard-adr`), and `0306` (ADR-0306, the stale-branch
+deletion rule — a branch whose content is a subset of `main` is deleted — card
+`t_c362aaf8`, branch `OP-101-task-stale-branch-deletion`), and `0307` (ADR-0307,
+the unmerged-PR rule — a card must not complete on an unmerged deliverable, and an
+open PR is declared in the handoff and gets a follow-up merge lane — card
+`t_892df2ea`, branch `OP-106-task-pr299-docs-tighten`). Next free in the block is
+`0308`.
 
 | ADR                                                                                | Title                                                                                                                   | Status                    |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -213,18 +219,19 @@ be a run on the head SHA — card `t_f141ecd8`, branch
 | [0240](ADR-0240-op99-one-click-unsubscribe-red.md)                                 | OP-99 RED: one-click unsubscribe — signed tokens, the scope reducer and first-party suppressions                        | Accepted                  |
 | [0241](ADR-0241-op99-one-click-unsubscribe-green.md)                               | OP-99 GREEN: the signed-token module, the public unsubscribe route pair and the suppression write                       | Accepted                  |
 | [0242](ADR-0242-op99-red-review-signoff.md)                                        | OP-99 RED review sign-off: unsubscribe contract verified RED; gitleaks scope closed, F2/F4 pins routed                  | Accepted                  |
-| [0300](ADR-0300-adr-number-range-allocation-policy.md)                             | ADR numbers are drawn from per-lane reserved ranges, never the shared high-water mark                                   | Accepted                  |
-| [0301](ADR-0301-ci-audit-dev-vs-prod-scope.md)                                     | Split the `audit` gate: blocking `pnpm audit --prod`, non-blocking `pnpm audit --dev`                                   | Accepted                  |
-| [0302](ADR-0302-adr-number-guard-contract.md)                                      | The `docs/adr/` number guard: its mechanical contract and its deliberate scope boundary                                 | Accepted                  |
 | [0260](ADR-0260-op100-tenant-provisioning-red.md)                                  | OP-100 RED: tenant provisioning, `tenantId` resolution and tenant read/update                                           | Accepted                  |
 | [0261](ADR-0261-op100-tenant-provisioning-green.md)                                | OP-100 GREEN: transactional provisioning, the reusable tenant stage, and the tenancy error transport                    | Accepted                  |
 | [0262](ADR-0262-op100-red-review-signoff.md)                                       | OP-100 RED review sign-off: tenancy contract verified RED; suspension coverage gap routed before the GREEN              | Accepted                  |
 | [0280](ADR-0280-op101-tenant-members-red.md)                                       | OP-101 RED: tenant members — masked contacts, owner protection and soft removal                                         | Accepted                  |
 | [0281](ADR-0281-op101-tenant-members-green.md)                                     | OP-101 GREEN: masking helpers, positional tenant segment, owner protection and soft removal                             | Accepted                  |
+| [0300](ADR-0300-adr-number-range-allocation-policy.md)                             | ADR numbers are drawn from per-lane reserved ranges, never the shared high-water mark                                   | Accepted                  |
+| [0301](ADR-0301-ci-audit-dev-vs-prod-scope.md)                                     | Split the `audit` gate: blocking `pnpm audit --prod`, non-blocking `pnpm audit --dev`                                   | Accepted                  |
+| [0302](ADR-0302-adr-number-guard-contract.md)                                      | The `docs/adr/` number guard: its mechanical contract and its deliberate scope boundary                                 | Accepted                  |
 | [0303](ADR-0303-workflow-shell-safety-guard.md)                                    | The workflow-shell-safety guard and the `pr_checks.yml` env transport: contract, scope boundary and sign-off            | Accepted                  |
 | [0304](ADR-0304-stale-draft-pr-reconciliation.md)                                  | A stale draft RED PR is reconciled against `main` and closed, never merged                                              | Accepted                  |
 | [0305](ADR-0305-ci-evidence-conflicting-pr-suppression.md)                         | CI evidence is a `pull_request` run on the head SHA; a conflicting PR has none                                          | Accepted                  |
 | [0306](ADR-0306-op101-stale-branch-deletion.md)                                    | A stale branch whose content is a subset of `main` is deleted; `main` is the only surviving ref                         | Accepted                  |
+| [0307](ADR-0307-unmerged-pr-blocks-card-completion.md)                             | A card must not complete on an unmerged deliverable; an open PR is declared and gets a merge lane                       | Accepted                  |
 | [0320](ADR-0320-op102-public-plans-endpoint-red.md)                                | OP-102 RED: the public plans endpoint — generic `display`, version ETag, ignored `includeInactive`, separate add-ons    | Accepted                  |
 | [0321](ADR-0321-op102-public-plans-endpoint-green.md)                              | OP-102 GREEN: project the catalogue onto the §3.1/§3.6 served shapes and wire both public reads onto the pipeline       | Accepted                  |
 | [0322](ADR-0322-op102-plans-etag-representation-red.md)                            | OP-102 follow-up RED: pin that the `GET /plans` ETag identifies the served representation                               | Accepted                  |
@@ -365,3 +372,51 @@ _The **OP-105** lane `Next free` cell advanced from `0383` to `0384` (card `t_68
 _The **OP-105** lane `Next free` cell advanced from `0384` to `0385` (card `t_7dd42be8`, OP-105 follow-up GREEN — implement the in-process memory payment provider for e2e; branch `OP-105-task-memory-payment-provider`, worktree `/root/openpic/openpic-webapp/.worktrees/t_68faf9b3`, stacked on the pins head `2771830`). `0384` is the cell's value re-read on the pins head immediately before committing [ADR-0384](ADR-0384-op105-memory-payment-provider-green.md). The GREEN implements the ADR-0383 contract in three production modules — the new in-process adapter `@/server/adapters/memory-payment-provider` (`memoryPaymentProvider(config?)`, `MemoryPaymentProvider` = the port + `signWebhook`), the new synchronous composition root `@/server/payments/get-payment-provider` (`getPaymentProvider()`, reading the selection through `getConfig()`, never `process.env`) and the union widening `PaymentProviderKey = "cashfree" | "memory"` in `@/server/payments/payment-provider` — with `createMandate` and `chargeOnce` as pure functions of their input (a `sha256` digest over an explicit, fixed-order projection of the mandate input / over the caller's `idempotencyKey`, so a replayed intent returns a byte-identical ref with no state map), a **pinned** `expiresAt` (`2099-12-31T23:59:59.000Z`) because ADR-0383 §1 forbids the wall clock, the ADR-0380 signature scheme reused verbatim in `signWebhook` (`base64(HMAC-SHA256(secret, x-webhook-timestamp + rawBody))`, `Date.now()` default timestamp) and in `verifyWebhook` (both headers present, finite timestamp inside the shared ±300 s window, timing-safe compare), a Zod schema of the port's own `NormalizedProviderEvent` as the **wire format** of `parseWebhook` (a non-JSON or off-shape body throws `UpstreamContractError`; Zod strips unknown keys), the exported stable constant `MEMORY_PAYMENT_WEBHOOK_SECRET` as the default secret so two independently constructed instances interoperate, `ReadonlyMap` tables (never a computed object key) for the two unpinned normalizers — `normalizeStatus` reads our own status vocabulary and defaults an unrecognised value to `incomplete`/`pending`, `normalizeFailureCategory` is the identity over our four categories defaulting to `technical`, and `fetchStatus` reports `active`/`active` — and a selector that returns the memory provider under a non-production selection and **fails closed** with `ConfigError(["PAYMENT_PROVIDER"])` for any other selection (no Stripe adapter exists and the `CASHFREE_*` wiring does not yet; OP-107 owns the production wiring). Evidence at the head: the 16 pins are green (`payments-memory-provider.test.ts` 12 + `get-payment-provider.test.ts` 4 — **16 passed (16)**), the unit project is **106 files / 1816 tests passed**, integration **73 files / 521 tests passed**, the combined coverage run **179 files / 2337 tests passed, exit `0`** with statements `92.27 %`, branches `80.86 %`, functions `95.83 %`, lines `92.76 %` and **no gate weakened**, `pnpm typecheck` exit `0` on all three projects, ESLint 0 problems and `prettier --check` clean. The three unpinned port methods are implemented but uncovered (the adapter file measures 42/47 lines, 17/23 branches, 10/14 functions) and are recorded in ADR-0384 as a handoff gap for the Test Author's next cycle, not a reason to relax a threshold. No test, mock, fixture or factory was edited: the diff is the three production modules, this ADR and the README ledger cells. No number outside the lane range `0380`–`0399` is touched._
 
 _The **OP-106** lane `Next free` cell advanced from `0402` to `0403` (card `t_09e53bea`, OP-106 follow-up TEST — pin the subscription read's unpinned edges; branch `OP-106-task-subscription-read-followup-pins`, worktree `/root/openpic/openpic-webapp/.worktrees/t_8f332485`, off `origin/main` `cab62e8`, the `1.31.0` release chore on top of the OP-106 squash `68f73ff`). `0400` is consumed by [ADR-0400](ADR-0400-op106-subscription-read-red.md) (the RED contract) and `0401` by [ADR-0401](ADR-0401-op106-subscription-read-green.md) (the GREEN), so this record takes `0402`, the cell's value re-read at the branch cut immediately before committing [ADR-0402](ADR-0402-op106-subscription-read-followup-pins.md). The card is **test-only** — no production file is touched: five characterisation pins are added to the existing integration spec `subscription-read.test.ts` (zeroed `pendingDue` → `null`; `scheduledChange.effectiveAt`/`updatedAt` serialized as RFC 3339 strings plus the `null` case; the equal-`updatedAt` multi-row tie-break tracking insertion order, not status; a terminal `cancelled` row carrying `cancelAt` rendering `cancelling`), and `seedSubscription` gains the optional `scheduledChange`/`updatedAt` overrides the pins need. These close the OP-106 GREEN review findings F1/F2/F3 and the two gaps ADR-0400 §Out-of-scope and ADR-0401 §Consequences named. The pins are **green on the trunk** (they lock shipped behaviour), so no GREEN sibling is created. Evidence at the pin head: focused unit `subscription-view.test.ts` **32 passed (32)**; focused integration `subscription-read.test.ts` + `subscription-history.test.ts` **20 passed (20)** (was 15; +5); full unit **106 files / 1843 passed | 3 skipped**; full integration **75 files / 541 passed** (was 536); `pnpm typecheck` clean on all three projects; ESLint 0 problems and `prettier --check` clean on the touched file; the `adr-numbering` guard green; the tie-break spec re-run in isolation **4×** green. `docs/adr/README.md` is the shared-ledger hotspot — the pool cell stays `0420`+. No number outside the lane range `0400`–`0419` is touched._
+
+_The **board-wide / process** `Next free` cell advanced from `0307` to `0308`
+(card `t_892df2ea`, OP-106 follow-up DOCS — retire the stale "PR #299 open" wording
+in [ADR-0401](ADR-0401-op106-subscription-read-green.md) and record the merge-lane
+gap rule; branch `OP-106-task-pr299-docs-tighten`, worktree
+`/root/openpic/openpic-webapp/.worktrees/t_8f332485`, off a fresh `origin/main`
+`0f53970` after PR #299 landed; the cell's value `0307` was re-read on that
+`origin/main` immediately before committing). `0300`–`0306` are consumed on `main`
+(`0303` by [ADR-0303](ADR-0303-workflow-shell-safety-guard.md), PR #240 merge
+`c44c311`; `0304` by [ADR-0304](ADR-0304-stale-draft-pr-reconciliation.md), PR
+#259; `0305` by
+[ADR-0305](ADR-0305-ci-evidence-conflicting-pr-suppression.md), PR #260; `0306` by
+[ADR-0306](ADR-0306-op101-stale-branch-deletion.md), branch
+`OP-101-task-stale-branch-deletion`), so this record takes `0307`.
+[ADR-0307](ADR-0307-unmerged-pr-blocks-card-completion.md) records the rule the
+OP-106 lane's merge gap made necessary: **a card must not complete while its own
+deliverable's PR is unmerged** — if a PR is left open (draft, ready-but-unmerged or
+conflicting) the completion handoff must state the PR number, its state, its head
+SHA and that the deliverable is off-trunk, and the board must carry a follow-up
+**MERGE** lane (`parents=[the card]`) before any downstream record claims the
+deliverable "landed"/"pinned". The precedent is the OP-106 follow-up TEST card
+`t_09e53bea`, which completed with PR
+[#299](https://github.com/yahodu/openpic-webapp/pull/299) still an unmerged draft
+(created `03:47:50Z`; the `ready_for_review` event is `04:01:06Z`, emitted by the
+merge lane) while [ADR-0401](ADR-0401-op106-subscription-read-green.md)
+§"Post-review status" already read "F1, F2 and F3 have since been pinned"; nothing
+on the board was gated on the merge, so the sign-off card `t_5fa28f29` had to raise
+the merge lane `t_66441715` by hand. That lane resolved this file's ledger conflict
+as a **union** — OP-105 lane cell `0385`, OP-106 lane cell `0403`, pool `0420`+,
+every index row ascending, main's OP-105 prose first to preserve its "the paragraph
+above" back-reference (which is why the OP-106 cell is `0403` while OP-105's is
+`0385`) — re-derived the head's CI evidence after the conflict cleared
+([ADR-0305](ADR-0305-ci-evidence-conflicting-pr-suppression.md): a conflicting PR
+starts no `pull_request` run), re-ran both suites at the merged head (unit **108
+files / 1859 passed | 3 skipped**, integration **75 files / 541 passed**) and
+squash-merged the branch merge commit `536c4f0` as `0f53970`. This card's other two
+deliverables retire the wording that outran the fact:
+[ADR-0401](ADR-0401-op106-subscription-read-green.md) §"Post-review status" now
+states the landed fact (PR #299 squash-merged to `main` as `0f53970`, an ancestor
+of `origin/main`) in place of "open at the time of writing", and
+[ADR-0402](ADR-0402-op106-subscription-read-followup-pins.md) §Consequences gains
+the merge-reconciliation bullet naming `0f53970` and the merged-head totals (PR
+#296 landed after that branch's cut `cab62e8`, which is why its own evidence block
+reads `106 files / 1843 passed`). One mechanical repair rode along: the index rows
+`0260`–`0281` had been sitting after `0302` since the OP-100 merges
+(`5fd133d`/`b2d5143`), so this card moved them to their ascending positions — the
+file's only non-ascending run — and re-verified every index row ascending. No
+number outside `0300`–`0319` is touched._
