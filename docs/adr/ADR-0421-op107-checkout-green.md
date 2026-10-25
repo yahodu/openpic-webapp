@@ -507,3 +507,80 @@ The other §3.3 verbs (`upgrade`/`downgrade`/`cancel`/`retry-charge`), the webho
   `GET /subscription` is meant to be the only way back to a pending mandate, that deserves a pin; if a
   valid-link `201` echo is wanted after all, `I7`'s concurrency contract needs restating — the two cannot
   both hold.
+
+## Review sign-off — 2026-10-25
+
+- **Reviewer round:** 1 (artifact lens) · **Card:** `t_5f08f665` · **PR:**
+  [#301](https://github.com/yahodu/openpic-webapp/pull/301) (reviewed head `91135c6` → squash `38bad08`,
+  merged `2026-10-25T04:42:44Z`) · **Verdict:** APPROVED WITH FINDINGS · **Consumes:** no ADR number
+  (append-only; `docs/adr/README.md` stays byte-identical to `origin/main`)
+
+The round-1 (**artifact lens**) review of this OP-107 GREEN returned **APPROVED WITH FINDINGS** — zero
+changes requested to the deliverable and **zero reviewer edits**: no test, mock, fixture, factory or
+production file was touched by the review, and the merged bytes are the reviewed bytes (`38bad08` is an
+ancestor of `origin/main`; the squash is the reviewed head plus the two `origin/main` merges recorded
+below).
+
+**Evidence reproduced independently on the merged artifact** — the squash `38bad08` (the merged tree),
+re-measured on the reviewed head `91135c6` wherever the two heads differ:
+
+- focused unit `apps/web/src/test/unit/subscription-checkout.test.ts` → **26 passed (26)** and
+  `adr-numbering.test.ts` → **29 passed (29)**; focused integration
+  `apps/web/src/test/integration/billing-checkout.test.ts` → **12 passed (12)**
+  (`TMPDIR=/root/tmp-mongo`). All three counts are **identical at both heads** — the merges change none of
+  the lane's own numbers.
+- full `--project unit`: merged `38bad08` → **109 files · 1899 passed | 3 skipped (1902)**; reviewed head
+  `91135c6` → **109 files · 1885 passed | 3 skipped (1888)**.
+- full `--project integration`: merged `38bad08` → **77 files · 557 passed (557)**; reviewed head `91135c6`
+  → **76 files · 553 passed (553)**.
+- the **+14 unit / +4 integration** tests separating the two heads arrived when `origin/main` was merged
+  into the branch twice: they are OP-105
+  [#297](https://github.com/yahodu/openpic-webapp/pull/297)'s `payments-cashfree-drift-log.test.ts` and
+  `payments-memory-provider.test.ts` and their siblings, swept in by the merges — **no OP-107 pin changed**.
+- full Playwright e2e (a real `next start` build, `api` + `api-production`) → **22 passed**.
+- `tsc -p tsconfig.json --noEmit`, `tsc -p packages/contracts/tsconfig.json --noEmit`,
+  `tsc -p apps/web/tsconfig.json --noEmit` → **exit 0** each; `eslint .` → **0 errors / 105 warnings**
+  (all pre-existing `security/detect-*`, none in the lane's files); `prettier --check .` → **clean**.
+- **scoped-merge proof:** `git diff --stat 38bad08^1 38bad08` → **16 files changed, 2462 insertions(+),
+  20 deletions(−)** — the lane's own sixteen files, nothing unrelated swept into the squash.
+
+**Correction to the commissioning card's figures (recorded, not silently copied).** The card asked for the
+full-suite pair as `unit 1899 | 3 skipped (1902)` **and** `integration 553 (553)`. Measured, those are the
+**two different heads**: `1899` is the merged squash `38bad08`, while `553` is the reviewed head `91135c6`
+(whose merged-squash count is `557`). Both are recorded above exactly as measured; every other quoted
+figure held.
+
+**Merge reconciliation.** `origin/main` was merged into the branch **twice** before the squash (main's tips
+`5181eea` → `9731340`). The shared `docs/adr/README.md` ledger conflicted once and was resolved as a
+**union**: main's prose (OP-105's `0385`→`0386` move and the board-wide `0307`→`0308` note) was kept
+**first**, the OP-107 lane's two notes appended after it. The table keeps main's OP-105 cell `0386`, the
+lane's own row `0420`–`0439` / `Next free 0422`, and the pool at `0440`+. **No ADR number was lost,
+displaced or double-counted**; this record consumes none of its own.
+
+**Findings carried out of the review.** All four were **routed, not fixed here** (no production file is a
+review artifact); they are cited **by card id and PR number**, not by ADR number — a follow-up's ADR number
+may renumber while its PR is open:
+
+- **F1 (the concurrent double-submit answered `201, 201`)** — two racing callers each minted a mandate
+  instead of the loser taking `409 subscription_already_active`; the same defect's other exit, a raw
+  `MongoServerError 11000`, fell through `errorResponse` as a `500`.
+- **F2 (the mandate customer's fallbacks)** — the `email` fallback put a display **name** into the vendor's
+  `customer_email`; the name ladder and the `"0000000000"` phone fallback were unverified.
+- **F3 (a retired plan's classification)** — a plan with `active: false` was refused as
+  `422 plan_not_self_serve` + `contactSalesUrl` rather than the not-sold `422 validation_failed`.
+- **F4 (the e2e `§0.5` key set)** — the `not.toMatch(/cashfree/i)` sweep passed only because the e2e
+  provider is memory-hosted; it would have passed a real vendor-id leak.
+
+These four went to TEST card `t_aa18a7ff` (pins) and its gated GREEN card `t_b54adec0`; their pins and the
+production fix they force are recorded in §"Follow-up pins" and §"Follow-up GREEN" above. The review's
+Low/Info items were routed as a second TEST card, **`t_e04e0e39`**
+(`parents=[t_b54adec0, t_be4e7022]`): it pins (a) the `E11000` → `409` insert exit — proven by probe at the
+reviewed head, but never reached by `billing-checkout.test.ts` because that spec does not bootstrap the
+one-live-row index — and (b) what the §3.3 refusal for an abandoned `incomplete` row means and **who
+retires it** (OP-108's webhook projection), now that the route no longer runs `restart`.
+
+**Post-review status.** F1 and the Low items are addressed by the `t_aa18a7ff` → `t_b54adec0` chain and
+`t_e04e0e39` once they land; **nothing in §Disputes or §Consequences above is retracted** — those sections
+are the historical record at the reviewed head `91135c6`, and the follow-ups' **own** records document what
+happened next. D1/D2 are not re-litigated here: the Test Author's resolution (card `t_7998de98`,
+§"Dispute resolution" above) stands and is already recorded.
