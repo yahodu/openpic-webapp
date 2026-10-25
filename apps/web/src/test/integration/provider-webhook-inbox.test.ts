@@ -243,6 +243,23 @@ afterAll(async () => {
 
 beforeEach(async () => {
   afterMock.mockClear();
+  // Each case owns its slice of the database. The whole file shares one booted
+  // app, and every case seeds a subscription carrying the same
+  // `sub_test_001` ref and re-delivers the same `providerEventId`s, so without
+  // this the `providerWebhookEvents` rows accumulate across cases and a later
+  // case is either swallowed as `duplicate_ignored` or projects against an
+  // earlier case's subscription. The `domain_events` outbox must clear too: its
+  // unique partial `dedupeKey` index makes a repeated emit (the same event
+  // identity in two cases) abort the projection transaction, which would leave
+  // the subscription unpatched while the route still answers `200`. This is the
+  // `notification-fanout-cron-route` idiom: delete every collection the
+  // contract touches.
+  await Promise.all([
+    app.db.collection(COLLECTIONS.providerWebhookEvents).deleteMany({}),
+    app.db.collection(COLLECTIONS.subscriptions).deleteMany({}),
+    app.db.collection(COLLECTIONS.billingTransactions).deleteMany({}),
+    app.db.collection(COLLECTIONS.domainEvents).deleteMany({}),
+  ]);
   // The `platformSettings` singleton is process-cached and shared by the whole
   // file: drop the document and the cache so each case starts from the
   // documented defaults (14 grace days, 90-day webhook retention).
@@ -448,7 +465,15 @@ function digestOf(rawBody: string): string {
 async function drainDeferredProjections(): Promise<void> {
   const callbacks = afterMock.mock.calls.map((call) => call[0]);
   afterMock.mockClear();
-  await Promise.all(callbacks.map((callback) => callback()));
+  // Run the deferred work in the order it was scheduled. Two deliveries drained
+  // concurrently would project the same subscription in parallel against a
+  // snapshot taken before either write; the ordering watermark is read outside
+  // the transaction, so the older event's patch could land last and regress the
+  // status. The cases pin *delivery order* (and its watermark), not a concurrent
+  // write race, so the drain is sequential.
+  for (const callback of callbacks) {
+    await callback();
+  }
 }
 
 describe("POST /api/v1/webhooks/{provider} — acknowledgement and projection", () => {
@@ -759,12 +784,17 @@ describe("POST /api/v1/webhooks/{provider} — signature verification", () => {
     const tenantId = newTenantId();
     await seedSubscription({ tenantId });
     const rawBody = activationBody();
+    // The request must be *rejected* for the warning to be the one under test:
+    // it carries the signed originals' signature over a body that was modified
+    // after signing, so the HMAC fails (`invalid_signature`). The
+    // `x-forwarded-for` header the hygiene assertions are about is kept.
+    const tampered = rawBody.replace(SUBSCRIPTION_REF_ID, "sub_test_999");
     const rowsBefore = (await webhookRows()).length;
 
     // Act
     const response = await receiveWebhook(
       webhookRequest({
-        rawBody,
+        rawBody: tampered,
         headers: { ...signedHeaders(rawBody), "x-forwarded-for": CLIENT_IP },
       })
     );
@@ -833,8 +863,11 @@ describe("POST /api/v1/webhooks/{provider} — dunning from settings", () => {
     const response = await receiveWebhook(
       webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
     );
-    const after = Date.now();
+    // The grace deadline is computed by the *deferred* projection, so the upper
+    // bound `after` must be read once that work has run — reading it before the
+    // drain would bound the deadline by an instant that is already in its past.
     await drainDeferredProjections();
+    const after = Date.now();
 
     // Assert
     expect(response.status).toBe(200);
@@ -890,8 +923,10 @@ describe("POST /api/v1/webhooks/{provider} — dunning from settings", () => {
     const response = await receiveWebhook(
       webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
     );
-    const after = Date.now();
+    // See the default-grace case: the upper bound is read after the deferred
+    // projection, which is what computes the deadline.
     await drainDeferredProjections();
+    const after = Date.now();
 
     // Assert
     expect(response.status).toBe(200);

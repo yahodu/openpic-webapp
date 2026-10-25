@@ -253,3 +253,80 @@ keeping the `x-forwarded-for` header that the hygiene assertions are about.
 - **Emitting domain events after the commit.** Rejected: §18.3's "write the
   event in the same operation where possible" — a crash between commit and emit
   loses the notification forever.
+
+## Follow-up resolution — card `t_a756515d` (the D1/D2 fixes)
+
+- **Status:** Accepted · **Date:** 2026-10-25 · **Branch:** `OP-108-task-webhook-inbox` (head `48830c4`)
+- **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_a297e850`
+- **Scope:** **test-only.** No production module, schema, index, fixture or
+  factory was edited; the GREEN's implementation is untouched. This section
+  records the test-side resolution of both §Disputes defects and one harness
+  flake the isolation fix surfaced.
+
+### D1 — per-case isolation, and the third collection the proposal missed
+
+Both integration suites now clear every collection the contract touches in
+`beforeEach` (the `notification-fanout-cron-route.test.ts:121-127` idiom):
+`providerWebhookEvents`, `subscriptions`, `billingTransactions` **and**
+`domain_events`. The `domain_events` outbox is the collection the card's own fix
+proposal omitted, and it is load-bearing: the projection emits through
+`emitDomainEvent` with `dedupeKey = <eventKey>:<idempotencyKey>`, and
+`INDEX_SPECS` gives `domain_events.dedupeKey` a **unique partial index**. Two
+cases that carry the same event identity (the activation's `49988825`, the
+charge's `49914526`, the failure's `49914527`) therefore collide on that
+`dedupeKey`; the E11000 aborts the projection's transaction, so the subscription
+is left unpatched **while the route still answers `200 received`**. That is
+exactly the observed residual reds (`the exported projection seam …` left the
+row `incomplete`; `I7` left `currentPeriodEnd` unextended; `I6` left the row
+`active`) — clearing only the three proposed collections was not enough.
+
+### D2 — the invalid-signature hygiene pin now sends an invalid body
+
+`I3: a rejected signature warns …` builds its request from the signed originals'
+signature over a body that was **modified after signing**
+(`tampered = rawBody.replace(SUBSCRIPTION_REF_ID, "sub_test_999")`, headers
+signed over `rawBody`), so the HMAC fails and the route takes the
+`webhook.signature_rejected` path. The `x-forwarded-for: CLIENT_IP` header the
+hygiene assertions are about is kept, and the case's own
+`webhookRows()).toHaveLength(rowsBefore)` pin now holds.
+
+### I6 — a bracket that read the upper bound before the work it bounds
+
+The two `I6` dunning cases read `after = Date.now()` _before_
+`drainDeferredProjections()`, but the grace deadline is computed by the deferred
+projection (`computeGraceEndsAt(now, settings)` with the projection's own `now`).
+The upper bound was therefore in the deadline's past, and the case flaked at the
+millisecond (`expected 179…938 to be less than or equal to 179…937`). Both cases
+now drain first and read `after` afterwards; the window
+`[before + graceDays, after + graceDays]` still brackets the request and the
+projection, with the deadline monotonic in between.
+
+### A harness hazard, not a contract: the drain is now sequential
+
+`drainDeferredProjections()` ran its callbacks through `Promise.all`, projecting
+two events for one subscription **concurrently**. Both transactions read the
+pre-write subscription (the ordering watermark is read _outside_ the
+transaction), so under load the older event's patch could commit last and
+regress the row: the full integration project failed twice with
+`I2: two different id-less events …` → `expected {status: "cancelled"} to match
+object {status: "cancelled"}` while receiving `incomplete` (the older
+`BANK_APPROVAL_PENDING`), even though the case is green when the file runs alone.
+The drain now awaits the callbacks in scheduled order, matching the order the two
+requests were actually issued — the case pins _delivery order_ and its watermark,
+not a concurrent write race. The underlying hazard (two `after()` projections for
+one subscription can regress `lastProviderEventAt`/`status`) is **production
+behaviour** and is routed as a follow-up card; it is not fixed here.
+
+### Evidence (head rebuilt on `48830c4`)
+
+| Gate                        | Result                                             |
+| --------------------------- | -------------------------------------------------- |
+| the two spec files          | **17 passed (17)** — 3 consecutive whole-file runs |
+| integration (full)          | **79 files / 574 passed (574)**                    |
+| unit (full)                 | **110 files / 1915 passed, 3 skipped** (unchanged) |
+| `tsc -p apps/web`           | exit `0`                                           |
+| ESLint / `prettier --check` | 0 errors / clean on both touched files             |
+
+No new ADR number was consumed: this is a test-side correction of pins already
+fixed by ADR-0440, so the lane's `Next free` stays `0442` and
+`docs/adr/README.md` is untouched.

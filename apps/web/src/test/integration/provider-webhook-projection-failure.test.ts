@@ -141,6 +141,19 @@ beforeEach(async () => {
     collMod: COLLECTIONS.billingTransactions,
     validator: { ...ALWAYS_REJECT },
   });
+  // Each case owns its slice of the database. The whole file shares one booted
+  // app and both cases re-post the same body for the same `sub_test_001` ref, so
+  // without this the second case's `latestWebhookRow()` would pick up the first
+  // case's already-processed row (and its subscription would match twice). The
+  // `notification-fanout-cron-route` idiom: delete every collection it touches.
+  // (Document validation does not apply to deletes, so the poisoned ledger
+  // clears normally.)
+  await Promise.all([
+    app.db.collection(COLLECTIONS.providerWebhookEvents).deleteMany({}),
+    app.db.collection(COLLECTIONS.subscriptions).deleteMany({}),
+    app.db.collection(COLLECTIONS.billingTransactions).deleteMany({}),
+    app.db.collection(COLLECTIONS.domainEvents).deleteMany({}),
+  ]);
   invalidatePlatformSettings();
 });
 
@@ -224,7 +237,11 @@ async function latestWebhookRow(): Promise<WebhookEventRow> {
 async function drainDeferredProjections(): Promise<void> {
   const callbacks = afterMock.mock.calls.map((call) => call[0]);
   afterMock.mockClear();
-  await Promise.all(callbacks.map((callback) => callback()));
+  // Sequential, in scheduled order — see the inbox suite's helper for why a
+  // concurrent drain would race two projections on the same subscription.
+  for (const callback of callbacks) {
+    await callback();
+  }
 }
 
 describe("a projection whose ledger write fails", () => {
