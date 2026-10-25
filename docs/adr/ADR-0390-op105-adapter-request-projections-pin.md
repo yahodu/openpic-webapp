@@ -130,3 +130,14 @@ takes **`0390`** — the number the orchestrator reserved for this card (decisio
 `t_e5485868`) — and advances the cell to `0391`. The board DB was re-read for a
 sibling claim on `0390` immediately before pushing: none exists. No number
 outside the lane range `0380`–`0399` is touched.
+
+## Post-review note — 2026-10-25 (card `t_df8ed734`)
+
+The 14 pins this record specifies were carried **byte-unchanged** through PR
+[#316](https://github.com/yahodu/openpic-webapp/pull/316) and turned green by
+the GREEN card `t_27873de6`; the reviewer independently re-ran them, unedited
+(**32 passed (32)** for the pins + the pre-existing adapter/checkout specs at the
+reviewed head `3c5c774`, and the pins + adapter spec set **20 passed (20)** on
+the merged trunk `841f342`). **Nothing in ADR-0390 is retracted or re-decided**;
+this note records only that the pins landed unchanged and were re-verified. No
+ADR number is consumed by this note, and `docs/adr/README.md` is untouched.
