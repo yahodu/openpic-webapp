@@ -114,3 +114,58 @@ this card (decision `t_e5485868`) and the cell's value re-read at the branch
 cut, immediately before committing. The cell is advanced to `0393`. The board
 DB was re-read for a sibling claim on `0392` immediately before pushing: none
 exists. No number outside the lane range `0380`–`0399` is touched.
+
+## Review sign-off — 2026-10-25
+
+- **Reviewer round:** 1 (artifact lens) · **Card:** `t_e2747a56` · **PR:**
+  [#317](https://github.com/yahodu/openpic-webapp/pull/317) (reviewed head `1f45dcf` → squash
+  `b317f8b`, merged `2026-10-25T06:34:05Z`) · **Verdict:** APPROVED, landed · **Consumes:** no ADR
+  number (append-only; `docs/adr/README.md` stays byte-identical to `origin/main`)
+
+The round-1 (**artifact lens**) review of the GREEN that satisfies this record's pins returned
+**APPROVED, landed** — zero changes requested to the deliverable and **zero reviewer edits**. The
+lens is the cold read of the diff before the handoff narrative, then independent execution; no test,
+mock, fixture, factory or production file was touched by the review, and the reviewed bytes are what
+shipped.
+
+**Evidence reproduced independently at the reviewed head `1f45dcf`:**
+
+- focused pins `apps/web/src/test/integration/payments-cashfree-expiresat.test.ts` plus the repinned
+  `payments-cashfree-adapter.test.ts` → **10 passed (10)**;
+- full `--project unit` → **110 files · 1914 passed | 3 skipped**;
+- full `--project integration` (`TMPDIR=/root/tmp-mongo`) → **79 files · 583 passed**;
+- `tsc -p apps/web/tsconfig.json --noEmit` → exit `0`; ESLint → **0 problems** on the two changed
+  production files; `prettier --check` → clean on both production files and this ADR;
+- PR Checks green at the head, with `audit-dev` failing as the ADR-0301 `continue-on-error` baseline
+  (the `ci` aggregate passes).
+
+**Merged-tree probe.** A throwaway worktree of `1f45dcf` merged with the then-current `origin/main`
+`ba9deb1` merges **clean** — only the trunk's own ADR-0421 docs file arrives — the repo guard
+`adr-numbering` is **29/29**, there is no duplicate `ADR-NNNN`, and the lane cell reads `0393`
+(`0392` consumed by this branch's own ADR-0392). The pins re-run on the merged tree: **10 passed
+(10)**. After the squash, `git diff --stat 1f45dcf b317f8b -- <the 7 PR paths>` is **empty** — the
+reviewed bytes are exactly what shipped.
+
+**Honesty audit.** `git show --name-only 1f45dcf` = **2 production modules + 1 ADR**; no test, mock,
+fixture or factory file was edited; no `NODE_ENV` / `process.env` / test-mode conditional appears
+anywhere in the production diff. The RED's pin assertions were carried into the GREEN **unedited**,
+and each I1 row asserts the input is offset-bearing with neither ms nor `Z`, so the pin is
+non-vacuous.
+
+**The one finding, F-1 (Low) — routed, not fixed here.** `normalizeExpiry` refuses only values
+`Date` cannot parse at all, while the response schema pins `subscription_expiry_time` as a bare
+`z.string().min(1)`, so a _wrong-but-parseable_ value is silently coerced to an instant rather than
+raising the contract break. It is **outside this PR's pinned criteria** — the GREEN card prescribed
+`new Date(...).toISOString()`, and §Open items above deliberately left the guard open, with I2
+pinning only the rejection class for an outright-unparseable value. It is recorded here as
+**F-1 (Low), routed** to the orchestrator decision card `t_d91849b7` — not as an open code defect.
+That follow-up is cited by **card id and PR number only**; no ADR number is asserted for it while it
+is unmerged.
+
+**Test-quality note.** The pins read the MSW wire body and assert the per-row input shape, so they
+cannot be weakened to an ISO-ms fixture; they survived the review unedited.
+
+**Nothing above is retracted.** The pins' Evidence block, the Decision and §Open items stand exactly
+as written at the reviewed head; the follow-up card's own record (`t_d91849b7`) documents what
+followed. This section consumes no ADR number and leaves `docs/adr/README.md` byte-identical to
+`origin/main`.

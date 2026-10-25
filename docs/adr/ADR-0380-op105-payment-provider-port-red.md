@@ -347,6 +347,16 @@ rather than "the vendor's expiry for that URL". No new ADR number is minted: the
 decision is recorded in this amendment and pinned executably by
 [ADR-0392](ADR-0392-op105-expiresat-rfc3339-pin.md).
 
+**Review carry-through (`t_e57e133f`).** The amendment above was carried **byte-unchanged** through
+PR [#317](https://github.com/yahodu/openpic-webapp/pull/317) (reviewed head `1f45dcf` → squash
+`b317f8b`) and independently re-run by the reviewer (round 1, artifact lens): the scoped
+`git diff --stat 1f45dcf b317f8b` over the PR's paths is **empty**, so the amended text shipped
+exactly as reviewed, and the pins the amendment is enforced by re-ran green (**10 passed (10)**) at
+the reviewed head and again on the merged tree. **Nothing in this record is retracted or
+re-decided** — the amendment stands as written, and the follow-up card's own record (`t_d91849b7`,
+cited by card id and PR number only) documents what followed. No ADR number is consumed by this note
+and `docs/adr/README.md` stays byte-identical to `origin/main`.
+
 ## ADR number allocation
 
 This lane (`OP-105`) had no reserved range in
