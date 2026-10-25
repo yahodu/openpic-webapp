@@ -111,6 +111,19 @@ typecheck` exit 0 on all three workspace projects; `eslint` 0 problems on the
 - `docs/adr/README.md` remains the shared-ledger **hotspot** — this record adds
   one index row after `0401`, advances the OP-106 lane `Next free` cell
   `0402` → `0403`, and appends a lane note. The pool cell stays `0420`+.
+- **Merge reconciliation (2026-10-25).** This record landed via PR
+  [#299](https://github.com/yahodu/openpic-webapp/pull/299), squash-merged to
+  `main` as `0f53970` — an ancestor of `origin/main` — after the branch's
+  `docs/adr/README.md` conflict was resolved as a union and pushed as the branch
+  merge commit `536c4f0`. PR
+  [#296](https://github.com/yahodu/openpic-webapp/pull/296) (the OP-105
+  in-process memory payment provider, ADR-0383/0384) landed **after** this
+  branch's cut `cab62e8`, so the **merged-head** suite totals read **108 files /
+  1859 passed | 3 skipped** unit and **75 files / 541 passed** integration. The
+  evidence block above is accurate at this record's own head and is deliberately
+  **not** retro-edited; this bullet is the reconciliation. The rule that keeps
+  such a gap visible is
+  [ADR-0307](ADR-0307-unmerged-pr-blocks-card-completion.md).
 
 ## Alternatives considered
 
