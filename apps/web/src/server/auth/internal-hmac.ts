@@ -78,6 +78,17 @@ export interface AuthorizeInternalRequestInput {
   readonly internalApiSecret: string;
   /** The shared secret Vercel Cron presents as a bearer. */
   readonly cronSecret: string;
+  /**
+   * Accept the `CRON_SECRET` bearer for **any** method under the cron prefix.
+   *
+   * Defaults to `false` — the shipped cron exception: a `GET` under
+   * `/api/v1/internal/cron/**` may present the bearer with an empty, unsigned
+   * body (Vercel Cron issues GETs and cannot sign one), and every other request
+   * must carry `INTERNAL_API_SECRET` plus a valid HMAC. §10.2's billing crons are
+   * `POST` routes driven by a hosted scheduler pinging with the same secret
+   * header, so those routes opt in explicitly (`billing-cron` route wiring).
+   */
+  readonly cronBearerAnyMethod?: boolean;
   /** The allowed absolute skew in seconds; defaults to 300. */
   readonly maxSkewSeconds?: number;
 }
@@ -90,6 +101,8 @@ export interface InternalAuthStageOptions {
   readonly cronSecret: string;
   /** The clock the timestamp window is measured against; defaults to the wall clock. */
   readonly clock?: Clock;
+  /** Accept the `CRON_SECRET` bearer for any method under the cron prefix (default `false`). */
+  readonly cronBearerAnyMethod?: boolean;
   /** The allowed absolute skew in seconds; defaults to 300. */
   readonly maxSkewSeconds?: number;
 }
@@ -173,7 +186,7 @@ function isCronPath(path: string): boolean {
 export function authorizeInternalRequest(input: AuthorizeInternalRequestInput): InternalAuthResult {
   const token = bearerToken(input.authorization);
 
-  if (input.method === "GET" && isCronPath(input.path)) {
+  if (isCronPath(input.path) && (input.method === "GET" || input.cronBearerAnyMethod === true)) {
     if (token !== null && constantTimeEquals(token, input.cronSecret)) {
       return { ok: true };
     }
@@ -221,6 +234,9 @@ export function internalAuthStage(options: InternalAuthStageOptions): RouteStage
       now: clock.now(),
       internalApiSecret: options.internalApiSecret,
       cronSecret: options.cronSecret,
+      ...(options.cronBearerAnyMethod === undefined
+        ? {}
+        : { cronBearerAnyMethod: options.cronBearerAnyMethod }),
       ...(options.maxSkewSeconds === undefined ? {} : { maxSkewSeconds: options.maxSkewSeconds }),
     });
 
