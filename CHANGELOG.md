@@ -1,3 +1,9 @@
+## [1.29.3](https://github.com/yahodu/openpic-webapp/compare/v1.29.2...v1.29.3) (2026-10-25)
+
+### Bug Fixes
+
+- **entitlements:** OP-103 keep the denial AppError when the blocked-event emit fails ([#283](https://github.com/yahodu/openpic-webapp/issues/283)) ([cb232d9](https://github.com/yahodu/openpic-webapp/commit/cb232d90f14786fba7ded8cd5cebdf7567226f57))
+
 ## [1.29.2](https://github.com/yahodu/openpic-webapp/compare/v1.29.1...v1.29.2) (2026-10-24)
 
 ### Bug Fixes
