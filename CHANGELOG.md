@@ -1,3 +1,9 @@
+## [1.30.0](https://github.com/yahodu/openpic-webapp/compare/v1.29.3...v1.30.0) (2026-10-25)
+
+### Features
+
+- **payments:** OP-105 add the payment provider port and Cashfree adapter ([#292](https://github.com/yahodu/openpic-webapp/issues/292)) ([d0eb4a0](https://github.com/yahodu/openpic-webapp/commit/d0eb4a0ca827c1f27c0ab22b37d20d8cd3956e2a))
+
 ## [1.29.3](https://github.com/yahodu/openpic-webapp/compare/v1.29.2...v1.29.3) (2026-10-25)
 
 ### Bug Fixes
