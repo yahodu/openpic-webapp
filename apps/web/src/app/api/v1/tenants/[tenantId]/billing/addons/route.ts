@@ -14,6 +14,7 @@ import { getDb } from "@/server/db/mongo";
 import { created, defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { idempotencyStage, mongoIdempotencyStore } from "@/server/idempotency";
+import { getLogger } from "@/server/logging";
 import { getPaymentProvider } from "@/server/payments/get-payment-provider";
 import type { ChargeOnceResult } from "@/server/payments/payment-provider";
 import { storedAddonSchema } from "@/server/plans/addons";
@@ -180,6 +181,15 @@ export const POST = defineRoute({
     }
 
     await recordChargeRefs(db, billingTransactionId, refs.externalRefs, systemClock.now());
+
+    getLogger().info("billing add-on purchase initiated", {
+      event: "billing.addon.purchase_initiated",
+      tenantId,
+      subscriptionId: subscription._id.toHexString(),
+      billingTransactionId: billingTransactionId.toHexString(),
+      addonKey: addon.data.addonKey,
+      quantity,
+    });
 
     return created(
       {

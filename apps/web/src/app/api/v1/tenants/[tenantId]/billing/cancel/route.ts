@@ -7,6 +7,7 @@ import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
+import { getLogger } from "@/server/logging";
 import { getPaymentProvider } from "@/server/payments/get-payment-provider";
 import { tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
@@ -102,6 +103,13 @@ export const POST = defineRoute({
       { _id: current._id },
       { $set: { cancelAt, cancelReason: ctx.body.reason ?? null, updatedAt: now } }
     );
+
+    getLogger().info("billing cancellation requested", {
+      event: "billing.subscription.cancel_requested",
+      tenantId,
+      subscriptionId: current._id.toHexString(),
+      atPeriodEnd: ctx.body.atPeriodEnd,
+    });
 
     return {
       status: 200,

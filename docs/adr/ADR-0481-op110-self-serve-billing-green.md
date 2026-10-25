@@ -121,6 +121,17 @@ question (the GREEN card says so), so the found-path serves the asset's stored
 `url` with a 15-minute `expiresAt` — recorded below as an assumption rather than
 guessed into a pin.
 
+## 9. The three mutation routes log their lifecycle line
+
+`retry-charge`, `cancel` and `addons` each emit one `info` line on the success
+path (`billing.retry_charge.initiated`, `billing.subscription.cancel_requested`,
+`billing.addon.purchase_initiated`) carrying `event` + `tenantId` +
+`subscriptionId` (+ the new row's id) and no redacted value. Every sibling
+billing mutation on the trunk already does this — `checkout` (…checkout created),
+`downgrade` (…plan downgrade scheduled) and `upgrade` (…plan upgraded) — so this
+is the same §5.2 line, not a new contract; nothing asserts it, and the codes stay
+`ERROR_CATALOG`-free.
+
 ## Dispute — I3 cannot pass against the pinned payload (Test Author action needed)
 
 `billing-self-serve.test.ts` › _I3: a retry success returns the workspace to

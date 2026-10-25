@@ -14,6 +14,7 @@ import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { idempotencyStage, mongoIdempotencyStore } from "@/server/idempotency";
+import { getLogger } from "@/server/logging";
 import { getPaymentProvider } from "@/server/payments/get-payment-provider";
 import type { ChargeOnceResult } from "@/server/payments/payment-provider";
 import { tenantRepo } from "@/server/repos";
@@ -162,6 +163,13 @@ export const POST = defineRoute({
     }
 
     await recordChargeRefs(db, billingTransactionId, refs.externalRefs, systemClock.now());
+
+    getLogger().info("billing retry charge initiated", {
+      event: "billing.retry_charge.initiated",
+      tenantId,
+      subscriptionId: current._id.toHexString(),
+      billingTransactionId: billingTransactionId.toHexString(),
+    });
 
     return {
       status: 202,
