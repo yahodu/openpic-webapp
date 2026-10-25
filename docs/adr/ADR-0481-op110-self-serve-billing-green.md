@@ -284,3 +284,91 @@ takes **`0481`**, the `Next free` value the RED wrote into the ledger table. The
 README's `OP-110 self-serve billing lane` row advances to `0482`, the index gains
 this row, and the pool cell (`0500`+) is untouched. No number outside the block
 is touched.
+
+## Review sign-off — 2026-10-25 (card `t_81899e24`, round 1 · artifact lens)
+
+The round-1 review of the OP-110 GREEN returned **APPROVED WITH FINDINGS**: the
+delivery shipped as reviewed, and the findings below were routed to follow-up
+cards rather than held against it. The reviewer edited nothing but this section —
+no production file, no test, mock, fixture or factory was touched.
+
+**Verdict and evidence.** The review ran at the reviewed head `922e8b3`:
+`tsc -p apps/web/tsconfig.json --noEmit` exit `0`; full **unit 114 files / 1976
+passed | 3 skipped**; full **integration 83 files / 672 passed | 1 failed
+(673)** — the single red being I3 (§_Dispute_ above); `prettier --check` clean;
+ESLint **0 errors**. The lane was raised as PR
+[#339](https://github.com/yahodu/openpic-webapp/pull/339) and squash-merged as
+`7ab9780` on `main`. The shipped tree is byte-identical to the branch head at
+merge (`git diff 1011550 7ab9780` is empty). Measured against the reviewed head
+over the PR's 22 paths, six files differ — `upgrade/route.ts`, `catalog.ts`,
+`packages/contracts/src/errors.ts` and `docs/adr/README.md` (all trunk-owned: the
+two OP-109 follow-up squashes that landed while the PR was open, and every
+differing line is trunk's own text), plus `billing-self-serve.test.ts` (the
+routed I3 fixture fix `94f1899`) and this ADR itself (the _Resolution_
+subsection written after the review). No OP-110 production line was added,
+removed or altered after the review, so the reviewed-path diff against the
+squash carries no invented content.
+
+**The dispute, upheld (recorded round-1 as F1 — closed).** The review reproduced
+I3 independently rather than taking the handoff's word for it:
+`cashfree-provider.ts:692` derives the subscription ref from
+`subscription_details.subscription_id`, so the fixture's factory default
+(`sub_test_001`) cannot address the workspace's seeded `sub_op110_001`, and I3
+sends no prior `retry-charge` for a pending intent to correlate on — the
+projection correctly answers `no_subscription_match`. The one-line fix landed
+**test-side** as the squash's spec edit via card `t_2c3d158b` (`94f1899`);
+production code was **not** changed to satisfy it. See §_Dispute — Resolution_
+above.
+
+**F2 (Medium — open at the time of writing).** The `payment_succeeded` reducer's
+reactivation predicate was widened to `subscription.status !== "active"`
+(`webhook-projection.ts:288`), so a stray confirmation for a `cancelled` or
+`incomplete` row flips it back to `active`, restores
+`activePlanKey = subscribedPlanKey` and re-emits the restored-limit pair
+`billing.subscription.reactivated` / `usage.limit.restored`. §3.3 grounds
+reactivation for the retry (`past_due`) and §10.1.2's projection table names only
+`downgraded`; `cancelled` and `incomplete` sit inside neither reading, and the
+prior predicate was `status === "downgraded"` — a widening, not a restatement.
+Routed to the boundary-pin card **`t_ffec14e2`** (`openpic-webapp-testcase-writer`);
+no PR number existed when this section was written, the pin being published as
+its own RED-by-design draft PR off the trunk. The pin's own record, not this ADR,
+documents what followed, and this ADR asserts nothing about that lane's ADR
+number — it may renumber while its PR is open.
+
+**Info-class findings recorded, no card.** None of the following changes OP-110's
+correctness; they are recorded here as the lane's technical-debt register.
+
+- **F3** — `mandate_not_chargeable` (whose Appendix A.4 transport message reads
+  "cannot be charged and must be re-created") is reused where a **cancel** finds
+  no mandate (`cancel/route.ts:82`) and on the add-on path
+  (`addons/route.ts:137`), with only `{ recoveryAction }` in `details` and no
+  `mandateStatus` — a code/shape reuse for what is really "no mandate to cancel".
+- **F4** — `grantDelta` is now **required** on `storedAddonSchema`
+  (`plans/addons.ts:43`) while the public `GET /api/v1/addons` route runs
+  `storedAddonSchema.parse(document)` inside an unguarded `.map(...)`: an
+  already-stored add-on document predating the field throws instead of being
+  skipped, so the whole catalogue would answer `500`. A `.default()` (or a
+  per-document guard) would have been back-compatible.
+- **F5** — the invoice number is the last path segment passed to
+  `decodeURIComponent` (`invoices/[invoiceNumber]/route.ts:44`), which throws
+  `URIError` on a malformed escape (`%zz`) → `500` where `404` is the honest
+  answer.
+- **F6** — the two `??` fallback keys are **unreachable**: the retry route's
+  (`billing-retry:…`, `retry-charge/route.ts:129-130`) and the add-on route's
+  (`billing-addon:…`, `addons/route.ts:143-144`). Both routes declare the
+  idempotency stage with `required: true`, so a call with no `idempotency-key`
+  header is refused as `400 idempotency_key_required`
+  (`idempotency/stage.ts:72`) before the handler ever runs. Dead code, no
+  behaviour risk.
+
+**One new lint warning.** `webhook-projection.ts:564`
+(`security/detect-object-injection` on `entitlements[entitlementKey]`) is the
+lane's only new ESLint diagnostic: `eslint.config.mjs` was **not** touched, and
+the count was proven per file with
+`git show <rev>:<path> | eslint --stdin --stdin-filename <path>` — **0 → 1** for
+that file. Recorded, not silenced.
+
+Nothing in the historical sections above is retracted: they record what shipped
+at `7ab9780`, and the follow-ups' own records document what followed. This
+sign-off consumes **no** ADR number — the lane's `Next free` cell is unchanged
+and `docs/adr/README.md` is byte-identical to `origin/main`.
