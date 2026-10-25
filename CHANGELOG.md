@@ -1,3 +1,9 @@
+## [1.38.0](https://github.com/yahodu/openpic-webapp/compare/v1.37.0...v1.38.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-109 upgrade, self-serve downgrade and scheduled-change cancel ([#334](https://github.com/yahodu/openpic-webapp/issues/334)) ([20fa9a5](https://github.com/yahodu/openpic-webapp/commit/20fa9a561de8cd019be699787c41ed2c9a33e278))
+
 ## [1.37.0](https://github.com/yahodu/openpic-webapp/compare/v1.36.0...v1.37.0) (2026-10-25)
 
 ### Features
