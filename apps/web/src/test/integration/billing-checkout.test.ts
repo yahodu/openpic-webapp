@@ -297,6 +297,17 @@ async function errorEnvelope(response: Response): Promise<ErrorEnvelope> {
   return parsed.error as ErrorEnvelope;
 }
 
+/**
+ * The sorted own keys of a JSON object value.
+ *
+ * §0.15 is a rule about **fields**, so the never-return sweep has to look at key
+ * names: a `not.toMatch(/cashfree/i)` sweep over the serialised body is a rule
+ * about *strings* and can be tripped — or satisfied — by a legitimate value.
+ */
+function keysOf(value: unknown): string[] {
+  return value !== null && typeof value === "object" ? Object.keys(value).sort() : [];
+}
+
 /** Count provider calls while answering every mandate request successfully. */
 function countProviderCalls(): { readonly calls: () => number } {
   let calls = 0;
@@ -416,7 +427,22 @@ describe("POST /api/v1/tenants/{tenantId}/billing/checkout", () => {
     const payload = await body(response);
     expect(payload).not.toHaveProperty("externalRefs");
     expect(payload).not.toHaveProperty("_id");
-    expect(JSON.stringify(payload)).not.toMatch(/cashfree/i);
+
+    // §0.15 / CONVENTIONS §8.1 are rules about **fields**, not about strings, so
+    // the pin is the exact key set of the bare §0.5 single resource: no stored
+    // refs, no driver `_id` and no vendor-shaped key (`cf_subscription_id`, …).
+    // `checkout.url` *is* the provider-hosted auth link (§3.2/§3.3 make it opaque
+    // and vendor-hosted), so the vendor name inside that one value is mandated —
+    // a substring sweep over the serialised body asserts the opposite rule.
+    expect(keysOf(payload)).toEqual([
+      "amountMinor",
+      "checkout",
+      "currency",
+      "paymentMethodKind",
+      "status",
+      "subscriptionId",
+    ]);
+    expect(keysOf(payload.checkout)).toEqual(["expiresAt", "kind", "url"]);
   });
 
   it("I2: a sales-assisted tier is refused with 422 plan_not_self_serve and the sales URL, without calling the provider", async () => {

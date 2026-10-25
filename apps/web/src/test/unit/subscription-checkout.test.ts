@@ -99,7 +99,11 @@ function existing(overrides: FactsOverrides = {}): ExistingSubscriptionFacts {
     subscriptionId: overrides.subscriptionId ?? SUBSCRIPTION_ID,
     status: overrides.status ?? "incomplete",
     cancelledAt: overrides.cancelledAt ?? null,
-    checkout: overrides.checkout ?? STORED_CHECKOUT,
+    // `null` is a *fact* here ("the row stores no hosted link"), not "not
+    // supplied": `??` would swallow it and hand back the default valid link, so
+    // the "no stored link" case would be value-identical to the "link is still
+    // valid" case and no implementation could satisfy both decisions.
+    checkout: overrides.checkout === undefined ? STORED_CHECKOUT : overrides.checkout,
   };
 }
 

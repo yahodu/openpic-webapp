@@ -133,6 +133,94 @@ override `auth_link` to a neutral host in this one test (e.g.
 `makeCashfreeCreateSubscriptionResponse({ subscription_expiry_time: FIXTURE_EXPIRES_AT, auth_link: "https://psp.example.com/checkout/abc" })`).
 The implementation already round-trips the link verbatim and puts no vendor field in the body.
 
+## Dispute resolution (Test Author, card `t_7998de98`)
+
+Both disputes are confirmed **test-side**, exactly as recorded above. Resolved on branch
+`OP-107-task-billing-checkout-red` (fast-forward from `552f4b8`) **without touching production code** —
+`git diff` at the resolving head touches only the two specs. Both were reproduced on `552f4b8` _before_
+any edit (unit **2 failed | 24 passed (26)** — `expected 'reuse' to be 'restart'` twice, the two rows D1
+names; integration **1 failed | 11 passed (12)** — `expected '{"subscriptionId":…,"url":"https://payments-test.cashfree.com/links/test-001",…}' not to match /cashfree/i`, line 419).
+
+### R1 — D1: the fixture now distinguishes `null` from "not supplied" (fixture only, meaning unchanged)
+
+```ts
+checkout: overrides.checkout ?? STORED_CHECKOUT,            // before
+checkout: overrides.checkout === undefined ? STORED_CHECKOUT : overrides.checkout,   // after
+```
+
+The pin's **meaning is unchanged**: the case descriptions ("no stored link", "names the stale row to
+retire") always meant `checkout: null` → `restart`; the fixture merely could not express it, which is what
+made the two cases value-identical. Both assertions now pass against the shipped
+`decideExistingSubscription` unchanged (its `checkout === null` and `expiresAt <= now` branches).
+
+**Flagged, not fixed (coverage gap).** The spec's docblock claims "the four boundary shapes of an
+`incomplete` row (valid link, expired link, no link, link expiring exactly now)" but `DECISION_CASES`
+carries no _expired_-link case (`expiresAt < now`) — only the `expiresAt === now` boundary, which takes the
+same `restart` branch. The follow-up card pins the unit count at 26, so adding a fourth case was out of
+scope; a future strengthening card should add it, or drop the claim from the docblock.
+
+### R2 — D2: the §0.15 pin is asserted on **keys**, not on a vendor-name substring (pin meaning changed)
+
+`expect(JSON.stringify(payload)).not.toMatch(/cashfree/i)` is replaced by the exact key set of the bare
+§0.5 single resource, at both levels:
+
+```ts
+expect(keysOf(payload)).toEqual([
+  "amountMinor",
+  "checkout",
+  "currency",
+  "paymentMethodKind",
+  "status",
+  "subscriptionId",
+]);
+expect(keysOf(payload.checkout)).toEqual(["expiresAt", "kind", "url"]);
+```
+
+Why the key set, and not the offered alternative (overriding `auth_link` to a neutral host):
+
+1. **§0.15 / CONVENTIONS §8.1 are rules about fields.** Their vocabulary is "provider API keys, webhook
+   secrets, `externalRefs[].meta`", "raw upstream provider payloads and provider-side ids" — a projection
+   rule. A vendor _name inside a value_ is a violation only when that value is a provider payload or a
+   provider id; `checkout.url` is the §3.3 provider-hosted auth link, which §3.2/§3.3 mandate as opaque and
+   vendor-hosted. The deleted sweep asserted the **opposite** of the contract — it could pass only by not
+   returning the link I1 pins.
+2. **The sweep was blind to the leak shapes that matter.** `cf_subscription_id` / `cf_payment_id` are the
+   real Cashfree-side ids; neither the key nor a realistic value contains the substring `cashfree`, so the
+   sweep would have passed a body carrying them, while the key set fails on _any_ extra key.
+3. **It keeps the fixture representative.** Overriding `auth_link` to `psp.example.com` would leave a
+   fixture no code path produces, to preserve an assertion that can only ever fire on the mandated URL.
+
+**Mutation probe — the replacement pin fires.** Widening `checkoutEnvelopeSchema` to admit
+`cf_subscription_id` and returning it from the handler puts the key on the wire, and the pin fails exactly
+as intended (a leak class the deleted sweep would have let through silently):
+
+```text
+AssertionError: expected [ 'amountMinor', …(6) ] to deeply equal [ 'amountMinor', 'checkout', …(4) ]
+  [
+    "amountMinor",
++   "cf_subscription_id",
+    "checkout",
+```
+
+The first probe (the same key returned with the schema **unchanged**) never reaches the wire: the
+pipeline's `serializeResponse` validates every object schema with `.strict()`, so outside production it
+**throws** and the route answers `500`, and in production it logs `http.response.serialization_failed` and
+serves the body stripped. That is the layering this pin backs up: the serializer covers a misbehaving
+handler, the key set covers a **widened envelope schema** — which is the only way an extra field can reach
+a client. Both probes were reverted (`git diff` on `route.ts` / `checkout.ts` empty afterwards).
+
+### Verification at the resolving head
+
+| Command                                                                                                              | Result             |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `npx vitest run --project unit apps/web/src/test/unit/subscription-checkout.test.ts`                                 | **26 passed (26)** |
+| `TMPDIR=/root/tmp-mongo npx vitest run --project integration apps/web/src/test/integration/billing-checkout.test.ts` | **12 passed (12)** |
+| `npx vitest run --project unit apps/web/src/test/unit/adr-numbering.test.ts`                                         | **29 passed (29)** |
+| `npx prettier --check` on both corrected specs                                                                       | clean              |
+
+No `ADR-0422` is drawn and no number is consumed: R1 changes no pin meaning and R2 changes one assertion
+inside an existing pin, so this section is the whole ledger entry (the lane's `Next free` stays `0422`).
+
 ## Evidence at this head
 
 While D1/D2 stand, the suite is **green except those three pins** (the whole lane, run
@@ -193,9 +281,10 @@ unedited):
   test-only branch.
 - A provider outage leaves the workspace unblocked and the retry is a measured pin (the row is
   terminal _and_ the partial-index slot is released by `cancelledAt`).
-- The lane cannot be declared green until D1/D2 are corrected; the OP-108 lane (which drives a
-  signed webhook onto the row this route creates) should not start from a head carrying three
-  red pins.
+- The lane cannot be declared green until D1/D2 are corrected — **both are now resolved, see
+  § Dispute resolution** (card `t_7998de98`, same branch, no production-code change); the OP-108 lane
+  (which drives a signed webhook onto the row this route creates) should not start from a head carrying
+  red pins, and the correcting head carries none.
 
 ## Alternatives considered
 
