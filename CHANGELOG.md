@@ -1,3 +1,9 @@
+## [1.36.0](https://github.com/yahodu/openpic-webapp/compare/v1.35.2...v1.36.0) (2026-10-25)
+
+### Features
+
+- **lint:** OP-105 report no-expression template-literal vendor imports ([#326](https://github.com/yahodu/openpic-webapp/issues/326)) ([79a2f66](https://github.com/yahodu/openpic-webapp/commit/79a2f66a1f6fae20d5e34615753d193e6f307bd7))
+
 ## [1.35.2](https://github.com/yahodu/openpic-webapp/compare/v1.35.1...v1.35.2) (2026-10-25)
 
 ### Bug Fixes
