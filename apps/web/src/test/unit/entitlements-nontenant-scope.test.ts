@@ -1,9 +1,14 @@
 import type { ClientSession, Db } from "mongodb";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { COLLECTIONS } from "@/server/db/collections";
+import type { DomainEventInput } from "@/server/domain/domain-events";
 import { fixedClock } from "@/server/runtime/clock";
-import { consumeEntitlement } from "@/server/services/entitlements";
+import {
+  consumeEntitlement,
+  type EntitlementEventEmitter,
+  type EntitlementVerdict,
+} from "@/server/services/entitlements";
 
 import { makeSubscription, makeUsageCounter } from "../factories/entitlements";
 import { makeEntitlement, makePlan } from "../factories/plan";
@@ -40,7 +45,12 @@ import { makeFakeMongo, type FakeMongo, type RecordedCall } from "../helpers/fak
  *    decision never reads.
  * 3. When the conditional counter advance matches nothing on **both** attempts,
  *    `consumeEntitlement` must not report success off the stale counter — it
- *    re-decides (deny) or surfaces a conflict.
+ *    re-decides (deny) or surfaces a conflict. The enforcement surface is
+ *    pinned too (ADR-0343 §2): the lost race **throws** the Appendix A denial
+ *    (`plan_limit_exceeded`, or `payment_required` when the re-read subscription
+ *    is `downgraded`), it never *returns* an `allowed: false` verdict; it emits
+ *    exactly one `usage.action.blocked`; and the denial's payload (`used`,
+ *    `limit`) is the **re-read** state, not the pre-race counter.
  *
  * The atomic/integration view of (1)+(2) against a real replica set lives in
  * `src/test/integration/entitlements-nontenant-scope.test.ts`.
@@ -135,9 +145,14 @@ function counterWrites(fake: FakeMongo): RecordedCall[] {
  * room, then the row can no longer accept the increment (both conditional
  * updates match nothing) and the fallback read sees the advanced value.
  *
+ * The value the re-read observes is what makes the denial's payload
+ * observable: the pre-race read yields `0`, the post-race re-read yields `5`,
+ * so a payload reporting `used: 0` is the pre-race (stale) state.
+ *
+ * @param options - The subscription status the plan resolution reads.
  * @returns A `Db` whose counter row transitions under the advance.
  */
-function makeLostRaceDb(): Db {
+function makeLostRaceDb(options: { readonly subscriptionStatus?: string } = {}): Db {
   let counterValue = 0;
   const handle = (name: string): unknown => {
     if (name === COLLECTIONS.plans) {
@@ -158,7 +173,15 @@ function makeLostRaceDb(): Db {
       };
     }
     if (name === COLLECTIONS.subscriptions) {
-      return { findOne: () => Promise.resolve({ ...makeSubscription({ tenantId: TENANT }) }) };
+      return {
+        findOne: () =>
+          Promise.resolve({
+            ...makeSubscription({
+              tenantId: TENANT,
+              status: options.subscriptionStatus ?? "active",
+            }),
+          }),
+      };
     }
     if (name === COLLECTIONS.entitlementGrants) {
       return { find: () => ({ toArray: () => Promise.resolve([]) }) };
@@ -176,6 +199,51 @@ function makeLostRaceDb(): Db {
     throw new Error(`unexpected collection ${name}`);
   };
   return { collection: handle } as unknown as Db;
+}
+
+/** The fields of a thrown denial these lost-race specs inspect. */
+interface DenialErrorLike {
+  readonly code: string;
+  readonly status: number;
+  readonly details?: Record<string, unknown>;
+}
+
+/**
+ * Await a call expected to be denied and return the thrown error.
+ *
+ * @param promise - The call under test.
+ * @returns The thrown value, typed to the fields the contract pins.
+ */
+async function caughtDenial(promise: Promise<unknown>): Promise<DenialErrorLike> {
+  try {
+    await promise;
+  } catch (error) {
+    return error as DenialErrorLike;
+  }
+  throw new Error("expected the consume to be denied, but it resolved");
+}
+
+/**
+ * Issue the lost-race consume: the decision reads room, but both conditional
+ * counter updates match nothing (the concurrent consumer took the last unit)
+ * and the re-read observes the advanced value.
+ *
+ * @param db - The `Db` that models the race.
+ * @param emit - The outbox emitter seam; defaults to the silent stand-in.
+ * @returns The consume's promise — denied, so it rejects.
+ */
+function consumeLostRace(
+  db: Db,
+  emit: EntitlementEventEmitter = EMITTER
+): Promise<EntitlementVerdict> {
+  return consumeEntitlement(
+    SESSION,
+    TENANT,
+    TENANT_KEY,
+    1,
+    {},
+    { db, clock: fixedClock(NOW), emit }
+  );
 }
 
 describe("consumeEntitlement — non-tenant scope uses ctx.counts (option a)", () => {
@@ -284,19 +352,47 @@ describe("consumeEntitlement — non-tenant scope uses ctx.counts (option a)", (
 
 describe("consumeEntitlement — the counter-advance fallback (tenant scope)", () => {
   it("U9: a failed advance is never reported as success off the stale counter", async () => {
-    const db = makeLostRaceDb();
-
     // The decision reads room, but both conditional updates match nothing (the
-    // row advanced past the limit) and the fallback read sees `5`.
-    const verdict = await consumeEntitlement(
-      SESSION,
-      TENANT,
-      TENANT_KEY,
-      1,
-      {},
-      { db, clock: fixedClock(NOW), emit: EMITTER }
-    ).catch(() => null);
+    // row advanced past the limit) and the fallback read sees `5`. The lost race
+    // must deny through the enforcement surface ADR-0343 §2 chose — it throws the
+    // Appendix A `plan_limit_exceeded`; it does not resolve an `allowed: false`
+    // verdict off the stale counter.
+    await expect(consumeLostRace(makeLostRaceDb())).rejects.toMatchObject({
+      code: "plan_limit_exceeded",
+    });
+  });
 
-    expect(verdict?.allowed ?? false).toBe(false);
+  it("U9: the thrown denial carries the re-read used/limit, not the pre-race value", async () => {
+    await expect(consumeLostRace(makeLostRaceDb())).rejects.toMatchObject({
+      details: { entitlementKey: TENANT_KEY, reason: "plan_limit", used: 5, limit: 3 },
+    });
+  });
+
+  it("U9: the lost race emits exactly one usage.action.blocked carrying the re-read used/limit", async () => {
+    const emit = vi.fn((_input: DomainEventInput) =>
+      Promise.resolve({ deduped: false, id: "evt_1" })
+    );
+
+    await caughtDenial(consumeLostRace(makeLostRaceDb(), emit));
+
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit.mock.calls[0]?.[0]).toMatchObject({
+      eventKey: "usage.action.blocked",
+      tenantId: TENANT,
+      payload: {
+        entitlementKey: TENANT_KEY,
+        reason: "plan_limit",
+        used: 5,
+        limit: 3,
+        periodKey: "2026-09",
+        scope: "tenant",
+      },
+    });
+  });
+
+  it("U9: a lost race on a downgraded subscription denies with 402 payment_required", async () => {
+    await expect(
+      consumeLostRace(makeLostRaceDb({ subscriptionStatus: "downgraded" }))
+    ).rejects.toMatchObject({ code: "payment_required", status: 402 });
   });
 });
