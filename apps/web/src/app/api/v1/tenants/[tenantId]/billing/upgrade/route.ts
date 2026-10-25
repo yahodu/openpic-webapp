@@ -5,7 +5,7 @@ import { getConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { withTransaction } from "@/server/db/transaction";
-import { created, defineRoute, type RouteStage } from "@/server/http/define-route";
+import { created, defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { parseJsonBody } from "@/server/http/respond";
 import { idempotencyStage, mongoIdempotencyStore } from "@/server/idempotency";
@@ -29,7 +29,7 @@ import {
   type UpgradeRequest,
 } from "@/server/services/subscriptions";
 import { requireTenantScope, userAuth } from "@/server/tenancy/route-scope";
-import { tenantStage } from "@/server/tenancy/route-stage";
+import { ownerOnlyTenant } from "@/server/tenancy/route-stage";
 
 /**
  * `POST /api/v1/tenants/{tenantId}/billing/upgrade` — move a workspace up to a
@@ -120,26 +120,6 @@ type LiveSubscription = z.infer<typeof liveSubscriptionSchema>;
 
 /** The plan and price a body-less upgrade targets. */
 type UpgradeTarget = Pick<UpgradeRequest, "targetPlanKey" | "priceKey">;
-
-/**
- * The tenant stage plus the §3.3 owner gate.
- *
- * The gate must run before the idempotency stage (which is where a missing key
- * is rejected), so it is folded into the `tenant` slot — the last stage before
- * `idempotency`.
- *
- * @returns A stage that resolves the workspace and refuses a non-owner.
- */
-function ownerOnlyTenant(): RouteStage {
-  const resolveTenant = tenantStage();
-  return async (ctx, request) => {
-    const headers = await resolveTenant(ctx, request);
-    if (ctx.tenantRole !== "owner") {
-      throw appError("forbidden");
-    }
-    return headers;
-  };
-}
 
 /**
  * Build the `returnUrl` a body-less upgrade lands on.

@@ -16,8 +16,10 @@ import type {
   TransactionKind,
   TransactionStatus,
 } from "@/server/payments/payment-provider";
+import { planSchema } from "@/server/plans/plans";
 import { platformRepo } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
+import { effectiveLimit, periodKey } from "@/server/services/entitlements";
 import { addDays } from "@/server/runtime/time";
 import { getPlatformSettings, type PlatformSettings } from "@/server/settings/platform-settings";
 
@@ -279,8 +281,11 @@ export function reduceProviderEvent(input: ProjectionInput): ProjectionDecision 
     case "payment_succeeded": {
       const end = periodEnd(subscription, now);
       // Reactivation is a status flip on the same record: access returns to the
-      // plan they pay for, never to a hard-coded tier (§14.3).
-      const reactivating = subscription.status === "downgraded";
+      // plan they pay for, never to a hard-coded tier (§14.3). A payment that
+      // returns a **non-active** row to `active` restores the limits it was
+      // blocked on — §3.3's retry-from-`past_due` case is the same rule as the
+      // downgraded one it was already applied to (ADR-0480 §5).
+      const reactivating = subscription.status !== "active";
       return {
         outcome: "applied",
         subscriptionPatch: {
@@ -441,6 +446,233 @@ function subscriptionRefOf(
   return event.externalRefs.find((ref) => ref.kind === "subscription") ?? null;
 }
 
+/**
+ * The grant an add-on purchase snapshots on its pending ledger row (§14.4,
+ * ADR-0480 §4).
+ */
+const addonSnapshotSchema = z.object({
+  addonKey: z.string(),
+  entitlementKey: z.string(),
+  delta: z.number(),
+  quantity: z.number(),
+});
+
+/** The §14.4 pending-intent fields the applier reads. */
+const intentRowSchema = z.object({
+  _id: z.instanceof(ObjectId),
+  tenantId: tenantIdSchema,
+  subscriptionId: z.instanceof(ObjectId),
+  amountMinor: z.number(),
+  currency: z.string(),
+  addon: addonSnapshotSchema.optional(),
+});
+
+/** A validated pending one-time-charge intent. */
+type PendingIntent = z.infer<typeof intentRowSchema>;
+
+/** The stored `subscriptions.activePlanKey` the grant-window check resolves (§14.3). */
+const planKeySchema = z
+  .object({ activePlanKey: z.string().nullish() })
+  .transform((row) => row.activePlanKey ?? "free");
+
+/** The stored `usageCounters.value` the grant-window check reads (§14.2). */
+const counterRowSchema = z
+  .object({ value: z.number().nullish() })
+  .transform((row) => row.value ?? 0);
+
+/** The stored `entitlementGrants` fields the grant-window check reads (§14.2). */
+const grantRowSchema = z.object({
+  delta: z.number(),
+  overrideLimit: z.number().nullable(),
+  validFrom: z.date(),
+  validUntil: z.date().nullable(),
+});
+
+/**
+ * Find the pending one-time-charge intent a payment confirmation settles
+ * (§14.4, ADR-0480 §3).
+ *
+ * The correlation key is the provider **payment** ref the charge was answered
+ * with: the intent's row carries it as the `externalRefs` entry the purchase
+ * wrote before the provider call.
+ *
+ * @param db - The database handle.
+ * @param event - The normalized event.
+ * @returns The pending intent, or `null` when this event settles no intent.
+ */
+async function findPendingIntent(
+  db: Db,
+  event: NormalizedProviderEvent
+): Promise<PendingIntent | null> {
+  if (event.kind !== "payment_succeeded") {
+    return null;
+  }
+  const payment = event.externalRefs.find((ref) => ref.kind === "payment");
+  if (payment === undefined) {
+    return null;
+  }
+  const row = await platformRepo(db)
+    .collection(COLLECTIONS.billingTransactions)
+    .findOne({
+      status: "pending",
+      externalRefs: {
+        $elemMatch: {
+          provider: payment.provider,
+          env: payment.env,
+          kind: "payment",
+          id: payment.id,
+        },
+      },
+    });
+  return row === null ? null : intentRowSchema.parse(row);
+}
+
+/**
+ * Whether writing `delta` onto `entitlementKey` lifts a workspace back inside
+ * its effective limit (§3.5, §10.1.2).
+ *
+ * `usage.limit.restored` is emitted only when the grant **clears a block**: the
+ * workspace was over the plan limit before the grant and is inside the topped-up
+ * one after it. An uncapped or ungated key has no block to clear.
+ *
+ * @param db - The database handle.
+ * @param session - The projection's transaction.
+ * @param tenantId - The workspace the grant belongs to.
+ * @param subscriptionId - The row whose plan gates the key.
+ * @param entitlementKey - The key being topped up.
+ * @param delta - The delta the grant adds.
+ * @param now - The instant the grant becomes active.
+ * @returns `true` when the grant lifts a block.
+ */
+async function grantRestoresLimit(
+  db: Db,
+  session: ClientSession,
+  tenantId: string,
+  subscriptionId: ObjectId,
+  entitlementKey: string,
+  delta: number,
+  now: Date
+): Promise<boolean> {
+  const subscriptionRow = await platformRepo(db)
+    .collection(COLLECTIONS.subscriptions)
+    .findOne({ _id: subscriptionId }, { session });
+  const planKey = subscriptionRow == null ? "free" : planKeySchema.parse(subscriptionRow);
+  const planRow = await platformRepo(db)
+    .collection(COLLECTIONS.plans)
+    .findOne({ key: planKey }, { session });
+  const spec =
+    planRow === null ? null : (planSchema.parse(planRow).entitlements[entitlementKey] ?? null);
+  if (spec === null) {
+    return false;
+  }
+  if (spec.limit === null) {
+    return false;
+  }
+
+  const grants = (
+    await platformRepo(db)
+      .collection(COLLECTIONS.entitlementGrants)
+      .find({ tenantId, entitlementKey }, { session })
+      .toArray()
+  ).map((row) => grantRowSchema.parse(row));
+  const counter = await platformRepo(db)
+    .collection(COLLECTIONS.usageCounters)
+    .findOne(
+      { tenantId, entitlementKey, periodKey: periodKey(spec.resetPeriod, now) },
+      { session }
+    );
+  const used = counter == null ? 0 : counterRowSchema.parse(counter);
+
+  const before = effectiveLimit(spec, grants, now);
+  const after = effectiveLimit(
+    spec,
+    [...grants, { delta, overrideLimit: null, validFrom: now, validUntil: null }],
+    now
+  );
+  return before !== null && used > before && (after === null || used <= after);
+}
+
+/**
+ * Settle a pending intent inside the projection's transaction: mark the charge
+ * succeeded, and — for an add-on purchase — write the **additive**
+ * `entitlementGrants` row it paid for and emit its domain events (§3.6).
+ *
+ * The grant is a new row, never a mutation of the plan (§14.2).
+ *
+ * @param db - The database handle.
+ * @param clock - The clock the emits are stamped with.
+ * @param now - The instant the settlement runs at.
+ * @param row - The inbox row the confirmation came from.
+ * @param session - The projection's transaction.
+ * @param intent - The intent the event correlated to.
+ */
+async function settleIntent(
+  db: Db,
+  clock: Clock,
+  now: Date,
+  row: InboxRow,
+  session: ClientSession,
+  intent: PendingIntent
+): Promise<void> {
+  const tenantId = String(intent.tenantId);
+  const subscriptionId = intent.subscriptionId.toHexString();
+  await platformRepo(db)
+    .collection(COLLECTIONS.billingTransactions)
+    .updateOne(
+      { _id: intent._id, status: "pending" },
+      { $set: { status: "succeeded", settledAt: now, rawPayloadRef: row._id, updatedAt: now } },
+      { session }
+    );
+
+  const addon = intent.addon;
+  if (addon === undefined) {
+    return;
+  }
+
+  const restores = await grantRestoresLimit(
+    db,
+    session,
+    tenantId,
+    intent.subscriptionId,
+    addon.entitlementKey,
+    addon.delta,
+    now
+  );
+  await platformRepo(db)
+    .collection(COLLECTIONS.entitlementGrants)
+    .insertOne(
+      {
+        tenantId,
+        entitlementKey: addon.entitlementKey,
+        delta: addon.delta,
+        overrideLimit: null,
+        source: { kind: "purchase", billingTransactionId: intent._id },
+        validFrom: now,
+        validUntil: null,
+        createdAt: now,
+      },
+      { session }
+    );
+
+  const identity = intent._id.toHexString();
+  const eventKeys = restores
+    ? ["billing.addon.purchased", "usage.limit.restored"]
+    : ["billing.addon.purchased"];
+  for (const eventKey of eventKeys) {
+    await emitDomainEvent(
+      {
+        eventKey,
+        tenantId,
+        actorRef: { kind: "system", id: "webhook" },
+        subjectRef: { kind: "subscription", id: subscriptionId },
+        payload: { subscriptionId, addonKey: addon.addonKey },
+        dedupeKey: `${eventKey}:${identity}`,
+      },
+      { db, clock, session }
+    );
+  }
+}
+
 /** Seams for {@link projectProviderWebhookEvent}. */
 export interface ProjectProviderWebhookEventOptions {
   /** The database handle; defaults to the shared client. */
@@ -522,20 +754,35 @@ async function applyProjection(
 
   const event = getPaymentProvider().parseWebhook(rawBodyOf(row.rawPayload));
   const ref = subscriptionRefOf(event);
-  if (ref === null) {
+  // A one-time charge (a retry or an add-on purchase) is confirmed by a payment
+  // event that settles the pending intent its purchase wrote (§14.4, ADR-0480
+  // §3): the payment ref is the correlation key, independent of the mandate ref.
+  const intent = await findPendingIntent(db, event);
+  if (ref === null && intent === null) {
     return ignore(row, "no_subscription_ref");
   }
 
   const subscriptions = platformRepo(db).collection(COLLECTIONS.subscriptions);
-  const stored = await subscriptions.findOne({
-    externalRefs: {
-      // §11.1: the environment is part of the identity, so a sandbox event can
-      // never address a production subscription's ref.
-      $elemMatch: { provider: ref.provider, kind: "subscription", id: ref.id, env: ref.env },
-    },
-  });
+  const stored =
+    ref === null
+      ? null
+      : await subscriptions.findOne({
+          externalRefs: {
+            // §11.1: the environment is part of the identity, so a sandbox event
+            // can never address a production subscription's ref.
+            $elemMatch: { provider: ref.provider, kind: "subscription", id: ref.id, env: ref.env },
+          },
+        });
   if (stored === null) {
-    return ignore(row, "no_subscription_match");
+    if (intent === null) {
+      return ignore(row, "no_subscription_match");
+    }
+    // Nothing to patch on a subscription: the confirmation settles the intent
+    // (and grants what it bought) on its own.
+    await withTransaction(async (session: ClientSession) => {
+      await settleIntent(db, clock, now, row, session, intent);
+    });
+    return "applied";
   }
 
   const subscription = subscriptionRowSchema.parse(stored);
@@ -554,11 +801,21 @@ async function applyProjection(
     settings,
     now,
   });
-  if (decision.outcome === "ignored") {
+  if (decision.outcome === "ignored" && intent === null) {
     return ignore(row, "nothing_to_apply");
   }
 
-  const outcome = await applyDecision(db, clock, now, row, subscription, event, eventAt, decision);
+  const outcome = await applyDecision(
+    db,
+    clock,
+    now,
+    row,
+    subscription,
+    event,
+    eventAt,
+    decision,
+    intent
+  );
   if (outcome === "ignored") {
     // The conditional write found the watermark already at/behind a newer
     // event's instant: a concurrent projection committed first (§10.1 step 6).
@@ -645,7 +902,8 @@ async function applyDecision(
   subscription: StoredSubscription,
   event: NormalizedProviderEvent,
   eventAt: Date,
-  decision: ProjectionDecision
+  decision: ProjectionDecision,
+  intent: PendingIntent | null
 ): Promise<"applied" | "ignored"> {
   const subscriptions = platformRepo(db).collection(COLLECTIONS.subscriptions);
   const ledger = platformRepo(db).collection(COLLECTIONS.billingTransactions);
@@ -682,7 +940,12 @@ async function applyDecision(
           throw new OutOfOrderProjectionError();
         }
       }
-      if (decision.transaction !== null) {
+      if (intent !== null) {
+        // The intent **is** this charge's ledger row (written before the
+        // provider call), so the confirmation settles it rather than writing a
+        // second row for the same money movement — and grants what it bought.
+        await settleIntent(db, clock, now, row, session, intent);
+      } else if (decision.transaction !== null) {
         await ledger.insertOne(
           ledgerDocument(row, subscription, event, eventAt, now, decision.transaction),
           { session }

@@ -165,15 +165,20 @@ export type EntitlementErrorCode = (typeof ENTITLEMENT_ERROR_CODES)[number];
  * `upstream_unavailable` (`502`, retryable, `{ provider, retryAfterSeconds }`)
  * for a payment-provider failure, `not_an_upgrade` (`422`,
  * `{ currentTierRank, targetTierRank, downgradeUrl }`) for an upgrade whose
- * target rank is not higher than the current one, and `acknowledgement_required`
- * (`422`, `{ consequences }`) for a downgrade that has not acknowledged its
- * computed consequences. Like the tenancy and entitlement rows they
- * are contract catalogue codes that are **not** members of
+ * target rank is not higher than the current one, and
+ * `acknowledgement_required` (`422`, `{ consequences }`) for a downgrade that
+ * has not acknowledged its computed consequences. Like the tenancy and
+ * entitlement rows they are contract catalogue codes that are **not** members of
  * {@link ERROR_CODES}, which the server error catalogue
  * (`@/server/http/catalog`) pins to exactly the base Appendix A table. They are
  * appended to the client-facing enum ({@link API_ERROR_CODES}) and transported
  * from their own table so both stay exact. Append-only, like every other code
  * (ADR-0421).
+ *
+ * OP-110 appends the two self-serve refusals of §3.3 / Appendix A.4:
+ * `no_pending_due` (`409`, nothing outstanding to charge) and
+ * `mandate_not_chargeable` (`409`, `{ mandateStatus, recoveryAction }` for a
+ * revoked or expired mandate) — the same append-only shape (ADR-0480 §7).
  */
 export const BILLING_ERROR_CODES = [
   "invalid_return_url",
@@ -182,6 +187,8 @@ export const BILLING_ERROR_CODES = [
   "upstream_unavailable",
   "not_an_upgrade",
   "acknowledgement_required",
+  "no_pending_due",
+  "mandate_not_chargeable",
 ] as const;
 
 /** A member of the closed {@link BILLING_ERROR_CODES} set. */

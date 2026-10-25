@@ -160,3 +160,27 @@ export function tenantStage(options: TenantStageOptions = {}): RouteStage {
     return { [TENANT_ID_HEADER]: resolved };
   };
 }
+
+/**
+ * The reusable tenant stage plus the §3.3 owner-only gate (OP-109, ADR-0460 §6).
+ *
+ * Every billing **mutation** is owner-only: an `admin` is a member but is not
+ * authorised to spend the workspace's money. The check is folded into the
+ * `tenant` slot rather than the handler because §0.9's idempotency stage runs
+ * *before* the handler, so a handler-level check would answer
+ * `400 idempotency_key_required` where §3.3 requires `403 forbidden`.
+ *
+ * @param options - The provisioning policy and the database seam.
+ * @returns A stage that resolves the workspace and refuses a non-member
+ *   (`404 not_found`) or a non-owner (`403 forbidden`).
+ */
+export function ownerOnlyTenant(options: TenantStageOptions = {}): RouteStage {
+  const resolveTenant = tenantStage(options);
+  return async (ctx, request) => {
+    const headers = await resolveTenant(ctx, request);
+    if (ctx.tenantRole !== "owner") {
+      throw appError("forbidden");
+    }
+    return headers;
+  };
+}

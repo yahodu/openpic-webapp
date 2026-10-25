@@ -52,6 +52,19 @@ export {
 export { CONTACT_SALES_URL, loadPlan, soldPrice, unsoldField } from "./catalogue";
 export type { SoldPrice } from "./catalogue";
 
+export { decideRetryEligibility, retryChargeResponseSchema } from "./retry-charge";
+export type { RetryChargeResponse, RetryEligibility, RetryEligibilityInput } from "./retry-charge";
+
+export { servedTransactionSchema, toTransactionDto, transactionPageSchema } from "./transactions";
+export type {
+  ServedPeriodCovered,
+  ServedTransaction,
+  ServedTransactionFailure,
+  StoredTransactionId,
+  StoredTransactionRow,
+  TransactionPage,
+} from "./transactions";
+
 export { resolveMandateCustomer } from "./mandate-customer";
 
 export type {
