@@ -108,3 +108,51 @@ ADR-0344). `0342`/`0343` are held by the unmerged F1 branch
 [ADR-0344](ADR-0344-op103-denial-emit-failure-red.md), so this record takes
 `0345` — the first number free across all refs — and advances the lane cell to
 `0346`. No number outside the lane range `0340`–`0359` is touched.
+
+## Review sign-off — 2026-10-25 (card `t_73a99e96`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of the F2 GREEN (`t_2d83385c`; review card
+`t_73a99e96`) returned **APPROVED WITH FINDINGS**, zero changes requested, zero
+reviewer edits to the deliverable. Reviewed head `2984891`, whose tree is
+byte-identical to the merge commit `cb232d9`.
+
+- **Merged, and reviewed what landed.** PR
+  [#283](https://github.com/yahodu/openpic-webapp/pull/283) `MERGED` as `cb232d9`
+  (squash); `git merge-base --is-ancestor cb232d9 origin/main` holds. Local
+  `main` == `origin/main` == `cb232d9` at review time.
+- **The F2 fix landed as designed (§1).** `recordDenial` wraps the
+  `usage.action.blocked` emit — both the injected `options.emit` seam and the
+  default `emitDomainEvent` — in a `try`/`catch`, logs
+  `entitlement.denied.emit_failed` at `warn`, and `consumeEntitlement` still
+  throws the Appendix A `AppError`.
+- **The pin is proven load-bearing.** A throwaway probe worktree at the pins head
+  `9908b34` (pins present, fix reverted) runs
+  `apps/web/src/test/unit/entitlements-denial-emit-failure.test.ts` → **5 failed
+  (5)**, assertion-level (`error.code` undefined — the raw emit error replaced
+  the denial). With the fix: **5 passed (5)**.
+- **The merge resolution kept every behaviour.** `git diff origin/main..2984891`
+  = `service.ts` (the F2 hunk only), the new unit pin, ADR-0344, ADR-0345,
+  `README.md`. The merged `service.ts` carries PR #286's `releaseEntitlement`
+  `resolved.scope !== "tenant"` branch, PR #281's `consumeEntitlement` scope
+  branch **and** its `deny()` helper, and this PR's F2 `try`/`catch`. The diff
+  `9908b34..2984891` restricted to `apps/web/src/test` is empty — no pin, mock,
+  fixture or factory was touched.
+- **The gates reproduced independently** at the reviewed head `2984891`: unit
+  **102 files / 1745 tests**, integration **72 files / 515 tests**
+  (`TMPDIR=/root/tmp-mongo`), `tsc --noEmit` exit 0 on root, `packages/contracts`
+  and `apps/web`, `eslint` 0 errors (1 pre-existing warning at `service.ts:172`),
+  `prettier --check` clean on the 5 changed files, and the ADR-numbering guard
+  **29/29**. PR Checks on `2984891` were all substantive green; `audit-dev` is
+  `continue-on-error` (non-gating per ADR-0301).
+- **Superseded draft.** PR #282 was closed and its branch
+  `OP-103-task-denial-emit-failure-pins` deleted; its commits are contained in
+  #283 (`git merge-base --is-ancestor 9908b34 acd6a0d`).
+- **Low finding (recorded, no code change).** The review card's body described
+  the F2 production change as "the `deny()` helper"; the F2 change is actually a
+  `try`/`catch` inside the existing private `recordDenial` (per §1). The `deny()`
+  helper present on `main` came from PR #281. The behaviour the wording stands
+  for is proven above.
+- **No test, mock, fixture or factory was touched** by the review.
+
+Nothing in §Context–§Alternatives above is retracted: those sections document the
+state at the GREEN head, and the follow-ups' own records document what followed.
