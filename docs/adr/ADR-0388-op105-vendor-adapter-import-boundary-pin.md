@@ -3,7 +3,7 @@
 - **Status:** Accepted · **Date:** 2026-10-25
 - **Card:** OP-105 follow-up TEST (`t_d3a8bf6f`) · **Branch:** `OP-105-task-vendor-boundary-pins` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_e553b2c9`
 - **Lane:** OP-105 (Payments adapter), reserved range `0380`–`0399` · **Consumes:** `0388`
-- **Relates to:** [ADR-0380](ADR-0380-op105-payment-provider-port-red.md) (the port + adapter contract), [ADR-0381](ADR-0381-op105-payment-provider-cashfree-adapter-green.md) (the GREEN implementation, whose Consequences record this boundary as out of scope), [ADR-0001](ADR-0001-ports-and-adapters-provider-neutrality.md) (ports and adapters, provider neutrality), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
+- **Relates to:** [ADR-0380](ADR-0380-op105-payment-provider-port-red.md) (the port + adapter contract), [ADR-0381](ADR-0381-op105-payment-provider-cashfree-adapter-green.md) (the GREEN implementation, whose Consequences record this boundary as out of scope), [ADR-0001](ADR-0001-ports-and-adapters.md) (ports and adapters, provider neutrality), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Supersedes:** nothing. It **completes** acceptance criterion 1 of the OP-105 GREEN card (`t_e553b2c9`, PR [#292](https://github.com/yahodu/openpic-webapp/pull/292), head `d3b6bdc`), which the round-1 (artifact-lens) review recorded as **not delivered**.
 - **Fixes:** round-1 (artifact-lens) review finding **F1 — Medium** on the merged OP-105 GREEN card.
 
