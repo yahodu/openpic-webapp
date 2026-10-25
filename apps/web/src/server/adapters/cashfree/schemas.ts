@@ -23,6 +23,15 @@ export const cashfreeCreateSubscriptionRequestSchema = z.object({
   }),
   plan_details: z.object({ plan_id: z.string().min(1) }),
   subscription_meta: z.object({ return_url: z.string().min(1) }),
+  /**
+   * The payment-method preference the vendor honours for this subscription
+   * (F3). The pinned `POST /pg/subscriptions` marks the block optional; the
+   * adapter projects the neutral §14.3 mandate kind onto `payment_methods`.
+   * Declared explicitly so the projection survives Zod's key stripping.
+   */
+  authorization_details: z
+    .object({ payment_methods: z.array(z.string().min(1)).min(1) })
+    .optional(),
 });
 
 /**
@@ -64,6 +73,17 @@ export const cashfreeChargeResponseSchema = z.object({
   payment_schedule_date: z.string().min(1),
   payment_initiated_date: z.string().min(1),
 });
+
+/**
+ * The `POST /pg/subscriptions/{id}/payments` (on-demand charge) request body.
+ *
+ * Strict, unlike the wire-response schemas: the outbound body is projected from
+ * one field, so an unrecognised key is a projection bug rather than vendor
+ * drift the adapter has to tolerate (F5).
+ */
+export const cashfreeChargeRequestSchema = z
+  .object({ payment_amount: z.number().positive() })
+  .strict();
 
 /** The `subscription_details` block every subscription webhook carries. */
 const cashfreeWebhookSubscriptionDetailsSchema = z.object({
@@ -111,5 +131,6 @@ export type CashfreeCreateSubscriptionResponse = z.infer<
 export type CashfreeSubscriptionStatusResponse = z.infer<
   typeof cashfreeSubscriptionStatusResponseSchema
 >;
+export type CashfreeChargeRequest = z.infer<typeof cashfreeChargeRequestSchema>;
 export type CashfreeChargeResponse = z.infer<typeof cashfreeChargeResponseSchema>;
 export type CashfreeWebhookEvent = z.infer<typeof cashfreeWebhookEventSchema>;
