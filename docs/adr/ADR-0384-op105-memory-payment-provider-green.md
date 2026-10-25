@@ -168,3 +168,70 @@ get-payment-provider.test.ts` → **16 passed (16)**, 2 files.
   `prettier --check` clean on the three touched production files.
 - No test, mock, fixture or factory was edited. The diff is three production
   modules, this ADR and the README ledger cells.
+
+## Review sign-off
+
+- **Reviewer round:** 1 (artifact lens) · **Card:** `t_7dd42be8` · **PR:** [#296](https://github.com/yahodu/openpic-webapp/pull/296) (head `0a04c09` → squash `4c5a7eb`) · **Verdict:** APPROVED WITH FINDINGS
+
+The round-1 (**artifact-lens**) review of this OP-105 follow-up GREEN returned
+**APPROVED WITH FINDINGS** — zero changes requested and **zero reviewer edits to
+the deliverable**. PR #296 was rebased on `main` twice (`a27f360` → `3ec9d09` →
+`68f73ff`/`cab62e8`) and squash-merged as `4c5a7eb`, whose containment holds
+(`git merge-base --is-ancestor 4c5a7eb origin/main`). The reviewed head `0a04c09`
+and the squash `4c5a7eb` are **byte-identical** for all eight of this PR's files
+(scoped `git diff --stat` empty): the only delta between the two trees is `main`'s
+own unrelated `docs(adr)` sign-off for OP-106. During the rebase the shared
+`docs/adr/README.md` ledger was resolved as a **union** — both sides' index rows
+kept (`0383`/`0384` and `0400`/`0401`), the lane's `Next free` cell at the
+**highest** value (`0385`), and `main`'s `0420`+ unallocated pool preserved.
+
+**Evidence reproduced at the reviewed head:**
+
+- The 16 pins (`payments-memory-provider.test.ts` + `get-payment-provider.test.ts`)
+  → **16 passed (16)**.
+- Full `unit` project **107 files / 1827 passed | 3 skipped** before the `main`
+  merge and **108 files / 1859 passed | 3 skipped** after (OP-106 landed in
+  between); the combined run `--project unit --project integration --coverage` →
+  **180 files / 2348 passed | 3 skipped (2351), exit 0**, statements **92.27 %**,
+  branches **80.86 %**, functions **95.83 %**, lines **92.76 %** — no threshold
+  moved.
+- `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` **0 problems** on the
+  three touched production modules; `prettier --check` clean.
+- **Honesty audit clean.** The GREEN commit `733353c` touches 2 new production
+  modules + `payment-provider.ts` + this ADR + the README ledger — **0 test
+  files** — and no `process.env`/`NODE_ENV` test conditional reaches production.
+- **CI green on the merged head:** `ci` (incl. `test:e2e`), PR Checks, CI Evidence
+  Guard, CodeQL, `unit_test`, `lint`, `test_coverage`, `secret-scan`,
+  `env-changes`, `validate-*`; only `audit-dev` fails, and it is
+  `continue-on-error: true` ([ADR-0301](ADR-0301-ci-audit-dev-vs-prod-scope.md)).
+
+### Findings carried out of the review
+
+Both findings are **beyond this card's pinned acceptance criteria** and were
+**routed, not fixed here**; they are cited by card id and PR number on purpose —
+an ADR number belonging to a still-unmerged follow-up is unstable.
+
+- **F1 (Medium) — three implemented-but-unpinned port methods.** `fetchStatus`,
+  `normalizeStatus` and `normalizeFailureCategory` ship in the memory adapter but
+  no pin calls them (the file measures 42/47 lines, 17/23 branches, 10/14
+  functions, so the global thresholds pass only because the rest of the tree
+  carries the run). Routed to the Test Author as TEST card `t_1664350a`.
+- **F2 (Low) — stale cross-reference.** `apps/web/src/test/unit/payments-memory-provider.test.ts:35`
+  cited `see ADR-0382` where the wire-format pins it describes belong to
+  [ADR-0383](ADR-0383-op105-memory-payment-provider-red.md). Same card
+  `t_1664350a`.
+
+Both findings were carried out by TEST card `t_1664350a`; its own record
+([ADR-0385](ADR-0385-op105-memory-provider-normalizer-pins.md)) documents what
+followed. The follow-up's outcome is now a landed fact of the trunk: the 14 pins
+and the `see ADR-0382` → `see ADR-0383` fix are on `main` (`9b2fcb3`), a SHA that
+satisfies `git merge-base --is-ancestor 9b2fcb3 origin/main` — the past tense is
+therefore permitted under [ADR-0307](ADR-0307-unmerged-pr-blocks-card-completion.md)
+clause 4.
+
+The `§1`–`§4` decisions above are **not retracted**: the follow-ups' own records
+document what followed them. Two deliberate designs were checked and **not**
+carded, because both are the intended house style rather than defects: `§1`'s
+`chargeOnce` keys idempotency on the caller's `idempotencyKey` alone, and
+`fetchStatus`/`normalizeStatus` return shared table objects, matching
+`createCashfreeProvider`'s existing style.
