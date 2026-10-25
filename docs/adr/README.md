@@ -33,7 +33,7 @@ the rejected alternatives are recorded in
 
 | Holder (lane)                       | Reserved range                  | Next free |
 | ----------------------------------- | ------------------------------- | --------- |
-| board-wide / process (orchestrator) | `0300`–`0319`                   | `0308`    |
+| board-wide / process (orchestrator) | `0300`–`0319`                   | `0309`    |
 | OP-96 notifications follow-up       | `0146`–`0179`                   | `0149`    |
 | OP-97 in-app feed                   | `0180`–`0199`                   | `0183`    |
 | OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
@@ -73,8 +73,11 @@ deletion rule — a branch whose content is a subset of `main` is deleted — ca
 `t_c362aaf8`, branch `OP-101-task-stale-branch-deletion`), and `0307` (ADR-0307,
 the unmerged-PR rule — a card must not complete on an unmerged deliverable, and an
 open PR is declared in the handoff and gets a follow-up merge lane — card
-`t_892df2ea`, branch `OP-106-task-pr299-docs-tighten`). Next free in the block is
-`0308`.
+`t_892df2ea`, branch `OP-106-task-pr299-docs-tighten`), and `0308` (ADR-0308, the
+one-owner-per-branch landing rule — one card owns a branch's landing and its
+fallback/verification card is a `parents=[primary]` child, not an independent
+sibling; card `t_58139e6e`, branch `OP-110-task-one-owner-per-branch-adr`). Next
+free in the block is `0309`.
 
 | ADR                                                                                | Title                                                                                                                   | Status                    |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -236,6 +239,7 @@ open PR is declared in the handoff and gets a follow-up merge lane — card
 | [0305](ADR-0305-ci-evidence-conflicting-pr-suppression.md)                         | CI evidence is a `pull_request` run on the head SHA; a conflicting PR has none                                          | Accepted                  |
 | [0306](ADR-0306-op101-stale-branch-deletion.md)                                    | A stale branch whose content is a subset of `main` is deleted; `main` is the only surviving ref                         | Accepted                  |
 | [0307](ADR-0307-unmerged-pr-blocks-card-completion.md)                             | A card must not complete on an unmerged deliverable; an open PR is declared and gets a merge lane                       | Accepted                  |
+| [0308](ADR-0308-one-owner-per-branch-landing.md)                                   | One card owns a branch's landing (one-owner-per-branch/worktree)                                                        | Accepted                  |
 | [0320](ADR-0320-op102-public-plans-endpoint-red.md)                                | OP-102 RED: the public plans endpoint — generic `display`, version ETag, ignored `includeInactive`, separate add-ons    | Accepted                  |
 | [0321](ADR-0321-op102-public-plans-endpoint-green.md)                              | OP-102 GREEN: project the catalogue onto the §3.1/§3.6 served shapes and wire both public reads onto the pipeline       | Accepted                  |
 | [0322](ADR-0322-op102-plans-etag-representation-red.md)                            | OP-102 follow-up RED: pin that the `GET /plans` ETag identifies the served representation                               | Accepted                  |
