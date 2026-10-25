@@ -203,3 +203,95 @@ The board-wide / process range is `0300`–`0319`. `0300`–`0307` are consumed 
 `0309` to `0311`. `0309`'s in-flight branch advances the same cell to `0310`+ in
 its own hunk; the landing card must union-resolve the cell to `0311` and must not
 let a sibling hunk rewind it. No number outside `0300`–`0319` is touched.
+
+## GREEN realization (card `t_3ad88600`)
+
+The pins above are unchanged and the spec is untouched. This section records what
+the GREEN built and **which wiring it chose** (`Consumes: none` — no new ADR row
+is minted here; `0309` remains the docs lane's).
+
+**Files.** `scripts/git/identity-guard.ts` (the pure validator, exactly the
+pinned contract, import-safe); `scripts/git/check-identity.ts` (the CLI wrapper:
+resolves `user.name`/`user.email` with `git config --get`, calls
+`assertGitIdentity`, writes the message to stderr and exits `1` — the wrapper,
+not the validator, owns the exit code); `scripts/git/pin-hooks-path.mjs` (the
+wiring assertion, run from `prepare`); `.husky/pre-commit` (runs the wrapper
+first, then `lint-staged`); `package.json` (`check:git-identity`, `prepare`).
+
+**The wiring decision — `core.hooksPath` names the tracked `.husky`, not
+husky's generated `.husky/_`.** Both settings are one value in the _shared_
+repo-local config, and both are worked out by the same trigger (`prepare`), so
+the choice is not about durability. It is about _where the hook body comes from_:
+
+- a relative `core.hooksPath` is resolved against **each worktree root**, and a
+  fresh `git worktree add` worktree has no `.husky/_` (its contents are
+  `.gitignore`d `*` and only an install generates them), so husky's default is a
+  silent no-op exactly where the corruption is inherited (Probe A);
+- the card's suggested **absolute** `core.hooksPath` → the main checkout's
+  `.husky/_` (Probe C) does fire, but husky's `_/h` resolves the hook body two
+  levels up from _itself_, so the body would always be the **main checkout's**
+  `.husky/pre-commit`. A lane could not run its own hook change until `main`
+  caught up — including this very card, whose guard would then be unreproducible
+  in a probe — and the value is a machine-specific absolute path that no diff can
+  verify;
+- pinning to the **tracked `.husky` directory** keeps the relative, per-worktree
+  resolution but points it at a directory that _does_ exist in every worktree, so
+  the hook body is always **the worktree's own tracked file**, it fires with no
+  install step, and the setting is the stable string `.husky` that anyone
+  reproduces by running `pnpm install`.
+
+`scripts/git/pin-hooks-path.mjs` re-asserts the pin after `husky` in `prepare`
+(husky's own step resets the key to `.husky/_` on every install, so the
+assertion has to follow it), and is a no-op outside a git work tree. `husky`
+itself is untouched and still runs, so `.husky/_` keeps being generated; the
+14 shims it writes were already behaviourally inert for the 13 hook names that
+have no `.husky/<name>` body — the `h` script exits `0` when the body is absent.
+
+The hook's `lint-staged` step is guarded by `[ -x node_modules/.bin/lint-staged ]`
+because the hook now runs _before_ an install in a fresh worktree: skipping it
+there reproduces the previous behaviour exactly (no hook ran at all) instead of
+triggering an install mid-commit. In an installed worktree the step runs as
+before.
+
+**Recorded probe (both cases), at head `8950c2c`.** A throwaway worktree of the
+same commit, outside the checkout, never installed
+(`git worktree add --detach $SCRATCH/probe-guard 8950c2c`; `ls -d node_modules
+.husky/_` → both absent; `git config --get core.hooksPath` → `.husky`). The
+corruption is injected per command with `GIT_CONFIG_COUNT`/`KEY_0`/`VALUE_0`, so
+the shared `.git/config` is never modified:
+
+```
+# PROBE 1 — corrupt identity: the commit is REFUSED (no commit object created)
+$ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=--global \
+    git commit -m "probe: corrupt identity must be refused"
+The shared repo-local git identity is corrupt: user.name must be a real name and email
+(git wrote a flag or a config key into the value). Repair it with
+`git config --local user.name "<name>"` and `git config --local user.email "<email>"`.
+commit_rc=1
+
+# PROBE 1b — corrupt email: REFUSED
+$ GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.email GIT_CONFIG_VALUE_0=user.email git commit -m …
+The shared repo-local git identity is corrupt: user.email must be a real name and email (…)
+commit_rc=1
+
+# PROBE 2 — healthy identity: the commit SUCCEEDS (lint-staged skipped: no deps)
+$ git commit -m "probe: healthy identity must succeed"
+[detached HEAD 350c1f4] probe: healthy identity must succeed
+ 1 file changed, 1 insertion(+)
+commit_rc=0
+
+# NEGATIVE CONTROL — same fresh worktree with husky's default relative `.husky/_`:
+$ GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=.husky/_ \
+  GIT_CONFIG_KEY_1=user.name GIT_CONFIG_VALUE_1=--global git commit -m …
+[detached HEAD 7346119] probe: corrupt identity with husky default hooksPath
+commit_rc=0        # no hook fired — the corruption sails through; the pin is load-bearing
+```
+
+The probe worktree was removed (`git worktree remove --force` + `git worktree
+prune`). The wiring itself is live in the shared repo-local config
+(`core.hooksPath` = `.husky`) and re-asserted by `prepare`; the commit that
+carries this GREEN was made through it.
+
+**Residual, unchanged from before.** A brand-new clone has no `core.hooksPath`
+until its first `pnpm install` (the same window husky itself has), and a manual
+`npx husky` outside `prepare` resets the key until the next install.
