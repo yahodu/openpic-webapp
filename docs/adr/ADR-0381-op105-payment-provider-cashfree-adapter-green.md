@@ -151,3 +151,86 @@ unverified wire mapping; OP-107 pins it against the live schema. Recorded as a c
   `CASHFREE_LIVE_TEST=1` sandbox contract test and the memory provider for e2e (both explicitly out
   of scope in ADR-0380); and the Cashfree-identifiers lint boundary (also out of scope there, so no
   rule enforces §5 above yet).
+
+## Review sign-off — 2026-10-25 (card `t_e553b2c9`, round 1 · artifact lens)
+
+- **Reviewer round:** 1 (artifact lens) · **Card:** `t_e553b2c9` · **PR:**
+  [#292](https://github.com/yahodu/openpic-webapp/pull/292) (head `d3b6bdc` → squash `d0eb4a0`) ·
+  **Verdict:** APPROVED WITH FINDINGS · **Consumes:** no ADR number (append-only; `docs/adr/README.md`
+  stays byte-identical to `origin/main`)
+
+The round-1 (**artifact lens**) review of this OP-105 GREEN returned **APPROVED WITH FINDINGS** —
+zero changes requested to the deliverable and **zero reviewer edits**: no test, mock, fixture,
+factory or production file was touched, and the merged bytes are the reviewed bytes
+(`git diff --quiet d3b6bdc d0eb4a0` is empty and `d0eb4a0` is an ancestor of `origin/main`).
+
+**Evidence reproduced independently at the reviewed head `d3b6bdc`:**
+
+- The RED pins re-run **unedited**: unit `payments-cashfree-status.test.ts` +
+  `payments-cashfree-webhook.test.ts` → **52 passed (52)**; integration
+  `payments-cashfree-adapter.test.ts` → **6 passed (6)**.
+- Full suites green: unit **104 files / 1800 tests**, integration **73 files / 521 tests**
+  (`TMPDIR=/root/tmp-mongo`).
+- `pnpm run typecheck` exit `0` on all three projects, ESLint 0 errors, `prettier --check` clean, the
+  `adr-numbering` guard green.
+- **Honesty audit clean.** The GREEN commits touch no test file —
+  `git diff --stat 8567dc2..HEAD` is the three production modules
+  (`server/payments/payment-provider.ts`, `server/adapters/cashfree/schemas.ts`,
+  `server/adapters/cashfree/cashfree-provider.ts`), this ADR and the README ledger cells; the pins
+  and the fixture factory arrived in the RED's own commits and were carried unchanged.
+- **A throwaway probe at the head found F2** (below): an unknown vendor `subscription_status` raised
+  `UpstreamContractError` with **no** `payments.upstream_contract_violation` line — `parseWebhook`
+  logged `[]` and `fetchStatus` logged only `["payments.call"]`.
+
+### Findings carried out of the review
+
+Both Medium findings are **beyond this card's pinned acceptance criteria** and were **routed, not
+fixed here**. They are cited by card id and PR number on purpose: a follow-up's ADR number may
+renumber while its PR is open.
+
+- **F1 (Medium) — acceptance criterion 1 (the Cashfree-identifier lint boundary) is not delivered.**
+  The diff adds no vendor identifier outside `adapters/cashfree/**` (the port carries only the
+  neutral `PaymentProviderKey` union §11.1 requires), but nothing enforces that: `eslint.config.mjs`
+  carries a boundary for the Novu SDK and one for the repository seam, and none for the payments
+  vendor seam. Routed to TEST card `t_d3a8bf6f` (pins) → GREEN card `t_b7f8adfd` (enforcement, PR
+  [#310](https://github.com/yahodu/openpic-webapp/pull/310), stacked on the draft pins PR #306).
+- **F2 (Medium) — an unknown vendor status throws with no drift log.** The wire schemas are
+  non-strict on the status string, so a status outside the twelve-row table is detected only by the
+  `STATUS_TABLE` lookup — the one path outside `contractViolation(...)` — and the drift was therefore
+  silent (probe above). Routed to TEST card `t_8ccb6c1f` → GREEN card `t_92de5343` (PR
+  [#297](https://github.com/yahodu/openpic-webapp/pull/297)).
+
+The Low/Info items were recorded and routed to the orchestrator card `t_d4deaa7a`, **by card id
+only** — none of them had a record when this sign-off was written:
+
+- **F3 (Low) — `paymentMethodKind` is carried by the port and never projected onto the create wire**
+  (§6 above).
+- **F4 (Low) — `createMandate` mints a fresh `randomUUID()` as the vendor `subscription_id` on every
+  call**, so a retried create is not retry-safe (§7 above). Whether the port gains an idempotency key
+  is the orchestrator's decision, and the follow-up card's own record documents the outcome.
+- **F5 (Low) — `chargeOnce`'s request body is not schema-validated** (§7 above validates the response
+  only).
+- **F6 (Info)** — `kind` reads `subscription_activated` for a paused mandate that normalizes to
+  `active`; documented in §2 above and harmless, since the projection reads `status`. No card.
+- **F7 (Info)** — the card's 502 `upstream_unavailable` envelope is unwired because OP-105 has no
+  route; the billing route cards (OP-107) own the mapping. No card.
+- **F8 (Info)** — the handoff metadata cited a non-existent `ADR-0382`; the ADR text cites ADR-0380
+  correctly. No card.
+
+### Post-review status
+
+Nothing in §Context–§Consequences above is retracted: those sections document the state at the GREEN
+head, and the follow-ups' own records document what followed. At the time this sign-off was written:
+
+- **F2 is addressed and landed.** TEST card `t_8ccb6c1f` is recorded in
+  [ADR-0386](ADR-0386-op105-drift-log-unknown-status-pin.md) and GREEN card `t_92de5343` in
+  [ADR-0387](ADR-0387-op105-drift-log-unknown-status-green.md); PR
+  [#297](https://github.com/yahodu/openpic-webapp/pull/297) squash-merged as `2669c304`, an ancestor
+  of `origin/main`. The drift line now fires on both wire paths (`parseWebhook`, `fetchStatus`) and a
+  status **inside** the table logs nothing.
+- **F1 is in flight.** TEST card `t_d3a8bf6f` (pins) and GREEN card `t_b7f8adfd` (enforcement) were
+  delivered as the draft pins PR #306 and PR #310, both **open** at the time of writing, so this
+  record asserts no landed fact and cites **no ADR number** for them — `t_b7f8adfd`'s own record
+  documents the outcome.
+- **F3–F5 are routed**, with their pins and implementation still in flight on the orchestrator's
+  chain behind card `t_d4deaa7a`; their own records document what followed.
