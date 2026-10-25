@@ -61,6 +61,9 @@ const STATUS_URL = `${SANDBOX_ORIGIN}/pg/subscriptions/${REF_ID}`;
 /** The on-demand charge URL for {@link REF}. */
 const CHARGE_URL = `${SANDBOX_ORIGIN}/pg/subscriptions/${REF_ID}/payments`;
 
+/** The Manage Subscription URL for {@link REF} (v2025-01-01, ADR-0460 §1). */
+const MANAGE_URL = `${SANDBOX_ORIGIN}/pg/subscriptions/${REF_ID}/manage`;
+
 /** Build a logger wired to a memory sink so a test can inspect emitted entries. */
 function installLogger(): { readonly logger: Logger; readonly sink: MemoryTransport } {
   const sink = memoryTransport();
@@ -214,5 +217,53 @@ describe("Cashfree adapter (MSW)", () => {
 
     // Assert
     expect(idempotencyKey).toBe("charge-idem-0001");
+  });
+
+  it("F4: cancelMandate parses the pinned v2025-01-01 Manage response into cancelled/revoked", async () => {
+    // Cashfree's Manage Subscription response is its `SubscriptionEntity` — the
+    // subscription object, which carries **no** `auth_link` (that field belongs
+    // to the Create response alone). Parsing it through the create-response
+    // schema would reject a real manage response, so the adapter must pin the
+    // manage shape on its own terms.
+    const { logger, sink } = installLogger();
+    server.use(
+      http.post(MANAGE_URL, () =>
+        HttpResponse.json(
+          makeCashfreeSubscriptionStatusResponse({ subscription_status: "CANCELLED" })
+        )
+      )
+    );
+    const provider = createCashfreeProvider(makePaymentProviderConfig({ logger }));
+
+    // Act
+    const result = await provider.cancelMandate({ ref: REF });
+
+    // Assert
+    expect(result.status).toEqual({ status: "cancelled", mandateStatus: "revoked" });
+    expect(sink.entries.filter((entry) => entry.event === UPSTREAM_CONTRACT_EVENT)).toEqual([]);
+  });
+
+  it("F4: a manage response carrying only the create shape is refused as vendor drift", async () => {
+    // A body with the create-response fields and **none** of the manage/status
+    // fields (`subscription_first_charge_time`, `next_schedule_date`) is not a
+    // manage response: reading a status off it would trust a shape the vendor
+    // never promised for this call, so it is refused explicitly (and logged).
+    const { logger, sink } = installLogger();
+    server.use(
+      http.post(MANAGE_URL, () =>
+        HttpResponse.json(
+          makeCashfreeCreateSubscriptionResponse({ subscription_status: "CANCELLED" })
+        )
+      )
+    );
+    const provider = createCashfreeProvider(makePaymentProviderConfig({ logger }));
+
+    // Act
+    const cancel = provider.cancelMandate({ ref: REF });
+
+    // Assert
+    await expect(cancel).rejects.toBeInstanceOf(UpstreamContractError);
+    const entry = sink.entries.find((logged) => logged.event === UPSTREAM_CONTRACT_EVENT);
+    expect(entry?.operation).toBe("cancelMandate");
   });
 });

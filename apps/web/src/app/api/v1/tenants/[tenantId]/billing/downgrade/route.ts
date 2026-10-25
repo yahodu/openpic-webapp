@@ -11,6 +11,7 @@ import { tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { periodKey } from "@/server/services/entitlements";
 import {
+  comparePlanTiers,
   computeDowngradeConsequences,
   downgradeRequestSchema,
   downgradeResponseSchema,
@@ -125,6 +126,21 @@ export const POST = defineRoute({
     const currentPlan = await loadPlan(db, current.activePlanKey);
     if (currentPlan === null) {
       throw appError("internal_error");
+    }
+
+    // §3.3 schedules a downgrade against a strictly lower tier. Anything else
+    // (an equal rank included) is refused before any write — the mirror of the
+    // upgrade's `not_an_upgrade` — so a higher tier can never be scheduled as a
+    // "downgrade" and then applied by the sweep with no charge and no
+    // re-authorization. The `upgradeUrl` names the endpoint that can serve it.
+    if (comparePlanTiers(currentPlan.tierRank, targetPlan.tierRank) !== "downgrade") {
+      throw appError("not_a_downgrade", {
+        details: {
+          currentTierRank: currentPlan.tierRank,
+          targetTierRank: targetPlan.tierRank,
+          upgradeUrl: `/api/v1/tenants/${tenantId}/billing/upgrade`,
+        },
+      });
     }
 
     const usage = await resolveUsageFacts(db, tenantId, currentPlan, now);

@@ -815,6 +815,86 @@ describe("POST /api/v1/tenants/{tenantId}/billing/upgrade", () => {
     expect(response.status).toBe(400);
     expect(await errorEnvelope(response)).toMatchObject({ code: "idempotency_key_required" });
   });
+
+  it("F1: a successful upgrade emits a tenant-scoped billing.plan.upgraded domain event naming the plan change", async () => {
+    // Contract §3.3: "Emits `billing.plan.upgraded` on success." The observable
+    // is the outbox row, not the info log the route already writes.
+    const owner = await app.signIn(makeIdentity("op109-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op109-upgrade-emits-event",
+    });
+    const tenantPath = tenantId.toHexString();
+    await seedSubscription({
+      tenantId: tenantPath,
+      planKey: "starter",
+      priceKey: "starter-monthly-inr",
+      status: "active",
+    });
+    recordProviderCalls();
+
+    const response = await upgradePlan(
+      planChangeRequest({
+        tenantPath,
+        route: "upgrade",
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(response.status).toBe(201);
+
+    // Scoped to this workspace and carrying the plan-change subject (the from →
+    // to plan keys §3.3 names), never an internal row field.
+    const events = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: tenantPath, eventKey: "billing.plan.upgraded" })
+      .toArray();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      eventKey: "billing.plan.upgraded",
+      tenantId: tenantPath,
+      payload: { fromPlanKey: "starter", toPlanKey: "professional" },
+    });
+  });
+
+  it("F1: an Idempotency-Key replay does not emit a second billing.plan.upgraded event", async () => {
+    const owner = await app.signIn(makeIdentity("op109-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op109-upgrade-emits-replay",
+    });
+    const tenantPath = tenantId.toHexString();
+    await seedSubscription({
+      tenantId: tenantPath,
+      planKey: "starter",
+      priceKey: "starter-monthly-inr",
+      status: "active",
+    });
+    recordProviderCalls();
+    const idempotencyKey = randomUUID();
+    const request = (): Request =>
+      planChangeRequest({
+        tenantPath,
+        route: "upgrade",
+        cookie: owner.cookie,
+        idempotencyKey,
+      });
+
+    const first = await upgradePlan(request());
+    expect(first.status).toBe(201);
+    const second = await upgradePlan(request());
+    expect(second.status).toBe(200);
+
+    // One policy change, one event — a replayed request adds none.
+    const events = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: tenantPath, eventKey: "billing.plan.upgraded" })
+      .toArray();
+    expect(events).toHaveLength(1);
+  });
 });
 
 describe("POST /api/v1/tenants/{tenantId}/billing/downgrade", () => {
@@ -1008,6 +1088,75 @@ describe("POST /api/v1/tenants/{tenantId}/billing/downgrade", () => {
     expect(new Date(row?.scheduledChange.effectiveAt as Date).getTime()).toBe(effectiveAt);
     expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
   });
+
+  it.each([
+    {
+      label: "the tier the workspace is already on",
+      slug: "op109-not-a-downgrade-equal",
+      currentPlanKey: "professional",
+      currentPriceKey: "professional-monthly-inr",
+      targetPlanKey: "professional",
+      currentTierRank: 2,
+      targetTierRank: 2,
+    },
+    {
+      label: "a higher tier",
+      slug: "op109-not-a-downgrade-higher",
+      currentPlanKey: "starter",
+      currentPriceKey: "starter-monthly-inr",
+      targetPlanKey: "professional",
+      currentTierRank: 1,
+      targetTierRank: 2,
+    },
+  ])(
+    "F2: a downgrade to $label is refused as 422 not_a_downgrade naming both ranks, writing nothing and never calling the provider",
+    async (caseRow) => {
+      // §3.3 schedules a downgrade against a strictly lower tier; the mirror of
+      // the upgrade's `not_an_upgrade`, and the endpoint the upgrade refusal
+      // points at. Anything that is not strictly lower must be refused before a
+      // `scheduledChange` is written.
+      const owner = await app.signIn(makeIdentity("op109-owner"));
+      const tenantId = await seedWorkspace({
+        userId: owner.userId,
+        role: "owner",
+        slug: caseRow.slug,
+      });
+      const tenantPath = tenantId.toHexString();
+      const liveId = await seedSubscription({
+        tenantId: tenantPath,
+        planKey: caseRow.currentPlanKey,
+        priceKey: caseRow.currentPriceKey,
+        status: "active",
+      });
+      const provider = recordProviderCalls();
+
+      const response = await downgradePlan(
+        planChangeRequest({
+          tenantPath,
+          route: "downgrade",
+          cookie: owner.cookie,
+          body: downgradeBody({ targetPlanKey: caseRow.targetPlanKey }),
+        })
+      );
+
+      expect(response.status).toBe(422);
+      const error = await errorEnvelope(response);
+      expect(error).toMatchObject({ code: "not_a_downgrade" });
+      expect(error.details).toMatchObject({
+        currentTierRank: caseRow.currentTierRank,
+        targetTierRank: caseRow.targetTierRank,
+      });
+
+      // Nothing scheduled, the live plan untouched, and no vendor traffic.
+      const row = await app.db.collection(COLLECTIONS.subscriptions).findOne({ _id: liveId });
+      expect(row?.scheduledChange).toBeNull();
+      expect(row).toMatchObject({
+        status: "active",
+        activePlanKey: caseRow.currentPlanKey,
+      });
+      expect(provider.calls()).toEqual([]);
+    }
+  );
 });
 
 describe("DELETE /api/v1/tenants/{tenantId}/billing/scheduled-change", () => {
