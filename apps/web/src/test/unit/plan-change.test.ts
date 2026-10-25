@@ -54,6 +54,13 @@ const IMAGES = "images.per_event";
 const COORGANIZERS = "coorganizers.per_event";
 
 /**
+ * A key both plans gate, but the target plan gates as a boolean `feature`
+ * rather than a usage ceiling (schema §14.1: a `feature` gate carries
+ * `limit: null` and an explicit `enabled` flag).
+ */
+const FEATURE_KEY = "originals.download";
+
+/**
  * The plan the tenant is on: the higher of the two tiers.
  *
  * Built through the shared factories rather than the seeded catalogue, so the
@@ -180,11 +187,114 @@ describe("computeDowngradeConsequences", () => {
     );
   });
 
+  it.each([
+    ["the catalogue's unlimited feature shape", null],
+    ["a feature shape that carries a limit of its own", 1],
+  ] as const)(
+    "does not flag a key the target plan gates as a feature (%s), though the key is used",
+    (_description, featureLimit) => {
+      // `originals.download` is present on **both** plans, but the target
+      // version is a `feature` gate: a boolean toggle is not a usage ceiling,
+      // so it is never something to acknowledge — `constrainedKeys` skips it on
+      // `enforcement === "feature"`. The other target key (`events.active`) is
+      // over its limit and still emits, so the feature key's absence is the
+      // skip and not an accidental absence from the target plan.
+      //
+      // The second row gives the feature gate a limit *below* the recorded
+      // usage, so it would produce a consequence if the walk visited it: the
+      // `enforcement` guard — not the `limit === null` guard — is what the pin
+      // observes for that row.
+      const currentPlan = makePlan({
+        key: "professional",
+        name: "Professional",
+        tierRank: 2,
+        entitlements: {
+          [EVENTS_ACTIVE]: makeEntitlement({ limit: 28 }),
+          [FEATURE_KEY]: makeEntitlement({
+            limit: null,
+            resetPeriod: "none",
+            scope: "event",
+            enforcement: "feature",
+            enabled: false,
+          }),
+        },
+      });
+      const targetPlan = makePlan({
+        key: "starter",
+        name: "Starter",
+        tierRank: 1,
+        entitlements: {
+          [EVENTS_ACTIVE]: makeEntitlement({ limit: 7 }),
+          [FEATURE_KEY]: makeEntitlement({
+            limit: featureLimit,
+            resetPeriod: "none",
+            scope: "event",
+            enforcement: "feature",
+            enabled: true,
+          }),
+        },
+      });
+
+      const keys = computeDowngradeConsequences({
+        currentPlan,
+        targetPlan,
+        usage: [
+          { entitlementKey: EVENTS_ACTIVE, used: 15 },
+          { entitlementKey: FEATURE_KEY, used: 3 },
+        ],
+      }).map((consequence) => consequence.entitlementKey);
+
+      expect(keys).toEqual([EVENTS_ACTIVE]);
+    }
+  );
+
+  it("does not flag a key the target plan leaves unlimited, though usage exists", () => {
+    // `images.per_event` is metered on the current plan and the tenant has used
+    // it, but the target plan makes it unlimited (`limit: null`): an unlimited
+    // ceiling cannot be exceeded, so a usage fact is not a constraint
+    // (`constrainedKeys` skips it on `limit === null`). Without the skip the
+    // walk would compare `100 > null` and emit a bogus consequence.
+    const currentPlan = makePlan({
+      key: "professional",
+      name: "Professional",
+      tierRank: 2,
+      entitlements: {
+        [IMAGES]: makeEntitlement({ limit: 20_000, resetPeriod: "none", scope: "event" }),
+      },
+    });
+    const targetPlan = makePlan({
+      key: "starter",
+      name: "Starter",
+      tierRank: 1,
+      entitlements: {
+        [IMAGES]: makeEntitlement({ limit: null, resetPeriod: "none", scope: "event" }),
+      },
+    });
+
+    expect(
+      computeDowngradeConsequences({
+        currentPlan,
+        targetPlan,
+        usage: [{ entitlementKey: IMAGES, used: 100 }],
+      })
+    ).toEqual([]);
+  });
+
   it("marks every consequence non-destructive, and reports the offending entries when one is not", () => {
-    // §3.3 makes this a hard invariant of the calculator itself. Asserting the
-    // *filtered* list — rather than a boolean over `.every(...)` — makes the
-    // failure name the consequence that broke it.
-    expect(CONSEQUENCES.filter((consequence) => consequence.destructive !== false)).toEqual([]);
+    // §3.3 makes this a hard invariant of the calculator itself. The pin reads
+    // each consequence's `destructive` **as a value** and compares it to
+    // `false`, keyed by the entitlement it belongs to, so a failure names the
+    // offending consequence rather than a bare boolean. Reading the value —
+    // instead of a `filter((c) => c.destructive)` predicate or a
+    // `c.destructive !== false` comparison — is what lints under
+    // `strictTypeChecked` whichever way the field is typed
+    // (`no-unnecessary-boolean-literal-compare` rejects the comparison, and a
+    // truthiness predicate trips `no-unnecessary-condition` once the field is
+    // the literal `false`). ADR-0462 records why this unblocks restoring the
+    // literal `false`.
+    expect(
+      CONSEQUENCES.map((consequence) => [consequence.entitlementKey, consequence.destructive])
+    ).toEqual(CONSEQUENCES.map((consequence) => [consequence.entitlementKey, false]));
   });
 
   it("explains every consequence in a sentence an organizer can act on", () => {

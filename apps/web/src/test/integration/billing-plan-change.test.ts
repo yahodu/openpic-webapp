@@ -948,6 +948,66 @@ describe("POST /api/v1/tenants/{tenantId}/billing/downgrade", () => {
     expect(new Date(row?.scheduledChange.effectiveAt as Date).getTime()).toBe(PERIOD_END.getTime());
     expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
   });
+
+  it("F5: a live row with no currentPeriodEnd schedules the change at now, not at period end", async () => {
+    // Characterisation pin (round-1 review finding F5). §3.3 says a downgrade
+    // takes effect **at period end**, but a live row that carries no
+    // `currentPeriodEnd` (the §14.3 field is optional in the route's reader)
+    // makes `downgrade/route.ts:139` fall back to `effectiveAt = now` — so the
+    // change lands immediately and, for a self-serve downgrade, contradicts the
+    // period-end rule. This pin records the *shipped* behaviour rather than
+    // demanding a change; ADR-0462 files the fallback as an open product
+    // question (whether the route should instead refuse with no period to
+    // schedule against).
+    const owner = await app.signIn(makeIdentity("op109-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op109-downgrade-no-period-end",
+    });
+    const tenantPath = tenantId.toHexString();
+    const liveId = await seedSubscription({
+      tenantId: tenantPath,
+      planKey: "starter",
+      priceKey: "starter-monthly-inr",
+      status: "active",
+    });
+    // The shared seed always writes `currentPeriodEnd`; delete it so the row is
+    // otherwise a normal live row that simply has no period end to schedule at.
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne({ _id: liveId }, { $unset: { currentPeriodEnd: "" } });
+
+    const before = Date.now();
+    const response = await downgradePlan(
+      planChangeRequest({
+        tenantPath,
+        route: "downgrade",
+        cookie: owner.cookie,
+        body: downgradeBody(),
+      })
+    );
+    const after = Date.now();
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    const scheduled = payload.scheduledChange as { toPlanKey: string; effectiveAt: string };
+    const effectiveAt = new Date(scheduled.effectiveAt).getTime();
+
+    // `now` is between the two reads around the request, and it is emphatically
+    // not the seeded period end (which is ~20 days away).
+    expect(scheduled.toPlanKey).toBe("free");
+    expect(effectiveAt).toBeGreaterThanOrEqual(before);
+    expect(effectiveAt).toBeLessThanOrEqual(after);
+    expect(effectiveAt).not.toBe(PERIOD_END.getTime());
+
+    const row = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ tenantId: tenantPath, cancelledAt: null });
+    expect(row?.scheduledChange).toMatchObject({ toPlanKey: "free", reason: "self_downgrade" });
+    expect(new Date(row?.scheduledChange.effectiveAt as Date).getTime()).toBe(effectiveAt);
+    expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
+  });
 });
 
 describe("DELETE /api/v1/tenants/{tenantId}/billing/scheduled-change", () => {

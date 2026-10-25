@@ -265,21 +265,6 @@ export default tseslint.config(
     },
   },
   {
-    // Scoped exemption for the OP-109 consequence pin. The spec asserts
-    // `CONSEQUENCES.filter((consequence) => consequence.destructive !== false)`
-    // — deliberately a *filtered* list, so a failure names the offending
-    // consequence rather than a boolean over `.every(...)`. `strictTypeChecked`
-    // reports any non-nullable boolean-to-`false` comparison as unnecessary, so
-    // the pin cannot be linted however the property is typed (a literal `false`
-    // additionally trips `no-unnecessary-condition`). The rule stays on
-    // everywhere else; the follow-up belongs to the Test Author (see
-    // ADR-0461 §5).
-    files: ["apps/web/src/test/unit/plan-change.test.ts"],
-    rules: {
-      "@typescript-eslint/no-unnecessary-boolean-literal-compare": "off",
-    },
-  },
-  {
     // Tenant isolation invariant (OP-77): only the repository layer
     // (`src/server/repos/**`) and the db folder (`src/server/db/**`) may call
     // `db.collection(...)`. Everywhere else must obtain a scoped handle from
