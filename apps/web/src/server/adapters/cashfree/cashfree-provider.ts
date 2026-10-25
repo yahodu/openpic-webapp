@@ -422,6 +422,41 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
     }
   }
 
+  /**
+   * Canonicalize a vendor `subscription_expiry_time` onto the one `Timestamp`
+   * shape the contract admits — RFC 3339, UTC, millisecond precision, `Z`
+   * (§0.13; §3.3 serves `checkout.expiresAt` in exactly that form).
+   *
+   * Cashfree answers ISO 8601 with an explicit IST `+05:30` offset, second
+   * precision and no `Z` (its Create Subscription reference: "We store
+   * timestamps in IST"). OP-107 projects `CreateMandateResult.expiresAt`
+   * straight onto `checkout.expiresAt`, so the offset is consumed here — the
+   * one boundary that already speaks the vendor's dialect — rather than carried
+   * onto our wire.
+   *
+   * A value that cannot become a valid instant is a contract break, never
+   * garbage to return: like the schema-drift path in {@link call}, it raises
+   * `UpstreamContractError` (and pages on the drift line) instead of handing a
+   * caller `Invalid Date` or a raw vendor string.
+   *
+   * @param operation - The port operation that observed the value.
+   * @param vendorExpiry - The raw vendor `subscription_expiry_time`.
+   * @returns The RFC 3339 UTC ms `Z` timestamp.
+   * @throws UpstreamContractError (via {@link contractViolation}) when the
+   *   value is not a parseable instant.
+   */
+  function normalizeExpiry(operation: string, vendorExpiry: string): string {
+    const parsed = new Date(vendorExpiry);
+    if (Number.isNaN(parsed.getTime())) {
+      throw contractViolation(
+        operation,
+        "Cashfree returned an unparseable subscription_expiry_time.",
+        undefined
+      );
+    }
+    return parsed.toISOString();
+  }
+
   /** Issue one call: pinned headers, a timeout, and a validated response. */
   async function call<T>(request: CashfreeCall<T>): Promise<T> {
     const startedAtMs = Date.now();
@@ -515,7 +550,7 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
       return {
         externalRefs: [refFor(config.env, "subscription", response.subscription_id)],
         checkoutUrl: response.auth_link,
-        expiresAt: response.subscription_expiry_time,
+        expiresAt: normalizeExpiry("createMandate", response.subscription_expiry_time),
       };
     },
 
