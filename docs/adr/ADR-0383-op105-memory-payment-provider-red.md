@@ -1,6 +1,6 @@
-# ADR-0382 — OP-105 follow-up RED: the in-process memory payment provider for e2e — deterministic mandate/charge, the shared webhook signer, and the `getPaymentProvider` composition root
+# ADR-0383 — OP-105 follow-up RED: the in-process memory payment provider for e2e — deterministic mandate/charge, the shared webhook signer, and the `getPaymentProvider` composition root
 
-- **Status:** Accepted · **Date:** 2026-10-25
+- **Status:** Accepted · **Date:** 2026-10-25 · **Renumbered:** cut as `0382`, moved to `0383` (the OP-105 live-sandbox lane merged `0382` to `main` first; ADR-0300 §7)
 - **Card:** OP-105 follow-up TEST (`t_68faf9b3`) · **Branch:** `OP-105-task-memory-payment-provider` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_68faf9b3`
 - **Relates to:** [ADR-0380](ADR-0380-op105-payment-provider-port-red.md) (the port + Cashfree adapter contract, which lists this deliverable as out of scope), [ADR-0381](ADR-0381-op105-payment-provider-cashfree-adapter-green.md) (its GREEN), [ADR-0096](ADR-0096-message-transport-factory.md) / [ADR-0105](ADR-0105-op94-notification-transport-selection.md) (`getMessageTransport`, the config-selector precedent this composition root mirrors), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §10.1 (verify → parse webhook order), §10.1.2 (normalized event taxonomy), §3.2 / §0.15 (`checkoutUrl` opaque, no vendor field in a response) · **Schema:** §11.1 (`externalRefs`), §14.3 / §14.4 (statuses, transaction kinds)

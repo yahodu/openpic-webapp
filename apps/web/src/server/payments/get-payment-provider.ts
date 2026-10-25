@@ -1,6 +1,6 @@
 /**
  * The config-driven `PaymentProvider` composition root (OP-105 follow-up,
- * ADR-0382 / ADR-0383).
+ * ADR-0383 / ADR-0384).
  *
  * `getPaymentProvider()` maps the validated `PAYMENT_PROVIDER` selection onto a
  * concrete `PaymentProvider`, exactly as `getMessageTransport()` maps

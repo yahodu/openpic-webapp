@@ -1,6 +1,6 @@
 /**
- * In-process, no-network `PaymentProvider` (OP-105 follow-up, ADR-0382 /
- * ADR-0383).
+ * In-process, no-network `PaymentProvider` (OP-105 follow-up, ADR-0383 /
+ * ADR-0384).
  *
  * This is the second implementation of the port in
  * `@/server/payments/payment-provider`: the swap-in an e2e drives end to end
@@ -12,7 +12,7 @@
  *    names the registered adapter, never a vendor that was not called).
  *  - **Determinism, not the wall clock.** `createMandate` and `chargeOnce` are
  *    pure functions of their input, so a replayed checkout or charge returns a
- *    byte-identical result (ADR-0382 §1–§2). Nothing here throws on a value the
+ *    byte-identical result (ADR-0383 §1–§2). Nothing here throws on a value the
  *    provider itself minted.
  *  - **The wire format is our normalized event.** Because there is no vendor
  *    payload, the raw webhook body *is* `JSON.stringify(<NormalizedProviderEvent
@@ -54,7 +54,7 @@ const PROVIDER = "memory" as const;
  * shape-matched by the secret scanner. It has to be *stable* rather than random
  * so two independently constructed instances interoperate: an e2e signs a
  * webhook with one process's provider and the server verifies it with
- * another's (ADR-0382 §3). How the e2e process learns this value is OP-108's
+ * another's (ADR-0383 §3). How the e2e process learns this value is OP-108's
  * wiring problem.
  */
 export const MEMORY_PAYMENT_WEBHOOK_SECRET = "memory-payment-webhook-secret";
@@ -69,7 +69,7 @@ const REPLAY_WINDOW_MS = 300_000;
  * The expiry every in-process checkout link carries.
  *
  * Pinned to a fixed instant rather than `Date.now() + ttl`, because
- * `createMandate` must be a pure function of its input (ADR-0382 §1): a
+ * `createMandate` must be a pure function of its input (ADR-0383 §1): a
  * replayed checkout has to return a byte-identical result, so the provider
  * cannot read a clock. The value is deliberately far in the future so no e2e
  * trips an expiry check it did not ask for.
@@ -122,7 +122,7 @@ export interface MemoryPaymentProviderConfig {
   readonly webhookSecret?: string;
 }
 
-/** The port plus the webhook signer the e2e lane needs (ADR-0382). */
+/** The port plus the webhook signer the e2e lane needs (ADR-0383). */
 export interface MemoryPaymentProvider extends PaymentProvider {
   /**
    * Sign a raw body the vendor way, so an e2e can mint a webhook the same
@@ -139,7 +139,7 @@ export interface MemoryPaymentProvider extends PaymentProvider {
  * A short, stable hex digest of a value.
  *
  * Deterministic by construction, so a replayed intent yields the same id and
- * the provider needs no mutable store (ADR-0382 §1–§2).
+ * the provider needs no mutable store (ADR-0383 §1–§2).
  */
 function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 24);
@@ -265,7 +265,7 @@ export function memoryPaymentProvider(
 
     fetchStatus(): Promise<FetchStatusResult> {
       // The provider holds no state: a ref it minted is reported healthy, which
-      // is the path an e2e drives (ADR-0382 §"Open items").
+      // is the path an e2e drives (ADR-0383 §"Open items").
       return Promise.resolve(MEMORY_STATUS);
     },
 
