@@ -124,3 +124,84 @@ card (decision `t_e5485868`) — and advances the cell to `0392` (the number the
 downstream `expiresAt` pins card reserves). The board DB was re-read for a
 sibling claim on `0391` immediately before pushing: none exists. No number
 outside the lane range `0380`–`0399` is touched.
+
+## Review sign-off — 2026-10-25 (card `t_27873de6`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of this delivery — the review + merge of
+PR [#316](https://github.com/yahodu/openpic-webapp/pull/316), reviewed head
+`3c5c774` — returned **APPROVED, landed**: zero changes requested to the
+deliverable and **zero reviewer edits** to the two production modules, the pins
+or this record. The lens was a cold read of the diff before the handoff
+narrative, then independent execution on the reviewed worktree.
+
+**Checks re-run independently at the reviewed head `3c5c774`:**
+
+- The pins + the pre-existing adapter/checkout integration specs —
+  **32 passed (32)**; the 14 ADR-0390 pins are unedited.
+- Full integration **78 files / 571 passed** (`TMPDIR=/root/tmp-mongo`); full
+  unit **110 files / 1913 passed | 3 skipped**.
+- `tsc --noEmit` exit `0` on the root, `packages/contracts` and `apps/web`
+  projects; `prettier --check .` clean.
+- `adr-numbering` guard **29 passed (29)**.
+- ESLint **0 errors / 0 warnings** on the two changed production files.
+- PR Checks green at the head, with `audit-dev` failing as the ADR-0301
+  `continue-on-error` baseline; `test_coverage` **passed** on this SHA.
+
+(Head-anchored figures. The 3-spec set reads higher on later trunk commits
+because a sibling PR's checkout specs land there afterwards; the pins + adapter
+spec pair is the equivalent post-merge measurement for comparison.)
+
+**External fact re-validation.** The reviewer fetched the pinned-version vendor
+reference
+(<https://www.cashfree.com/docs/api-reference/payments/previous/v2025-01-01/subscription/mandate/create>)
+and read its embedded request schema: `authorization_details` is an **object**,
+`payment_methods` is a `string[]` with documented values
+`enach` / `pnach` / `upi` / `card`, and **none** of `authorization_details` /
+`payment_methods` / `authorization_amount` / `authorization_amount_refund`
+carries `isRequired: true`. The pinned projection is therefore **not** an
+invented vendor field, and declaring the block optional is faithful to
+`x-api-version: 2025-01-01`.
+
+**Honesty audit.** `git diff --name-only 664879b HEAD` is two production modules
+(`cashfree-provider.ts`, `schemas.ts`) plus ADRs and the README ledger only — no
+test, mock, fixture or factory is edited, no `NODE_ENV` / test-mode conditional
+exists anywhere in the change, and the ADR-0390 spec stayed **byte-unchanged**
+(`git diff --stat 664879b HEAD -- apps/web/src/test/` is empty).
+
+**Blast-radius check.** `createMandate`'s only production caller is
+`apps/web/src/app/api/v1/tenants/[tenantId]/billing/checkout/route.ts:369` (at
+the reviewed head), which always passes
+`SELF_SERVE_PAYMENT_METHOD = "mandate_upi"`, and `chargeOnce` has **no**
+production caller yet — so the new pre-wire refusal and the strict charge schema
+cannot regress a shipped flow.
+
+**Findings — three, all graded Info and deliberately routed to no card.**
+
+- **Info — cent precision stays unpinned.** `amountMinor: 49901` →
+  `payment_amount: 499.01` passes `z.number().positive()`; the vendor type is
+  `float64`, so a pin would only characterise legitimate pass-through. Already
+  recorded in ADR-0390 §Open items and ADR-0391 §Consequences.
+- **Info — `pnach` and a multi-element `payment_methods` preference are
+  unreachable** from the single-valued neutral `PaymentMethodKind`. Closing it
+  needs a **port** change — an orchestrator/design decision, out of scope at the
+  pin stage.
+- **Info — `authorization_details.authorization_amount` is not sent.** The
+  vendor example carries it (its doc text notes it is always `0` for ENACH) and
+  marks none of the subfields required, so acceptance should be confirmed
+  against the real API before the first production mandate. That check belongs
+  to the live-sandbox record, not a unit pin.
+
+**Test-quality note.** The pins read the **MSW-captured wire body** and assert
+the refusal with a **zero-call counter** — behaviour-level, with no brittle
+coupling to the implementation, no over-mocking and no flake risk. They survived
+the review unedited.
+
+**Merge and follow-ups.** The delivery shipped as PR
+[#316](https://github.com/yahodu/openpic-webapp/pull/316), **squash-merged as
+`841f342`**, carrying the ADR-0390 pins (byte-unchanged) and this GREEN's ADR in
+one squash. **Nothing in this record is retracted**, and **no ADR number is
+asserted here for anything unmerged**: the follow-ups are cited by card id and
+PR number only — the `expiresAt` TEST card `t_5547cab6` and its GREEN card
+`t_e2747a56` (PR
+[#317](https://github.com/yahodu/openpic-webapp/pull/317)) — whose own records
+document what followed.
