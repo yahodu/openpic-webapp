@@ -1,8 +1,8 @@
-# ADR-0382 — OP-105 follow-up TEST: the drift log fires for a vendor `subscription_status` outside the pinned table (F2)
+# ADR-0383 — OP-105 follow-up TEST: the drift log fires for a vendor `subscription_status` outside the pinned table (F2)
 
 - **Status:** Accepted · **Date:** 2026-10-25
 - **Card:** OP-105 follow-up TEST (`t_8ccb6c1f`) · **Branch:** `OP-105-task-driftlog-pins` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_e553b2c9`
-- **Lane:** OP-105 (Payments adapter), reserved range `0380`–`0399` · **Consumes:** `0382`
+- **Lane:** OP-105 (Payments adapter), reserved range `0380`–`0399` · **Consumes:** `0383`
 - **Relates to:** [ADR-0380](ADR-0380-op105-payment-provider-port-red.md) (the RED contract — §1 the unknown-status case, §6 the drift line), [ADR-0381](ADR-0381-op105-payment-provider-cashfree-adapter-green.md) (the GREEN implementation), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Supersedes:** nothing. It **strengthens** ADR-0380 §6: the drift line was pinned for a _response that breaks the pinned contract_, and an unknown vendor status is exactly such a response — the one detection path that did not emit it.
 - **Fixes:** round-1 (artifact-lens) review finding **F2 — Medium** on the merged OP-105 GREEN card `t_e553b2c9` (PR [#292](https://github.com/yahodu/openpic-webapp/pull/292), head `d3b6bdc`).

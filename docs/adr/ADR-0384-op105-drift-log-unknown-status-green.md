@@ -1,15 +1,15 @@
-# ADR-0383 — OP-105 follow-up GREEN: emit the drift log for a vendor `subscription_status` outside the pinned table (F2)
+# ADR-0384 — OP-105 follow-up GREEN: emit the drift log for a vendor `subscription_status` outside the pinned table (F2)
 
 - **Status:** Accepted · **Date:** 2026-10-25
 - **Card:** OP-105 follow-up GREEN (`t_92de5343`) · **Branch:** `OP-105-task-driftlog-green` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_e553b2c9` (shared with the TEST lane)
-- **Lane:** OP-105 (Payments adapter), reserved range `0380`–`0399` · **Consumes:** `0383`
-- **Relates to:** [ADR-0380](ADR-0380-op105-payment-provider-port-red.md) (the RED contract — §1 the unknown-status case, §6 the drift line), [ADR-0381](ADR-0381-op105-payment-provider-cashfree-adapter-green.md) (the GREEN implementation), [ADR-0382](ADR-0382-op105-drift-log-unknown-status-pin.md) (the pins this GREEN turns green), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
-- **Supersedes:** nothing. It **satisfies** ADR-0382's pins by making the drift line fire on both detection paths, reusing the `contractViolation(...)` helper ADR-0380 §6 already owns.
+- **Lane:** OP-105 (Payments adapter), reserved range `0380`–`0399` · **Consumes:** `0384`
+- **Relates to:** [ADR-0380](ADR-0380-op105-payment-provider-port-red.md) (the RED contract — §1 the unknown-status case, §6 the drift line), [ADR-0381](ADR-0381-op105-payment-provider-cashfree-adapter-green.md) (the GREEN implementation), [ADR-0383](ADR-0383-op105-drift-log-unknown-status-pin.md) (the pins this GREEN turns green), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
+- **Supersedes:** nothing. It **satisfies** ADR-0383's pins by making the drift line fire on both detection paths, reusing the `contractViolation(...)` helper ADR-0380 §6 already owns.
 - **Fixes:** round-1 (artifact-lens) review finding **F2 — Medium** on the merged OP-105 GREEN card `t_e553b2c9` (PR [#292](https://github.com/yahodu/openpic-webapp/pull/292), head `d3b6bdc`).
 
 ## Context
 
-ADR-0382 pinned the defect: the wire schemas are deliberately non-strict on the
+ADR-0383 pinned the defect: the wire schemas are deliberately non-strict on the
 `subscription_status` string, so a brand-new vendor status parses cleanly and is
 detected only by the `STATUS_TABLE` lookup — the one detection path that raised
 `UpstreamContractError` **without** emitting `payments.upstream_contract_violation`.
@@ -36,7 +36,7 @@ Emit the drift signal at both wire call sites through the existing
    `level = error`, `provider = cashfree` and the operation, and a same-class,
    same-message `UpstreamContractError` propagates. A status **inside** the
    table returns normally and logs nothing, so the line stays a drift signal and
-   not a per-call line (ADR-0382 guard pins).
+   not a per-call line (ADR-0383 guard pins).
 2. **`fetchStatus`** calls `normalizeWireStatus("fetchStatus", response.subscription_status)`.
 3. **`parseWebhook`** resolves the status **before** deriving the kind —
    `normalizeWireStatus("parseWebhook", vendorStatus)` then `kindForEvent(type, data)`.
@@ -54,7 +54,7 @@ status: <status>.` text is hoisted into a module-private `unknownStatusMessage`
    error U1 asserts (`/SOME_NEW_VENDOR_STATUS/`) and the drift line always carry
    the same text. No second log shape is invented.
 
-The `operation` values are fixed by ADR-0382 (`parseWebhook`, `fetchStatus`) and
+The `operation` values are fixed by ADR-0383 (`parseWebhook`, `fetchStatus`) and
 were not re-decided. The log line carries message + provider + operation only —
 no secret, signature or raw payload (`docs/CONVENTIONS.md` §5.3), exactly like the
 existing `contractViolation` line.
@@ -69,6 +69,14 @@ existing `contractViolation` line.
 - `parseWebhook`'s unknown-status throw now originates from the wire-lookup
   helper rather than from `kindForEvent`. Same class, same message, same eventual
   return shape; the only observable change is the added drift line.
+- **Precedence (round-1 review finding F2):** `parseWebhook` now resolves the
+  `subscription_status` **before** deriving the event kind, so a payload that is
+  malformed in **both** ways — an unknown event `type` **and** an unknown
+  `subscription_status` — surfaces `Unknown Cashfree subscription status: <status>.`
+  rather than `Unknown Cashfree webhook event type: <type>.` It is the same
+  `UpstreamContractError` class, still non-retryable, and still carries the single
+  drift line. Reverting to derive the kind first would break ADR-0383's
+  exactly-one-drift-entry pin, so the precedence is documented rather than reverted.
 - **Evidence** (branch `OP-105-task-driftlog-green`, stacked on the pins head
   `94f5af0`; production file `apps/web/src/server/adapters/cashfree/cashfree-provider.ts`
   sha256 `dd6006c04e8f26e75b9d98a2e18a6f1efe452d6cd7a907e699385ed99447d138`):
@@ -83,7 +91,7 @@ existing `contractViolation` line.
 
 - **Log inside `normalizeVendorStatus`.** Rejected: that is the pure table lookup,
   reached directly by the port method `normalizeStatus` (U1) — the log would fire
-  on a surface that observed no response, contradicting ADR-0382's
+  on a surface that observed no response, contradicting ADR-0383's
   wire-path-only framing.
 - **Wrap only the post-`kindForEvent` normalization in `parseWebhook`.** Rejected:
   for a `SUBSCRIPTION_STATUS_CHANGED` event the unknown status throws inside
