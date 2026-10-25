@@ -174,6 +174,15 @@ No production code changed between `3a98020` and `3b13b3f`, so the projection,
 the free-tier default, the `owner`|`admin` split and the parallel reads described
 above are exactly what the green run exercises.
 
+The lane was then merged with `origin/main` (`4775e16`, a docs-only conflict in
+this repo's shared `docs/adr/README.md` ledger) and re-verified on the merged
+head: `tsc`/`eslint`/`prettier` clean, unit + integration **176 files / 2301
+tests** passed, coverage **exit 0** (global **92.39 % statements / 80.95 %
+branches / 96.38 % functions / 92.89 % lines**; `apps/web/src/server/services/entitlements`
+branches **97.38 %**), `pnpm --filter @openpic/web build` exit 0 and Playwright
+E2E **21 passed**; CI (typecheck, lint, unit, integration, coverage, build, E2E)
+green on the head.
+
 ## Consequences
 
 - The advisory view powers the quota bars, and a wrong `resetsAt`, a
