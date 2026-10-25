@@ -149,7 +149,7 @@ const PROVIDER_SPECS: readonly ProviderSpec[] = [
   { key: "RATE_LIMIT_PROVIDER", values: ["memory", "redis"] },
   { key: "STORAGE_PROVIDER", values: ["memory", "s3"] },
   { key: "QUEUE_PROVIDER", values: ["memory", "mongo"] },
-  { key: "PAYMENT_PROVIDER", values: ["memory", "stripe"] },
+  { key: "PAYMENT_PROVIDER", values: ["memory", "stripe", "cashfree"] },
   { key: "MESSAGE_TRANSPORT", values: ["memory", "ses"] },
 ];
 
@@ -519,6 +519,72 @@ export function getRateLimitConfig(): RateLimitRuntimeConfig {
     upstashToken,
     salt: process.env.RATE_LIMIT_SALT ?? DEFAULT_RATE_LIMIT_SALT,
   };
+}
+
+/**
+ * Runtime wiring for the payment-provider adapters (OP-107, ADR-0421).
+ *
+ * Kept outside the frozen {@link AppConfig} shape (which its own specs assert
+ * exactly) because it is operational wiring — the Cashfree credentials and the
+ * pinned vendor API version — exactly as {@link getNovuRuntimeConfig} and
+ * {@link getRateLimitConfig} are. The adapter itself receives these values as
+ * an explicit object; this accessor is the single place they are read from the
+ * environment, so no adapter touches `process.env` (the `no-restricted-
+ * properties` boundary).
+ *
+ * Fails closed: when `cashfree` is selected, all four credential names must be
+ * present and non-blank. A deploy that selects the vendor without credentials
+ * must refuse the request rather than call it half-configured.
+ */
+export interface PaymentsRuntimeConfig {
+  /** The selected `PAYMENT_PROVIDER` (`memory` | `stripe` | `cashfree`). */
+  readonly provider: string;
+  /** The Cashfree credentials when `cashfree` is selected, else `null`. */
+  readonly cashfree: {
+    readonly clientId: string;
+    readonly clientSecret: string;
+    readonly apiVersion: string;
+    readonly webhookSecret: string;
+  } | null;
+}
+
+/**
+ * Read the payment-provider runtime wiring from the environment.
+ *
+ * @returns The provider selection, and the Cashfree credentials when it is
+ *   `cashfree` (otherwise `null`).
+ * @throws {ConfigError} When `cashfree` is selected and one of the four
+ *   `CASHFREE_*` names is unset or blank. Only the key names are reported.
+ */
+export function getPaymentsRuntimeConfig(): PaymentsRuntimeConfig {
+  const provider = process.env.PAYMENT_PROVIDER ?? DEFAULT_PROVIDER;
+  if (provider !== "cashfree") {
+    return { provider, cashfree: null };
+  }
+
+  const clientId = process.env.CASHFREE_CLIENT_ID ?? "";
+  const clientSecret = process.env.CASHFREE_CLIENT_SECRET ?? "";
+  const apiVersion = process.env.CASHFREE_API_VERSION ?? "";
+  const webhookSecret = process.env.CASHFREE_WEBHOOK_SECRET ?? "";
+
+  const missing: string[] = [];
+  if (clientId.trim() === "") {
+    missing.push("CASHFREE_CLIENT_ID");
+  }
+  if (clientSecret.trim() === "") {
+    missing.push("CASHFREE_CLIENT_SECRET");
+  }
+  if (apiVersion.trim() === "") {
+    missing.push("CASHFREE_API_VERSION");
+  }
+  if (webhookSecret.trim() === "") {
+    missing.push("CASHFREE_WEBHOOK_SECRET");
+  }
+  if (missing.length > 0) {
+    throw new ConfigError(missing);
+  }
+
+  return { provider, cashfree: { clientId, clientSecret, apiVersion, webhookSecret } };
 }
 
 /** Recursively freeze an object graph so callers cannot mutate configuration. */

@@ -23,6 +23,22 @@ export {
   subscriptionViewSchema,
 } from "./view";
 
+export {
+  checkoutEnvelopeSchema,
+  checkoutPaymentMethodKindSchema,
+  checkoutRequestSchema,
+  decideExistingSubscription,
+  isAllowedReturnUrl,
+} from "./checkout";
+
+export type {
+  CheckoutEnvelope,
+  CheckoutRequest,
+  ExistingCheckout,
+  ExistingSubscriptionDecision,
+  ExistingSubscriptionFacts,
+} from "./checkout";
+
 export type {
   MandateStatus,
   StatusHistoryEntry,
