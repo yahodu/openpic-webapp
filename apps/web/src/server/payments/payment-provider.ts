@@ -20,8 +20,13 @@ export type PaymentEnvironment = "sandbox" | "production";
 /**
  * The provider key stored on every `externalRefs` entry and normalized event
  * (§11.1). Extend the union when a second PSP is wired.
+ *
+ * `memory` is the in-process adapter selected for `APP_ENV=e2e` (OP-105
+ * follow-up, ADR-0383 §4): the key names the *registered adapter*, so an e2e
+ * ref must say `memory` — tagging it `cashfree` would attribute a simulated
+ * event to a vendor that was never called.
  */
-export type PaymentProviderKey = "cashfree";
+export type PaymentProviderKey = "cashfree" | "memory";
 
 /** How the customer is billed (§14.3) — generic, never a vendor term. */
 export type PaymentMethodKind =
