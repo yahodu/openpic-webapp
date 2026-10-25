@@ -109,3 +109,46 @@ instead of rejecting` — the failure message names the defect.
 - **Change production to make the pin pass.** Not needed: the trunk already
   implements ADR-0343 §2. An implementation change would have required the GREEN
   card `openpic-webapp-backend-coder` and a stop-and-report on this card.
+
+## Review sign-off — 2026-10-25 (card `t_f0d58138`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of the OP-103 follow-up TEST
+(`t_f0d58138`) returned **APPROVED**, zero changes requested, zero reviewer
+edits to the deliverable. Reviewed head `3edced1`, merged with `origin/main`
+`93f44e3` as `8317585` — the shared-ledger `docs/adr/README.md` resolved as a
+**union** (cell `0349`, rows `0340`–`0348` all present, zero conflict markers) —
+squash-merged as `9f0fc44`.
+
+- **Merged, and reviewed what landed.** PR
+  [#287](https://github.com/yahodu/openpic-webapp/pull/287) `MERGED` as
+  `9f0fc44` (squash); `git merge-base --is-ancestor 9f0fc44 origin/main` holds.
+  Local `main` == `origin/main` == `9f0fc44` at review time.
+- **The branch-only change is test + record only.**
+  `git diff --name-only origin/main...HEAD` is exactly
+  `apps/web/src/test/unit/entitlements-nontenant-scope.test.ts`,
+  `docs/adr/ADR-0348-op103-nontenant-lostrace-pin.md` and `docs/adr/README.md` —
+  **no production file touched**.
+- **The pin changed exactly as §Decision records.** The four `U8` specs are
+  byte-unchanged (titles and bodies); `U9` went from 1 spec to 4 (net +3).
+- **The gates reproduced independently** on the merged head: unit **102 files /
+  1748 tests**, integration **72 files / 515 tests** (`TMPDIR=/root/tmp-mongo`),
+  `tsc --noEmit` exit 0 on root, `packages/contracts` and `apps/web`, `eslint`
+  0 errors, `prettier --check` clean, and the ADR-numbering guard **29/29**.
+- **The pin is proven load-bearing.** A throwaway detached probe worktree at
+  `3edced1` (removed afterwards; the reviewed tree was never mutated):
+  `return deniedVerdict(reread, limitDenialReason(reread))` → **4 failed | 4
+  passed (8)** (`AssertionError: promise resolved "{ allowed: false, … }"
+instead of rejecting`), and `return allowedVerdict(resolved, resolved.used)` →
+  **4 failed | 4 passed (8)** (`… "{ allowed: true, … }"`). Both redden exactly
+  the four `U9` specs and leave the four `U8` specs green, so the pin is neither
+  vacuous nor over-broad.
+- **Info (no action, no card).** The implementer's handoff metadata listed
+  "4 × `U8` specs **and** 4 × `consumeEntitlement — non-tenant scope uses
+ctx.counts (option a)` specs" as separate unchanged groups; they are the same
+  four specs (the `U8` specs live in that `describe`). The substance is correct —
+  4 unchanged, 4 new — the wording just double-counts.
+
+Nothing in §Context–§Alternatives above is retracted: the strengthened `U9` is
+the pin, not new production behaviour — the trunk already implements ADR-0343
+§2, and this record only makes the existing enforcement surface fail loudly on a
+regression.
