@@ -1,3 +1,9 @@
+## [1.39.0](https://github.com/yahodu/openpic-webapp/compare/v1.38.0...v1.39.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-109 emit billing.plan.upgraded and refuse a non-lower downgrade target ([#340](https://github.com/yahodu/openpic-webapp/issues/340)) ([44ff384](https://github.com/yahodu/openpic-webapp/commit/44ff38420173742c61c96b67d71cab230a4836aa))
+
 ## [1.38.0](https://github.com/yahodu/openpic-webapp/compare/v1.37.0...v1.38.0) (2026-10-25)
 
 ### Features

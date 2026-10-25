@@ -5,6 +5,7 @@ import { getConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { withTransaction } from "@/server/db/transaction";
+import { emitDomainEvent } from "@/server/domain/domain-events";
 import { created, defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { parseJsonBody } from "@/server/http/respond";
@@ -373,6 +374,21 @@ export const POST = defineRoute({
           schemaVersion: 1,
         },
         { session }
+      );
+
+      // §3.3 requires `billing.plan.upgraded` on a successful upgrade. Emitting
+      // inside this transaction joins the outbox row to the state change; a
+      // replayed `Idempotency-Key` never re-enters the handler, so it can never
+      // emit a second event.
+      await emitDomainEvent(
+        {
+          eventKey: "billing.plan.upgraded",
+          tenantId,
+          actorRef: { kind: "user", id: actor },
+          subjectRef: { kind: "subscription", id: subscriptionId.toHexString() },
+          payload: { fromPlanKey: currentPlan.key, toPlanKey: targetPlan.key },
+        },
+        { db, session }
       );
     });
 
