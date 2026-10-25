@@ -6,6 +6,36 @@ import tseslint from "typescript-eslint";
 import noDirectCollectionAccess from "./eslint-rules/no-direct-collection-access.mjs";
 import noDirectVendorAdapterImport from "./eslint-rules/no-direct-vendor-adapter-import.mjs";
 
+/**
+ * The content-repository namespaces the dunning worker must never reach
+ * (OP-111, contract §10.2.1 invariant C6; ADR-0500).
+ *
+ * C6 is enforced as a lint boundary rather than a review habit: `@/server/repos`
+ * is today the generic, tenant-stamping layer and the per-collection modules do
+ * not exist yet, so the group names the canonical `@/server/repos/<namespace>`
+ * specifier the events / face-matching lanes will introduce, together with the
+ * bare alias and its trailing-segment form.
+ */
+const CONTENT_REPO_NAMESPACES = [
+  "events",
+  "eventImages",
+  "mediaAssets",
+  "imageFaces",
+  "faceMatches",
+  "selfies",
+];
+
+/** The `no-restricted-imports` patterns that make C6 unforgeable. */
+const DUNNING_CONTENT_IMPORT_PATTERNS = CONTENT_REPO_NAMESPACES.map((namespace) => ({
+  group: [
+    `@/server/repos/${namespace}`,
+    `@/server/repos/${namespace}/*`,
+    `**/server/repos/${namespace}`,
+    `**/server/repos/${namespace}/**`,
+  ],
+  message: `The dunning worker may import only the subscriptions repository (contract §10.2.1, invariant C6), so it must never reach the "${namespace}" content repository.`,
+}));
+
 export default tseslint.config(
   {
     ignores: [
@@ -116,6 +146,41 @@ export default tseslint.config(
               message:
                 "Import Novu only inside the Novu adapter (src/server/adapters/novu) or the scripts/novu admin CLI; elsewhere depend on the MessageTransport port.",
             },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The C6 content-import boundary on the dunning worker (OP-111, contract
+    // §10.2.1; ADR-0500). This object must stay **after** the
+    // `apps/web/src/server/**` object above: flat config replaces a rule's
+    // options, so a boundary declared earlier is overwritten and silently
+    // useless. The logging/Novu patterns are therefore repeated here.
+    //
+    // The dunning module may import only the subscription repository — and the
+    // `@/server/repos` barrel that exposes `platformRepo` — so the six content
+    // namespaces of §10.2.1 are forbidden, each as the bare alias, its
+    // trailing-segment form, and the canonical `**/server/repos/<namespace>`
+    // specifier, so a nested module cannot slip through. A blanket
+    // `@/server/repos/**` ban would also block the subscription repository the
+    // rule exists to permit.
+    files: ["apps/web/src/server/billing/jobs/dunning.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/server/logging/**", "@/server/logging/*"],
+              message: "Import only the Logger port from @/server/logging.",
+            },
+            {
+              group: ["novu", "@novu/*"],
+              message:
+                "Import Novu only inside the Novu adapter (src/server/adapters/novu) or the scripts/novu admin CLI; elsewhere depend on the MessageTransport port.",
+            },
+            ...DUNNING_CONTENT_IMPORT_PATTERNS,
           ],
         },
       ],
