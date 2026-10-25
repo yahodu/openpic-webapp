@@ -98,16 +98,44 @@ const rule = {
     }
 
     /**
+     * Resolve an import/export source node to a statically known specifier.
+     *
+     * A string literal is static as written. A template literal is static only
+     * when it has no interpolation — `` `@/server/adapters/cashfree/…` `` is a
+     * `TemplateLiteral` with zero expressions and a single cooked string — so
+     * its cooked value is the specifier. A template literal *with* an
+     * expression is unresolvable and yields `null`, so the rule stays quiet.
+     *
+     * @param {import("estree").Node | null | undefined} sourceNode - The source
+     *   node, when the construct has one.
+     * @returns {string | null} The static specifier, or `null` when the source
+     *   is absent or not statically resolvable.
+     */
+    function staticSpecifier(sourceNode) {
+      if (!sourceNode) {
+        return null;
+      }
+      if (sourceNode.type === "Literal" && typeof sourceNode.value === "string") {
+        return sourceNode.value;
+      }
+      const isStaticTemplate =
+        sourceNode.type === "TemplateLiteral" &&
+        sourceNode.expressions.length === 0 &&
+        sourceNode.quasis.length === 1;
+      return isStaticTemplate && typeof sourceNode.quasis[0].value.cooked === "string"
+        ? sourceNode.quasis[0].value.cooked
+        : null;
+    }
+
+    /**
      * Report an import/export source when it names the vendor adapter.
      *
-     * @param {import("estree").Node | null | undefined} sourceNode - The source literal,
-     *   when the construct has one.
+     * @param {import("estree").Node | null | undefined} sourceNode - The source
+     *   node, when the construct has one.
      */
     function checkSource(sourceNode) {
-      if (!sourceNode || sourceNode.type !== "Literal" || typeof sourceNode.value !== "string") {
-        return;
-      }
-      if (!isVendorAdapterSpecifier(sourceNode.value, filename)) {
+      const specifier = staticSpecifier(sourceNode);
+      if (specifier === null || !isVendorAdapterSpecifier(specifier, filename)) {
         return;
       }
       context.report({ node: sourceNode, messageId: "noDirectVendorAdapterImport" });
