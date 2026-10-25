@@ -123,3 +123,97 @@ RED contract), so this record takes `0401`, the lane cell's value re-read on the
 RED head (`84e87f7`) immediately before committing, and advances the lane's
 `Next free` cell to `0402`. No number outside the lane range `0400`–`0419` is
 touched.
+
+## Review sign-off — 2026-10-25 (card `t_b08b6d61`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of this OP-106 GREEN (`t_b08b6d61`)
+returned **APPROVED WITH FINDINGS** — zero changes requested, and **zero
+reviewer edits to the deliverable's behaviour**. The reviewer's only change was
+the behaviour-preserving refactor commit
+[`609e264`](https://github.com/yahodu/openpic-webapp/commit/609e264)
+(`refactor(subscriptions): OP-106 derive the banner enums and share the wire
+enums`, `view.ts` +32/−13): `SubscriptionBannerKind`/`SubscriptionBannerSeverity`
+and the payment-method-kind/billing-cycle enums are derived from single
+`as const`/schema sources instead of duplicated literals, so the parsed and
+serialized shapes are unchanged.
+
+- **Criterion 1 — `reassurance` is always present for `past_due`/`downgraded`.**
+  `buildSubscriptionBanner` attaches `REASSURANCE_COPY` on exactly those two
+  kinds and no other, asserted by exact object equality plus
+  `/nothing has been deleted/i`; focused unit `subscription-view.test.ts`
+  **32 passed (32)** and integration I2 through the real route.
+- **Criterion 2 — the free state is not a `404`.** A tenant with no
+  `subscriptions` row answers `200` with `exists: false`, `status: "none"`,
+  `activePlanKey`/`subscribedPlanKey: "free"`, `pendingDue: null`,
+  `banner: null`, and I1 asserts `_id`/`externalRefs` are absent from a real
+  non-vacuous body — integration I1.
+- **Criterion 3 — `mandateStatus` is independent of `status`.** `mandate_status`
+  is projected straight from the stored row and read only by the banner
+  (`active` + `revoked` → `mandate_revoked`) and `canRetryCharge`; I2's
+  revoked-mandate case pins `status: "active"` with `mandateStatus: "revoked"`
+  from a real document.
+- **Full suite on the reviewed head `529ed2f`** (after merging `origin/main`
+  into the branch): unit `106 files / 1843 passed | 3 skipped`, integration
+  `75 files / 536 passed` (`TMPDIR=/root/tmp-mongo`), `pnpm typecheck` clean on
+  all three projects, the `adr-numbering` guard **29/29**; no
+  test/mock/fixture/factory edited
+  (`git diff --name-only 84e87f7 -- apps/web/src/test` is empty).
+- **The shared ADR ledger was resolved as a union** when `origin/main` was merged
+  into the branch: the OP-105 lane's `Next free` cell keeps the highest value
+  `0383`; the OP-106 lane row keeps `0402`; the unallocated-pool cell stays
+  `0420`+; the index keeps every row ascending (`0382`, `0400`, `0401`); and both
+  lanes' prose note blocks are kept verbatim.
+- **Merged, and containment proven.** PR
+  [#294](https://github.com/yahodu/openpic-webapp/pull/294) was squash-merged as
+  `68f73ff` and `git merge-base --is-ancestor 68f73ff origin/main` holds. At the
+  merge, `git diff --name-only 529ed2f 68f73ff` was exactly
+  `docs/adr/ADR-0382-…md` (it gained PR #298's unrelated review sign-off) — every
+  `apps/`, `packages/` and OP-106 ADR/README byte is identical between the
+  reviewed head and the trunk. The trunk has since advanced by the release commit
+  `cab62e8` (`CHANGELOG.md`, `package.json`); the application and OP-106 ADR
+  bytes are still identical.
+
+### Findings carried out of the review
+
+These findings are **beyond this card's pinned acceptance criteria**: they sit
+exactly in the gaps this record's own §Consequences and ADR-0400's scope note
+left open. They are **routed, not fixed here**, and are cited by card id and PR
+number on purpose — an ADR number belonging to a still-unmerged follow-up is
+unstable (`0402`–`0419` may renumber).
+
+- **F1 (Low) — a terminal row that still carries `cancelAt` renders
+  `cancelling`.** ADR-0400 §1 row 5 is unconditional, so a `cancelled`/`expired`
+  row with a `cancelAt` would render `banner.kind: "cancelling"`; no pin seeded
+  it. Routed to card `t_09e53bea`.
+- **F2 (Low) — the multi-row tie-break on equal `updatedAt` is unspecified.** The
+  read serves the tenant's most-recently-updated row (`findOne` sort
+  `updatedAt: -1`); two rows with an equal `updatedAt` have no defined order.
+  Routed to card `t_09e53bea`.
+- **F3 (Low) — `scheduledChange`/`updatedAt` serialization and a zeroed
+  `pendingDue` were unpinned.** Routed to card `t_09e53bea`.
+- **F4 (Info) — two OP-107 children pointed at the shared main checkout.** Cards
+  `t_98bf1d99` and `t_5f08f665` were repointed to their own worktrees by the
+  reviewer, and both cards were commented to record it.
+- **F5 (Info, no action) — the §2 strict-serializer claim checks out.**
+  `serializeResponse` validates object schemas strictly via `.strict()`
+  (`apps/web/src/server/http/serialize-response.ts:50`), so a leaked field throws
+  outside production — exactly as §2 asserts.
+
+### Post-review status
+
+- **F1, F2 and F3 have since been pinned** by the OP-106 follow-up TEST card
+  `t_09e53bea` (characterisation pins added to
+  `apps/web/src/test/integration/subscription-read.test.ts`; branch
+  `OP-106-task-subscription-read-followup-pins`, PR
+  [#299](https://github.com/yahodu/openpic-webapp/pull/299), open at the time of
+  writing): the zeroed `pendingDue` → `null` case, `scheduledChange.effectiveAt`/
+  `updatedAt` as RFC 3339 strings plus the null case, the equal-`updatedAt`
+  tie-break tracking insertion order rather than status, and the terminal
+  `cancelled` row with `cancelAt` rendering `cancelling`. The pins characterise
+  the shipped behaviour; they do not change it.
+- **F4 was fixed inside the review** — the cards were repointed and commented.
+- **F5 requires no change.**
+
+Nothing in §Context–§Consequences above is retracted: the delivered view and
+routes were found correct as pinned, and the sign-off only records that. Anything
+F1–F3 imply lands through their own cards, not by editing this record.
