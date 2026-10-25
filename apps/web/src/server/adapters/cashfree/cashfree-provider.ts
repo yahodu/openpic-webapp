@@ -618,11 +618,16 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
         );
       }
 
+      // The Manage response is Cashfree's `SubscriptionEntity` — the same shape
+      // `GET /pg/subscriptions/{id}` returns, and it carries **no** `auth_link`
+      // (that field belongs to the Create response alone). Reusing the
+      // create-response schema here rejected every real manage response, so the
+      // manage call is pinned to the status shape on its own terms.
       const response = await call({
         operation: "cancelMandate",
         url: `${baseUrl}/pg/subscriptions/${encodeURIComponent(input.ref.id)}/manage`,
         method: "POST",
-        schema: cashfreeCreateSubscriptionResponseSchema,
+        schema: cashfreeSubscriptionStatusResponseSchema,
         body: request.data,
       });
 
