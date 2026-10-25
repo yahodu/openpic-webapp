@@ -155,6 +155,33 @@ export const ENTITLEMENT_ERROR_CODES = ["plan_limit_exceeded", "feature_not_avai
 export type EntitlementErrorCode = (typeof ENTITLEMENT_ERROR_CODES)[number];
 
 /**
+ * Billing-checkout codes (contract §3.3, Appendix A.2/A.4).
+ *
+ * The four refusals `POST /tenants/{tenantId}/billing/checkout` documents:
+ * `invalid_return_url` (`422`, `{ allowedOrigins }`) for a `returnUrl` off the
+ * allow-list, `plan_not_self_serve` (`422`, `{ contactSalesUrl }`) for a
+ * sales-assisted tier, `subscription_already_active` (`409`,
+ * `{ subscriptionId, status }`) for a workspace that already subscribes, and
+ * `upstream_unavailable` (`502`, retryable, `{ provider, retryAfterSeconds }`)
+ * for a payment-provider failure. Like the tenancy and entitlement rows they
+ * are contract catalogue codes that are **not** members of
+ * {@link ERROR_CODES}, which the server error catalogue
+ * (`@/server/http/catalog`) pins to exactly the base Appendix A table. They are
+ * appended to the client-facing enum ({@link API_ERROR_CODES}) and transported
+ * from their own table so both stay exact. Append-only, like every other code
+ * (ADR-0421).
+ */
+export const BILLING_ERROR_CODES = [
+  "invalid_return_url",
+  "plan_not_self_serve",
+  "subscription_already_active",
+  "upstream_unavailable",
+] as const;
+
+/** A member of the closed {@link BILLING_ERROR_CODES} set. */
+export type BillingErrorCode = (typeof BILLING_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -219,6 +246,7 @@ export const API_ERROR_CODES = [
   ...NOTIFICATION_ERROR_CODES,
   ...TENANCY_ERROR_CODES,
   ...ENTITLEMENT_ERROR_CODES,
+  ...BILLING_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -238,7 +266,8 @@ export type AppErrorCode =
   | AccountErrorCode
   | NotificationErrorCode
   | TenancyErrorCode
-  | EntitlementErrorCode;
+  | EntitlementErrorCode
+  | BillingErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
