@@ -1,3 +1,9 @@
+## [1.35.0](https://github.com/yahodu/openpic-webapp/compare/v1.34.1...v1.35.0) (2026-10-25)
+
+### Features
+
+- **payments:** OP-105 project paymentMethodKind onto the create wire (F3/F5) ([#316](https://github.com/yahodu/openpic-webapp/issues/316)) ([841f342](https://github.com/yahodu/openpic-webapp/commit/841f3424c51b5de5883f10bb43b05f5d42f5939c))
+
 ## [1.34.1](https://github.com/yahodu/openpic-webapp/compare/v1.34.0...v1.34.1) (2026-10-25)
 
 ### Bug Fixes
