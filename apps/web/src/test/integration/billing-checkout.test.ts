@@ -1,0 +1,701 @@
+import { randomUUID } from "node:crypto";
+
+import { ObjectId } from "mongodb";
+import { http, HttpResponse } from "msw";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
+
+import { POST as startCheckout } from "@/app/api/v1/tenants/[tenantId]/billing/checkout/route";
+import { cashfreeCreateSubscriptionRequestSchema } from "@/server/adapters/cashfree/schemas";
+import { COLLECTIONS } from "@/server/db/collections";
+import { seedPlans } from "@/server/plans/seed-plans";
+
+import { body } from "../helpers/auth-requests";
+import {
+  APP_ORIGIN,
+  makeIdentity,
+  startTestApp,
+  type SignedInUser,
+  type TestApp,
+} from "../helpers/authed-app";
+import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
+import {
+  makeCashfreeCreateSubscriptionResponse,
+  TEST_CASHFREE_WEBHOOK_SECRET,
+} from "../factories/payment";
+import { server } from "./setup";
+
+/**
+ * Integration / contract — `POST /api/v1/tenants/{tenantId}/billing/checkout`
+ * (OP-107 RED, contract §3.3; ADR-0420).
+ *
+ * The user story: *as a tenant owner I want to subscribe to a paid plan via a
+ * hosted mandate flow so that I can unlock paid limits.*
+ *
+ *   I1  the happy path — a schema-valid mandate request reaches the provider and
+ *       the workspace gains an `incomplete` row carrying the provider refs while
+ *       the caller gets the §3.3 `201` envelope;
+ *   I2  a sales-assisted tier is `422 plan_not_self_serve` with the sales URL;
+ *   I3  a workspace that already has a live subscription is `409
+ *       subscription_already_active` with its id and status;
+ *   I4  a provider failure is `502 upstream_unavailable` (retryable) and leaves
+ *       **no blocking document** — the retry succeeds;
+ *   I5  a replay under the same `Idempotency-Key` calls the provider exactly
+ *       once;
+ *   I6  a non-owner member is `403 forbidden`.
+ *
+ * Around those, the ordinary behaviour §3.3 implies: the `401`/`400` ladder
+ * (`user:complete` auth, a required `Idempotency-Key`), the `422
+ * invalid_return_url` with the allow-list in `details`, and the §0.15
+ * never-return rule — **no vendor field ever reaches the response**.
+ *
+ * ## Contract expected of the implementation
+ *
+ * - `@/app/api/v1/tenants/[tenantId]/billing/checkout/route` exports `POST`,
+ *   `defineRoute({ route: "/api/v1/tenants/:tenantId/billing/checkout", … })`
+ *   with `userAuth()`, the reusable `tenantStage()`, the idempotency stage
+ *   (`required: true`, the `mongoIdempotencyStore`) and a `write.normal` rate
+ *   limit; the 201 body is the bare §3.3 `CheckoutEnvelope` (§0.5 single
+ *   resource) and carries `Location: <checkout url>`.
+ * - The provider comes from `getPaymentProvider()` (`@/server/payments/
+ *   get-payment-provider`), selected through `getConfig()`. `PAYMENT_PROVIDER=
+ *   cashfree` **plus** `CASHFREE_CLIENT_ID` / `CASHFREE_CLIENT_SECRET` /
+ *   `CASHFREE_API_VERSION` / `CASHFREE_WEBHOOK_SECRET` build the Cashfree
+ *   adapter in its `sandbox` environment, so MSW can intercept
+ *   `https://sandbox.cashfree.com/pg/subscriptions`. Without that selection the
+ *   route cannot be driven against a vendor at all.
+ * - The subscription row is tenant-scoped on the **string** hex `tenantId` (the
+ *   OP-103/OP-104/OP-106 convention) and is inserted **before** the provider is
+ *   called: I4 asserts the `expired` row a failed attempt leaves behind.
+ * - `PAYMENT_PROVIDER=cashfree` must be an accepted `PROVIDER_SPECS` value, and
+ *   the four `CASHFREE_*` names must be part of the validated configuration
+ *   (`@/server/config/env`). Today neither exists.
+ *
+ * ## Assumptions recorded in the handoff (ADR-0420)
+ *
+ * - The allow-list for `returnUrl` is `config.app.allowedOrigins`, which the
+ *   test harness sets to `APP_ORIGIN`.
+ * - The vendor plan reference sent to Cashfree is the `id` of the sold price's
+ *   `externalRefs` entry (`STARTER_MONTHLY_V1` for `starter-monthly-inr`).
+ * - The checkout expiry is normalized to an RFC 3339 UTC `Z` timestamp on the
+ *   wire, so the fixture's `subscription_expiry_time` is seeded in that shape.
+ * - `plan_not_self_serve` / `subscription_already_active` / `invalid_return_url`
+ *   / `upstream_unavailable` are Appendix A.4/A.2 codes the server catalogue
+ *   does not carry yet; their `details` are asserted as the contract tables
+ *   specify them.
+ */
+
+const TENANTS_PATH = "/api/v1/tenants";
+
+/** An RFC 3339 UTC timestamp string. */
+const isoDateTime = z
+  .string()
+  .refine((value) => !Number.isNaN(Date.parse(value)), { message: "not an ISO date-time" });
+
+/** The §3.3 checkout envelope, as served. */
+const envelopeSchema = z.object({
+  subscriptionId: z.string().regex(/^[0-9a-f]{24}$/i),
+  status: z.literal("incomplete"),
+  checkout: z.object({
+    kind: z.literal("redirect"),
+    url: z.string().min(1),
+    expiresAt: isoDateTime,
+  }),
+  paymentMethodKind: z.enum(["mandate_upi", "mandate_bank_debit", "card", "invoice", "manual"]),
+  amountMinor: z.number().int(),
+  currency: z.literal("INR"),
+});
+
+/** The sandbox subscriptions endpoint the Cashfree adapter posts a mandate to. */
+const CAShFREE_CREATE_URL = "https://sandbox.cashfree.com/pg/subscriptions";
+
+/** The vendor plan id carried by the seeded `starter-monthly-inr` price. */
+const STARTER_VENDOR_PLAN_ID = "STARTER_MONTHLY_V1";
+
+/** The amount of the seeded `starter-monthly-inr` price, in minor units. */
+const STARTER_AMOUNT_MINOR = 49_900;
+
+/** The fixed vendor decision expiry every fixture carries (already UTC `Z`). */
+const FIXTURE_EXPIRES_AT = "2026-11-01T05:00:46.000Z";
+
+/** The payments selection this suite drives the route with. */
+const PAYMENTS_ENV: Record<string, string> = {
+  PAYMENT_PROVIDER: "cashfree",
+  CASHFREE_CLIENT_ID: "test-client-id",
+  CASHFREE_CLIENT_SECRET: "test-client-secret",
+  CASHFREE_API_VERSION: "2025-01-01",
+  CASHFREE_WEBHOOK_SECRET: TEST_CASHFREE_WEBHOOK_SECRET,
+};
+
+/** The error envelope of a failed response. */
+interface ErrorEnvelope {
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly details?: Record<string, unknown>;
+}
+
+/** The `returnUrl` every accepted request carries (an allow-listed origin). */
+const RETURN_URL = new URL("/billing/return", APP_ORIGIN).toString();
+
+let app: TestApp;
+
+beforeAll(async () => {
+  app = await startTestApp({ prefix: "op107-checkout", env: PAYMENTS_ENV });
+  // The pricing catalogue is data (§14.1); the checkout resolves the sold price
+  // from it, so a workspace cannot buy a tier the platform does not sell.
+  await seedPlans({ db: app.db });
+}, MONGO_READY_HOOK_TIMEOUT_MS);
+
+afterAll(async () => {
+  await app.cleanup();
+});
+
+/** Merge fields into a caller's auto-provisioned `userProfiles` row. */
+async function updateProfile(userId: ObjectId, fields: Record<string, unknown>): Promise<void> {
+  const result = await app.db
+    .collection(COLLECTIONS.userProfiles)
+    .updateOne({ userId }, { $set: { ...fields, updatedAt: new Date() } });
+  expect(result.matchedCount).toBe(1);
+}
+
+/** Insert a tenant (schema §13.3) and return its id. */
+async function insertTenant(fields: { slug: string; ownerUserId: ObjectId }): Promise<ObjectId> {
+  const _id = new ObjectId();
+  await app.db.collection(COLLECTIONS.tenants).insertOne({
+    _id,
+    slug: fields.slug,
+    name: "OP107 Studio",
+    status: "active",
+    ownerUserId: fields.ownerUserId,
+    billingContactUserId: fields.ownerUserId,
+    dataRegion: "in",
+    counters: {
+      eventCount: 0,
+      activeEventCount: 0,
+      imageCount: 0,
+      storageBytes: 0,
+      attendeeCount: 0,
+      reconciledAt: null,
+    },
+    settings: {
+      defaultTimeZone: "Asia/Kolkata",
+      brandLogoAssetId: null,
+      defaultWatermarkAssetId: null,
+    },
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    schemaVersion: 1,
+  });
+  return _id;
+}
+
+/** Seed a workspace with `user` as a member and its `current` alias target. */
+async function seedWorkspace(options: {
+  userId: ObjectId;
+  role: "owner" | "admin" | "member";
+  slug: string;
+}): Promise<ObjectId> {
+  const tenantId = await insertTenant({
+    slug: options.slug,
+    ownerUserId: options.role === "owner" ? options.userId : new ObjectId(),
+  });
+  await app.db.collection(COLLECTIONS.tenantMembers).insertOne({
+    tenantId,
+    userId: options.userId,
+    role: options.role,
+    status: "active",
+    joinedAt: new Date(),
+  });
+  await updateProfile(options.userId, { primaryTenantId: tenantId });
+  return tenantId;
+}
+
+/** Add `user` to `tenantId` with a role and a working `current` alias. */
+async function addMember(
+  tenantId: ObjectId,
+  user: SignedInUser,
+  role: "owner" | "admin" | "member"
+): Promise<void> {
+  await app.db
+    .collection(COLLECTIONS.tenantMembers)
+    .insertOne({ tenantId, userId: user.userId, role, status: "active", joinedAt: new Date() });
+  await updateProfile(user.userId, { primaryTenantId: tenantId });
+}
+
+/** Seed one live `subscriptions` row (schema §14.3) and return its id. */
+async function seedLiveSubscription(options: {
+  tenantId: string;
+  status: "incomplete" | "active" | "past_due" | "downgraded";
+}): Promise<ObjectId> {
+  const _id = new ObjectId();
+  await app.db.collection(COLLECTIONS.subscriptions).insertOne({
+    _id,
+    tenantId: options.tenantId,
+    subscribedPlanKey: "starter",
+    subscribedPlanVersion: 1,
+    activePlanKey: "starter",
+    status: options.status,
+    priceKey: "starter-monthly-inr",
+    paymentMethodKind: "mandate_upi",
+    mandateStatus: "pending",
+    billingCycle: "monthly",
+    gracePeriodEndsAt: null,
+    pendingDueMinor: 0,
+    currency: "INR",
+    dunning: { attemptCount: 0, lastAttemptAt: null, remindersSent: [], nextReminderAt: null },
+    cancelAt: null,
+    cancelledAt: null,
+    cancelReason: null,
+    scheduledChange: null,
+    previousSubscriptionId: null,
+    statusHistory: [],
+    externalRefs: [
+      { provider: "cashfree", env: "sandbox", kind: "subscription", id: "cf_prev_001" },
+    ],
+    createdAt: new Date("2026-09-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+  });
+  return _id;
+}
+
+/** The §3.3 request body for a self-serve tier. */
+function checkoutBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    planKey: "starter",
+    priceKey: "starter-monthly-inr",
+    returnUrl: RETURN_URL,
+    ...overrides,
+  };
+}
+
+/** A `POST …/billing/checkout` request, optionally carrying an idempotency key. */
+function checkoutRequest(options: {
+  tenantPath: string;
+  cookie?: string;
+  body?: Record<string, unknown>;
+  idempotencyKey?: string;
+}): Request {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (options.cookie !== undefined) {
+    headers.cookie = options.cookie;
+  }
+  if (options.idempotencyKey !== undefined) {
+    headers["idempotency-key"] = options.idempotencyKey;
+  }
+  return new Request(
+    new URL(`${TENANTS_PATH}/${options.tenantPath}/billing/checkout`, APP_ORIGIN),
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(options.body ?? checkoutBody()),
+    }
+  );
+}
+
+/** The error envelope of a failed response. */
+async function errorEnvelope(response: Response): Promise<ErrorEnvelope> {
+  const parsed = await body(response);
+  return parsed.error as ErrorEnvelope;
+}
+
+/** Count provider calls while answering every mandate request successfully. */
+function countProviderCalls(): { readonly calls: () => number } {
+  let calls = 0;
+  server.use(
+    http.post(CAShFREE_CREATE_URL, () => {
+      calls += 1;
+      return HttpResponse.json(
+        makeCashfreeCreateSubscriptionResponse({ subscription_expiry_time: FIXTURE_EXPIRES_AT })
+      );
+    })
+  );
+  return { calls: () => calls };
+}
+
+describe("POST /api/v1/tenants/{tenantId}/billing/checkout", () => {
+  it("I1: a valid request returns the 201 checkout envelope and stores an incomplete subscription with the provider refs", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-happy",
+    });
+
+    const response = makeCashfreeCreateSubscriptionResponse({
+      subscription_expiry_time: FIXTURE_EXPIRES_AT,
+    });
+    let mandateRequest: unknown = undefined;
+    server.use(
+      http.post(CAShFREE_CREATE_URL, async ({ request }) => {
+        mandateRequest = await request.json();
+        return HttpResponse.json(response);
+      })
+    );
+
+    const result = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(result.status).toBe(201);
+    expect(result.headers.get("location")).toBe(response.auth_link);
+
+    const payload = await body(result);
+    expect(() => envelopeSchema.parse(payload)).not.toThrow();
+    expect(payload).toMatchObject({
+      status: "incomplete",
+      paymentMethodKind: "mandate_upi",
+      amountMinor: STARTER_AMOUNT_MINOR,
+      currency: "INR",
+      checkout: {
+        kind: "redirect",
+        url: response.auth_link,
+        expiresAt: FIXTURE_EXPIRES_AT,
+      },
+    });
+
+    // The mandate left the building in the pinned wire format, addressed to the
+    // vendor plan id the sold price carries, with the caller's return URL.
+    expect(cashfreeCreateSubscriptionRequestSchema.safeParse(mandateRequest).success).toBe(true);
+    expect(mandateRequest).toMatchObject({
+      plan_details: { plan_id: STARTER_VENDOR_PLAN_ID },
+      subscription_meta: { return_url: RETURN_URL },
+    });
+
+    // The workspace now holds one incomplete row carrying the vendor refs.
+    const stored = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ tenantId: tenantId.toHexString(), status: "incomplete" });
+    expect(stored).not.toBeNull();
+    expect(String(stored?._id)).toBe(payload.subscriptionId);
+    expect(stored).toMatchObject({
+      subscribedPlanKey: "starter",
+      activePlanKey: "starter",
+      priceKey: "starter-monthly-inr",
+      mandateStatus: "pending",
+      currency: "INR",
+    });
+    const refs = stored?.externalRefs as { provider: string; kind: string; id: string }[];
+    expect(refs).toContainEqual(
+      expect.objectContaining({
+        provider: "cashfree",
+        kind: "subscription",
+        id: response.subscription_id,
+      })
+    );
+    const history = stored?.statusHistory as { to: string }[];
+    expect(history.some((entry) => entry.to === "incomplete")).toBe(true);
+  });
+
+  it("I1: the response carries no vendor-shaped field, no stored refs and no driver id", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-happy-no-vendor",
+    });
+    server.use(
+      http.post(CAShFREE_CREATE_URL, () =>
+        HttpResponse.json(
+          makeCashfreeCreateSubscriptionResponse({ subscription_expiry_time: FIXTURE_EXPIRES_AT })
+        )
+      )
+    );
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(response.status).toBe(201);
+    const payload = await body(response);
+    expect(payload).not.toHaveProperty("externalRefs");
+    expect(payload).not.toHaveProperty("_id");
+    expect(JSON.stringify(payload)).not.toMatch(/cashfree/i);
+  });
+
+  it("I2: a sales-assisted tier is refused with 422 plan_not_self_serve and the sales URL, without calling the provider", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-enterprise",
+    });
+    const provider = countProviderCalls();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+        body: checkoutBody({ planKey: "enterprise", priceKey: "enterprise-monthly-inr" }),
+      })
+    );
+
+    expect(response.status).toBe(422);
+    const error = await errorEnvelope(response);
+    expect(error).toMatchObject({ code: "plan_not_self_serve" });
+    expect(error.details).toMatchObject({ contactSalesUrl: expect.any(String) });
+    expect(provider.calls()).toBe(0);
+  });
+
+  it("I3: a workspace with a live subscription is refused with 409 subscription_already_active, without calling the provider", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-active",
+    });
+    const existingId = await seedLiveSubscription({
+      tenantId: tenantId.toHexString(),
+      status: "active",
+    });
+    const provider = countProviderCalls();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(response.status).toBe(409);
+    const error = await errorEnvelope(response);
+    expect(error).toMatchObject({ code: "subscription_already_active" });
+    expect(error.details).toMatchObject({
+      subscriptionId: existingId.toHexString(),
+      status: "active",
+    });
+    expect(provider.calls()).toBe(0);
+  });
+
+  it("I4: a provider 500 is 502 upstream_unavailable, leaves the row expired, and the retry succeeds", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-provider-500",
+    });
+
+    const success = makeCashfreeCreateSubscriptionResponse({
+      subscription_expiry_time: FIXTURE_EXPIRES_AT,
+    });
+    let attempt = 0;
+    server.use(
+      http.post(CAShFREE_CREATE_URL, () => {
+        attempt += 1;
+        if (attempt === 1) {
+          return new HttpResponse(null, { status: 500 });
+        }
+        return HttpResponse.json(success);
+      })
+    );
+
+    const failed = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(failed.status).toBe(502);
+    const error = await errorEnvelope(failed);
+    expect(error).toMatchObject({ code: "upstream_unavailable", retryable: true });
+    expect(error.details).toMatchObject({ provider: "cashfree" });
+
+    // The failed attempt must not block the workspace: its row is terminal.
+    expect(
+      await app.db
+        .collection(COLLECTIONS.subscriptions)
+        .countDocuments({ tenantId: tenantId.toHexString(), status: "expired" })
+    ).toBeGreaterThan(0);
+
+    // …so a retry (a fresh idempotency key) can start the mandate again.
+    const retried = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(retried.status).toBe(201);
+    const payload = await body(retried);
+    expect(() => envelopeSchema.parse(payload)).not.toThrow();
+
+    const stored = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ tenantId: tenantId.toHexString(), status: "incomplete" });
+    expect(stored).not.toBeNull();
+    expect(String(stored?._id)).toBe(payload.subscriptionId);
+  });
+
+  it("I5: a replay with the same Idempotency-Key calls the provider exactly once", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-replay",
+    });
+    const provider = countProviderCalls();
+    const idempotencyKey = randomUUID();
+
+    const first = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey,
+      })
+    );
+    expect(first.status).toBe(201);
+    const firstBody = await body(first);
+
+    const second = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey,
+      })
+    );
+
+    expect(second.status).toBe(200);
+    expect(second.headers.get("idempotency-replayed")).toBe("true");
+    expect(await body(second)).toEqual(firstBody);
+    expect(provider.calls()).toBe(1);
+  });
+
+  it("I6: a non-owner member may not start a checkout", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-member",
+    });
+    const member = await app.signIn(makeIdentity("op107-member"));
+    await addMember(tenantId, member, "member");
+    const provider = countProviderCalls();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: member.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(await errorEnvelope(response)).toMatchObject({ code: "forbidden" });
+    expect(provider.calls()).toBe(0);
+  });
+
+  it("I6: an admin — who §3.3 does not authorise — may not start a checkout either", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-admin",
+    });
+    const admin = await app.signIn(makeIdentity("op107-admin"));
+    await addMember(tenantId, admin, "admin");
+    const provider = countProviderCalls();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: admin.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(await errorEnvelope(response)).toMatchObject({ code: "forbidden" });
+    expect(provider.calls()).toBe(0);
+  });
+
+  it("rejects an unauthenticated caller with 401 before any tenancy resolution", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-anon",
+    });
+
+    const response = await startCheckout(
+      checkoutRequest({ tenantPath: tenantId.toHexString(), idempotencyKey: randomUUID() })
+    );
+
+    expect(response.status).toBe(401);
+    expect(await errorEnvelope(response)).toMatchObject({ code: "authentication_required" });
+  });
+
+  it("requires an Idempotency-Key header", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-no-key",
+    });
+
+    const response = await startCheckout(
+      checkoutRequest({ tenantPath: tenantId.toHexString(), cookie: owner.cookie })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await errorEnvelope(response)).toMatchObject({ code: "idempotency_key_required" });
+  });
+
+  it("refuses a returnUrl that is not on the allow-list with 422 invalid_return_url", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-bad-return",
+    });
+    const provider = countProviderCalls();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: owner.cookie,
+        idempotencyKey: randomUUID(),
+        body: checkoutBody({ returnUrl: "https://app.openpic.in.evil.com/billing/return" }),
+      })
+    );
+
+    expect(response.status).toBe(422);
+    const error = await errorEnvelope(response);
+    expect(error).toMatchObject({ code: "invalid_return_url" });
+    expect(error.details).toMatchObject({ allowedOrigins: expect.any(Array) });
+    expect(provider.calls()).toBe(0);
+  });
+
+  it("a non-member is denied with the uniform 404 and never reaches the provider", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-outsider",
+    });
+    const outsider = await app.signIn(makeIdentity("op107-outsider"));
+    const provider = countProviderCalls();
+
+    const response = await startCheckout(
+      checkoutRequest({
+        tenantPath: tenantId.toHexString(),
+        cookie: outsider.cookie,
+        idempotencyKey: randomUUID(),
+      })
+    );
+
+    expect(response.status).toBe(404);
+    expect(await errorEnvelope(response)).toMatchObject({ code: "not_found" });
+    expect(provider.calls()).toBe(0);
+  });
+});
