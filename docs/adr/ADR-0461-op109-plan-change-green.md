@@ -174,3 +174,81 @@ table in the ADR-0421 shape. The base `ERROR_CATALOG` is untouched.
 so this record takes `0461` — the cell's value in the lane's `Next free` column
 as written by the RED. The lane's `Next free` advances to `0462`; no number
 outside the lane range `0460`–`0479` is touched.
+
+## Review sign-off — 2026-10-25 (card t_4079f630, round 1 · artifact lens)
+
+The round-1 review of the OP-109 GREEN returned **APPROVED WITH FINDINGS** — the
+delivery shipped, and the findings below were routed to the chained follow-up
+cards rather than held against it. The reviewer edited nothing but this section:
+no production file, no test, mock, fixture or factory was touched.
+
+**Head chain and merge.** RED `cf54901` (the two specs) → `aa611bd` (the
+`cancelMandate` port seam) → `04a2065` (the plan-change surface) → `946e59a`
+(ADR-0461 and its ledger rows) → `5161c05` (the lint-scoped consequence pin),
+raised as PR [#334](https://github.com/yahodu/openpic-webapp/pull/334) and
+squash-merged as `20fa9a5` on `main`. The reviewed-path diff between the reviewed
+head `5161c05` and the squash `20fa9a5` is **empty** (the trunk had not moved
+under the review), so the bytes reviewed are the bytes that shipped.
+
+**Evidence reproduced by the reviewer.** At `5161c05`: unit `plan-change.test.ts`
+**17 passed (17)** and integration `billing-plan-change.test.ts` **24 passed
+(24)** (`TMPDIR=/root/tmp-mongo`), both **unedited**; full projects **unit 112
+files / 1952 passed | 3 skipped** and **integration 82 files / 638 passed**.
+Re-run on the merged trunk `20fa9a5`: both pins plus the `adr-numbering` guard —
+unit **46 passed (46)** (17 plan-change + 29 guard) and integration **24 passed
+(24)**. An ESLint probe that re-enables
+`@typescript-eslint/no-unnecessary-boolean-literal-compare` on the exempted spec
+reports exactly **one** diagnostic (`plan-change.test.ts:187:49`), proving the
+scoped `eslint.config.mjs` exemption is load-bearing and minimal.
+
+**Findings, with routing.** Each finding cites the follow-up **card** id (its ADR
+number may renumber while its PR is open).
+
+- **F1 (Medium)** — `billing.plan.upgraded` is never emitted although §3.3
+  (`docs/API Contract.md:1115`) and the card's §1 require it. Probe: after a `201`
+  upgrade `domain_events` holds only the sign-in events (`account.welcome`,
+  `auth.signin.new_device`) and `notifications` is empty; the key is registered at
+  `notifications/notification-types.values.ts:401` with no emitter. → TEST
+  `t_78d4ebb7` + GREEN `t_f5df9fe6`.
+- **F2 (Medium)** — `POST …/billing/downgrade` has no direction guard. Probe: a
+  `professional` target from a live `starter` row answered `200` and wrote
+  `scheduledChange.toPlanKey = "professional"`. §3.3 is silent on this edge and no
+  pin covered it. → TEST `t_78d4ebb7` + GREEN `t_f5df9fe6`.
+- **F3 (Low)** — `DowngradeConsequence.destructive` typed `boolean` instead of
+  ADR-0460 §3's literal `false`, requiring the scoped `eslint.config.mjs`
+  exemption (which masks exactly the one diagnostic above). → TEST `t_5eef78db` +
+  GREEN `t_f9146a1a`.
+- **F4 (Low)** — `cancelMandate` parses the Manage response with
+  `cashfreeCreateSubscriptionResponseSchema` (a documented superset fixture), so
+  the manage contract is inherited rather than pinned. → pin in TEST `t_78d4ebb7`.
+- **F5 (Low)** — a live row with no `currentPeriodEnd` schedules the change at
+  `now` (`downgrade/route.ts:139`), contradicting "take effect at period end". →
+  characterization pin in TEST `t_5eef78db` (the `t_78d4ebb7` card restated it;
+  the pin landed with the `t_f9146a1a` GREEN, `1764700`).
+- **F6 (Info)** — the remaining unpinned edges (`DELETE` with nothing scheduled →
+  `204`, implicit-free upgrade → `409`, create-failure-after-cancel → `502`) are
+  honestly recorded in §Assumptions; no card.
+
+**Post-review status (board checked 2026-10-25).** Every card of the follow-up
+chain (`t_5eef78db` → `t_f9146a1a` → `t_78d4ebb7` → `t_f5df9fe6`) is `done`, and
+all five actionable findings have landed:
+
+- **F1, F2** — the upgrade now emits `billing.plan.upgraded` inside its own
+  transaction and the downgrade refuses a non-lower target as `422 not_a_downgrade`
+  before any write; GREEN `t_f5df9fe6` squash-merged as `44ff384` (PR
+  [#340](https://github.com/yahodu/openpic-webapp/pull/340)).
+- **F3** — the scoped exemption is gone and `destructive` is restored to the
+  literal `false`; GREEN `t_f9146a1a` squash-merged as `1764700` (PR
+  [#337](https://github.com/yahodu/openpic-webapp/pull/337)).
+- **F4** — `cancelMandate` now parses the Manage response with the status shape,
+  so a create-only response is refused as a contract violation; its pins shipped
+  inside `44ff384`.
+- **F5** — the missing-`currentPeriodEnd` fallback is characterised (behaviour
+  unchanged) and its §3.3 contradiction recorded for the product owner; the pin
+  shipped inside `1764700`.
+- **F6** — information only; no change.
+
+Nothing in the historical `§1`–`§6` sections is retracted: they record what
+shipped at `20fa9a5`, and the follow-ups' own ADRs document what followed. This
+sign-off consumes **no** ADR number — the lane's `Next free` cell is unchanged and
+`docs/adr/README.md` is byte-identical to `origin/main`.
