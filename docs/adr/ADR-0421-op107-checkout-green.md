@@ -683,7 +683,7 @@ Restored byte-identical afterwards.
 | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `TMPDIR=/root/tmp-mongo vitest run --project integration apps/web/src/test/integration/billing-checkout.test.ts` | **23 passed (23)** (was 20) — the whole focused file re-run **3×**, green each time (incl. `I7`/`I7b` with the index built)       |
 | `vitest run --project unit` (full)                                                                               | 1914 passed \| 3 skipped (1917) — see the figure note below                                                                       |
-| `TMPDIR=/root/tmp-mongo vitest run --project integration` (full)                                                 | **582 passed (582)** (was 565 at `f35aac9`)                                                                                       |
+| `TMPDIR=/root/tmp-mongo vitest run --project integration` (full)                                                 | **586 passed (586)** at the review head (`582` before merging `origin/main`; was `565` at `f35aac9`)                              |
 | `vitest run --project unit apps/web/src/test/unit/adr-numbering.test.ts`                                         | **29 passed (29)**                                                                                                                |
 | `pnpm typecheck`                                                                                                 | exit `0` (root + contracts + web)                                                                                                 |
 | `eslint` on the touched spec                                                                                     | 0 errors, 0 warnings                                                                                                              |
@@ -693,10 +693,10 @@ Restored byte-identical afterwards.
 
 **Figure note (recorded as measured, not copied).** The card quoted `unit 1900 passed | 3 skipped` and
 `integration 565 passed`; both are **stale snapshots of older heads** (the `t_be4e7022` sign-off had to
-correct this card's two other figures for the same reason). Measured here: integration `582` = `565` + the
-**3** pins this card adds + the **14** integration tests `origin/main` gained after the card was written
-(`payments-cashfree-expiresat.test.ts`, `payments-cashfree-request-projections.test.ts` and the
-`payments-cashfree-adapter.test.ts` edit, i.e. OP-105 #316/#317). For the unit figure, the `unit` project
+correct this card's two other figures for the same reason). Measured here: integration `586` at the review
+head = `565` + the **3** pins this card adds + the **18** integration tests `origin/main` gained after the
+card was written (`payments-cashfree-request-projections.test.ts` +14 and `payments-cashfree-expiresat.test.ts`
++4 with the `payments-cashfree-adapter.test.ts` edit, i.e. OP-105 #316/#317). For the unit figure, the `unit` project
 (`vitest.config.ts`) includes `packages/contracts/src/**/*.test.ts` and `apps/web/src/**/*.test.ts` and
 **excludes** `**/test/integration/**`, and this card's only change is an integration spec — so the pins are
 **provably unit-neutral** and `1914` is the trunk's own count; the gate that matters (zero failures, only the
