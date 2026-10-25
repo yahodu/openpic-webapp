@@ -175,6 +175,86 @@ the cell to `0312`. No number outside `0300`–`0319` is touched.
 
 ## GREEN realization
 
-Not yet recorded — the gated GREEN is `t_de160aea`, which must base its branch on
-this branch's tip and append its realization section here without minting a new
-ADR number.
+Delivered by `t_de160aea` on branch `OP-110-task-pin-hooks-path-warning-green`
+(based on this RED branch's tip `ca98f7c`, **not** bare `origin/main`). The pins
+are carried unchanged — the only production change is to
+`scripts/git/pin-hooks-path.mjs`, which now exports the seam and distinguishes
+the two failure modes:
+
+```js
+export function pinHooksPath(deps) {
+  try {
+    deps.runGit(["rev-parse", "--is-inside-work-tree"]);
+  } catch {
+    // No work tree to configure (e.g. an install from a source tarball).
+    return 0;
+  }
+
+  try {
+    deps.runGit(["config", "core.hooksPath", ".husky"]);
+  } catch (error) {
+    const reason = (error instanceof Error ? error.message : String(error))
+      .trim()
+      .replace(/\s+/g, " ");
+    deps.stderr.write(`pin-hooks-path: could not pin core.hooksPath to .husky — ${reason}\n`);
+  }
+
+  return 0;
+}
+```
+
+The runner wiring is a main-module guard, so an import has no side effect:
+
+```js
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = pinHooksPath({ runGit: git, stderr: process.stderr });
+}
+```
+
+Three details the pins left to the GREEN, recorded here:
+
+1. **`process` is imported (`node:process`), not read as a global.** The flat
+   ESLint config runs `js.configs.recommended` over `.mjs` files with no Node
+   globals declared, so the ambient `process` fails `no-undef`; the explicit
+   import keeps `eslint .` at 0 errors without touching the shared config.
+2. **`git` captures stderr (`stdio: ["ignore", "pipe", "pipe"]`).** With the
+   previous `"ignore"`, `execFileSync`'s message was only
+   `Command failed: git config core.hooksPath .husky` — it named the command but
+   not _why_ the pin failed, which is the observability the finding asked for.
+   Piping stderr makes the thrown message carry git's own text
+   (`error: could not lock config file .git/config: Permission denied`).
+3. **The reason is collapsed to one line** (trim + `\s+` → `" "`), because that
+   embedded stderr is multi-line; the diagnostic stays exactly one line, matching
+   the shape the pins assert for the injected single-line messages. The exact
+   prose remains the GREEN's per "Out of scope" above.
+
+### Evidence at the GREEN head
+
+- Focused spec:
+  `npx vitest run --project unit apps/web/src/test/unit/pin-hooks-path.test.ts`
+  → `Test Files 1 passed (1)` · `Tests 7 passed (7)`.
+- Full unit project → `Test Files 119 passed (119)` ·
+  `Tests 2049 passed | 3 skipped (2052)`. The RED head's baseline was
+  118 files / 2045 tests, so the new spec's 7 assertions are the only delta and
+  every pre-existing test still passes.
+- `npx tsc -p tsconfig.json --noEmit`, `-p apps/web/tsconfig.json`,
+  `-p packages/contracts/tsconfig.json` → all exit `0`.
+- `npx eslint . -f json` → 0 errors / 106 warnings (the pre-existing baseline);
+  `npx prettier --check .` clean.
+- **Runner-wiring probe (the part the pins deliberately do not cover).** The real
+  entry point was exercised four ways, with the worktree's `node_modules`
+  present and `core.hooksPath` unset first:
+  1. `node scripts/git/pin-hooks-path.mjs` in the worktree → rc `0`, no stdout,
+     no stderr, and `git config --get core.hooksPath` then reads `.husky`;
+  2. `import()` of the module → no config mutation, `process.exitCode` still
+     `undefined` (the main-module guard holds);
+  3. the same command with a `git` shim on `PATH` that succeeds on `rev-parse`
+     and fails on `config` → rc `0` and **one** stderr line:
+     `pin-hooks-path: could not pin core.hooksPath to .husky — Command failed: git config core.hooksPath .husky error: could not lock config file .git/config: Permission denied`;
+  4. the same command from a directory that is not a repository → rc `0`, no
+     stdout, no stderr (the tarball tolerance is intact).
+
+The pins, the mocks and the fixtures were not touched (`git diff ca98f7c..HEAD`
+touches only `scripts/git/pin-hooks-path.mjs` and this section). No new
+dependency, no `package.json` change, no new ADR number — the README ledger cell
+stays `0312`.
