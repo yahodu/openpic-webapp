@@ -19,9 +19,10 @@ import type { SubscriptionStatus } from "./view";
  *     only when the URL carries no credentials;
  *   - {@link decideExistingSubscription} — the §3.3 decision table: no document
  *     (or a terminal one) starts a checkout, a live row is the `409`
- *     `subscription_already_active`, and an `incomplete` row is **reused** while
- *     its hosted link is still valid and **restarted** (the stale row is
- *     retired, then a fresh one begins) once it is not.
+ *     `subscription_already_active`, and an `incomplete` row is *usable* only
+ *     through a hosted link that has not expired yet — otherwise it is stale and
+ *     a fresh checkout would have to replace it (the route refuses it instead:
+ *     see ADR-0421 follow-up §1).
  *
  * The module holds no I/O: the route owns the reads, the writes and the
  * provider call, so these two functions are exercisable without a database.
@@ -104,9 +105,13 @@ export interface ExistingSubscriptionFacts {
 /**
  * What the checkout route must do about the workspace's current subscription.
  *
- * `restart` names the stale row so the route retires it **before** inserting
- * the new one (the one-live-row unique index would otherwise reject the
- * insert); `blocked` is the §3.3 `409`.
+ * `start` is the one decision that lets a checkout through. Every other row the
+ * table names is **live** — §3.3's `cancelledAt: null` plus a non-terminal
+ * status — and the route answers the §3.3 `409 subscription_already_active` for
+ * it instead of retiring a pending mandate whose user may be approving it right
+ * now (ADR-0421 follow-up §1); `reuse` still carries the stored link and its
+ * expiry, and `blocked` the status it read, so this value stays the single
+ * description of the row.
  */
 export type ExistingSubscriptionDecision =
   | { readonly kind: "start" }
