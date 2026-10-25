@@ -148,8 +148,64 @@ exercises); and`export * from "…/cashfree/…"`is reported, but only the`expor
   rejects the literal rule; no production source outside the rule module and the
   config is touched.
 
-## Review sign-off
+## Review sign-off — 2026-10-25 (card `t_b7f8adfd`, round 1 · artifact lens)
 
-_Pending. The pins and this GREEN ship in one PR from
-`OP-105-task-vendor-boundary-green`; the review of this delivery is the review of
-that PR._
+The round-1 (**artifact-lens**) review of this delivery — review card
+`t_587805e5`, the review + merge of PR
+[#310](https://github.com/yahodu/openpic-webapp/pull/310) — returned **APPROVED
+WITH FINDINGS**: zero changes requested to the deliverable and **zero reviewer
+edits** to the rule, the config, the pins or this record beyond the one
+link-only fix to ADR-0388 noted below.
+
+**Evidence reproduced independently at the reviewed head `30bc570`** (`3572300`
+was the head before that one-commit link fix):
+
+- The pins re-run **unedited** — the pins spec blob is unchanged —
+  **14 passed (14)**.
+- `eslint .` → **exit 0, 0 errors / 105 warnings**, and its warning-key set is
+  **identical to the `origin/main` `1f3d39d` baseline: 58 keys vs 58 keys,
+  0 added / 0 removed / 0 changed** (the one key whose path differs is the
+  worktree prefix on `scripts/db/ensure-indexes.ts`); the new rule
+  `openpic/no-direct-vendor-adapter-import` contributes **no** warning.
+- `pnpm run typecheck` (all three projects) exit `0`; `prettier --check .` clean.
+- unit **110 files / 1913 passed | 3 skipped**; integration **77 files / 557
+  passed** (`TMPDIR=/root/tmp-mongo`); `adr-numbering` **29 passed (29)**.
+- **Production-path probe** (a throwaway file, deleted afterwards; the tree
+  returned clean): a specifier into `server/adapters/cashfree/**` is **reported**
+  at severity `2` under `openpic/no-direct-vendor-adapter-import` **both** via
+  the alias and via a **relative** specifier, while the composition root
+  `apps/web/src/server/payments/get-payment-provider.ts` is **silent**.
+- CI green (`audit-dev` is `continue-on-error` and is not a gate; `audit`
+  passes).
+
+**Findings (both Low; these record review-time state and point forward).**
+
+- **Low — two unpinned edges of the boundary.** A dynamic `import()` whose
+  specifier is a **template literal with no expressions** is **not** reported —
+  the rule matches a string `Literal` only, which is what the pin exercises —
+  and `export * from "…/cashfree/…"` is reported, but only the
+  `export { … } from` shape is pinned. The no-expression template-literal edge
+  is being **pinned** by the follow-up RED/GREEN pair — RED card `t_a2fde084`
+  (assignee `testcase-writer`) and GREEN card `t_dfe5970e` (assignee
+  `backend-coder`), same lane branch — so it is **not yet closed** at this head.
+- **Low — the `off` switch uses repo-wide globs** (`**/test/**`, `**/e2e/**`,
+  …) rather than `apps/web/**`-scoped ones. No functional hole today (the
+  registration is `apps/web/src/**`-scoped), noted for the day the rule is
+  registered repo-wide.
+
+**Known item, landed inside the PR.** ADR-0388 linked the non-existent
+`ADR-0001-ports-and-adapters-provider-neutrality.md`; it was fixed in-PR at
+`30bc570` (link-only, one line) so the record lands correct, with an inline line
+comment on the PR. No pinned decision and no test, mock, fixture or factory was
+touched.
+
+**Merge and number.** The delivery shipped as PR
+[#310](https://github.com/yahodu/openpic-webapp/pull/310), **squash-merged as
+`dd9a027`** (an ancestor of `origin/main`), carrying both the pins (TEST card
+`t_d3a8bf6f`, whose own draft PR
+[#306](https://github.com/yahodu/openpic-webapp/pull/306) was **closed
+unmerged**) and the enforcement (GREEN card `t_b7f8adfd`). **No ADR number is
+asserted here for anything unmerged:** the draft pins PR #306 never merged and
+carries **no** ADR number of its own — the pins' record is
+[ADR-0388](ADR-0388-op105-vendor-adapter-import-boundary-pin.md), which landed
+only inside #310.

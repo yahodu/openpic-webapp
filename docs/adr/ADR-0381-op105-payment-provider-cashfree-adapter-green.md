@@ -304,3 +304,30 @@ acceptance criterion) shipped on `main` in PR
 
 Nothing in §Context–§Consequences or in the round-1 `## Review sign-off` above is retracted: those
 sections document the state at the GREEN head, and this note records what followed.
+
+## Post-review status refresh — F1 is **landed** (card `t_1e20d7c2`, 2026-10-25)
+
+_Append-only; **no ADR number consumed**; `docs/adr/README.md` stays byte-identical to `origin/main`._
+
+This note refreshes the round-1 sign-off's `### Post-review status` above. Its **F1** bullet still reads
+"in flight" — that was the state **at the time that sign-off was written**, and it stays a dated
+snapshot; this section is the current status. Nothing in §Context–§Consequences, in the round-1
+`## Review sign-off`, or in the `## Post-review decision` above is rewritten or retracted.
+
+- **F1 is landed.** The pins (TEST card `t_d3a8bf6f`) and the enforcement (GREEN card `t_b7f8adfd`)
+  shipped in one PR, [#310](https://github.com/yahodu/openpic-webapp/pull/310), **squash-merged as
+  `dd9a027`** — an ancestor of `origin/main`. [ADR-0388](ADR-0388-op105-vendor-adapter-import-boundary-pin.md)
+  and [ADR-0389](ADR-0389-op105-vendor-adapter-import-boundary-green.md) are on `main`, and ADR-0388's
+  `ADR-0001` cross-reference was corrected in the same PR (commit `30bc570`). The superseded draft pins
+  PR [#306](https://github.com/yahodu/openpic-webapp/pull/306) was **closed unmerged** (its commits are
+  contained in #310). The delivery's review is recorded in
+  [ADR-0389](ADR-0389-op105-vendor-adapter-import-boundary-green.md) §"Review sign-off" (review card
+  `t_587805e5`; verdict APPROVED WITH FINDINGS).
+- **No ADR number is asserted for anything unmerged.** PR #306 never merged and carries no ADR number
+  of its own; the pins' record is ADR-0388, which landed only inside #310.
+- **F1's unpinned edges are pointed forward, not closed.** The review's two Low findings — a
+  no-expression template-literal dynamic import, and the unpinned `export *` shape — are being pinned
+  by the follow-up RED/GREEN pair (RED `t_a2fde084` @`testcase-writer`, GREEN `t_dfe5970e`
+  @`backend-coder`, same lane branch). They were open at the reviewed head.
+- **F2 is landed** (PR [#297](https://github.com/yahodu/openpic-webapp/pull/297) → `2669c304`); the
+  F3–F5 routing above is unchanged.
