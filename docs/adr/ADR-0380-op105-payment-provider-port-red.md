@@ -317,6 +317,36 @@ client secret, a signature or a raw payload (CONVENTIONS §5.3).
   verifies that one mapping against the live schema; nothing downstream depends
   on it until OP-107.
 
+## Amendment — `createMandate().expiresAt` is canonicalized in the adapter (`t_e2747a56`)
+
+§5 above projected the create-subscription response as `expiresAt:
+subscription_expiry_time` verbatim, which left the field's **shape** open. It is
+now closed: the vendor field is typed `string<ISO8601>` and Cashfree's Create
+Subscription reference states _"We store timestamps in IST. Example:
+`2025-06-01T10:20:12+05:30`"_
+(<https://www.cashfree.com/docs/api-reference/payments/latest/subscription/create-subscription>)
+— ISO 8601 with an **explicit IST `+05:30` offset, second precision, no ms and
+no `Z`**. That form is neither UTC nor ms precision, while `docs/API Contract.md`
+§0.13 (line 360) fixes **one** shape for every `Timestamp` — RFC 3339 UTC, ms
+precision, `Z` — and §3.3 (line 1088) serves `checkout.expiresAt` in exactly
+that form, projected straight from this field by OP-107.
+
+So the adapter converts: `normalizeExpiry` parses
+`response.subscription_expiry_time` and returns its `toISOString()`
+(`2025-06-01T10:20:12+05:30` → `2025-06-01T04:50:12.000Z`). The conversion lives
+here for the same reason every other vendor dialect does — the adapter is the
+only module that speaks Cashfree, so the port stays provider-neutral
+([ADR-0001](ADR-0001-ports-and-adapters.md)) and every downstream route remains
+a pure projection. A value that cannot become a valid instant is a contract
+break and raises `UpstreamContractError` through the schema-drift path (the
+`contractViolation` helper, hence the `payments.upstream_contract_violation`
+line), never `Invalid Date` or a raw vendor string on our wire.
+
+The port's `CreateMandateResult.expiresAt` doc comment now states that shape
+rather than "the vendor's expiry for that URL". No new ADR number is minted: the
+decision is recorded in this amendment and pinned executably by
+[ADR-0392](ADR-0392-op105-expiresat-rfc3339-pin.md).
+
 ## ADR number allocation
 
 This lane (`OP-105`) had no reserved range in

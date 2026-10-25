@@ -1,3 +1,9 @@
+## [1.35.1](https://github.com/yahodu/openpic-webapp/compare/v1.35.0...v1.35.1) (2026-10-25)
+
+### Bug Fixes
+
+- **payments:** OP-105 normalize createMandate().expiresAt to RFC 3339 UTC ms Z (F1) ([#317](https://github.com/yahodu/openpic-webapp/issues/317)) ([b317f8b](https://github.com/yahodu/openpic-webapp/commit/b317f8b159a7d27053465ba5ae973ce66b1d4050))
+
 ## [1.35.0](https://github.com/yahodu/openpic-webapp/compare/v1.34.1...v1.35.0) (2026-10-25)
 
 ### Features
