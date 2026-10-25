@@ -886,6 +886,40 @@ describe("GET /api/v1/tenants/{tenantId}/billing/invoices/{invoiceNumber}", () =
     expect(response.status).toBe(404);
     expect(await errorEnvelope(response)).toMatchObject({ code: "not_found" });
   });
+
+  /**
+   * The `{invoiceNumber}` segment is the one path value this route decodes
+   * explicitly: `new URL(...).pathname` keeps the raw percent-escape, so the
+   * handler calls `decodeURIComponent` on it. That decode is on user-controlled
+   * input, and a segment that is not a valid escape (`%`, `100%`, `%zz`) makes
+   * `decodeURIComponent` throw a `URIError`. Every other refusal on this surface
+   * is an `AppError` with a contract code, so a malformed segment must be refused
+   * with the same envelope as the "no stored asset" miss — `404 not_found` — and
+   * must never surface the unhandled throw as `500 internal_error`.
+   */
+  it.each([
+    { segment: "%", slug: "op110-invoices-malformed-bare" },
+    { segment: "100%", slug: "op110-invoices-malformed-trailing" },
+    { segment: "%zz", slug: "op110-invoices-malformed-nonhex" },
+  ])(
+    "refuses the malformed invoice-number segment $segment as 404 not_found, never 500",
+    async ({ segment, slug }) => {
+      const { tenantPath, owner } = await ownerWorkspace(slug);
+
+      const response = await getInvoice(
+        billingRequest({
+          tenantPath,
+          route: `invoices/${segment}`,
+          cookie: owner.cookie,
+          method: "GET",
+        })
+      );
+
+      expect(response.status).not.toBe(500);
+      expect(response.status).toBe(404);
+      expect(await errorEnvelope(response)).toMatchObject({ code: "not_found" });
+    }
+  );
 });
 
 describe("POST /api/v1/tenants/{tenantId}/billing/addons", () => {
