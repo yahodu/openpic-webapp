@@ -1,3 +1,27 @@
+## [1.29.3](https://github.com/yahodu/openpic-webapp/compare/v1.29.2...v1.29.3) (2026-10-25)
+
+### Bug Fixes
+
+- **entitlements:** OP-103 keep the denial AppError when the blocked-event emit fails ([#283](https://github.com/yahodu/openpic-webapp/issues/283)) ([cb232d9](https://github.com/yahodu/openpic-webapp/commit/cb232d90f14786fba7ded8cd5cebdf7567226f57))
+
+## [1.29.2](https://github.com/yahodu/openpic-webapp/compare/v1.29.1...v1.29.2) (2026-10-24)
+
+### Bug Fixes
+
+- **entitlements:** OP-103 make the entitlement decision and counter agree off tenant scope ([#281](https://github.com/yahodu/openpic-webapp/issues/281)) ([b721200](https://github.com/yahodu/openpic-webapp/commit/b721200ec993d1501a1d4e4db0926b2cd985ce36))
+
+## [1.29.1](https://github.com/yahodu/openpic-webapp/compare/v1.29.0...v1.29.1) (2026-10-24)
+
+### Bug Fixes
+
+- **entitlements:** OP-103 make releaseEntitlement agree with the decision off tenant scope ([#286](https://github.com/yahodu/openpic-webapp/issues/286)) ([cfb8486](https://github.com/yahodu/openpic-webapp/commit/cfb848637d332a46608e3d5005b11f59848bd671))
+
+## [1.29.0](https://github.com/yahodu/openpic-webapp/compare/v1.28.1...v1.29.0) (2026-10-24)
+
+### Features
+
+- **entitlements:** OP-103 generic entitlement check, consumption and counters ([#277](https://github.com/yahodu/openpic-webapp/issues/277)) ([e63b854](https://github.com/yahodu/openpic-webapp/commit/e63b85464f42ceba769248745af39493eac8deec))
+
 ## [1.28.1](https://github.com/yahodu/openpic-webapp/compare/v1.28.0...v1.28.1) (2026-10-24)
 
 ### Bug Fixes

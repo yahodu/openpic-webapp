@@ -286,12 +286,20 @@ function decide(resolved: ResolvedEntitlement, amount: number): EntitlementVerdi
     return allowedVerdict(resolved, resolved.used);
   }
   if (resolved.used + amount > resolved.effectiveLimit) {
-    return deniedVerdict(
-      resolved,
-      resolved.status === "downgraded" ? "payment_downgrade" : "plan_limit"
-    );
+    return deniedVerdict(resolved, limitDenialReason(resolved));
   }
   return allowedVerdict(resolved, resolved.used);
+}
+
+/**
+ * The denial reason for a hard-limit overrun: a `downgraded` subscription
+ * turns the denial into `payment_downgrade` (the `402` vs `403` split).
+ *
+ * @param resolved - The resolved state.
+ * @returns The reason the limit denial carries.
+ */
+function limitDenialReason(resolved: ResolvedEntitlement): EntitlementDenialReason {
+  return resolved.status === "downgraded" ? "payment_downgrade" : "plan_limit";
 }
 
 /**
@@ -332,13 +340,15 @@ export async function checkEntitlement(
  * row on first use can lose that race, so a duplicate-key insert is retried as
  * a plain update.
  *
- * @returns The counter's new value.
+ * @returns The counter's new value, or `null` when neither conditional update
+ *   found room (the counter advanced past the limit between the decision and
+ *   the write) — the caller must not report success off a stale read.
  */
 async function advanceCounter(
   resolved: ResolvedEntitlement,
   amount: number,
   deps: Seams
-): Promise<number> {
+): Promise<number | null> {
   const limit = resolved.effectiveLimit;
   const collection = tenantRepo(resolved.tenantId, deps.db).collection(COLLECTIONS.usageCounters);
   const filter: Document = {
@@ -355,11 +365,7 @@ async function advanceCounter(
   if (created !== null) {
     return created;
   }
-  const retried = await applyCounterUpdate(collection, filter, update, deps, false);
-  return (
-    retried ??
-    (await readCounterValue(resolved.tenantId, resolved.entitlementKey, resolved.periodKey, deps))
-  );
+  return applyCounterUpdate(collection, filter, update, deps, false);
 }
 
 /** Apply one `findOneAndUpdate`, returning the new value or `null`. */
@@ -425,7 +431,16 @@ function hourBucket(now: Date): string {
   return now.toISOString().slice(0, 13);
 }
 
-/** Emit `usage.action.blocked` (once per tenant/key/hour) and log the denial. */
+/**
+ * Emit `usage.action.blocked` (once per tenant/key/hour) and log the denial.
+ *
+ * The emit is a best-effort side effect: a rejection is swallowed and recorded
+ * as a `warn` line (`entitlement.denied.emit_failed`) so the lost
+ * `usage.action.blocked` row stays observable, but a broken outbox can never
+ * replace the denial `AppError` the caller is about to throw (OP-103 follow-up
+ * F2; contract §0.14). This mirrors the `safeEmit` seam in
+ * `@/server/auth/identity-hooks`.
+ */
 async function recordDenial(
   tenantId: string,
   verdict: EntitlementDeniedVerdict,
@@ -457,11 +472,20 @@ async function recordDenial(
     dedupeKey: `${tenantId}:${verdict.entitlementKey}:${hourBucket(deps.clock.now())}`,
   };
 
-  if (deps.emit === undefined) {
-    await emitDomainEvent(input, { db: deps.db, clock: deps.clock });
-    return;
+  try {
+    if (deps.emit === undefined) {
+      await emitDomainEvent(input, { db: deps.db, clock: deps.clock });
+    } else {
+      await deps.emit(input);
+    }
+  } catch (error) {
+    getLogger().warn("entitlement.denied.emit_failed", {
+      event: "entitlement.denied.emit_failed",
+      tenantId,
+      entitlementKey: verdict.entitlementKey,
+      err: error,
+    });
   }
-  await deps.emit(input);
 }
 
 /** Map a denied verdict onto the Appendix A `AppError` (contract §0.14). */
@@ -498,12 +522,46 @@ function denialError(tenantId: string, verdict: EntitlementDeniedVerdict): AppEr
 }
 
 /**
+ * Record a denied verdict and throw its Appendix A `AppError`.
+ *
+ * The blocked record is emitted **outside** the caller's transaction: the throw
+ * aborts that transaction, and the durable "blocked" row must survive it.
+ *
+ * @param tenantId - The tenant the usage belongs to.
+ * @param verdict - The denied verdict.
+ * @param ctx - Caller context (refs for the event).
+ * @param options - The emitter seam.
+ * @param deps - Database/clock seams.
+ * @returns Never — the call always throws.
+ */
+async function deny(
+  tenantId: string,
+  verdict: EntitlementDeniedVerdict,
+  ctx: EntitlementContext,
+  options: EntitlementConsumeOptions,
+  deps: { readonly db: Db; readonly clock: Clock }
+): Promise<never> {
+  await recordDenial(tenantId, verdict, ctx, {
+    db: deps.db,
+    clock: deps.clock,
+    ...(options.emit === undefined ? {} : { emit: options.emit }),
+  });
+  throw denialError(tenantId, verdict);
+}
+
+/**
  * Consume `amount` of a metered key inside the caller's transaction.
  *
  * Re-checks, then advances the counter atomically. On a denial it emits the
  * durable `usage.action.blocked` event **outside** the caller's session (the
  * throw aborts that transaction, and the blocked record must survive it) and
- * throws the Appendix A `AppError`.
+ * throws the Appendix A `AppError`. A rejected blocked-emit is swallowed (and
+ * logged at `warn`) so it can never replace that denial.
+ *
+ * Only a `tenant`-scoped key advances a `usageCounters` row, because only a
+ * `tenant`-scoped key reads one: for `event`/`attendee` scope the caller's
+ * `ctx.counts` is the sole usage source, and the returned verdict's `used` is
+ * that value (ADR-0342, option (a)).
  *
  * @param session - The caller's transaction; every read and write joins it.
  * @param tenantId - The tenant the usage belongs to.
@@ -511,7 +569,8 @@ function denialError(tenantId: string, verdict: EntitlementDeniedVerdict): AppEr
  * @param amount - The amount to consume (default `1`).
  * @param ctx - Caller context (counts, event refs).
  * @param options - Database/clock/emitter seams.
- * @returns The allowed verdict, with the post-increment `used`.
+ * @returns The allowed verdict, with the post-increment `used` for a
+ *   `tenant`-scoped key or `ctx.counts` otherwise.
  * @throws {AppError} `plan_limit_exceeded` / `payment_required` /
  *   `feature_not_available` on a denial.
  */
@@ -528,16 +587,22 @@ export async function consumeEntitlement(
   const verdict = decide(resolved, amount);
 
   if (!verdict.allowed) {
-    await recordDenial(tenantId, verdict, ctx, {
-      db: seams.db,
-      clock: seams.clock,
-      ...(options.emit === undefined ? {} : { emit: options.emit }),
-    });
-    throw denialError(tenantId, verdict);
+    return deny(tenantId, verdict, ctx, options, seams);
   }
 
-  const used = await advanceCounter(resolved, amount, seams);
-  return allowedVerdict(resolved, used);
+  if (resolved.scope !== "tenant") {
+    return allowedVerdict(resolved, resolved.used);
+  }
+
+  const advanced = await advanceCounter(resolved, amount, seams);
+  if (advanced === null) {
+    // Both conditional updates matched nothing, so the counter advanced past
+    // the room between the decision and the write (a lost race). Re-decide
+    // against the live counter rather than reporting success off a stale read.
+    const reread = await resolveEntitlement(tenantId, entitlementKey, ctx, seams);
+    return deny(tenantId, deniedVerdict(reread, limitDenialReason(reread)), ctx, options, seams);
+  }
+  return allowedVerdict(resolved, advanced);
 }
 
 /**
@@ -546,13 +611,19 @@ export async function consumeEntitlement(
  * The reversal for a delete (contract §0.14 C6): decrements the counter,
  * clamped at zero, and returns the resulting verdict. Never denies.
  *
+ * Only a `tenant`-scoped key decrements a `usageCounters` row, because only a
+ * `tenant`-scoped key reads one: for `event`/`attendee` scope the caller's
+ * `ctx.counts` is the sole usage source, so the release neither writes a counter
+ * nor reports its value — it mirrors the consume decision (ADR-0342, ADR-0347).
+ *
  * @param session - The caller's transaction; the counter write joins it.
  * @param tenantId - The tenant the usage belongs to.
  * @param entitlementKey - The metered key.
  * @param amount - The amount to release (default `1`).
  * @param ctx - Caller context (counts).
  * @param options - Database/clock seams.
- * @returns The allowed verdict, with the post-release `used`.
+ * @returns The allowed verdict, with the post-release `used` for a
+ *   `tenant`-scoped key or the clamped `ctx.counts` otherwise.
  */
 export async function releaseEntitlement(
   session: ClientSession,
@@ -564,6 +635,12 @@ export async function releaseEntitlement(
 ): Promise<EntitlementVerdict> {
   const seams = resolveSeams(options, session);
   const resolved = await resolveEntitlement(tenantId, entitlementKey, ctx, seams);
+
+  if (resolved.scope !== "tenant") {
+    const counts = ctx.counts ?? 0;
+    return allowedVerdict(resolved, amount > counts ? 0 : counts);
+  }
+
   const used = await releaseCounter(resolved, amount, seams);
   return allowedVerdict(resolved, used);
 }
