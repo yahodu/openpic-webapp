@@ -220,6 +220,8 @@ async function seedSubscription(overrides: {
   gracePeriodEndsAt?: Date | null;
   pendingDueMinor?: number;
   cancelAt?: Date | null;
+  scheduledChange?: { toPlanKey: string; effectiveAt: Date; reason: string } | null;
+  updatedAt?: Date;
   statusHistory?: { from: string; to: string; at: Date; reason: string; actor: string }[];
 }): Promise<void> {
   const activePlanKey = overrides.activePlanKey ?? "starter";
@@ -243,14 +245,14 @@ async function seedSubscription(overrides: {
     cancelAt: overrides.cancelAt ?? null,
     cancelledAt: null,
     cancelReason: null,
-    scheduledChange: null,
+    scheduledChange: overrides.scheduledChange ?? null,
     previousSubscriptionId: null,
     statusHistory: overrides.statusHistory ?? [],
     // A provider-shaped ref: the §0.15 never-return rule says this must not be
     // served to a client (`externalRefs` is "never" exposed).
     externalRefs: [{ provider: "cashfree", id: "cf_sub_0001" }],
     createdAt: new Date("2026-09-01T00:00:00.000Z"),
-    updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+    updatedAt: overrides.updatedAt ?? new Date("2026-09-01T00:00:00.000Z"),
   });
 }
 
@@ -438,6 +440,195 @@ describe("GET /api/v1/tenants/{tenantId}/subscription", () => {
       banner: { kind: "mandate_revoked", severity: "important" },
       // The mandate is not chargeable, so "Pay now" must be withheld.
       actions: { canRetryCharge: false, canUpgrade: true },
+    });
+  });
+
+  /**
+   * OP-106 follow-up (card `t_09e53bea`): the projection's edges the OP-106
+   * RED/GREEN left unpinned. These are **characterisation pins** — they lock the
+   * shipped behaviour of `readSubscriptionView` exactly as merged (PR #294,
+   * ADR-0401) rather than driving new code. A failure here means the shipped
+   * behaviour changed, not that the pin is wrong.
+   */
+  describe("the served projection's unpinned edges (OP-106 follow-up)", () => {
+    it("serves `pendingDue: null` when the stored `pendingDueMinor` is zero (the projection gates on `> 0`)", async () => {
+      const owner = await app.signIn(makeIdentity("op106-owner"));
+      const tenantId = await seedWorkspace({
+        userId: owner.userId,
+        role: "owner",
+        slug: "op106-zero-due",
+      });
+      // Only the positive case (`49900`) and the free state were pinned before;
+      // a stored zero must not surface as `{ amountMinor: 0, currency: "INR" }`.
+      await seedSubscription({
+        tenantId: tenantId.toHexString(),
+        status: "active",
+        pendingDueMinor: 0,
+      });
+
+      const response = await getSubscription(
+        subscriptionRequest(owner.cookie, tenantId.toHexString())
+      );
+
+      expect(response.status).toBe(200);
+      const payload = await body(response);
+      expect(() => subscriptionBodySchema.parse(payload)).not.toThrow();
+      expect(payload.status).toBe("active");
+      expect(payload.exists).toBe(true);
+      expect(payload.pendingDue).toBeNull();
+    });
+
+    it("serializes a stored `scheduledChange.effectiveAt` and `updatedAt` as RFC 3339 strings", async () => {
+      const owner = await app.signIn(makeIdentity("op106-owner"));
+      const tenantId = await seedWorkspace({
+        userId: owner.userId,
+        role: "owner",
+        slug: "op106-scheduled-change",
+      });
+      const effectiveAt = new Date("2026-11-01T00:00:00.000Z");
+      const updatedAt = new Date("2026-10-15T10:30:00.000Z");
+      await seedSubscription({
+        tenantId: tenantId.toHexString(),
+        status: "active",
+        scheduledChange: { toPlanKey: "pro", effectiveAt, reason: "upgrade_at_period_end" },
+        updatedAt,
+      });
+
+      const response = await getSubscription(
+        subscriptionRequest(owner.cookie, tenantId.toHexString())
+      );
+
+      expect(response.status).toBe(200);
+      const payload = await body(response);
+      expect(() => subscriptionBodySchema.parse(payload)).not.toThrow();
+      expect(payload).toMatchObject({
+        scheduledChange: {
+          toPlanKey: "pro",
+          effectiveAt: effectiveAt.toISOString(),
+          reason: "upgrade_at_period_end",
+        },
+        updatedAt: updatedAt.toISOString(),
+      });
+      // The dates crossed the wire as RFC 3339 strings, never as `Date` objects.
+      const scheduledChange = payload.scheduledChange as { effectiveAt: unknown };
+      expect(typeof scheduledChange.effectiveAt).toBe("string");
+      expect(typeof payload.updatedAt).toBe("string");
+    });
+
+    it("serves `scheduledChange: null` and still serializes `updatedAt` for a row with no scheduled change", async () => {
+      const owner = await app.signIn(makeIdentity("op106-owner"));
+      const tenantId = await seedWorkspace({
+        userId: owner.userId,
+        role: "owner",
+        slug: "op106-no-scheduled-change",
+      });
+      const updatedAt = new Date("2026-10-16T08:00:00.000Z");
+      await seedSubscription({
+        tenantId: tenantId.toHexString(),
+        status: "active",
+        updatedAt,
+      });
+
+      const response = await getSubscription(
+        subscriptionRequest(owner.cookie, tenantId.toHexString())
+      );
+
+      expect(response.status).toBe(200);
+      const payload = await body(response);
+      expect(() => subscriptionBodySchema.parse(payload)).not.toThrow();
+      expect(payload.scheduledChange).toBeNull();
+      expect(payload.updatedAt).toBe(updatedAt.toISOString());
+    });
+
+    it("characterization: with two rows at an equal `updatedAt`, the read serves the row inserted first", async () => {
+      const owner = await app.signIn(makeIdentity("op106-owner"));
+      const equalUpdatedAt = new Date("2026-10-20T00:00:00.000Z");
+
+      // ADR-0400 §1 pins the served row as the tenant's *most recently updated*
+      // one, but `findOne({}, { sort: { updatedAt: -1 } })` gives MongoDB no
+      // tie-break: on an equal `updatedAt` the order is unspecified (ADR-0401
+      // §Consequences calls this out). This pin fixes the **shipped** answer for
+      // this harness — the collection's natural (insertion) order — so a future
+      // `sort` change that prefers the live/active row is a visible break, not a
+      // silent one. If product wants "the live row wins", that is a new RED.
+      const liveFirst = await seedWorkspace({
+        userId: owner.userId,
+        role: "owner",
+        slug: "op106-tie-live-first",
+      });
+      await seedSubscription({
+        tenantId: liveFirst.toHexString(),
+        status: "active",
+        updatedAt: equalUpdatedAt,
+      });
+      await seedSubscription({
+        tenantId: liveFirst.toHexString(),
+        status: "cancelled",
+        updatedAt: equalUpdatedAt,
+      });
+
+      const cancelledFirst = await seedWorkspace({
+        userId: owner.userId,
+        role: "owner",
+        slug: "op106-tie-cancelled-first",
+      });
+      await seedSubscription({
+        tenantId: cancelledFirst.toHexString(),
+        status: "cancelled",
+        updatedAt: equalUpdatedAt,
+      });
+      await seedSubscription({
+        tenantId: cancelledFirst.toHexString(),
+        status: "active",
+        updatedAt: equalUpdatedAt,
+      });
+
+      const liveFirstPayload = await body(
+        await getSubscription(subscriptionRequest(owner.cookie, liveFirst.toHexString()))
+      );
+      const cancelledFirstPayload = await body(
+        await getSubscription(subscriptionRequest(owner.cookie, cancelledFirst.toHexString()))
+      );
+
+      // The served row tracks *insertion order*, not the status: inserting the
+      // live row first serves `active`, inserting the cancelled row first serves
+      // `cancelled`. Neither row is preferred by its status.
+      expect(liveFirstPayload.status).toBe("active");
+      expect(cancelledFirstPayload.status).toBe("cancelled");
+    });
+
+    it("characterization: a terminal `cancelled` row that still carries `cancelAt` renders the `cancelling` banner", async () => {
+      const owner = await app.signIn(makeIdentity("op106-owner"));
+      const tenantId = await seedWorkspace({
+        userId: owner.userId,
+        role: "owner",
+        slug: "op106-terminal-cancel-at",
+      });
+      const cancelAt = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+      // ADR-0400 §1 row 5 (`cancelAt` set → `cancelling`) is unconditional and
+      // does not exclude a terminal status; ADR-0401 §Consequences records that
+      // nothing seeded this combination. This pin fixes the **shipped** answer:
+      // a `cancelled` row that still carries a `cancelAt` renders `cancelling`.
+      // If product decides the banner must be suppressed on a terminal status,
+      // that is a RED + GREEN change to ADR-0400 row 5 — not a silent edit here.
+      await seedSubscription({
+        tenantId: tenantId.toHexString(),
+        status: "cancelled",
+        cancelAt,
+      });
+
+      const response = await getSubscription(
+        subscriptionRequest(owner.cookie, tenantId.toHexString())
+      );
+
+      expect(response.status).toBe(200);
+      const payload = await body(response);
+      expect(() => subscriptionBodySchema.parse(payload)).not.toThrow();
+      expect(payload).toMatchObject({
+        status: "cancelled",
+        cancelAt: cancelAt.toISOString(),
+        banner: { kind: "cancelling", severity: "informational" },
+      });
     });
   });
 
