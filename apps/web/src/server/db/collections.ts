@@ -20,6 +20,13 @@ export const COLLECTIONS = {
   eventImages: "event_images",
   attendeeEventProfiles: "attendee_event_profiles",
   subscriptions: "subscriptions",
+  /**
+   * The append-only billing ledger (schema §14.4). One row per money movement,
+   * written in the same transaction as the `subscriptions` patch it belongs to
+   * (§23); the unique `idempotencyKey` is what makes a re-projection after a
+   * crash write the same row rather than a second one (ADR-0441).
+   */
+  billingTransactions: "billing_transactions",
   dispatches: "notification_dispatches",
   accessLinks: "access_links",
   mediaAssets: "media_assets",

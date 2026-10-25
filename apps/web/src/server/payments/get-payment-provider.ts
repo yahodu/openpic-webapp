@@ -42,10 +42,15 @@ import type { PaymentEnvironment, PaymentProvider } from "@/server/payments/paym
  * provider only ever exists off production — is the vendor's sandbox, which is
  * what MSW intercepts in the integration suite.
  *
+ * Exported because the inbound webhook inbox has to stamp the same environment
+ * on every `providerWebhookEvents` row (§18.4): a reader that derived it
+ * separately could disagree with the refs the adapter minted, and the two are
+ * compared on every projection (ADR-0441).
+ *
  * @param appEnv - The validated `APP_ENV`.
  * @returns `production` only for a production process, `sandbox` otherwise.
  */
-function vendorEnvironment(appEnv: string): PaymentEnvironment {
+export function paymentEnvironmentFor(appEnv: string): PaymentEnvironment {
   return appEnv === "production" ? "production" : "sandbox";
 }
 
@@ -59,7 +64,7 @@ function vendorEnvironment(appEnv: string): PaymentEnvironment {
  */
 export function getPaymentProvider(): PaymentProvider {
   const config = getConfig();
-  const env = vendorEnvironment(config.app.env);
+  const env = paymentEnvironmentFor(config.app.env);
 
   if (config.payments.provider === "memory") {
     return memoryPaymentProvider({ env });
