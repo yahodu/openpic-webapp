@@ -84,6 +84,8 @@ and set the repo-local identity explicitly when provisioning a checkout/worktree
 card `t_cdacca2f`, branch `OP-110-task-git-identity-guard-adr`). Next free in the
 block is `0311`.
 
+_The **board-wide** [`0308`](ADR-0308-one-owner-per-branch-landing.md) record gained a **§Recurrence** section (card `t_1deaf426`, orchestrator; branch `OP-111-task-adr-0308-recurrence`) after the OP-111 GREEN landing (`t_71cc5e0c`, PR #352) reproduced the one-owner hazard in a new, **run-level** shape — a live implementer worker mutated the lane worktree after its handoff while the review run owned the same path. No number is consumed: the block cell stays `0311`._
+
 | ADR                                                                                | Title                                                                                                                   | Status                    |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------- |
 | [0001](ADR-0001-ports-and-adapters.md)                                             | Ports and adapters, provider neutrality                                                                                 | Accepted                  |
