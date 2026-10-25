@@ -710,3 +710,50 @@ card was written (`payments-cashfree-request-projections.test.ts` +14 and `payme
   the one-live-row slot is free again. That belongs to the OP-108 lane, not here.
 - The `I9` name/phone fallbacks (`UNSET_CONTACT_PHONE`, `FALLBACK_CUSTOMER_NAME`) remain documented
   placeholders (§"Decision §5", §"Follow-up pins §2") — unchanged by this card.
+
+## Review sign-off — 2026-10-25 (card `t_e04e0e39`, round 1)
+
+- **Reviewer round:** 1 (artifact lens) · **Card:** `t_e04e0e39` (reviewer run 1045) · **Reviewed artifact:**
+  the squashed trunk commit `8124a3f` (PR [#323](https://github.com/yahodu/openpic-webapp/pull/323), reviewed
+  head `8c93ea6`, merged `2026-10-25T06:45:47Z`) · **Verdict:** APPROVED · **Consumes:** no ADR number
+  (append-only; `docs/adr/README.md` stays byte-identical to `origin/main` and the lane's `Next free` stays
+  `0422`)
+
+The round-1 (**artifact lens**) review of the OP-107 TEST follow-up `t_e04e0e39` returned **APPROVED** — zero
+changes requested, zero reviewer edits, and no test, mock, fixture, factory or production file touched by the
+review. The reviewed artifact is what shipped: `8124a3f` is the squash of PR #323 (state MERGED), an ancestor
+of `origin/main`, and `main == origin/main == 8124a3f` at review time.
+
+**Gates reproduced independently on the merged artifact.**
+
+- focused `TMPDIR=/root/tmp-mongo vitest run --project integration apps/web/src/test/integration/billing-checkout.test.ts`
+  → **23 passed (23)**;
+- `vitest run --project unit apps/web/src/test/unit/adr-numbering.test.ts` → **29 passed (29)**;
+- `git diff --name-only 8124a3f^ 8124a3f` → exactly **two** files: the integration spec
+  `apps/web/src/test/integration/billing-checkout.test.ts` and the `+126/−0` append to this ADR — **no**
+  production, mock, fixture or factory file;
+- `docs/adr/README.md` **byte-identical** to `origin/main`; **no ADR number consumed**.
+
+**Independent mutation reproductions** (each in a throwaway worktree, never the lane tree — not a restatement
+of the handoff):
+
+- **(a)** `DUPLICATE_KEY 11000 → 11001` in `route.ts` → `I10b` fails
+  `AssertionError: expected 500 to be 409` while `I10` stays **green**. That split is itself the proof of this
+  file's own honest note (§"Follow-up pins §2"): `I10` does **not** traverse the `E11000` branch (the
+  `runExclusive` queue refuses the loser at `liveRowOf` first), whereas `I10b` does.
+- **(b)** `details += supportUrl` → `I11` fails its exact-key-set assertion
+  (`expected [ 'status', 'subscriptionId', …(1) ] to deeply equal [ 'status', 'subscriptionId' ]`).
+
+Both mutations were reverted; the route was left byte-identical and the throwaway worktree discarded.
+
+**Routed finding (Low) — the symmetric risk to `I10b`.** Deleting the route's
+`if (!isDuplicateKeyError(error)) throw error;` rethrow (~`route.ts:465-466`) so that **every** insert failure
+maps to the `409` leaves all **23** pins green (reviewer-verified near-fix probe). An unmasked non-duplicate
+failure would then be reported to the caller as `409 subscription_already_active` instead of surfacing as a
+server error — the mirror image of the `E11000` → `409` contract `I10b` pins. Its pin is routed to the TEST
+card **`t_075ebcaa`** (this card's parent), cited **by card id only** (its ADR and PR numbers may renumber
+while its PR is open).
+
+**Post-review status.** The Low finding above is addressed by card `t_075ebcaa`; nothing in §"Follow-up pins
+(card `t_e04e0e39`)" or §"Review sign-off — 2026-10-25" is retracted — those sections are the historical
+record at `8124a3f`, and the follow-up's own record documents what happened next.
