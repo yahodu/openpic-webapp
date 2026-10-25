@@ -38,10 +38,24 @@ const invoiceAssetSchema = z.object({
   url: z.string().min(1),
 });
 
-/** The `{invoiceNumber}` segment of the matched path, or `""`. */
+/**
+ * The `{invoiceNumber}` segment of the matched path, or `""`.
+ *
+ * `new URL(...).pathname` keeps the raw percent-escape, so the segment is
+ * decoded explicitly. The decode is **total**: a segment that is not a valid
+ * percent-escape (`%`, `100%`, `%zz`) would make `decodeURIComponent` throw a
+ * `URIError`, which no layer catches — so it is returned verbatim instead and
+ * falls through to the ordinary stored-asset lookup, answering the surface's
+ * uniform `404 not_found` rather than a `500` (ADR-0482 §1).
+ */
 function invoiceNumberFromRequest(request: Request): string {
   const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
-  return decodeURIComponent(segments[segments.length - 1] ?? "");
+  const segment = segments[segments.length - 1] ?? "";
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 export const GET = defineRoute({

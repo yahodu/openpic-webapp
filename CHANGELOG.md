@@ -1,3 +1,9 @@
+## [1.40.1](https://github.com/yahodu/openpic-webapp/compare/v1.40.0...v1.40.1) (2026-10-25)
+
+### Bug Fixes
+
+- **billing:** OP-110 make the invoice-number decode total ([#346](https://github.com/yahodu/openpic-webapp/issues/346)) ([c2ebc58](https://github.com/yahodu/openpic-webapp/commit/c2ebc589098735a31f3be0aa7b5be4c5e3302317))
+
 ## [1.40.0](https://github.com/yahodu/openpic-webapp/compare/v1.39.0...v1.40.0) (2026-10-25)
 
 ### Features
