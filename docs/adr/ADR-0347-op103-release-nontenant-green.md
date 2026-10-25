@@ -127,3 +127,28 @@ allocation counts as taken, so this record takes the next free number, `0347`,
 and advances the lane cell to `0348`. No number outside the lane range is
 touched. `docs/adr/README.md` is the known shared-ledger hotspot and will
 conflict with the F1/F2 merges; resolve by keeping each row with its own number.
+
+## Review sign-off (round 1, artifact lens) — card `t_b21f15aa`
+
+- **Reviewed head:** `3d07fb2` (PR #286, branch `OP-103-task-release-nontenant-green`, stacked on the pins
+  head `75f346d`), squash-merged to `main` as `cfb8486` on 2026-10-24. The squash kept the branch tree
+  (`git diff --stat 3d07fb2 cfb8486` is empty), so the reviewed artifact and the merged artifact are identical.
+- **Verdict:** APPROVED WITH FINDINGS; no reviewer edits.
+- **Independently re-run by the reviewer on the reviewed head** (none of these counts are taken from the
+  implementer's handoff): unit **100 files / 1735 tests**; integration **71 files / 513 tests**
+  (`TMPDIR=/root/tmp-mongo`); coverage thresholds pass (statements `92.21 %` / branches `80.45 %` /
+  functions `96.29 %` / lines `92.73 %`; the `services/entitlements` directory branch rate `90.65 %` against
+  the `90 %` bar); `tsc` exit `0` on the root, `packages/contracts` and `apps/web` projects; `eslint` 0 errors
+  with the `service.ts` warning count identical before and after the change; `prettier --check` clean on the
+  three changed files; the `adr-numbering` guard `29/29`; PR Checks green on the head (`audit-dev` is
+  `continue-on-error` and non-gating per ADR-0301).
+- **The pin is load-bearing:** a throwaway worktree at the pins head `75f346d` (production change reverted,
+  pins kept) fails `entitlements-release-nontenant.test.ts` **5 failed (5)**, assertion-level.
+- **Findings:** F1 (High, delivery) — the sibling F1/F2 GREEN PRs #281/#283 were open, green and owned by no
+  card, so the consume-scope and denial-emit fixes were absent from the trunk; routed to cards `t_4b89884d`
+  and `t_73a99e96` (this sign-off records that routing and does not depend on their outcome). F2 (Info) —
+  `releaseEntitlement` re-derives `ctx.counts ?? 0` although `resolveEntitlement` already exposes it as
+  `resolved.used`; deliberately not actioned (`service.ts` is a live hotspot). F3 (Info) — the superseded
+  draft pins PR #285 was closed and its branch deleted.
+- Nothing in the sections above is retracted; the clamp reading stays the literal echo ADR-0346 pinned, and
+  the follow-ups' own records document what followed.
