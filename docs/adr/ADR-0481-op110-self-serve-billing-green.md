@@ -202,6 +202,17 @@ the spec.
   **83 files / 671 passed | 1 failed** — the single failure is the disputed I3;
   `billing-self-serve.test.ts` **33 passed | 1 failed (34)**; ESLint `0 errors`
   (106 pre-existing warnings); `prettier --check` clean.
+- **Evidence at the PR head** (`e55631b`, the `origin/main` `1764700` merged in;
+  README union-resolved): `pnpm typecheck` exit `0` on all three projects; full
+  unit **114 files / 1976 passed | 3 skipped**; full integration
+  **83 files / 672 passed | 1 failed (673)** — still only I3;
+  `test:coverage` statements `92.52 %`, branches `81.35 %`, functions
+  `96.43 %`, lines `92.93 %` (all ≥ threshold; the step's non-zero exit is the
+  disputed I3, not a threshold); ESLint `0 errors`; `prettier --check` clean.
+  CI (`PR Checks` + `CI`) is green on every job except the two that run the
+  suite — `ci` (integration) and `test_coverage` — which fail **only** on I3;
+  `audit-dev` is the branch's pre-existing non-blocking dev-toolchain job
+  (ADR-0301).
 - The lane ships RED-by-design (the OP-108/OP-109 precedent): the pins ride in
   this GREEN's PR — the RED's own test-only commit is the branch's first parent —
   which is why the diff contains the three specs as well as the implementation.
