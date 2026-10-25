@@ -192,9 +192,22 @@ asks the allocator; it never invents one. Reserving at creation — rather than 
 worker deriving a number at its branch cut from a shared snapshot — is what makes
 a lane closed under concurrency. The authority for this rule, its rationale and
 the rejected alternatives are
-`docs/adr/ADR-0300-adr-number-range-allocation-policy.md` §8. Numbers allocated
-before the policy (`≤ 0145`) are frozen history and are never moved.
+`docs/adr/ADR-0300-adr-number-range-allocation-policy.md` §8–§9. Numbers
+allocated before the policy (`≤ 0145`) are frozen history and are never moved.
 
+- **In-flight-aware allocation (ADR-0300 §9, rule B).** Before it hands a number
+  to any card the allocator **enumerates the lane's in-flight reservations** and
+  takes the next free number **above the highest in-flight one** — never the trunk
+  `Next free` cell, never a snapshot of shared state. Enumerate all three sources:
+  every live worktree's `docs/adr/` files, the lane's non-`done` cards' `Consumes`
+  values, and the lane's open remote refs (`git ls-remote --heads origin "OP-<n>*"`,
+  reading `docs/adr/` at each head where reachable). The rule binds **whoever mints
+  a card**, not the orchestrator alone. No ADR-carrying PR may squash-merge until
+  the duplicate check has run **on the merged tree** (merge the incoming head into
+  a throwaway worktree off `origin/main`, then run
+  `apps/web/src/test/unit/adr-numbering.test.ts` and `uniq -d` over the `ADR-NNNN`
+  prefixes there): a lone `docs/adr/README.md` conflict resolves cleanly while
+  hiding a duplicate **file**.
 - **The ledger.** The live range table is `docs/adr/README.md` § "ADR number
   allocation" (ADR-0300) — the single source of truth. Do not copy or re-derive
   the ranges anywhere else, including here. **The `Next free` column is a
