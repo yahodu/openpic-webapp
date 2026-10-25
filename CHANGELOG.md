@@ -1,3 +1,9 @@
+## [1.31.0](https://github.com/yahodu/openpic-webapp/compare/v1.30.0...v1.31.0) (2026-10-25)
+
+### Features
+
+- **subscriptions:** OP-106 subscription read and status history ([#294](https://github.com/yahodu/openpic-webapp/issues/294)) ([68f73ff](https://github.com/yahodu/openpic-webapp/commit/68f73ff15d55130c59205a275c510997247c0e29))
+
 ## [1.30.0](https://github.com/yahodu/openpic-webapp/compare/v1.29.3...v1.30.0) (2026-10-25)
 
 ### Features
