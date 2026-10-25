@@ -205,8 +205,18 @@ would block the one repository the rule exists to permit.
 - `eslint .` → `0 errors` (the 106 warnings are pre-existing, none on a touched
   file), `prettier --check .` clean;
 - `vitest run --project unit --project integration --coverage` exits `0` with the
-  global thresholds met (statements `92.28 %`, branches `80.81 %`, functions
-  `96.55 %`, lines `92.67 %`).
+  global thresholds met — 201 files, `2714 passed | 3 skipped`; statements
+  `92.29 %`, branches `80.79 %`, functions `96.55 %`, lines `92.67 %` (measured at
+  the reviewed head `a9aa770`, the pins head `9bb1aa8` merged with `origin/main`
+  `d79a3f2`; the only conflict was the shared `docs/adr/README.md` ledger,
+  union-resolved).
+- PR Checks run
+  [40217176682](https://github.com/yahodu/openpic-webapp/actions/runs/40217176682)
+  on head `a9aa770` is **success** (`validate-branch-name`, `validate-pr-title`,
+  `env-changes`, `secret-scan`, `lint`, `unit_test`, `test_coverage`, `audit` and
+  the aggregate `ci` gate). `audit-dev` is red and **non-blocking by design**
+  (`continue-on-error: true`, ADR-0301): 5 pre-existing `undici` advisories in the
+  dev toolchain, with no dependency or lockfile change in this lane.
 - The diff is production code plus this ADR and the README ledger cells — **no
   test, mock, fixture or factory is edited**; the pins are carried into the PR
   byte-unchanged.
