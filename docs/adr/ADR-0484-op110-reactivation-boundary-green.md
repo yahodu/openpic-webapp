@@ -36,9 +36,18 @@ snapshot, so that number is now **trunk-owned** and this lane's two records are
 renumbered past it: the reactivation-boundary pins `ADR-0482` → **`ADR-0483`**
 and this GREEN `ADR-0483` → **`ADR-0484`**, with every file name, H1, in-text
 cross-reference, README index row and ledger paragraph updated and the lane cell
-advanced above the highest consumed number. Without this, the trunk's unit
-`apps/web/src/test/unit/adr-numbering.test.ts` (`checkAdrDirectory`) would see two
-`ADR-0482` files.
+advanced `0483` → **`0485`** (highest consumed `0484` + 1). Without this, the
+trunk's unit `apps/web/src/test/unit/adr-numbering.test.ts`
+(`checkAdrDirectory`) would see two `ADR-0482` files.
+
+The numbers were chosen by enumerating the lane's **in-flight** reservations
+(ADR-0300 §9, rule B) as well as trunk's consumed set: `0483` is free on trunk
+_and_ on every open OP-110 remote head (`git ls-remote --heads origin "OP-110*"`
+then `git ls-tree` each head's `docs/adr/` → the highest `048x` on any of them is
+the trunk-owned `0482`), and no non-`done` OP-110 card reserves an `0480`–`0499`
+number, so the pair takes the next free `0483`/`0484`. The invoice-number-decode
+GREEN (`t_7f9ccfa0`) landed without minting a number, so the `0483` its pins
+record had pencilled in for it stayed free.
 
 ## Decision
 
