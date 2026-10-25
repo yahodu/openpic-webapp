@@ -162,3 +162,79 @@ touched.
   the wrong reason.
 - **Skip the whole file with `describe.skip` and no guard.** Rejected: it makes a
   requested live run silently skip.
+
+## Review sign-off — 2026-10-25 (card `t_0998dd27`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of the OP-105 follow-up TEST
+(`t_0998dd27`) returned **APPROVED** — zero changes requested, **zero reviewer
+edits to the deliverable**. PR
+[#295](https://github.com/yahodu/openpic-webapp/pull/295) (head `54cc96a`) was
+squash-merged as `a27f360`, and the merged tree is identical to the reviewed head
+(`git diff --stat 54cc96a a27f360` empty), so the trunk carries the reviewed
+bytes.
+
+- **Criterion 1 — the gate is exact and offline.** The focused `unit` spec
+  (`payments-cashfree-live-sandbox.test.ts`) reports `1 passed (1)` file and
+  `11 passed | 3 skipped (14)`, the three live tests reporting as **skipped**;
+  with the variable unset no network I/O is issued. Gate exactness was probed
+  independently at suite level: `CASHFREE_LIVE_TEST=true` and
+  `CASHFREE_LIVE_TEST=""` both stay green and skipped, so only the exact value
+  `1` starts the run.
+- **Criterion 2 — fail closed.** `CASHFREE_LIVE_TEST=1` with no `CASHFREE_*` in
+  the environment **fails** the suite with:
+
+  ```text
+  CASHFREE_LIVE_TEST=1 requested a live Cashfree sandbox run but CASHFREE_CLIENT_ID,
+  CASHFREE_CLIENT_SECRET, CASHFREE_WEBHOOK_SECRET, CASHFREE_LIVE_PLAN_ID are unset.
+  Refusing to run a partial live contract test.
+  ```
+
+  thrown in `beforeAll` before any provider is constructed.
+
+- **Criterion 3 — the round trip against the sandbox on the neutral shapes.**
+  Reviewed **by construction** against the merged port and adapter
+  (`payment-provider.ts`, `cashfree-provider.ts:429-482`, `refFor` at `:323`):
+  the exact key sets `["checkoutUrl", "expiresAt", "externalRefs"]` and
+  `["mandateStatus", "status"]`, `env: "sandbox"`, and the pinned
+  `x-api-version 2025-01-01`. **Not executed** — no Cashfree sandbox credentials
+  were available to the reviewer.
+- **Criterion 4 — no secret, signature or raw payload logged (§5.3).** The
+  memory transport is non-vacuous (`entries.length > 0`), `expectNoSecretsInLogs`
+  passes, and the serialized entries contain none of the three secrets.
+- **Criterion 5 — no gate weakened, no production conditional.** The diff is
+  exactly **4 files**, of which **0 are production files**.
+
+**Repo gates reproduced at the reviewed head:** full unit `105 files / 1811
+passed | 3 skipped`; integration `73 files / 521 passed`
+(`TMPDIR=/root/tmp-mongo`); `tsc -p apps/web/tsconfig.json` exit `0`; `eslint` 0
+errors (3 `security/detect-object-injection` warnings, a pre-existing class);
+`prettier --check` clean on the four files; the `adr-numbering` guard 29/29;
+`gh pr checks 295` green except `audit-dev`, which is `continue-on-error: true`
+(ADR-0301).
+
+### Findings carried out of the review
+
+These findings are **beyond this card's pinned acceptance criteria**: the card is
+test-only, so it cannot own an adapter change or `/.env.example`. They are
+**routed, not fixed here**, and are cited by card id and PR number on purpose —
+an ADR number belonging to a still-unmerged follow-up is unstable.
+
+- **F1 (Medium) — `createMandate().expiresAt` has no pinned format.** The
+  adapter passes the vendor's `subscription_expiry_time` through
+  (`cashfree-provider.ts:458`) while contract §3.3 line 1088 shows
+  `"2026-09-25T10:14:00.000Z"` and §0.13 line 360 requires RFC 3339 UTC
+  millisecond precision with a `Z` suffix. Routed to card `t_d32c89cf`
+  (ORCHESTRATE/DECISION, created out of review `t_0998dd27`): the vendor's
+  timezone has to be decided before a pin can be written.
+- **F2 (Low) — `.env.example:95` documents none of the four `CASHFREE_*` names.**
+  Folded into `t_d32c89cf`.
+
+**Info (recorded, no card):** a live run leaves its sandbox subscription
+uncancelled (`cancelMandate` is deliberately not on the port, ADR-0380 §5); the
+three lint warnings above are a pre-existing class; and this record's "11
+executed assertions" (§Consequences) reads as 11 executed **tests**.
+
+Nothing in §Context–§Alternatives above is retracted: the delivered test was
+found correct as pinned, and the sign-off only records that — anything F1/F2
+imply lands through their own cards, not by editing this record. F1 and F2 remain
+open and owned by `t_d32c89cf`; neither is a defect in this record's deliverable.
