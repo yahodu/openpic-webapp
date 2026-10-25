@@ -1,3 +1,9 @@
+## [1.34.1](https://github.com/yahodu/openpic-webapp/compare/v1.34.0...v1.34.1) (2026-10-25)
+
+### Bug Fixes
+
+- **billing:** OP-107 satisfy the checkout follow-up pins (409 on a live row, customer fallbacks, retired-plan refusal) ([#314](https://github.com/yahodu/openpic-webapp/issues/314)) ([f35aac9](https://github.com/yahodu/openpic-webapp/commit/f35aac9cf1a93b3dba998dd131a8d1c8a6e92d51)), closes [#301](https://github.com/yahodu/openpic-webapp/issues/301) [#301](https://github.com/yahodu/openpic-webapp/issues/301)
+
 ## [1.34.0](https://github.com/yahodu/openpic-webapp/compare/v1.33.0...v1.34.0) (2026-10-25)
 
 ### Features
