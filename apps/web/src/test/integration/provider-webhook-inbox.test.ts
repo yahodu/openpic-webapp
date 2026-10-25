@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { ObjectId, type Document } from "mongodb";
+import { ObjectId, type Db, type Document } from "mongodb";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -184,6 +184,12 @@ interface SubscriptionRow {
     readonly remindersSent: readonly string[];
     readonly nextReminderAt: Date | null;
   };
+  /**
+   * The ordering watermark the projection persists (§10.1 step 6). The §14.3
+   * schema carries no such field today, so it lives under this leaf; only the
+   * observable outcome is contractual (ADR-0440 §6).
+   */
+  readonly lastProviderEventAt?: Date | null;
   readonly externalRefs: readonly ProviderRef[];
 }
 
@@ -474,6 +480,97 @@ async function drainDeferredProjections(): Promise<void> {
   for (const callback of callbacks) {
     await callback();
   }
+}
+
+/** A one-shot signal: `promise` settles the first time `resolve()` is called. */
+interface Deferred {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+}
+
+/** Build a {@link Deferred}. */
+function deferred(): Deferred {
+  const state: { resolve: () => void } = { resolve: () => undefined };
+  const promise = new Promise<void>((settle) => {
+    state.resolve = () => {
+      settle();
+    };
+  });
+  return {
+    promise,
+    resolve: () => {
+      state.resolve();
+    },
+  };
+}
+
+/**
+ * The interleaving seam for the concurrent-projection pin.
+ *
+ * `read` settles once the gated projection has read the pre-write subscription
+ * row; `hold` is what the spec resolves to let that read return.
+ */
+interface SubscriptionReadGate {
+  readonly read: Deferred;
+  readonly hold: Deferred;
+}
+
+/**
+ * A `Db` seam that makes the concurrent-projection interleaving deterministic.
+ *
+ * **The hazard.** `projectProviderWebhookEvent` reads the subscription and
+ * checks the `lastProviderEventAt` watermark *outside* `withTransaction`, then
+ * applies an **unconditional** `$set` inside it. Two projections for one
+ * subscription that both read the pre-write row therefore both pass the
+ * watermark check, and whichever transaction commits last wins — so the *older*
+ * event's patch can land last and regress `status` / `lastProviderEventAt`.
+ * The route schedules each projection through `after()`, so two
+ * near-simultaneous deliveries for one subscription produce two concurrent
+ * projections in the same process, and §10.1 step 6 ("orders by the provider's
+ * `occurredAt`, never by arrival") is not honoured.
+ *
+ * **Why a wrapper.** A bare `Promise.all` of two projections is a race that can
+ * pass by luck. This wrapper forces the losing interleaving on every run: the
+ * gated projection's `subscriptions.findOne` captures the pre-write row and
+ * then **holds** before returning it, so the spec can run the *newer* projection
+ * to completion (its transaction commits first) and only then release the
+ * older one. On the pre-fix head the older call's unconditional `$set` then
+ * overwrites the newer patch; once the projection guards the write atomically
+ * the older call is reported `ignored`.
+ *
+ * Only the `subscriptions` collection is gated, and only its `findOne`; every
+ * other handle is the real one, so the transaction, the ledger and the outbox
+ * are untouched.
+ */
+function gatedSubscriptionDb(base: Db, gate: SubscriptionReadGate): Db {
+  return new Proxy(base, {
+    get(target, property) {
+      if (property !== "collection") {
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return (name: string) => {
+        const collection = target.collection(name);
+        if (name !== COLLECTIONS.subscriptions) {
+          return collection;
+        }
+        return new Proxy(collection, {
+          get(inner, innerProperty) {
+            if (innerProperty === "findOne") {
+              return async (filter: Document, options?: Document) => {
+                const found: unknown = await inner.findOne(filter, options);
+                gate.read.resolve();
+                await gate.hold.promise;
+                return found;
+              };
+            }
+            const value: unknown = Reflect.get(inner, innerProperty);
+            return typeof value === "function" ? value.bind(inner) : value;
+          },
+        });
+      };
+    },
+  });
 }
 
 describe("POST /api/v1/webhooks/{provider} — acknowledgement and projection", () => {
@@ -982,5 +1079,75 @@ describe("POST /api/v1/webhooks/{provider} — out-of-order delivery", () => {
     expect((await latestWebhookRow()).processResult).toBe("ignored");
     const failures = (await ledgerRows(tenantId)).filter((row) => row.status === "failed");
     expect(failures).toEqual([]);
+  });
+});
+
+describe("POST /api/v1/webhooks/{provider} — concurrent projections for one subscription", () => {
+  it("I8: an older event projecting concurrently with a newer one cannot apply out of order", async () => {
+    // Arrange — one subscription, two id-less status changes: an older
+    // `BANK_APPROVAL_PENDING` (30 min ago) and a newer `CUSTOMER_CANCELLED`
+    // (10 min ago). §10.1 step 6 orders by the provider's `occurredAt`, never by
+    // arrival — including when the two projections run *concurrently*, which is
+    // exactly what the route's `after()` scheduling produces for two
+    // near-simultaneous deliveries.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const olderAt = new Date(Date.now() - 30 * 60_000);
+    const newerAt = new Date(Date.now() - 10 * 60_000);
+    const olderBody = statusChangedBody("BANK_APPROVAL_PENDING", olderAt.toISOString());
+    const newerBody = statusChangedBody("CUSTOMER_CANCELLED", newerAt.toISOString());
+
+    // Deliver both so the §18.4 inbox rows exist, then drop the deferred
+    // callbacks: this case drives the exported projection seam itself, with the
+    // interleaving gate below (the sequential `drainDeferredProjections` pins
+    // delivery order; this case pins the concurrent write race).
+    await receiveWebhook(webhookRequest({ rawBody: olderBody, headers: signedHeaders(olderBody) }));
+    await receiveWebhook(webhookRequest({ rawBody: newerBody, headers: signedHeaders(newerBody) }));
+    afterMock.mockClear();
+
+    const rows = await webhookRows();
+    const olderRow = rows.find((row) => row.eventType === "mandate_pending");
+    const newerRow = rows.find((row) => row.eventType === "subscription_cancelled");
+    if (olderRow === undefined || newerRow === undefined) {
+      throw new Error("expected both status-change inbox rows to be recorded");
+    }
+
+    // Act — force the losing interleaving deterministically (see
+    // `gatedSubscriptionDb`): the older projection reads the pre-write row and
+    // is held there while the newer projection runs to completion, so the
+    // newer event's transaction commits first; only then is the older one
+    // released to apply its patch.
+    const gate: SubscriptionReadGate = { read: deferred(), hold: deferred() };
+    const olderProjection = projectProviderWebhookEvent(String(olderRow._id), {
+      db: gatedSubscriptionDb(app.db, gate),
+    });
+    await gate.read.promise;
+    await projectProviderWebhookEvent(String(newerRow._id), { db: app.db });
+    gate.hold.resolve();
+    await olderProjection;
+
+    // Assert — (1) the newer event wins, whatever order the two commits landed
+    // in, and (2) the watermark is the newer event's instant, not the older's.
+    const finalRow = await readSubscription(subscriptionId);
+    expect(finalRow).toMatchObject({ status: "cancelled" });
+    expect(finalRow.lastProviderEventAt).toEqual(newerAt);
+
+    // (3) the older event is reported out-of-order, never applied.
+    const olderAfter = await app.db
+      .collection(COLLECTIONS.providerWebhookEvents)
+      .findOne({ _id: new ObjectId(String(olderRow._id)) });
+    expect(olderAfter?.processResult).toBe("ignored");
+
+    // (4) nothing from the older event's regression persists. Neither status
+    // change carries a ledger transaction, so the ledger stays empty; the
+    // discriminating half is the outbox, which keeps only the newer event's
+    // domain event (`billing.subscription.cancelled`) and none of the older
+    // event's (`billing.mandate.pending`).
+    expect(await ledgerRows(tenantId)).toEqual([]);
+    const outbox = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ "subjectRef.id": subscriptionId.toHexString() })
+      .toArray();
+    expect(outbox.map((row) => row.eventKey)).toEqual(["billing.subscription.cancelled"]);
   });
 });
