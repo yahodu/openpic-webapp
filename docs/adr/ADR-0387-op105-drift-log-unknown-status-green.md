@@ -78,12 +78,14 @@ existing `contractViolation` line.
   drift line. Reverting to derive the kind first would break ADR-0386's
   exactly-one-drift-entry pin, so the precedence is documented rather than reverted.
 - **Evidence** (branch `OP-105-task-driftlog-green`, stacked on the pins head
-  `94f5af0`; production file `apps/web/src/server/adapters/cashfree/cashfree-provider.ts`
+  `94f5af0` and merged with `origin/main` `54f8542` at rework — the merge
+  renamed this record's ADRs to `0386`/`0387`; production file
+  `apps/web/src/server/adapters/cashfree/cashfree-provider.ts`
   sha256 `dd6006c04e8f26e75b9d98a2e18a6f1efe452d6cd7a907e699385ed99447d138`):
-  - Pins: `TMPDIR=/root/tmp-mongo npx vitest run --project integration payments-cashfree-drift-log` → **4 passed (4)**.
-  - Full unit: **104 files / 1800 tests passed**; full integration: **74 files / 525 tests passed**.
-  - `tsc` (all three projects) clean; ESLint **0 errors** (the 102 warnings are pre-existing, none on the touched file); `prettier --check` clean.
-  - `test:coverage` exit `0` — statements `92.32 %`, branches `80.84 %`, functions `96.19 %`, lines `92.82 %` (no gate weakened, no test written).
+  - Pins: `TMPDIR=/root/tmp-mongo npx vitest run --project integration payments-cashfree-drift-log` → **4 passed (4)**, the spec byte-identical to the pins head.
+  - Full unit: **108 files / 1859 passed | 3 skipped**; full integration: **76 files / 540 passed**.
+  - `tsc` (all three projects) exit `0`; ESLint **0 errors** (105 warnings are pre-existing, none on the touched file); `prettier --check` clean.
+  - `test:coverage` exit `0` — statements `92.39 %`, branches `81.06 %`, functions `95.9 %`, lines `92.88 %` (no gate weakened, no test written); the `adr-numbering` guard **29/29**.
 - The pins are reviewed inside this GREEN's PR per the lane's RED→GREEN precedent;
   the sibling TEST card `t_8ccb6c1f` reviewed them as a frozen deliverable.
 
