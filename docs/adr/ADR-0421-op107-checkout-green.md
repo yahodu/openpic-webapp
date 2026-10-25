@@ -417,3 +417,93 @@ Pin: `apps/web/src/test/unit/subscription-checkout.test.ts` — `DECISION_CASES`
 Pin ledger: **(a)** `I7`/`I7b` **pinned-and-red** → `t_b54adec0`; **(b)** `I9b` **pinned-and-red**, `I9`×3
 & `I9c` **characterization**; **(c)** `I8` **pinned-and-red** (contract-silent code, reading recorded
 above); **(d)** e2e key set **shipped-and-pinned**; **(e)** the unit case **characterization**.
+
+## Follow-up GREEN (card `t_b54adec0`) — the pins satisfied
+
+Round-1's routed findings became the Test Author's pins (`t_aa18a7ff`, above). This section records the GREEN
+that turns them green: **production code only** — the route
+`apps/web/src/app/api/v1/tenants/[tenantId]/billing/checkout/route.ts` — with **no test, mock, fixture or
+factory edited** and **no new ADR number consumed** (`docs/adr/README.md` byte-identical; the lane's
+`Next free` stays `0422`).
+
+### 1. The concurrent double-submit is arbitrated in the route (`I7`, `I7b`) — and why that is required
+
+The pins' premise — "the one-live-row partial index is what arbitrates the race" — does **not** hold in the
+harness that runs them. Probed at this head: `db.command({ listIndexes: COLLECTIONS.subscriptions })` inside
+the route during `billing-checkout.test.ts` answers `[{ key: { _id: 1 }, name: "_id_" }]`. The billing spec
+never bootstraps indexes (the specs that need one build their own — `plans-seed.test.ts:199`,
+`domain-events.test.ts:148`), so `subscriptions_active_tenant_unique` does not exist there and two racing
+inserts both succeed. The route therefore has to arbitrate §3.3's one-live-row invariant itself; the index
+stays what §3.3 calls it, the **cross-process** arbiter.
+
+Two changes, measured rather than assumed:
+
+- **A live row of _any_ shape is the `409`.** `liveRowOf` maps every non-`start` decision — `blocked`,
+  `reuse`, `restart` — to `409 subscription_already_active` naming that row. With the pinned `reuse`/`restart`
+  shapes still able to answer the old `201` reuse echo (or to retire the row), `I7` reproduced RED in **8 of
+  10** consecutive focused runs at each intermediate step (`expected [ 201, 201 ] to deeply equal
+[ 201, 409 ]`): the loser's read lands on either side of the winner's hosted-link store, and — with no
+  index — both callers can also pass the decision point before either inserts. Only "a live row refuses"
+  passes **every** interleaving, and it satisfies the pin's remaining assertions by construction: a refused
+  caller never reaches the insert, so it can neither retire nor duplicate the winner's row, and
+  `provider.calls()` stays `1`.
+- **The insert race answers the same `409`.** `runExclusive(workspace, …)` serialises the read-then-claim
+  inside one process — the pattern `seed-notification-types.ts` already uses for its "a database not yet
+  bootstrapped carries no index" window — and the `E11000` the partial index raises cross-process is caught
+  (`isDuplicateKeyError`, the `DUPLICATE_KEY = 11000` pattern) and answered as the §3.3 refusal for the row
+  that won instead of falling through `errorResponse` as a `500`. The provider call sits **after** the
+  critical section, which is what keeps `I7b` deadlock-free: the second caller reads and refuses while the
+  first caller's vendor call is still held open. The queue entry is deleted once it settles, so a long-lived
+  process does not accumulate one entry per workspace it has ever served.
+
+Consequence, recorded rather than hidden: this route no longer retires a stale `incomplete` row. An abandoned
+checkout is now a `409` naming the pending row, and retiring that row (a vendor expiry / `mandate_failed`
+projection) belongs to the webhook lane (OP-108) — the consequence the pins card accepted when it made "not
+reuse-eligible" blocking.
+
+### 2. The mandate customer's address fallback (`I9b`)
+
+`email` falls back to a new `PLATFORM_NO_REPLY_EMAIL = "no-reply@openpic.in"` — a platform-owned no-reply
+mailbox, the documented-placeholder shape of `UNSET_CONTACT_PHONE` — instead of `FALLBACK_CUSTOMER_NAME`,
+which put a display _name_ in the vendor's `customer_email`. The name ladder
+(`userProfiles.displayName` > `user.name` > `"OpenPic customer"`) and the `"0000000000"` phone fallback are
+unchanged (`I9`×3 and `I9c` characterise them). The route docblock and both constant docblocks state why.
+
+### 3. A retired plan is the not-sold refusal (`I8`)
+
+The collapsed `!plan.active || !plan.selfServe` guard is split: `!plan?.active` answers the same
+`422 validation_failed` + `details.fields[].path = "planKey"` the route already serves for a _missing_ plan,
+and `!plan.selfServe` keeps `422 plan_not_self_serve` + `contactSalesUrl` for the `enterprise` case (`I2`,
+unchanged). §3.1 excludes a retired plan from the catalogue, so it is not for sale — the reading §3's
+predecessor recorded, now implemented.
+
+### Out of scope (deliberately)
+
+The other §3.3 verbs (`upgrade`/`downgrade`/`cancel`/`retry-charge`), the webhook projection (OP-108), the
+`billing.mandate.pending` event, and round-1's information-only items.
+
+### Evidence at this head
+
+| Command                                                                                                          | Result                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TMPDIR=/root/tmp-mongo vitest run --project integration apps/web/src/test/integration/billing-checkout.test.ts` | **20 passed (20)** — was `4 failed \| 16 passed (20)`; the focused spec re-run **12×**, green every time                                                                                                                   |
+| `vitest run --project unit` (full)                                                                               | 109 files · **1900 passed \| 3 skipped (1903)** (unchanged)                                                                                                                                                                |
+| `TMPDIR=/root/tmp-mongo vitest run --project integration` (full)                                                 | 77 files · **565 passed (565)** — was `4 failed \| 561 passed (565)`; re-run **3×**, green each time                                                                                                                       |
+| `vitest run --project unit --project integration --coverage`                                                     | 186 files · **2465 passed \| 3 skipped (2468)**, exit `0`; statements **92.39 %** / branches **81.15 %** / functions **96.2 %** / lines **92.87 %** — every gate above threshold, `apps/web/src/app/**` on the global `80` |
+| `vitest run --project unit apps/web/src/test/unit/adr-numbering.test.ts`                                         | **29 passed (29)**                                                                                                                                                                                                         |
+| `playwright test -c apps/web/playwright.config.ts --project=api apps/web/e2e/billing-checkout.spec.ts`           | **1 passed (1)** (real `next start`, the memory provider)                                                                                                                                                                  |
+| `pnpm typecheck`                                                                                                 | exit `0` (all three projects)                                                                                                                                                                                              |
+| `pnpm lint`                                                                                                      | 0 errors (105 pre-existing `security/detect-*` warnings, none in the touched file)                                                                                                                                         |
+| `prettier --check` on the touched file                                                                           | clean                                                                                                                                                                                                                      |
+
+### Coverage gaps handed to the Test Author
+
+- **The index exit is still unpinned.** `E11000` → `409` is unreachable in `billing-checkout.test.ts` because
+  that spec never bootstraps indexes; a pin that calls `ensureIndexes(test.db)` (as `plans-seed.test.ts` does)
+  would exercise it. Until then it is carried by `I7`'s contract plus this record.
+- **Nothing pins who retires an abandoned `incomplete` row** now that the route does not, and nothing says
+  what a `409` should tell that caller.
+- **The `reuse` decision is now unused at the route level** (its unit table still pins it). If §3.2's
+  `GET /subscription` is meant to be the only way back to a pending mandate, that deserves a pin; if a
+  valid-link `201` echo is wanted after all, `I7`'s concurrency contract needs restating — the two cannot
+  both hold.
