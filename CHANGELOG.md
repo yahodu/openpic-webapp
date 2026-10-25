@@ -1,3 +1,9 @@
+## [1.35.2](https://github.com/yahodu/openpic-webapp/compare/v1.35.1...v1.35.2) (2026-10-25)
+
+### Bug Fixes
+
+- **payments:** OP-105 refuse a Date-parseable but vendor-misshaped subscription_expiry_time (F-1) ([#324](https://github.com/yahodu/openpic-webapp/issues/324)) ([81dc1b7](https://github.com/yahodu/openpic-webapp/commit/81dc1b721e7d25fedb8f63c9ce7384c595487f88))
+
 ## [1.35.1](https://github.com/yahodu/openpic-webapp/compare/v1.35.0...v1.35.1) (2026-10-25)
 
 ### Bug Fixes
