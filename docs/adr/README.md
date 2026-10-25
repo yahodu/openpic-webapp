@@ -411,7 +411,7 @@ squash-merged the branch merge commit `536c4f0` as `0f53970`. This card's other 
 deliverables retire the wording that outran the fact:
 [ADR-0401](ADR-0401-op106-subscription-read-green.md) §"Post-review status" now
 states the landed fact (PR #299 squash-merged to `main` as `0f53970`, an ancestor
-of `origin/main`) in place of "open at the time of writing", and
+of `origin/main`) in place of the earlier caveat that PR #299 was still unmerged, and
 [ADR-0402](ADR-0402-op106-subscription-read-followup-pins.md) §Consequences gains
 the merge-reconciliation bullet naming `0f53970` and the merged-head totals (PR
 #296 landed after that branch's cut `cab62e8`, which is why its own evidence block
