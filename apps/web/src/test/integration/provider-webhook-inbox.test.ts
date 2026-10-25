@@ -1417,3 +1417,129 @@ describe("POST /api/v1/webhooks/{provider} — the projection's no-write exits",
     expect(after.lastProviderEventAt ?? null).toBeNull();
   });
 });
+
+describe("POST /api/v1/webhooks/{provider} — the reactivation boundary", () => {
+  /**
+   * The domain-event keys the outbox holds for one subscription, in order.
+   *
+   * The no-write-exits suite keeps its own copy of this helper for the same
+   * reason this one does: a helper scoped to the describe that uses it cannot
+   * leak into a sibling's setup.
+   */
+  async function emittedKeys(subscriptionId: ObjectId): Promise<readonly string[]> {
+    const rows = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ "subjectRef.id": subscriptionId.toHexString() })
+      .toArray();
+    return rows.map((row) => String(row.eventKey));
+  }
+
+  /**
+   * Seed a row whose *active* plan differs from the plan it subscribes to.
+   *
+   * `seedSubscription` seeds `activePlanKey === subscribedPlanKey === "starter"`,
+   * which makes a "the active plan did not change" assertion vacuous: a
+   * reactivation restores `subscribedPlanKey` (`"starter"`), so both outcomes
+   * read the same value. Pointing the active plan at a different key is what
+   * makes the boundary observable — a reactivation overwrites it with
+   * `"starter"`, and a boundary that holds leaves the downgraded key in place.
+   */
+  async function seedRecoveryRow(options: {
+    readonly tenantId: string;
+    readonly status: SubscriptionStatus;
+    readonly activePlanKey?: string;
+  }): Promise<ObjectId> {
+    const subscriptionId = await seedSubscription({
+      tenantId: options.tenantId,
+      status: options.status,
+    });
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne(
+        { _id: subscriptionId },
+        { $set: { activePlanKey: options.activePlanKey ?? "free" } }
+      );
+    return subscriptionId;
+  }
+
+  it("a payment_succeeded for a cancelled subscription does not resurrect it", async () => {
+    // Arrange — §3.3 and §10.1.2 ground reactivation on exactly two recovery
+    // paths (`past_due` and `downgraded`); a `cancelled` row is in neither, so a
+    // stray confirmation must not flip it back to `active`.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedRecoveryRow({ tenantId, status: "cancelled" });
+    const rawBody = paymentSucceededBody("49914530");
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — the payment is still recorded, but the cancelled row is not
+    // resurrected: the status and the active plan stay put and the
+    // restored-limit pair is not emitted.
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    const after = await readSubscription(subscriptionId);
+    expect(after.status).toBe("cancelled");
+    expect(after.activePlanKey).toBe("free");
+    const keys = await emittedKeys(subscriptionId);
+    expect(keys).toContain("billing.payment.succeeded");
+    expect(keys).not.toContain("billing.subscription.reactivated");
+    expect(keys).not.toContain("usage.limit.restored");
+  });
+
+  it("a payment_succeeded for an incomplete subscription does not resurrect it", async () => {
+    // Arrange — `incomplete` is the pre-activation state, not a recovery path
+    // either: the activation event (`SUBSCRIPTION_AUTH_STATUS`) is what moves it
+    // to `active`, so a stray charge confirmation must leave it alone.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedRecoveryRow({ tenantId, status: "incomplete" });
+    const rawBody = paymentSucceededBody("49914531");
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    const after = await readSubscription(subscriptionId);
+    expect(after.status).toBe("incomplete");
+    expect(after.activePlanKey).toBe("free");
+    const keys = await emittedKeys(subscriptionId);
+    expect(keys).toContain("billing.payment.succeeded");
+    expect(keys).not.toContain("billing.subscription.reactivated");
+    expect(keys).not.toContain("usage.limit.restored");
+  });
+
+  it("a payment_succeeded for a past_due subscription reactivates it and restores the limits", async () => {
+    // Arrange — the OP-110 I3 requirement: a retry from `past_due` **is** a
+    // recovery path (§3.3), so this control must stay green.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedRecoveryRow({ tenantId, status: "past_due" });
+    const rawBody = paymentSucceededBody("49914532");
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — `active` with `activePlanKey = subscribedPlanKey` and the pair of
+    // restored events alongside the payment receipt.
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    const after = await readSubscription(subscriptionId);
+    expect(after.status).toBe("active");
+    expect(after.activePlanKey).toBe("starter");
+    expect(await emittedKeys(subscriptionId)).toEqual([
+      "billing.payment.succeeded",
+      "billing.subscription.reactivated",
+      "usage.limit.restored",
+    ]);
+  });
+});
