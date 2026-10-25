@@ -132,7 +132,7 @@ billing mutation on the trunk already does this — `checkout` (…checkout crea
 is the same §5.2 line, not a new contract; nothing asserts it, and the codes stay
 `ERROR_CATALOG`-free.
 
-## Dispute — I3 cannot pass against the pinned payload (Test Author action needed)
+## Dispute — I3 could not address the seeded subscription (resolved test-side)
 
 `billing-self-serve.test.ts` › _I3: a retry success returns the workspace to
 active and emits the restored events_ is **left red**, and no honest
@@ -157,12 +157,47 @@ the projection correctly reports `no_subscription_match`. Every other route in
 the suite uses `VENDOR_SUBSCRIPTION_ID` (the charge mock asserts the vendor call
 is addressed to `sub_op110_001`), so the mismatch is local to this fixture.
 
-The one-line fix belongs to the Test Author: override the subscription id in the
+The one-line fix belonged to the Test Author: override the subscription id in the
 body the suite drives (`subscriptionDetails: {subscription_id:
 VENDOR_SUBSCRIPTION_ID, subscription_status: "ACTIVE"}`) — or seed the
 subscription with the factory's own `sub_test_001`. Either makes I3 green with no
 production change at all. A child card is routed for it; this GREEN does not edit
 the spec.
+
+### Resolution — Test Author, card `t_2c3d158b` (same branch, same PR)
+
+The reviewer upheld the dispute and reproduced the failure independently at
+`922e8b3`; the correction is **test-side only**, the assertion is untouched, and
+**no production file, factory, mock or other spec was edited** (`git status
+--short` shows the one spec). The fix keeps the helper's payload for the other
+call sites byte-identical, which is why it is the third-parameter form rather
+than flipping the shared default (see below).
+
+- `paymentSucceededBody(paymentId, eventTime?, subscriptionId = "sub_test_001")`
+  now names `subscription_details.subscription_id`, defaulting to the factory's
+  own value.
+- I3 alone passes the seeded id:
+  `paymentSucceededBody(VENDOR_PAYMENT_ID, undefined, VENDOR_SUBSCRIPTION_ID)`.
+- The two I5 add-on call sites (`…/addons` grant and the `usage.limit.restored`
+  unblock case) keep the default, so their body stays byte-identical and they
+  keep correlating on the **payment** ref alone. Flipping the shared default
+  would have silently moved them onto the subscription-match path and stopped
+  covering the "an intent settles with no subscription match" branch.
+
+Evidence — before, at the GREEN head `922e8b3` (`-t "I3:"`):
+`AssertionError: expected { …(26) } to match object { status: 'active', …(2) }`
+with `"pendingDueMinor": 49900, "status": "past_due"` received. After, at the fix
+head: focused spec **34 passed (34)**; full integration **83 files / 673 passed
+(673)**; full unit **114 files / 1976 passed | 3 skipped (1979)** — i.e. the fix
+moves exactly the one previously-red case and nothing else;
+`provider-webhook-inbox.test.ts` + `addons-endpoint.test.ts` **2 files / 25 passed
+(25)**, proving OP-108's own `payment_succeeded` pins and I5 are unaffected;
+`tsc -p apps/web/tsconfig.json --noEmit` exit `0`; ESLint `0` problems;
+`prettier --check` clean.
+
+This is a pure fixture correction: it fixes no contract and consumes **no** ADR
+number — the lane's `Next free` cell is unchanged at `0482` and the shared
+`docs/adr/README.md` ledger is deliberately not touched.
 
 ## Assumptions and open questions
 
@@ -212,7 +247,8 @@ the spec.
   CI (`PR Checks` + `CI`) is green on every job except the two that run the
   suite — `ci` (integration) and `test_coverage` — which fail **only** on I3;
   `audit-dev` is the branch's pre-existing non-blocking dev-toolchain job
-  (ADR-0301).
+  (ADR-0301). The two red jobs (`ci`, `test_coverage`) are cleared at the fix
+  head — see § _Resolution_ above.
 - The lane ships RED-by-design (the OP-108/OP-109 precedent): the pins ride in
   this GREEN's PR — the RED's own test-only commit is the branch's first parent —
   which is why the diff contains the three specs as well as the implementation.

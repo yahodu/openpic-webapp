@@ -441,13 +441,25 @@ function webhookRequest(rawBody: string): Request {
   });
 }
 
-/** A `SUBSCRIPTION_PAYMENT_SUCCESS` body for one charge (₹499 → `49900`). */
+/**
+ * A `SUBSCRIPTION_PAYMENT_SUCCESS` body for one charge (₹499 → `49900`).
+ *
+ * §11.1 makes the tagged subscription ref in `subscription_details` the
+ * identity of the subscription a webhook addresses. `subscriptionId` keeps
+ * the factory's own default, so the I5 add-on call sites still correlate on
+ * the **payment** ref alone; the retry confirmation (I3) passes the id its
+ * workspace actually seeded.
+ */
 function paymentSucceededBody(
   paymentId: string,
-  eventTime = new Date(Date.now() - 60_000).toISOString()
+  eventTime = new Date(Date.now() - 60_000).toISOString(),
+  subscriptionId = "sub_test_001"
 ): string {
   return makeCashfreeWebhookBody("SUBSCRIPTION_PAYMENT_SUCCESS", {
-    subscriptionDetails: { subscription_status: "ACTIVE" },
+    subscriptionDetails: {
+      subscription_id: subscriptionId,
+      subscription_status: "ACTIVE",
+    },
     eventTime,
     extraData: {
       payment_id: `ab-${paymentId}`,
@@ -711,7 +723,10 @@ describe("POST /api/v1/webhooks/{provider} — the retry confirmation", () => {
       mandateStatus: "active",
       pendingDueMinor: DUE_MINOR,
     });
-    const rawBody = paymentSucceededBody(VENDOR_PAYMENT_ID);
+    // The body must address the seeded subscription (§11.1 identity), not the
+    // factory default — I3 sends no prior retry-charge, so there is no pending
+    // payment-ref intent for the projection to correlate with.
+    const rawBody = paymentSucceededBody(VENDOR_PAYMENT_ID, undefined, VENDOR_SUBSCRIPTION_ID);
 
     const response = await receiveWebhook(webhookRequest(rawBody));
     expect(response.status).toBe(200);
