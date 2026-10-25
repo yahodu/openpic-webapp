@@ -175,3 +175,95 @@ concurrency _by construction_ — no card computes its number from shared state 
 and it costs the allocator one field at card-creation time, where serialisation
 costs the lane wall-clock and depends on a cross-chain ordering edge being
 remembered. The choice is recorded on card `t_e5485868`.
+
+## §9 — In-flight-aware allocation (2026-10-25, card `t_6b5e0fc9`)
+
+_2026-10-25, card `t_6b5e0fc9` (orchestrator) — the OP-110 lane follow-up that
+closes the third same-class number collision._
+
+§7 makes an in-flight allocation count as **taken**; §8 (rule A) has the
+**allocator** reserve the number when it creates the card. Neither closed this
+collision, because **the reservation itself was derived from a snapshot**: two
+cards in one lane, each told to "re-read the lane `Next free` cell", read the same
+value on the same trunk and minted the same number. On the OP-110 lane
+(`0480`–`0499`) that happened with two independently-rooted **pin** cards:
+
+| pin card                             | branch                                  | commit               | record minted                                  |
+| ------------------------------------ | --------------------------------------- | -------------------- | ---------------------------------------------- |
+| `t_58320f19` (invoice-number decode) | `OP-110-task-invoice-number-decode-pin` | `2418ce7` @ 17:02:37 | `ADR-0482-op110-invoice-number-decode-pins.md` |
+| `t_ffec14e2` (reactivation boundary) | `OP-110-task-reactivation-boundary-pin` | `89dbfd7` @ 17:06:44 | `ADR-0482-op110-reactivation-boundary-pins.md` |
+
+The reactivation lane's gated GREEN (`t_805e17b6`) then minted a further record on
+top of its pin branch, so the collision is **two-deep** in a stacked pin→green
+pair. The invoice lane landed first (PR
+[#346](https://github.com/yahodu/openpic-webapp/pull/346) → squash `c2ebc589`,
+trunk `1d1943b`), making `0482` **trunk-owned**; the reactivation lane cannot land
+without renumbering both of its records — renumber card `t_c83556f9`, gated on
+`t_805e17b6`. That lane's renumbered numbers are still **in flight** and are
+deliberately not asserted here. The failure is **invisible on the incoming
+branch** — its own guard passes — and only reddens the **trunk's** unit job after
+the squash, when `checkAdrDirectory("docs/adr")` sees two `ADR-0482` files.
+
+This is the **third** recurrence of the class: OP-96 (`0147`, the §7 note) and
+OP-105 (`0382`; then `0383`+`0384`, the §8 note) came first — hence the durable fix.
+
+11. **In-flight-aware allocation (rule B).** Before the allocator hands a number
+    to any card it **enumerates the lane's in-flight reservations** and takes the
+    next free number **above the highest in-flight number** — never the number
+    named by the trunk `Next free` cell, and never a value derived from a snapshot
+    of shared state. The enumeration is:
+
+    - **every live worktree's ADR files** —
+      `for d in <repo>/.worktrees/*/; do ls "$d/docs/adr/" 2>/dev/null | grep -E '^ADR-0[0-9]{3}'; done`;
+    - **the `Consumes` values of the lane's non-`done` cards** (board DB /
+      `kanban_list`);
+    - **the lane's open remote refs** — `git ls-remote --heads origin "OP-<n>*"`,
+      reading `docs/adr/` at each head where reachable.
+
+    The rule binds **whoever mints a card**, not the orchestrator alone: on this
+    board reviewer and testcase-writer cards minted both colliding OP-110 pins. A
+    card that mints no number still writes `Consumes: none` (§8 rule A).
+
+12. **Pre-merge duplicate detection on the merged tree.** No ADR-carrying PR may
+    squash-merge until the guard has run **on the merged tree** — not on the
+    incoming branch — because a lone `docs/adr/README.md` conflict resolves cleanly
+    while hiding a duplicate **file**:
+
+    ```
+    git fetch origin
+    git worktree add --detach <scratch>/probe-adr-merge origin/main
+    cd <scratch>/probe-adr-merge && git merge --no-ff <incoming-head>
+    # symlink node_modules (root, apps/web, packages/contracts) from the main checkout, then:
+    ./node_modules/.bin/vitest run --project unit apps/web/src/test/unit/adr-numbering.test.ts   # must pass
+    ls docs/adr/ | grep -oE 'ADR-[0-9]{4}' | sort | uniq -d                                       # must be empty
+    ```
+
+    This is a **review-time obligation** (consistent with the guard's two
+    documented out-of-scope items in `docs/CONVENTIONS.md` §11), **not** a CI
+    change.
+
+**Rejected alternative — "reserve the pair, not the number" (candidate 1).** It
+covers only a pin+green pair riding **one** branch/PR. The OP-110 collision was
+between two independently-rooted follow-up pins (as was OP-105's): a pair
+reservation cannot see sibling pin B, which still reads the cell and re-mints A's
+number. It is also subsumed by in-flight enumeration — both the pin file and the
+reserved green number are visible to rule B — so it is recorded as a compatible
+special case **inside** rule B, not as the primary rule.
+
+**Rejected alternative — "land-then-renumber as primary" (candidate 3).** It does
+not prevent the collision; it only makes the loser's repair cheap, and adopting it
+as primary normalises a duplicate landing and shifts the cost onto the loser's
+lane. It remains the **fallback recovery**, invoked only when detection catches a
+duplicate: the existing `t_c83556f9` recipe already enumerates every field to
+rewrite — file name, H1, every `Consumes`/cross-reference, the two README index
+rows, the lane prose paragraph and the `Next free` cell; a `README.md` conflict
+resolves as a **union** (§8 item 10) — so it is the canonical checklist and needs
+no new script.
+
+Rationale for rule B over reserving at creation alone: rule (A) removes the
+_worker's_ snapshot but leaves the _allocator's_, and the allocator is not
+serialised either — two follow-up cards created minutes apart each read the same
+cell. Enumerating in-flight reservations before reserving makes the number a
+function of what is actually outstanding rather than of a stale counter, at the
+cost of one enumeration per card creation. The choice is recorded on card
+`t_6b5e0fc9`.
