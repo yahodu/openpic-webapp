@@ -26,8 +26,8 @@ import { server } from "./setup";
  * failure and its log line. No assertion reaches inside the adapter.
  *
  * I1: `createMandate` POSTs a schema-valid body to the sandbox subscriptions
- *     endpoint, parses the response and returns the opaque `checkoutUrl` plus
- *     the vendor refs and expiry.
+ *     endpoint, parses the response and returns the opaque `checkoutUrl`, the
+ *     vendor refs and the canonical RFC 3339 UTC ms `Z` expiry.
  * I2: a response missing a required field raises `UpstreamContractError` and is
  *     logged at `error` with the vendor and the operation.
  * I3: a 5xx from Cashfree is a **retryable** upstream failure.
@@ -112,7 +112,9 @@ describe("Cashfree adapter (MSW)", () => {
     });
 
     expect(result.checkoutUrl).toBe(response.auth_link);
-    expect(result.expiresAt).toBe(response.subscription_expiry_time);
+    // The port canonicalizes the vendor expiry to RFC 3339 UTC ms `Z` (§0.13);
+    // the fixture default is the vendor-shaped `2026-11-01T10:30:46+05:30`.
+    expect(result.expiresAt).toBe("2026-11-01T05:00:46.000Z");
     expect(result.externalRefs).toContainEqual({
       provider: "cashfree",
       env: "sandbox",

@@ -145,7 +145,11 @@ export interface CreateMandateResult {
   readonly externalRefs: readonly ProviderRef[];
   /** The hosted authorization URL — opaque to every caller (§3.2). */
   readonly checkoutUrl: string;
-  /** The vendor's expiry for that URL. */
+  /**
+   * When that URL stops working, as RFC 3339 UTC with millisecond precision and
+   * a `Z` suffix (contract §0.13) — the one shape §3.3's `checkout.expiresAt`
+   * admits. The adapter canonicalizes the vendor's own representation.
+   */
   readonly expiresAt: string;
 }
 
