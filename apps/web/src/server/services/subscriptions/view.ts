@@ -63,12 +63,23 @@ export type MandateStatus = z.infer<typeof mandateStatusSchema>;
 /** The workspace role that decides whether a billing action is offered. */
 export type SubscriptionActionRole = "owner" | "admin" | "member";
 
+/** The five banner kinds §3.2 enumerates, in precedence order. */
+const BANNER_KINDS = [
+  "past_due",
+  "downgraded",
+  "mandate_pending",
+  "mandate_revoked",
+  "cancelling",
+] as const;
+
 /** A banner kind (contract §3.2 enumerates exactly five). */
-export type SubscriptionBannerKind =
-  "past_due" | "downgraded" | "mandate_pending" | "mandate_revoked" | "cancelling";
+export type SubscriptionBannerKind = (typeof BANNER_KINDS)[number];
+
+/** The banner severities, from quietest to loudest. */
+const BANNER_SEVERITIES = ["critical", "important", "informational"] as const;
 
 /** How loudly the banner speaks: money problems are `critical`. */
-export type SubscriptionBannerSeverity = "critical" | "important" | "informational";
+export type SubscriptionBannerSeverity = (typeof BANNER_SEVERITIES)[number];
 
 /**
  * The computed banner a client renders above the subscription view.
@@ -144,8 +155,8 @@ export const subscriptionActionsSchema = z.object({
 
 /** The §3.2 `banner` schema (five kinds, `reassurance` only where mandated). */
 export const subscriptionBannerSchema = z.object({
-  kind: z.enum(["past_due", "downgraded", "mandate_pending", "mandate_revoked", "cancelling"]),
-  severity: z.enum(["critical", "important", "informational"]),
+  kind: z.enum(BANNER_KINDS),
+  severity: z.enum(BANNER_SEVERITIES),
   daysRemaining: z.number().optional(),
   downgradeOn: isoDateTime.optional(),
   reassurance: z.string().optional(),
@@ -164,6 +175,18 @@ const scheduledChangeSchema = z.object({
   reason: z.string(),
 });
 
+/** The payment method kinds schema §14.3 stores and this view serves. */
+const paymentMethodKindSchema = z.enum([
+  "mandate_upi",
+  "mandate_bank_debit",
+  "card",
+  "invoice",
+  "manual",
+]);
+
+/** The billing cycles schema §14.3 stores and this view serves. */
+const billingCycleSchema = z.enum(["monthly", "yearly"]);
+
 /**
  * The served subscription view **without** `actions`.
  *
@@ -180,10 +203,8 @@ export const subscriptionViewFactsSchema = z.object({
   subscribedPlanVersion: z.number().optional(),
   activePlanKey: z.string(),
   priceKey: z.string().optional(),
-  billingCycle: z.enum(["monthly", "yearly"]).optional(),
-  paymentMethodKind: z
-    .enum(["mandate_upi", "mandate_bank_debit", "card", "invoice", "manual"])
-    .optional(),
+  billingCycle: billingCycleSchema.optional(),
+  paymentMethodKind: paymentMethodKindSchema.optional(),
   mandateStatus: mandateStatusSchema.nullable().optional(),
   currentPeriodStart: isoDateTime.optional(),
   currentPeriodEnd: isoDateTime.optional(),
@@ -244,10 +265,8 @@ const storedSubscriptionSchema = z.object({
   subscribedPlanVersion: z.number().optional(),
   activePlanKey: z.string().default("free"),
   priceKey: z.string().optional(),
-  billingCycle: z.enum(["monthly", "yearly"]).optional(),
-  paymentMethodKind: z
-    .enum(["mandate_upi", "mandate_bank_debit", "card", "invoice", "manual"])
-    .optional(),
+  billingCycle: billingCycleSchema.optional(),
+  paymentMethodKind: paymentMethodKindSchema.optional(),
   mandateStatus: mandateStatusSchema.nullable().optional(),
   currentPeriodStart: z.date().optional(),
   currentPeriodEnd: z.date().optional(),
