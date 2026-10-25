@@ -1,6 +1,6 @@
 # ADR-0361 — OP-104 GREEN: the entitlements read view and the raw usage endpoint — module contract, UTC `resetsAt`, and two disputed RED assertions
 
-- **Status:** Accepted (GREEN; two RED assertions disputed, left unedited)
+- **Status:** Accepted (GREEN; suite green at head `3b13b3f` — both disputed RED assertions fixed by the Test Author and the coverage arms pinned, see “Re-run” below)
 - **Date:** 2026-10-24
 - **Card:** OP-104 GREEN (`t_72aaa13f`) · **Branch:** `OP-104-task-entitlements-usage-endpoints` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_e7539f55`
 - **Relates to:** [ADR-0360](ADR-0360-op104-entitlements-usage-endpoints-red.md) (the RED contract this turns green), [ADR-0340](ADR-0340-op103-entitlements-red.md) / [ADR-0341](ADR-0341-op103-entitlements-green.md) (the decision surface this reads), [ADR-0260](ADR-0260-op100-tenant-provisioning-red.md) (the reusable tenant stage), [ADR-0280](ADR-0280-op101-tenant-members-red.md) (the owner-only gate shape), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
@@ -64,7 +64,15 @@ is platform-scoped, the grants/counters are tenant-scoped through `tenantRepo`
 (the **string** `tenantId` OP-103 established). `/usage` projects the rows through
 a schema that omits the driver `_id` and serializes `updatedAt` as ISO.
 
-## Disputed RED assertions (left unedited)
+## Disputed RED assertions (historical — both resolved on re-run)
+
+> **Resolved at head `3b13b3f`.** The Test Author fixed both assertions on the
+> same lane branch in a test-only commit (no production file touched): D1 now
+> finds the row in the already-parsed payload (`entitlementRowFrom`), and D2
+> wipes `plans`/`subscriptions`/`entitlementGrants`/`usageCounters` in a
+> `beforeEach`. That same commit pinned the five `view.ts` branch arms listed
+> below. The two subsections that follow are the `3a98020` evidence, kept
+> verbatim.
 
 Two assertions in `apps/web/src/test/integration/entitlements-endpoints.test.ts`
 cannot pass for any honest implementation. They are reported here rather than
@@ -107,7 +115,7 @@ same scenario in isolation serves `enabled: false`, as the spec expects.
 **Proposed fix:** give each test a unique plan key, add a `beforeEach` cleanup
 (or upsert the plan seed), or call `ensureIndexes` and seed with an upsert.
 
-## Evidence at this head
+## Evidence at the first GREEN head (`3a98020`)
 
 - `tsc` clean on all three projects (RED's 4 errors gone: the two route modules
   and the two barrel exports now exist).
@@ -141,6 +149,30 @@ dead code, and each is a real state the code must handle:
 | 224       | `planRow === null ? {} : …`                                      | a plan key with **no** `plans` document          |
 | 264       | `periodKey === undefined ? {} : { periodKey }`                   | `/usage` with **no** `?periodKey=`               |
 | 277       | `counter.updatedAt === undefined ? {} : …`                       | a counter row **without** `updatedAt`            |
+
+## Re-run — the suite is green at `3b13b3f`
+
+The two disputed assertions and the five coverage arms were fixed by the Test
+Author on the same lane branch (`3b13b3f`, test-only: no production file
+touched; the ADR-0360 contract is unchanged). Re-running the whole gate on the
+unchanged production code at `3b13b3f`:
+
+- `tsc` clean on all three projects; `eslint` 0 errors; `prettier --check` clean;
+  ADR guard 29/29.
+- unit + integration with coverage (`--coverage --coverage.reportOnFailure=true`):
+  **exit 0** — every test green and every coverage gate passes. Global **92.33 %
+  statements / 80.72 % branches / 96.37 % functions / 92.83 % lines**;
+  `apps/web/src/server/services/**` **branches 93.10 % (135/145)** vs the 90 %
+  gate, with `view.ts` at **32/32 = 100 %**. The 10 remaining uncovered branches
+  are the pre-existing OP-103 remainder in `service.ts`.
+- `pnpm --filter @openpic/web build` exit 0 with both new routes
+  (`/api/v1/tenants/[tenantId]/entitlements`, `/api/v1/tenants/[tenantId]/usage`)
+  in the route table; Playwright E2E **21 passed**.
+- Focused integration spec: `entitlements-endpoints.test.ts` **20/20**.
+
+No production code changed between `3a98020` and `3b13b3f`, so the projection,
+the free-tier default, the `owner`|`admin` split and the parallel reads described
+above are exactly what the green run exercises.
 
 ## Consequences
 
