@@ -157,13 +157,17 @@ export type EntitlementErrorCode = (typeof ENTITLEMENT_ERROR_CODES)[number];
 /**
  * Billing-checkout codes (contract §3.3, Appendix A.2/A.4).
  *
- * The four refusals `POST /tenants/{tenantId}/billing/checkout` documents:
- * `invalid_return_url` (`422`, `{ allowedOrigins }`) for a `returnUrl` off the
- * allow-list, `plan_not_self_serve` (`422`, `{ contactSalesUrl }`) for a
- * sales-assisted tier, `subscription_already_active` (`409`,
- * `{ subscriptionId, status }`) for a workspace that already subscribes, and
+ * The six refusals `POST /tenants/{tenantId}/billing/{checkout,upgrade,downgrade}`
+ * documents: `invalid_return_url` (`422`, `{ allowedOrigins }`) for a
+ * `returnUrl` off the allow-list, `plan_not_self_serve` (`422`,
+ * `{ contactSalesUrl }`) for a sales-assisted tier, `subscription_already_active`
+ * (`409`, `{ subscriptionId, status }`) for a workspace that already subscribes,
  * `upstream_unavailable` (`502`, retryable, `{ provider, retryAfterSeconds }`)
- * for a payment-provider failure. Like the tenancy and entitlement rows they
+ * for a payment-provider failure, `not_an_upgrade` (`422`,
+ * `{ currentTierRank, targetTierRank, downgradeUrl }`) for an upgrade whose
+ * target rank is not higher than the current one, and `acknowledgement_required`
+ * (`422`, `{ consequences }`) for a downgrade that has not acknowledged its
+ * computed consequences. Like the tenancy and entitlement rows they
  * are contract catalogue codes that are **not** members of
  * {@link ERROR_CODES}, which the server error catalogue
  * (`@/server/http/catalog`) pins to exactly the base Appendix A table. They are
@@ -176,6 +180,8 @@ export const BILLING_ERROR_CODES = [
   "plan_not_self_serve",
   "subscription_already_active",
   "upstream_unavailable",
+  "not_an_upgrade",
+  "acknowledgement_required",
 ] as const;
 
 /** A member of the closed {@link BILLING_ERROR_CODES} set. */

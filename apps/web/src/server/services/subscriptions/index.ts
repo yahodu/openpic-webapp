@@ -39,6 +39,32 @@ export type {
   ExistingSubscriptionFacts,
 } from "./checkout";
 
+export {
+  comparePlanTiers,
+  computeDowngradeConsequences,
+  downgradeRequestSchema,
+  downgradeResponseSchema,
+  scheduledChangeSchema,
+  upgradeEnvelopeSchema,
+  upgradeRequestSchema,
+} from "./plan-change";
+
+export { CONTACT_SALES_URL, loadPlan, soldPrice, unsoldField } from "./catalogue";
+export type { SoldPrice } from "./catalogue";
+
+export { resolveMandateCustomer } from "./mandate-customer";
+
+export type {
+  DowngradeConsequence,
+  DowngradeConsequencesInput,
+  DowngradeRequest,
+  DowngradeResponse,
+  EntitlementUsageFact,
+  PlanChangeDirection,
+  UpgradeEnvelope,
+  UpgradeRequest,
+} from "./plan-change";
+
 export type {
   MandateStatus,
   StatusHistoryEntry,

@@ -1,4 +1,4 @@
-import { ObjectId, type Db } from "mongodb";
+import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { getConfig, getRateLimitConfig } from "@/server/config/env";
@@ -9,18 +9,22 @@ import type { AppError } from "@/server/http/app-error";
 import { appError } from "@/server/http/errors";
 import { idempotencyStage, mongoIdempotencyStore } from "@/server/idempotency";
 import { getLogger } from "@/server/logging";
-import { planSchema, type Plan, type PlanPrice } from "@/server/plans/plans";
 import { getPaymentProvider } from "@/server/payments/get-payment-provider";
-import type { CreateMandateResult, MandateCustomer } from "@/server/payments/payment-provider";
+import type { CreateMandateResult } from "@/server/payments/payment-provider";
 import { createRateLimiter, rateLimitStage } from "@/server/rate-limit";
 import { platformRepo, tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import {
   checkoutEnvelopeSchema,
   checkoutRequestSchema,
+  CONTACT_SALES_URL,
   decideExistingSubscription,
   isAllowedReturnUrl,
+  loadPlan,
+  resolveMandateCustomer,
+  soldPrice,
   subscriptionStatusSchema,
+  unsoldField,
   type CheckoutEnvelope,
   type ExistingSubscriptionDecision,
   type ExistingSubscriptionFacts,
@@ -70,9 +74,6 @@ import { tenantStage } from "@/server/tenancy/route-stage";
  * never reaches the provider a second time. The response is the bare envelope
  * (§0.5) and carries no vendor-shaped field (§0.15).
  */
-
-/** The `returnUrl` a checkout must land on is a *config* fact, not a new env var. */
-const CONTACT_SALES_URL = "/contact-sales";
 
 /** The mandate kind every self-serve checkout creates (contract §3.3 example). */
 const SELF_SERVE_PAYMENT_METHOD = "mandate_upi" as const;
@@ -150,32 +151,6 @@ function runExclusive<T>(lockKey: string, task: () => Promise<T>): Promise<T> {
   return result;
 }
 
-/**
- * The placeholder phone a mandate carries when the account has none on record.
- *
- * The vendor contract requires a non-empty `customer_phone`; an email-OTP
- * account may not have signed up a number yet, and the mandate is created by
- * the workspace owner, not by the customer filling in a form. Replace this with
- * a "verified phone required" refusal the moment the product collects one
- * (recorded as a coverage gap in ADR-0421).
- */
-const UNSET_CONTACT_PHONE = "0000000000";
-
-/** The customer name used when the account has no display name. */
-const FALLBACK_CUSTOMER_NAME = "OpenPic customer";
-
-/**
- * The address a mandate carries when the account has none on record.
- *
- * The vendor requires a non-empty `customer_email`, and the account row is the
- * only source of one. A display **name** is not an address, so the fallback is
- * the platform's own no-reply mailbox — the same shape of documented
- * placeholder as {@link UNSET_CONTACT_PHONE}. Replace both with a "verified
- * contact required" refusal the moment the product collects one (recorded as a
- * coverage gap in ADR-0421).
- */
-const PLATFORM_NO_REPLY_EMAIL = "no-reply@openpic.in";
-
 /** The stored row fields this route reads and writes (schema §14.3). */
 const storedSubscriptionRowSchema = z.object({
   _id: z.unknown(),
@@ -250,96 +225,6 @@ function alreadyActiveError(subscriptionId: string, status: SubscriptionStatus):
   return appError("subscription_already_active", {
     details: { subscriptionId, status },
   });
-}
-
-/** Load one stored plan from the platform-scope catalogue, or `null`. */
-async function loadPlan(db: Db, planKey: string): Promise<Plan | null> {
-  const row = await platformRepo(db).collection(COLLECTIONS.plans).findOne({ key: planKey });
-  return row === null ? null : planSchema.parse(row);
-}
-
-/** The sold price and the vendor plan reference it carries. */
-interface SoldPrice {
-  readonly price: PlanPrice;
-  readonly vendorPlanRef: string;
-}
-
-/**
- * Resolve the sold price of a plan, with the vendor plan id the provider needs.
- *
- * The vendor name is confined to `plans.prices[].externalRefs` (ADR-0001), so
- * the reference the mandate is addressed to has to flow from there; a price
- * with no `kind: "plan"` ref cannot be sold and is refused.
- *
- * @param plan - The validated stored plan.
- * @param priceKey - The requested price key.
- * @returns The active price and its vendor ref, or `null` when unsellable.
- */
-function soldPrice(plan: Plan, priceKey: string): SoldPrice | null {
-  const price = plan.prices.find(
-    (candidate) => candidate.priceKey === priceKey && candidate.active
-  );
-  const ref = price?.externalRefs.find((candidate) => candidate.kind === "plan");
-  if (price === undefined || ref === undefined) {
-    return null;
-  }
-  return { price, vendorPlanRef: ref.id };
-}
-
-/** A `422 validation_failed` field entry naming one unsellable request field. */
-function unsoldField(path: string): {
-  readonly path: string;
-  readonly code: string;
-  readonly message: string;
-} {
-  return {
-    path,
-    code: "not_found",
-    message: "must name an active plan and price sold by the platform",
-  };
-}
-
-/** A non-empty trimmed string, or `null`. */
-function asContactText(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
-}
-
-/** The acting account's contact fields (the Better Auth `user` document). */
-const accountContactSchema = z.object({
-  email: z.unknown().optional(),
-  name: z.unknown().optional(),
-  phoneNumber: z.unknown().optional(),
-});
-
-/** The profile's display-name field (the `userProfiles` document). */
-const profileContactSchema = z.object({
-  displayName: z.unknown().optional(),
-});
-
-/**
- * Derive the customer a mandate is created for.
- *
- * The customer is never client-supplied: it comes from the acting account's
- * Better Auth user row (the email) and the profile's display name, with a
- * documented placeholder for a missing phone ({@link UNSET_CONTACT_PHONE}) and
- * for a missing address ({@link PLATFORM_NO_REPLY_EMAIL}) — a display name is
- * never handed to the vendor as an address.
- *
- * @param user - The Better Auth `user` document, or `null`.
- * @param profile - The `userProfiles` document, or `null`.
- * @returns The port's {@link MandateCustomer}.
- */
-function resolveMandateCustomer(user: unknown, profile: unknown): MandateCustomer {
-  const account = accountContactSchema.parse(user ?? {});
-  const profileRow = profileContactSchema.parse(profile ?? {});
-  return {
-    name:
-      asContactText(profileRow.displayName) ??
-      asContactText(account.name) ??
-      FALLBACK_CUSTOMER_NAME,
-    email: asContactText(account.email) ?? PLATFORM_NO_REPLY_EMAIL,
-    phone: asContactText(account.phoneNumber) ?? UNSET_CONTACT_PHONE,
-  };
 }
 
 export const POST = defineRoute({

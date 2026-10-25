@@ -325,7 +325,10 @@ export const ENTITLEMENT_ERROR_TRANSPORT: Readonly<
  * `subscription_already_active` (`409`) reports the live row that blocks the
  * checkout; `upstream_unavailable` (`502`, **retryable**,
  * `{ provider, retryAfterSeconds }`) is the payment-provider failure the client
- * may retry (ADR-0421).
+ * may retry, and the OP-109 plan-change refusals `not_an_upgrade` (`422`,
+ * `{ currentTierRank, targetTierRank, downgradeUrl }`) and
+ * `acknowledgement_required` (`422`, `{ consequences }`) are appended here in
+ * the same shape (ADR-0421, ADR-0460/ADR-0461).
  */
 export const BILLING_ERROR_TRANSPORT: Readonly<Record<BillingErrorCode, ErrorCatalogEntry>> = {
   invalid_return_url: {
@@ -347,6 +350,16 @@ export const BILLING_ERROR_TRANSPORT: Readonly<Record<BillingErrorCode, ErrorCat
     status: 502,
     retryable: true,
     message: "The payment provider is temporarily unavailable.",
+  },
+  not_an_upgrade: {
+    status: 422,
+    retryable: false,
+    message: "This plan change is not an upgrade.",
+  },
+  acknowledgement_required: {
+    status: 422,
+    retryable: false,
+    message: "The consequences of this plan change must be acknowledged first.",
   },
 };
 
