@@ -150,3 +150,74 @@ step after the older call's read happens after the newer transaction commits.
 Lane range `0440`–`0459` (`docs/adr/README.md` row `OP-108 webhook inbox lane`).
 This card consumes `0443`; the lane's `Next free` cell advances `0443` → `0444`.
 No number outside `0440`–`0459` is touched.
+
+## Review sign-off — 2026-10-25 (card `t_c6e73ade`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens**) review of this delivery — the REVIEW/LAND card
+`t_c6e73ade`, which reviewed the GREEN `t_bd4d7286` and landed PR
+[#311](https://github.com/yahodu/openpic-webapp/pull/311) — returned
+**APPROVED**: zero changes requested to the deliverable and **zero reviewer
+edits** to the fix, the pins or this record beyond the sign-off section itself.
+
+**Evidence reproduced independently at the reviewed head `0c8bf86`** (the sheet
+was checked out **detached** at the handoff SHA, never at the moving branch tip,
+and every gate was re-run on that tree by the reviewer — nothing was copied from
+the handoff):
+
+- **The pin is deterministic.** The pre-fix head `84445e2` fails
+  `provider-webhook-inbox.test.ts` in **3 runs out of 3**, always the same way
+  (`1 failed | 15 passed (16)`, `AssertionError: expected { …(20) } to match
+object { status: 'cancelled' }`), and the fix head is green **3/3**
+  (`16 passed (16)`).
+- **The guard is inside the transaction.** `webhook-projection.ts:663-683` is a
+  single conditional `subscriptions.updateOne` _within_ `withTransaction`
+  (`{_id, $or:[{$exists:false}, null, {$lt: eventAt}]}`, patch and watermark
+  advance in one `$set`), with `matchedCount === 0` throwing the
+  `OutOfOrderProjectionError` sentinel **before** the ledger insert (`:685`) and
+  the emits (`:691`). The pre-transaction read (`:543-548`) is only the
+  short-circuit. The sentinel carries no `TransientTransactionError` label and
+  `withTransaction` (`server/db/transaction.ts:61`) delegates to the driver's
+  `session.withTransaction`, which retries only labelled errors — the abort is
+  final and reported, and a genuine write conflict is still retried against the
+  freshly committed row.
+- Full unit **110 files / 1915 passed | 3 skipped**; `adr-numbering` guard
+  **29 passed (29)**; full integration **79 files / 575 passed**
+  (`TMPDIR=/root/tmp-mongo`); coverage exit `0` — statements 92.48 %, branches
+  **81.32 %**, functions 96.37 %, lines 92.94 % (floor 80 %);
+  `pnpm --filter @openpic/web build` exit `0` with
+  `/api/v1/webhooks/[provider]` in the route table;
+  `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; ESLint **0 errors** /
+  105 pre-existing warnings; `prettier --check` clean on all 14 changed files;
+  e2e `E1` **1 passed** on a real `next start` with the memory provider.
+- The ten pins repaired by `5c6f87b` (card `t_a756515d`) and `I7` are green in
+  the full integration run, and the sequential `drainDeferredProjections()` pin
+  is unmodified: `git diff --name-only 84445e2 0c8bf86` is **3 files** — the
+  production module, this ADR and `docs/adr/README.md` — with no test, mock,
+  fixture or factory in the follow-up diff.
+- CI on the PR head: `ci`, `audit`, `secret-scan`, `test_coverage`,
+  `unit_test`, `lint`, `env-changes`, `validate-branch-name`,
+  `validate-pr-title` and CodeQL all pass; `audit-dev` fails and is
+  `continue-on-error` (ADR-0301) while `audit` passes.
+
+**Finding (Low, routed to a card — not a blocker).** At the reviewed head the
+coverage data (`coverage-final.json` per-branch zero-counts) reports four
+defensive branches of this module **never taken**: `:657`'s false side (a
+decision with `subscriptionPatch === null`, the `refund_processed` path §4 above
+makes a claim about), `:519` (`unregistered_provider`), `:525`
+(`no_subscription_ref`) and `:557` (`nothing_to_apply`). Global branch coverage
+sits above its floor, so this is an unpinned-behaviour gap rather than a gate
+failure; §4's scoping claim is the one with written weight behind it. A **TEST**
+characterization-pin card — `t_2f62897a`, no ADR number of its own and no GREEN
+sibling unless a pin genuinely fails — is created and gated behind the review
+card.
+
+**Merge and number.** The delivery shipped as PR
+[#311](https://github.com/yahodu/openpic-webapp/pull/311), **squash-merged as
+`7d39082`** (`git merge-base --is-ancestor 7d39082 origin/main` holds; the
+branch was auto-deleted). The squash keeps the reviewed bytes: the only PR path
+that differs between the reviewed head and the squash is `docs/adr/README.md`,
+and that difference is `origin/main`'s own intervening OP-105 ledger rows and
+`Next free` cell (`0388`–`0393`, cell `0394`) which the branch predated — an
+index-only union, no ADR number collision (`ADR-044[0-3]` unique). **No ADR
+number is asserted here:** this sign-off consumes none, and the lane's
+`Next free` cell stays `0444`.
