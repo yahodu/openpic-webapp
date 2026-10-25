@@ -221,3 +221,91 @@ and that difference is `origin/main`'s own intervening OP-105 ledger rows and
 index-only union, no ADR number collision (`ADR-044[0-3]` unique). **No ADR
 number is asserted here:** this sign-off consumes none, and the lane's
 `Next free` cell stays `0444`.
+
+## Characterization pins for the four no-write exits — 2026-10-25 (card `t_2f62897a`)
+
+Consumes **no** ADR number (the lane's `Next free` cell stays `0444`, no index row
+is added, `docs/adr/README.md` byte-identical to `origin/main`) and records **no
+new decision**: it pins behaviour this record already describes — §4's scoping
+claim in particular — which no spec exercised when the review measured it.
+
+**The pins.** Five characterization cases appended to
+`apps/web/src/test/integration/provider-webhook-inbox.test.ts` (describe
+`… — the projection's no-write exits`; the file goes 16 → 21 cases and the whole
+change is one additive hunk from line 1154, so no existing case, harness, fixture,
+mock or factory is touched — and no production file is touched at all):
+
+- `a refund moves money only: …` — a `SUBSCRIPTION_REFUND_STATUS` event against a
+  subscription whose watermark already holds an earlier instant. The §14.4 refund
+  row is written (`kind: "refund"`, `status: "succeeded"`, `49_900` INR,
+  `rawPayloadRef` → the inbox row), the inbox records `applied`, the
+  `billing.refund.processed` domain event is emitted, and
+  `subscriptions.lastProviderEventAt` is **still exactly the seeded instant**:
+  §4's "there is no subscription write and no watermark advance".
+- `re-projecting the same refund row cannot double-post it …` — the applier driven
+  a second time on the same row. The null-patch path advances no watermark, so no
+  ordering guard can refuse the retry: `billing_transactions_idempotency_key_unique`
+  is the replay guard. The case asserts the ledger is byte-identical to the first
+  projection (one row, one `idempotencyKey`), the outbox holds exactly one
+  `billing.refund.processed`, and the watermark is still absent. The refused
+  transaction surfaces as the module's documented `processResult: "error"` /
+  `processedAt: null` retry state — deliberately **not** asserted, so a future edit
+  that treats a duplicate ledger key as an idempotent no-op stays green.
+- `an inbox row for a provider this deployment does not register …` — a stored
+  `provider: "stripe"` row. The route refuses an unregistered `{provider}` segment
+  with a `404` and writes nothing, so a stored foreign row (a deployment that
+  changed its registered provider mid-flight) is the only way to reach the
+  projection's own `:519` guard: `processResult: "ignored"`, no ledger row, no
+  domain event, subscription untouched.
+- `a parseable event whose payload carries no subscription ref …` — a well-formed
+  refund whose `subscription_details.subscription_id` is absent — asserted **on the
+  raw body**, so the case cannot drift into the _no-match_ exit while claiming to
+  exercise `:525`. Nothing is written.
+- `a decision the reducer reports as ignored …` —
+  `SUBSCRIPTION_PAYMENT_NOTIFICATION_INITIATED`, the vendor event §10.1.2 maps to
+  the `ignored` kind. It carries a real ref and matches the seeded row, so it
+  clears the earlier guards and reaches `:557`: the row is recorded `ignored`, with
+  no subscription patch (hence no watermark), no ledger row and no domain event.
+
+**Evidence — before/after per-branch counts.** Command of record:
+`vitest run --project unit --project integration --coverage --coverage.reporter=json`.
+"Before" is the **same head with only the new `describe` block removed** from the
+spec — re-measured for this record, not quoted from the review:
+
+| Branch (`webhook-projection.ts`)                   | Before    | After     |
+| -------------------------------------------------- | --------- | --------- |
+| `:519` `config.payments.provider !== row.provider` | `[0, 16]` | `[1, 21]` |
+| `:525` `ref === null`                              | `[0, 16]` | `[1, 20]` |
+| `:557` `decision.outcome === "ignored"`            | `[0, 14]` | `[1, 17]` |
+| `:657` `decision.subscriptionPatch !== null`       | `[14, 0]` | `[14, 3]` |
+
+Those four entries are the only zero-paths on their lines at the "before" head and
+none of them carries a zero path afterwards. The un-taken paths that remain in the
+file (the `??` fallbacks of `:196`–`:198`, `:225`/`:226`, `:307`, `:395`,
+`:399`/`:400`, `:424`, `:482`, `:494` — F3's `{lastProviderEventAt: null}`
+sub-filter among them) are the ones the review already recorded and are out of this
+card's scope: the file stands at 79/91 branch paths, statements 102/103, functions
+19/19. Report-wide, per-path branches are **81.62 %** against the 80 % floor
+(statements 92.68 %, functions 96.50 %, lines 93.14 %, coverage exit `0`) — quoted
+from the vitest text reporter on the pins' head; the review's 81.32 % was measured
+on a **different** head, so the two figures are not term-for-term comparable.
+
+**Evidence — the pins discriminate (mutation probes).** Each probe patched one
+anchor in the production module, ran only the five new cases, and restored the
+module byte-identically (verified by SHA-256, `git status` clean afterwards):
+
+| Mutation                                                                        | Caught by                      | Failure                                                                                      |
+| ------------------------------------------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------- |
+| the `refund_processed` decision gains a `subscriptionPatch` (the §4 regression) | both refund cases              | `expected 2026-10-25T11:00:56.254Z to deeply equal …10:35:56.251Z`; `expected …Z to be null` |
+| `ledgerIdempotencyKey` stops being deterministic                                | the re-projection case         | `expected [ { …(14) }, { …(14) } ] to deeply equal [ { …(14) } ]`                            |
+| `:519`'s condition `&& false`                                                   | the unregistered-provider case | `expected 'applied' to be 'ignored'`                                                         |
+| `:525`'s condition `&& false`                                                   | the missing-ref case           | `expected 'error' to be 'ignored'`                                                           |
+| `:557`'s condition `&& false`                                                   | the nothing-to-apply case      | `expected 'applied' to be 'ignored'`                                                         |
+
+**Gates and harness state.** `tsc -p apps/web/tsconfig.json --noEmit` exit `0`;
+ESLint **0 problems** on the spec; `prettier --check` clean after the one
+formatting pass (which touched only the appended block). Unit and integration are
+green together at the pins' head — 192 files / **2549 passed | 3 skipped** — and
+the same run with only the new block removed is 2544 passed | 3 skipped, i.e. the
+delta is exactly the five added integration cases (the file is integration-only, so
+the `unit` project is untouched).

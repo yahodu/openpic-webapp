@@ -1151,3 +1151,269 @@ describe("POST /api/v1/webhooks/{provider} — concurrent projections for one su
     expect(outbox.map((row) => row.eventKey)).toEqual(["billing.subscription.cancelled"]);
   });
 });
+
+/**
+ * Characterization pins — the projection's four **no-write** exits (§10.1 step 6,
+ * ADR-0443 §4).
+ *
+ * Every case above drives the applier down a path that writes something. These
+ * pin the paths that write *nothing*, which the module carries as defensive
+ * guards and which no spec exercised:
+ *
+ *   - a decision whose `subscriptionPatch` is `null` — the `refund_processed`
+ *     row, the one ADR-0443 §4 makes a written claim about (money moves, the
+ *     subscription does not, and **no watermark advances**);
+ *   - `unregistered_provider` — a stored row this deployment has no adapter for;
+ *   - `no_subscription_ref` — a parseable event whose payload addresses no
+ *     subscription;
+ *   - `nothing_to_apply` — a decision the reducer itself reports as `ignored`.
+ *
+ * All four are **shipped** behaviour, so these cases are green on arrival and
+ * have no GREEN sibling; they exist so a future edit that makes the guard fire
+ * on the null-patch path, advances the watermark there, or lets an ignore path
+ * write cannot land silently.
+ */
+describe("POST /api/v1/webhooks/{provider} — the projection's no-write exits", () => {
+  /**
+   * A `SUBSCRIPTION_REFUND_STATUS` body: money moves, the subscription does not
+   * (§10.1.2). The refund is the decision whose `subscriptionPatch` is `null`,
+   * so it is the only event that reaches the guard's false side.
+   *
+   * @param options - The instant, the vendor refund id and whether the payload
+   *   carries the `subscription_details.subscription_id` a match needs.
+   * @returns The raw JSON body — the exact bytes the signature covers.
+   */
+  function refundBody(
+    options: {
+      readonly eventTime?: string;
+      readonly refundId?: string;
+      readonly carrySubscriptionRef?: boolean;
+    } = {}
+  ): string {
+    return makeCashfreeWebhookBody("SUBSCRIPTION_REFUND_STATUS", {
+      eventTime: options.eventTime ?? minutesAgo(5),
+      // `undefined` is dropped by `JSON.stringify`, so the key is *absent* from
+      // the bytes: the adapter then reports no subscription ref at all.
+      subscriptionDetails:
+        options.carrySubscriptionRef === false ? { subscription_id: undefined } : {},
+      extraData: {
+        refund_id: `refund-${options.refundId ?? "001"}`,
+        cf_refund_id: options.refundId ?? "700001",
+        refund_status: "SUCCESS",
+        refund_amount: 499,
+        refund_currency: "INR",
+        cf_payment_id: "49914526",
+      },
+    });
+  }
+
+  /** The domain-event keys the outbox holds for one subscription, in order. */
+  async function emittedKeys(subscriptionId: ObjectId): Promise<readonly string[]> {
+    const rows = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ "subjectRef.id": subscriptionId.toHexString() })
+      .toArray();
+    return rows.map((row) => String(row.eventKey));
+  }
+
+  /** Read one `providerWebhookEvents` row back by id, whatever its provider key. */
+  async function webhookRowById(id: ObjectId): Promise<WebhookEventRow> {
+    const row = await app.db.collection(COLLECTIONS.providerWebhookEvents).findOne({ _id: id });
+    expect(row).not.toBeNull();
+    return row as unknown as WebhookEventRow;
+  }
+
+  it("a refund moves money only: the ledger row is written, the watermark does not move and the inbox records applied", async () => {
+    // Arrange — a paid-up subscription whose watermark already holds an earlier
+    // instant, so "unchanged" is a value and not merely an absent field.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      mandateStatus: "active",
+    });
+    const watermark = new Date(Date.now() - 30 * 60_000);
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne({ _id: subscriptionId }, { $set: { lastProviderEventAt: watermark } });
+    const rawBody = refundBody();
+
+    // Act — the provider's POST, then the deferred projection.
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — the §18.4 row records the normalized kind and the applied result:
+    // the refund is not an ignore, it is a decision with no subscription patch.
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    const recorded = await latestWebhookRow();
+    expect(recorded).toMatchObject({ eventType: "refund_processed", providerEventId: "700001" });
+    expect(recorded.processResult).toBe("applied");
+    expect(recorded.processedAt).toBeInstanceOf(Date);
+
+    // …the money is on the ledger (§14.4)…
+    const ledger = await ledgerRows(tenantId);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      kind: "refund",
+      status: "succeeded",
+      amountMinor: 49_900,
+      currency: "INR",
+      failure: null,
+    });
+    expect(String(ledger[0]?.subscriptionId)).toBe(subscriptionId.toHexString());
+    expect(String(ledger[0]?.rawPayloadRef)).toBe(String(recorded._id));
+
+    // …and ADR-0443 §4 holds: a decision with `subscriptionPatch === null`
+    // advances no watermark, so the stored instant is exactly what it was —
+    // never this event's `occurredAt`.
+    const after = await readSubscription(subscriptionId);
+    expect(after.lastProviderEventAt).toEqual(watermark);
+    expect(after).toMatchObject({
+      status: "active",
+      mandateStatus: "active",
+      pendingDueMinor: 0,
+    });
+    expect(await emittedKeys(subscriptionId)).toEqual(["billing.refund.processed"]);
+  });
+
+  it("re-projecting the same refund row cannot double-post it: the ledger's unique idempotencyKey is the replay guard", async () => {
+    // Arrange — one applied refund, the state OP-111's sweep hands back to the
+    // applier when it retries a row.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      mandateStatus: "active",
+    });
+    const rawBody = refundBody();
+    await receiveWebhook(webhookRequest({ rawBody, headers: signedHeaders(rawBody) }));
+    await drainDeferredProjections();
+
+    const recorded = await latestWebhookRow();
+    const first = await ledgerRows(tenantId);
+    expect(first).toHaveLength(1);
+
+    // Act — the same inbox row through the applier again. The null-patch path
+    // advances no watermark, so no ordering guard can refuse this run: the
+    // ledger's unique `idempotencyKey` is the only thing standing between a
+    // retry and a second money row.
+    await projectProviderWebhookEvent(String(recorded._id), { db: app.db });
+
+    // Assert — no second posting, no mutation of the first, no duplicate emit.
+    expect(await ledgerRows(tenantId)).toEqual(first);
+    expect(await emittedKeys(subscriptionId)).toEqual(["billing.refund.processed"]);
+    const after = await readSubscription(subscriptionId);
+    expect(after.lastProviderEventAt ?? null).toBeNull();
+  });
+
+  it("an inbox row for a provider this deployment does not register is ignored and writes nothing", async () => {
+    // Arrange — a row the inbox *can* hold but this deployment's adapter cannot
+    // claim (the route refuses an unregistered `{provider}` segment with a 404
+    // and writes nothing, so a stored foreign row is the only way to reach the
+    // projection's own guard — e.g. a deployment that changed its registered
+    // provider mid-flight).
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = activationBody();
+    const foreign = await app.db.collection(COLLECTIONS.providerWebhookEvents).insertOne({
+      provider: "stripe",
+      env: "sandbox",
+      eventType: "subscription_activated",
+      providerEventId: "49988825",
+      payloadHash: null,
+      signatureValid: true,
+      rawPayload: JSON.parse(rawBody) as unknown,
+      receivedAt: new Date(),
+      processedAt: null,
+      processResult: null,
+      processError: null,
+      expireAt: new Date(Date.now() + WEBHOOK_TTL_DAYS * MS_PER_DAY),
+    });
+
+    // Act
+    await projectProviderWebhookEvent(foreign.insertedId, { db: app.db });
+
+    // Assert — recorded as an ignore (never an error, never a partial write),
+    // with the subscription, the ledger and the outbox untouched.
+    const recorded = await webhookRowById(foreign.insertedId);
+    expect(recorded.processResult).toBe("ignored");
+    expect(recorded.processedAt).toBeInstanceOf(Date);
+    expect(await ledgerRows(tenantId)).toEqual([]);
+    expect(await emittedKeys(subscriptionId)).toEqual([]);
+    expect(await readSubscription(subscriptionId)).toMatchObject({
+      status: "incomplete",
+      mandateStatus: "pending",
+    });
+  });
+
+  it("a parseable event whose payload carries no subscription ref is ignored and writes nothing", async () => {
+    // Arrange — a well-formed refund the adapter normalizes, whose payload
+    // addresses the refund and the payment only: no `subscription_id`.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = refundBody({ carrySubscriptionRef: false });
+
+    // The pin's own premise: without this the case could pass through the
+    // *no-match* exit while claiming to exercise the missing-ref guard.
+    expect(rawBody).not.toContain(SUBSCRIPTION_REF_ID);
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert
+    expect(response.status).toBe(200);
+    const recorded = await latestWebhookRow();
+    expect(recorded.eventType).toBe("refund_processed");
+    expect(recorded.processResult).toBe("ignored");
+    expect(await ledgerRows(tenantId)).toEqual([]);
+    expect(await emittedKeys(subscriptionId)).toEqual([]);
+    expect(await readSubscription(subscriptionId)).toMatchObject({
+      status: "incomplete",
+      mandateStatus: "pending",
+    });
+  });
+
+  it("a decision the reducer reports as ignored is recorded ignored and writes nothing", async () => {
+    // Arrange — `SUBSCRIPTION_PAYMENT_NOTIFICATION_INITIATED` is the vendor event
+    // §10.1.2 maps to the `ignored` kind. It carries a real subscription ref and
+    // matches the seeded row, so it clears the provider, ref and match guards and
+    // reaches the decision itself.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = makeCashfreeWebhookBody("SUBSCRIPTION_PAYMENT_NOTIFICATION_INITIATED", {
+      eventTime: minutesAgo(5),
+      extraData: {
+        payment_id: "ab-charge-001",
+        cf_payment_id: "49914526",
+        payment_type: "CHARGE",
+        payment_status: "INITIATED",
+        payment_amount: 499,
+        payment_currency: "INR",
+      },
+    });
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — the normalized kind is `ignored` and the decision wrote nothing:
+    // no subscription patch (so no watermark), no ledger row, no domain event.
+    expect(response.status).toBe(200);
+    const recorded = await latestWebhookRow();
+    expect(recorded.eventType).toBe("ignored");
+    expect(recorded.processResult).toBe("ignored");
+    expect(await ledgerRows(tenantId)).toEqual([]);
+    expect(await emittedKeys(subscriptionId)).toEqual([]);
+    const after = await readSubscription(subscriptionId);
+    expect(after).toMatchObject({ status: "incomplete", mandateStatus: "pending" });
+    expect(after.lastProviderEventAt ?? null).toBeNull();
+  });
+});
