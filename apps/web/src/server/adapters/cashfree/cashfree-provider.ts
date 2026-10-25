@@ -38,6 +38,7 @@ import type {
   NormalizedStatus,
   NormalizedTransaction,
   PaymentEnvironment,
+  PaymentMethodKind,
   PaymentProvider,
   PaymentProviderConfig,
   ProviderRef,
@@ -46,6 +47,7 @@ import type {
 } from "@/server/payments/payment-provider";
 
 import {
+  cashfreeChargeRequestSchema,
   cashfreeChargeResponseSchema,
   cashfreeCreateSubscriptionRequestSchema,
   cashfreeCreateSubscriptionResponseSchema,
@@ -103,6 +105,19 @@ const FAILURE_CATEGORY_TABLE: ReadonlyMap<string, FailureCategory> = new Map([
   ["MANDATE_REVOKED", "mandate_revoked"],
   ["AUTHENTICATION_FAILED", "auth_required"],
   ["TECHNICAL_ERROR", "technical"],
+]);
+
+/**
+ * The neutral §14.3 mandate kind → the pinned `authorization_details.payment_methods`
+ * preference (F3). The pinned Subscriptions API version (`x-api-version: 2025-01-01`)
+ * exposes one payment-method preference per subscription, and each self-serve kind
+ * maps onto exactly one vendor value. `invoice` / `manual` are the off-platform
+ * Enterprise kinds — they have no vendor mandate — so they are deliberately absent.
+ */
+const PAYMENT_METHOD_TABLE: ReadonlyMap<PaymentMethodKind, string> = new Map([
+  ["mandate_upi", "upi"],
+  ["mandate_bank_debit", "enach"],
+  ["card", "card"],
 ]);
 
 /**
@@ -463,6 +478,14 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
 
   return {
     async createMandate(input: CreateMandateInput): Promise<CreateMandateResult> {
+      const paymentMethod = PAYMENT_METHOD_TABLE.get(input.paymentMethodKind);
+      if (paymentMethod === undefined) {
+        throw new TransportError(
+          `The mandate kind "${input.paymentMethodKind}" has no Cashfree mandate to create.`,
+          { retryable: false, code: "invalid_request" }
+        );
+      }
+
       const request = cashfreeCreateSubscriptionRequestSchema.safeParse({
         subscription_id: randomUUID(),
         customer_details: {
@@ -472,6 +495,7 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
         },
         plan_details: { plan_id: input.planRef },
         subscription_meta: { return_url: input.returnUrl },
+        authorization_details: { payment_methods: [paymentMethod] },
       });
       if (!request.success) {
         throw new TransportError(
@@ -496,12 +520,23 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
     },
 
     async chargeOnce(input: ChargeOnceInput): Promise<ChargeOnceResult> {
+      const request = cashfreeChargeRequestSchema.safeParse({
+        payment_amount: toMajorUnits(input.amountMinor),
+      });
+      if (!request.success) {
+        throw new TransportError("The charge request did not match the pinned Cashfree contract.", {
+          retryable: false,
+          code: "invalid_request",
+          cause: request.error,
+        });
+      }
+
       const response = await call({
         operation: "chargeOnce",
         url: `${baseUrl}/pg/subscriptions/${encodeURIComponent(input.ref.id)}/payments`,
         method: "POST",
         schema: cashfreeChargeResponseSchema,
-        body: { payment_amount: toMajorUnits(input.amountMinor) },
+        body: request.data,
         headers: { "x-idempotency-key": input.idempotencyKey },
       });
 
