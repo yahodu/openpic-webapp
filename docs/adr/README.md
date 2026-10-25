@@ -33,7 +33,7 @@ the rejected alternatives are recorded in
 
 | Holder (lane)                       | Reserved range                  | Next free |
 | ----------------------------------- | ------------------------------- | --------- |
-| board-wide / process (orchestrator) | `0300`–`0319`                   | `0309`    |
+| board-wide / process (orchestrator) | `0300`–`0319`                   | `0310`    |
 | OP-96 notifications follow-up       | `0146`–`0179`                   | `0149`    |
 | OP-97 in-app feed                   | `0180`–`0199`                   | `0183`    |
 | OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
@@ -76,8 +76,12 @@ open PR is declared in the handoff and gets a follow-up merge lane — card
 `t_892df2ea`, branch `OP-106-task-pr299-docs-tighten`), and `0308` (ADR-0308, the
 one-owner-per-branch landing rule — one card owns a branch's landing and its
 fallback/verification card is a `parents=[primary]` child, not an independent
-sibling; card `t_58139e6e`, branch `OP-110-task-one-owner-per-branch-adr`). Next
-free in the block is `0309`.
+sibling; card `t_58139e6e`, branch `OP-110-task-one-owner-per-branch-adr`), and
+`0309` (ADR-0309, the `git config` read-vs-write identity guard — read identity
+only with `--get`, write it only in an explicit local scope, never `--global`,
+and set the repo-local identity explicitly when provisioning a checkout/worktree;
+card `t_cdacca2f`, branch `OP-110-task-git-identity-guard-adr`). Next free in the
+block is `0310`.
 
 | ADR                                                                                | Title                                                                                                                   | Status                    |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -240,6 +244,7 @@ free in the block is `0309`.
 | [0306](ADR-0306-op101-stale-branch-deletion.md)                                    | A stale branch whose content is a subset of `main` is deleted; `main` is the only surviving ref                         | Accepted                  |
 | [0307](ADR-0307-unmerged-pr-blocks-card-completion.md)                             | A card must not complete on an unmerged deliverable; an open PR is declared and gets a merge lane                       | Accepted                  |
 | [0308](ADR-0308-one-owner-per-branch-landing.md)                                   | One card owns a branch's landing (one-owner-per-branch/worktree)                                                        | Accepted                  |
+| [0309](ADR-0309-git-config-read-vs-write-identity-guard.md)                        | The `git config` read-vs-write identity guard: read with `--get`, write identity only in an explicit local scope        | Accepted                  |
 | [0320](ADR-0320-op102-public-plans-endpoint-red.md)                                | OP-102 RED: the public plans endpoint — generic `display`, version ETag, ignored `includeInactive`, separate add-ons    | Accepted                  |
 | [0321](ADR-0321-op102-public-plans-endpoint-green.md)                              | OP-102 GREEN: project the catalogue onto the §3.1/§3.6 served shapes and wire both public reads onto the pipeline       | Accepted                  |
 | [0322](ADR-0322-op102-plans-etag-representation-red.md)                            | OP-102 follow-up RED: pin that the `GET /plans` ETag identifies the served representation                               | Accepted                  |
@@ -502,3 +507,31 @@ _The **OP-110** lane had no reserved range on `main`, so — as its first card �
 _The **OP-110** lane `Next free` cell advanced from `0481` to `0482` (card `t_81899e24`, OP-110 GREEN — retry charge, cancel, transactions, invoices and add-ons; branch `OP-110-task-self-serve-billing-green`, worktree `/root/openpic/openpic-webapp/.worktrees/t_81899e24`, stacked on the RED head `88b6b08`). `0480` is consumed by [ADR-0480](ADR-0480-op110-self-serve-billing-red.md) (the RED contract), so this record takes `0481`, the cell's value written by the RED, immediately before committing [ADR-0481](ADR-0481-op110-self-serve-billing-green.md). The GREEN implements the ADR-0480 contract exactly and edits **no** test, mock, fixture or factory: the pure `@/server/services/subscriptions/retry-charge` (`decideRetryEligibility` — `pendingDueMinor <= 0` → `no_pending_due` **first**, then `{revoked, expired}` → `mandate_not_chargeable` + `recoveryAction: "recreate_mandate"`, `paused` allowed) and `…/transactions` (`toTransactionDto` **builds** the §3.4 served item so a stored `providerCode` cannot ride along under a renamed key; a category-less stored failure is served `null`; `Date`s become RFC 3339 UTC strings); the shared one-time-charge seam `@/server/billing/one-time-charge` (`providerRefOf`, `insertPendingCharge` — a `pending` §14.4 row written **before** the provider call with the add-on's snapshot under `addon: {addonKey, entitlementKey, delta, quantity}` — `failPendingCharge`, `recordChargeRefs`); `storedAddonSchema`'s new `grantDelta` (ADR-0320 named no amount, so the contract's own `storage-50gb` example was not expressible); the five routes — `POST …/billing/retry-charge` (owner-gated `tenantStage()` + a **required** `Idempotency-Key`, `202 {status: "charge_initiated", billingTransactionId, pollUrl}`, `409 no_pending_due` / `409 mandate_not_chargeable` with `details.recoveryAction`), `POST …/billing/cancel` (`cancelMandate` then `200 {status, cancelAt, note}` with the status left to the webhook and a `note` matching `/not deleted/i`), `GET …/billing/transactions` (owner|admin, `occurredAt` desc, the §0.8 compound cursor whose `_id` half is revived to an ObjectId, a `kind` filter, the §0.15 scanner), `GET …/billing/invoices/{invoiceNumber}` (owner|admin, `404` when no stored asset carries the number) and `POST …/billing/addons` (owner, idempotent, `201`); the webhook projection's second correlation (a `payment_succeeded` settles the pending intent the event's **payment** ref matches — marking that row `succeeded` rather than inserting a second ledger row — inserts the **additive** `entitlementGrants` row and emits `billing.addon.purchased` plus `usage.limit.restored` only when the grant clears a block), and the reducer's reactivation rule widening to `status !== "active"` so §3.3's retry-from-`past_due` emits the restored pair (OP-108's own `payment_succeeded` pins seed an **active** row, so nothing shipped is contradicted); `ownerOnlyTenant()` moved out of OP-109's upgrade route into `@/server/tenancy/route-stage` so this lane reuses the one gate; and the two Appendix A.4 codes `no_pending_due` / `mandate_not_chargeable` appended to `BILLING_ERROR_CODES` + `BILLING_ERROR_TRANSPORT` (`ERROR_CATALOG` untouched). Evidence at the head: `tsc` clean, full unit **114 files / 1973 passed | 3 skipped**, full integration **83 files / 671 passed | 1 failed** — the one red is **I3**, which is left red under the dispute protocol because its payload cannot address the workspace it seeds (the fixture leaves the body's default `subscription_details.subscription_id` as `sub_test_001` while the seeded mandate is `sub_op110_001`, and no prior `retry-charge` call leaves an intent to correlate), a test-side defect routed to the Test Author as a child card rather than edited here — `billing-self-serve.test.ts` **33 passed | 1 failed (34)**; ESLint 0 errors and `prettier --check` clean; `docs/adr/README.md` remains the shared-ledger hotspot, so a later lane's merge is a union resolution keeping this row at `0481`. No number outside the lane range `0480`–`0499` is touched._
 
 _The **OP-110** lane `Next free` cell advanced from `0482` to `0483` (card `t_58320f19`, OP-110 follow-up TEST — the invoice-number decode pinned; branch `OP-110-task-invoice-number-decode-pin`, worktree `/root/openpic/openpic-webapp/.worktrees/t_58320f19`, off `origin/main` `2be55fb`, the `1.40.0` release chore on the OP-110 GREEN squash `7ab9780`). `0480` is consumed by [ADR-0480](ADR-0480-op110-self-serve-billing-red.md) (the RED contract) and `0481` by [ADR-0481](ADR-0481-op110-self-serve-billing-green.md) (the GREEN — both count as taken under [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §7), so this record takes `0482`, the cell's value re-read on `origin/main` immediately before committing; the lane cell advances to `0483`. [ADR-0482](ADR-0482-op110-invoice-number-decode-pins.md) is **test-only** — no production module, schema, index, fixture or factory is edited; the diff is the lane's integration spec (`billing-self-serve.test.ts`), this ADR and the README ledger cells. **F5** (routed by the OP-110 GREEN's round-1 review): `GET …/billing/invoices/{invoiceNumber}` decodes its path segment with an **unguarded** `decodeURIComponent`, so a segment that is not a valid percent-escape (`%`, `100%`, `%zz`) throws a `URIError` no layer catches and the route answers **`500`** instead of a contract refusal. The pin drives an owner-authenticated `GET` for each of the three segments and asserts `response.status` is **not** `500` **and** is `404`, with the envelope `code: "not_found"` — the same refusal §3.4/ADR-0481 §8 already serves when no stored asset carries the number (a `422 validation_failed` format gate was rejected: it would add a second refusal shape for a miss). The decode must therefore be **total** (`try { decodeURIComponent(segment) } catch { return segment }`), which the gated GREEN `t_7f9ccfa0` performs without touching an assertion. Evidence at the head: focused spec **3 failed | 34 passed (37)** and the three failures are exactly the pins (`AssertionError: expected 500 not to be 500`, the run log naming the `URIError`), so the RED is for the right reason; full unit **114 files / 1976 passed | 3 skipped**; full integration **83 files / 3 failed | 679 passed (682)** — the delta over `main` is the three pins and nothing else; `tsc` exit `0`, ESLint `0` problems and `prettier --check` clean. The pins are RED-by-design and are folded into the gated GREEN card (which must base its branch on this pins branch). `docs/adr/README.md` remains the shared-ledger hotspot: a later merge is a union resolution keeping this row at `0482` and the `Next free` cell at `0483`. No number outside the lane range `0480`–`0499` is touched._
+
+_The **board-wide / process** `Next free` cell advanced from `0309` to `0310`
+(card `t_cdacca2f`, OP-110 follow-up DOCS/ADR — record the `git config`
+read-vs-write identity guard; branch `OP-110-task-git-identity-guard-adr`,
+worktree `/root/openpic/openpic-webapp/.worktrees/t_cdacca2f`, off a fresh
+`origin/main` `1d1943b`; the cell's value `0309` was re-read on that
+`origin/main` immediately before committing). `0300`–`0308` are consumed on
+`main` (`0308` by [ADR-0308](ADR-0308-one-owner-per-branch-landing.md), PR
+#345), so this record consumes the orchestrator-reserved `0309` (decision card
+`t_937f0e96`) and advances the cell to `0310`.
+[ADR-0309](ADR-0309-git-config-read-vs-write-identity-guard.md) records why the
+shared checkout's repo-local `.git/config` held the literal `--global` for
+`user.name`/`user.email` — a mis-ordered `git config <key> --global` *read*
+is a **write** of `--global` into the **local** file — and fixes the guard: read
+identity only with `--get`, write it only in an explicit local scope
+(`git -C <repo> config --local user.name|user.email …`), never `--global`, and
+set the repo-local identity explicitly when provisioning a checkout or worktree
+(validated before the first commit). The failure is board-wide (every worktree
+inherits the shared repo-local config), invisible on trunk (GitHub re-authors
+squashes, so `7ab9780` is correct while `94f1899`/`1011550` are
+`--global <--global>`), silent and sticky, and it **re-occurred during its own
+repair** (the repair card's step-2 command `git config --global user.name
+user.email` is a write; the worker restored the global file byte-exactly to its
+181-byte credentials-only state). The enforcement arm is the repo's commit-time
+identity guard (board lane `OP-110-task-git-identity-guard`) wired into
+`.husky/pre-commit`, since CI (a clean checkout; `.git/config` not committed)
+cannot see the identity a worker's commit carries. No number outside
+`0300`–`0319` is touched._
