@@ -1,1 +1,27 @@
-pnpm lint-staged
+#!/usr/bin/env sh
+# Repo pre-commit hook.
+#
+# OP-110 follow-up: the first step guards the shared repo-local git identity.
+# The corruption (`user.name`/`user.email` = `--global` / `user.email`) lives in
+# `.git/config` and is inherited by every worktree, so the commit is refused
+# before anything else runs. See ADR-0309 (the rule) and ADR-0310 (the contract
+# and the worktree hook-firing facts).
+#
+# `core.hooksPath` is pinned to this *tracked* `.husky` directory — not to
+# husky's generated `.husky/_` — because a fresh `git worktree add` worktree has
+# the tracked hook but no generated shim (`.husky/_/.gitignore` is `*`, so the
+# shim only appears after `pnpm install`). Pinning to `.husky` makes this file
+# the hook body in every worktree, with no install step, and keeps it the
+# worktree's own copy rather than the main checkout's.
+# `scripts/git/pin-hooks-path.mjs` re-asserts the path in `prepare`, because
+# `husky` resets it to the relative `.husky/_` on every install.
+set -e
+
+node --experimental-strip-types scripts/git/check-identity.ts
+
+# `lint-staged` needs this worktree's dependencies. A worktree that has not
+# installed has none — and before this hook ran unconditionally, no hook ran
+# there at all — so skip it instead of triggering an install mid-commit.
+if [ -x node_modules/.bin/lint-staged ]; then
+  pnpm lint-staged
+fi

@@ -16,6 +16,7 @@
     "test:int": "vitest run --project integration",
     "test:e2e": "playwright test -c apps/web/playwright.config.ts",
     "test:coverage": "vitest run --project unit --project integration --coverage",
+    "check:git-identity": "node --experimental-strip-types scripts/git/check-identity.ts",
     "db:ensure-indexes": "node --experimental-strip-types --import ./scripts/db/register-extensionless.mjs scripts/db/ensure-indexes.ts",
     "novu:upsert-workflows": "node --experimental-strip-types --import ./scripts/db/register-extensionless.mjs scripts/novu/upsert-workflows.ts",
     "novu:assert-no-drift": "node --experimental-strip-types --import ./scripts/db/register-extensionless.mjs scripts/novu/assert-no-drift.ts",
@@ -24,7 +25,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "audit": "pnpm audit --audit-level=moderate",
-    "prepare": "husky"
+    "prepare": "husky && node scripts/git/pin-hooks-path.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
