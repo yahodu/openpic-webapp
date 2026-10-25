@@ -110,3 +110,45 @@ existing `contractViolation` line.
   helper.** Rejected: reading it from `unknown` needs an `as` cast (ESLint-banned)
   or an `instanceof` ternary whose false side is unreachable — the same uncovered
   branch. Hoisting the message keeps one source of truth with no branch.
+
+## Review sign-off — 2026-10-25
+
+_Reviewed in PR [#297](https://github.com/yahodu/openpic-webapp/pull/297) at head `f2e8ae7`
+— round 3 (contract lens), verdict **APPROVED**. The reviewer resolved the shared
+`docs/adr/README.md` union on the branch (after the trunk's PR #302 landed `ADR-0385` and
+moved the lane cell) and the PR was squash-merged to `main` (merge commit `2669c30`,
+verified an ancestor of `origin/main`)._
+
+Nothing above is retracted or reworded: §Consequences and the **Evidence** block stand
+exactly as merged. This section records only the review that landed them.
+
+- **Lens history on the same card.** Round 1 (artifact) and round 2 (execution) both
+  returned `changes_requested` on the recurring **shared ADR-ledger collision** — the pair
+  was minted at `0382` in round 1 and renumbered to `0383`/`0384` in round 2, each time
+  after a sibling card reached the trunk first. Round 3 (contract) verified the renumber to
+  **`0386`/`0387`**, the lane `Next free` cell then reading **`0388`**, and found **no
+  duplicate ADR number** on the merged tree (the repo guard `adr-numbering` **29/29**).
+- **The pins shipped byte-identical.** The spec
+  `apps/web/src/test/integration/payments-cashfree-drift-log.test.ts` still hashes
+  `sha256 e86ae726cb14…95411` at the pins head `94f5af0` and on the merged tree
+  (re-measured on `origin/main`), and was **re-run green** on the merged head: **4 passed
+  (4)** — exactly the figure §Evidence records.
+- **Independently reproduced on the merged tree:** pins **4 passed (4)**; full unit
+  **108 files / 1859 passed | 3 skipped**; full integration **76 files / 545 passed**;
+  combined `--coverage` **184 files / 2404 passed | 3 skipped, exit 0** →
+  **92.39 / 81.14 / 95.9 / 92.88**; `tsc` exit `0`; ESLint 0 errors / 0 warnings on the
+  touched files; `prettier --check` clean. These match the §Evidence block; the ESLint
+  caveat there (105 pre-existing warnings repo-wide, none on the touched file) still holds.
+- **Contract mapping (round 3).** Exactly one `payments.upstream_contract_violation` per
+  wire path, each carrying the pinned `operation` (`parseWebhook` / `fetchStatus`); the
+  public port `normalizeStatus` untouched; no drift line for a status inside the table; no
+  secret, signature or payload in the line; TSDoc on the new helper.
+- **Post-review status of the recorded findings.** The two items the review found are
+  recorded **Info-only, no code change**, and no card was raised for either: the
+  `normalizeWireStatus` `catch` is broader than today's single throw, and `createMandate`'s
+  response `subscription_status` is still not table-validated. They remain open
+  observations, not defects pinned by this card's contract.
+- **Related follow-up work, cited by card id only** (no ADR number asserted — the record of
+  an open follow-up may renumber before it lands): the boundary-lint pair `t_d3a8bf6f`
+  (TEST) → `t_b7f8adfd` (GREEN), and the board process card `t_e5485868`, which owns the
+  durable fix for the recurring ADR-ledger collision this card bounced on twice.
