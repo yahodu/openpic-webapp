@@ -278,7 +278,11 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     unique: true,
   },
 
-  // provider_webhook_events — webhook replay protection (§21).
+  // provider_webhook_events — webhook replay protection with zero application
+  // logic (§18.4, §21). The index is **partial on a string `providerEventId`**:
+  // a payload that carries no vendor event id has no competing id, and a plain
+  // unique index would collide every id-less delivery on `(provider, null)` —
+  // silently swallowing every second status change (ADR-0441 §2).
   {
     collection: COLLECTIONS.providerWebhookEvents,
     name: "provider_webhook_events_provider_event_unique",
@@ -287,6 +291,32 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["providerEventId", 1],
     ],
     unique: true,
+    partialFilterExpression: { providerEventId: { $type: "string" } },
+  },
+  // provider_webhook_events — the second identity shape of §18.4: two payloads
+  // that carry no event id are held apart by their content hash, and a byte
+  // replay of one of them collides here (ADR-0441 §2).
+  {
+    collection: COLLECTIONS.providerWebhookEvents,
+    name: "provider_webhook_events_provider_payload_unique",
+    keys: [
+      ["provider", 1],
+      ["payloadHash", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { providerEventId: null },
+  },
+  // provider_webhook_events — OP-111's `webhook-projection-sweep` reads every
+  // unprocessed row oldest-first; the partial index keeps it sized to the
+  // backlog rather than to the whole 90-day window (§10.2, §18.4).
+  {
+    collection: COLLECTIONS.providerWebhookEvents,
+    name: "provider_webhook_events_unprocessed_received",
+    keys: [
+      ["processedAt", 1],
+      ["receivedAt", 1],
+    ],
+    partialFilterExpression: { processedAt: null },
   },
   // provider_webhook_events — 90-day retention (§22).
   {
@@ -294,6 +324,60 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     name: "provider_webhook_events_expire_at_ttl",
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
+  },
+
+  // billing_transactions — the append-only ledger (§14.4). The unique
+  // `idempotencyKey` is what lets a re-projection after a crash write the same
+  // row instead of a second one. The collection is deliberately NOT in
+  // `TENANT_SCOPED_COLLECTIONS`: its `{subscriptionId, kind, occurredAt}` index
+  // is a legitimate per-subscription scan (a subscription already identifies
+  // one tenant), not a cross-tenant query (§14.4, ADR-0441 §4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_idempotency_key_unique",
+    keys: [["idempotencyKey", 1]],
+    unique: true,
+  },
+  // billing_transactions — the tenant's statement, newest-first (§14.4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_tenant_occurred",
+    keys: [
+      ["tenantId", 1],
+      ["occurredAt", -1],
+    ],
+  },
+  // billing_transactions — one subscription's history by kind (§14.4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_subscription_kind_occurred",
+    keys: [
+      ["subscriptionId", 1],
+      ["kind", 1],
+      ["occurredAt", -1],
+    ],
+  },
+  // billing_transactions — reconciliation resolves a vendor transaction id back
+  // to our row, so the partial multikey pair is the lookup (§11.1, §14.4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_external_refs",
+    keys: [
+      ["externalRefs.provider", 1],
+      ["externalRefs.id", 1],
+    ],
+    partialFilterExpression: { externalRefs: { $exists: true } },
+  },
+  // billing_transactions — the pending-status sweep scans only unsettled rows
+  // (§14.4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_status_pending",
+    keys: [
+      ["status", 1],
+      ["occurredAt", 1],
+    ],
+    partialFilterExpression: { status: "pending" },
   },
 
   // idempotency_keys — one claim per (key, scope, principal); the unique index
