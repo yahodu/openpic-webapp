@@ -309,3 +309,38 @@ green together at the pins' head — 192 files / **2549 passed | 3 skipped** —
 the same run with only the new block removed is 2544 passed | 3 skipped, i.e. the
 delta is exactly the five added integration cases (the file is integration-only, so
 the `unit` project is untouched).
+
+## Review sign-off — 2026-10-25 (card `t_2f62897a`, round 1 · artifact lens)
+
+The round-1 (**artifact-lens** + independent-execution) review of the
+characterization pins returned **APPROVED**: zero changes requested to the
+deliverable and zero reviewer edits to the spec or this record beyond this
+sign-off section.
+
+**Independent evidence at the merged tree `d769130`** (the reviewer verified the
+branch tip `c293b37` is tree-identical to the squash, so the bytes reviewed are
+the bytes that shipped, and `d769130` is an ancestor of `origin/main`):
+
+- `coverage-final.json` per-branch counts for `webhook-projection.ts`: `:519`
+  `[1,21]`, `:525` `[1,20]`, `:557` `[1,17]`, `:657` `[14,3]` — all four branches
+  the review's coverage data reported never taken are now non-zero on both paths.
+  The 12 remaining zero-paths are exactly the out-of-scope ones named above
+  (`:196`–`:198`, `:225`/`:226`, `:307`, `:395`, `:399`/`:400`, `:424`, `:482`,
+  `:494`).
+- Full unit + integration **192 files / 2549 passed | 3 skipped**, coverage exit
+  `0`; `prettier --check` clean; ESLint **0 errors** on the changed spec;
+  `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `adr-numbering` guard
+  **29 passed (29)**.
+- Squash diff = **2 paths / 354 insertions / 0 deletions** — no production file
+  and no existing case, harness, fixture, mock or factory edited.
+- **Independent mutation probes** in a throwaway worktree (removed afterwards):
+  making the guard fire on the `subscriptionPatch === null` path fails exactly the
+  two refund pins, and forcing `:519`/`:525`/`:557` `&& false` fails exactly one
+  intended pin each — with the module restored byte-identically (`git status`
+  clean).
+
+**Merge and number.** PR
+[#331](https://github.com/yahodu/openpic-webapp/pull/331) squash-merged as
+`d769130`; the head branch was auto-deleted. This sign-off consumes **no** ADR
+number — the lane's `Next free` cell stays `0444` and `docs/adr/README.md` is
+byte-identical to `origin/main`.
