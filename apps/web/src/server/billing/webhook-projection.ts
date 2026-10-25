@@ -281,15 +281,23 @@ export function reduceProviderEvent(input: ProjectionInput): ProjectionDecision 
     case "payment_succeeded": {
       const end = periodEnd(subscription, now);
       // Reactivation is a status flip on the same record: access returns to the
-      // plan they pay for, never to a hard-coded tier (§14.3). A payment that
-      // returns a **non-active** row to `active` restores the limits it was
-      // blocked on — §3.3's retry-from-`past_due` case is the same rule as the
-      // downgraded one it was already applied to (ADR-0480 §5).
-      const reactivating = subscription.status !== "active";
+      // plan they pay for, never to a hard-coded tier (§14.3). It is a
+      // **recovery** out of a recoverable dunning state, though, and §3.3 /
+      // §10.1.2 name exactly two such paths — `past_due` (the retry success) and
+      // `downgraded` (the projection row). A `cancelled` row is terminal by the
+      // tenant's own action and `incomplete` is the pre-activation state whose
+      // documented transition to `active` is the activation event, not a charge
+      // confirmation. For either, the payment is still recorded and
+      // `billing.payment.succeeded` still fires, but the row is not moved to
+      // `active` and the restored-limit pair is not emitted (ADR-0484).
+      const reactivating = ["downgraded", "past_due"].includes(subscription.status);
+      // An already-`active` row restates `active` (a no-op the ledger contract
+      // already carried); only a recovery moves a different status up to it.
+      const reachesActive = reactivating || subscription.status === "active";
       return {
         outcome: "applied",
         subscriptionPatch: {
-          status: "active",
+          ...(reachesActive ? { status: "active" } : {}),
           ...(reactivating ? { activePlanKey: subscription.subscribedPlanKey } : {}),
           pendingDueMinor: 0,
           gracePeriodEndsAt: null,

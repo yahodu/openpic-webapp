@@ -1,4 +1,4 @@
-# ADR-0482 — OP-110 follow-up TEST: the reactivation boundary pinned — a `payment_succeeded` cannot resurrect a `cancelled`/`incomplete` subscription
+# ADR-0483 — OP-110 follow-up TEST: the reactivation boundary pinned — a `payment_succeeded` cannot resurrect a `cancelled`/`incomplete` subscription
 
 - **Status:** Accepted · **Date:** 2026-10-25
 - **Card:** OP-110 follow-up TEST (`t_ffec14e2`) · **Branch:** `OP-110-task-reactivation-boundary-pin` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_ffec14e2`
