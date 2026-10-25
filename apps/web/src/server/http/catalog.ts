@@ -328,7 +328,9 @@ export const ENTITLEMENT_ERROR_TRANSPORT: Readonly<
  * may retry, and the OP-109 plan-change refusals `not_an_upgrade` (`422`,
  * `{ currentTierRank, targetTierRank, downgradeUrl }`) and
  * `acknowledgement_required` (`422`, `{ consequences }`) are appended here in
- * the same shape (ADR-0421, ADR-0460/ADR-0461).
+ * the same shape (ADR-0421, ADR-0460/ADR-0461). The OP-109 follow-up adds
+ * `not_a_downgrade` (`422`, `{ currentTierRank, targetTierRank, upgradeUrl }`)
+ * — the mirror of `not_an_upgrade` for the downgrade endpoint (ADR-0465).
  */
 export const BILLING_ERROR_TRANSPORT: Readonly<Record<BillingErrorCode, ErrorCatalogEntry>> = {
   invalid_return_url: {
@@ -355,6 +357,11 @@ export const BILLING_ERROR_TRANSPORT: Readonly<Record<BillingErrorCode, ErrorCat
     status: 422,
     retryable: false,
     message: "This plan change is not an upgrade.",
+  },
+  not_a_downgrade: {
+    status: 422,
+    retryable: false,
+    message: "This plan change is not a downgrade.",
   },
   acknowledgement_required: {
     status: 422,
