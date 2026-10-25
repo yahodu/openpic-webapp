@@ -1,3 +1,9 @@
+## [1.34.0](https://github.com/yahodu/openpic-webapp/compare/v1.33.0...v1.34.0) (2026-10-25)
+
+### Features
+
+- **lint:** OP-105 enforce the Cashfree adapter import boundary (F1) ([#310](https://github.com/yahodu/openpic-webapp/issues/310)) ([dd9a027](https://github.com/yahodu/openpic-webapp/commit/dd9a0278828bc4a30ba0b589f5763e6fec248927))
+
 ## [1.33.0](https://github.com/yahodu/openpic-webapp/compare/v1.32.1...v1.33.0) (2026-10-25)
 
 ### Features
