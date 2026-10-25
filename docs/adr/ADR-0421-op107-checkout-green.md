@@ -584,3 +584,129 @@ retires it** (OP-108's webhook projection), now that the route no longer runs `r
 are the historical record at the reviewed head `91135c6`, and the follow-ups' **own** records document what
 happened next. D1/D2 are not re-litigated here: the Test Author's resolution (card `t_7998de98`,
 §"Dispute resolution" above) stands and is already recorded.
+
+## Follow-up pins (card `t_e04e0e39`) — the index exit and the abandoned-`incomplete` refusal
+
+Round-1 (artifact lens) routed the **two remaining findings** of the `t_b54adec0` review into a TEST card,
+`t_e04e0e39` (`parents=[t_b54adec0, t_be4e7022]`, same lane worktree). It closes the two coverage gaps the
+previous section handed to the Test Author (its §"Coverage gaps handed to the Test Author" items 1 and 2).
+**Test-only**: at the pins head `git diff --name-only origin/main` touches exactly **one** file — the
+integration spec `apps/web/src/test/integration/billing-checkout.test.ts` — with **no production, mock,
+fixture or factory edited**, **no new ADR number consumed** (this append is additive; the lane's `Next free`
+stays `0422` and `docs/adr/README.md` is byte-identical).
+
+### 1. The suite now runs against the bootstrapped schema
+
+`ensureIndexes(app.db)` runs in the spec's `beforeAll` (the `plans-seed.test.ts:197` precedent), so the route
+faces the real `subscriptions_active_tenant_unique` partial index
+(`{ tenantId: 1 }`, unique, `partialFilterExpression: { cancelledAt: null }`) rather than a harness carrying
+only `_id_`. That is the precondition the previous section's gap named: **without the index two racing
+inserts both succeed and the insert exit is unreachable**, which is why `I7` alone could never pin it.
+
+### 2. `I10` / `I10b` — the `E11000` insert exit is the same `409`, never a `500`
+
+Two pins, and the honest split between them matters:
+
+- **`I10`** (the shape the card asked for) fires `Promise.all` with the index **built** and asserts the pair
+  resolves `[201, 409]`, one provider call, exactly one live row (`cancelledAt: null`), no `expired` row, and
+  the loser's `details.subscriptionId` naming the winner. **Measured, not assumed:** with the index present
+  the loser is still refused by `liveRowOf` **before** it inserts — the in-process `runExclusive` queue
+  serialises the read-then-claim, so the second caller reads the first caller's row. `I10` therefore pins the
+  observable contract _with the real schema_, but it does **not** by itself traverse the `E11000` branch.
+- **`I10b`** is the pin that does, and it is what makes the requirement a regression lock rather than a
+  restatement. A row can occupy the index's live slot while this caller's read classifies it as terminal —
+  seeded here as `status: "expired"` with `cancelledAt` still `null`, the exact disagreement
+  §"Decision §4" above names ("a row parked at `status: expired` with `cancelledAt` still null would keep
+  occupying the one-live-row slot"), and the same disagreement a second process creates when its row lands
+  after our read. The route decides `start`, inserts, and the index refuses the insert; the catch must answer
+  §3.3's refusal for the row that won, not fall through `errorResponse` as a `500`. `I10b` asserts `409` (not
+  `500`), `details` naming that occupant with its own status, **zero** provider calls, no second row written,
+  and the occupant untouched.
+
+**Mutation evidence (the pin has teeth).** `DUPLICATE_KEY = 11000` → `11001` in
+`route.ts` (`isDuplicateKeyError` stops recognising the driver code) makes `I10b` fail with
+`AssertionError: expected 500 to be 409`. That single-token mutation is also the proof that the `409` `I10b`
+observes comes from the catch and not from a `refused` decision — under the mutation the route reaches the
+driver error and answers `500`. The route was restored byte-identical afterwards (`git diff` empty).
+
+### 3. `I11` — what an abandoned `incomplete` row means, and who retires it
+
+`I11` seeds the workspace with a live `incomplete` mandate carrying a hosted link that has **already
+expired** (expired by construction — one hour before the run — so the fact under test does not depend on the
+wall clock), then starts a checkout. The refusal, pinned field by field:
+
+- `409` `subscription_already_active`, `retryable: false`, `details = { subscriptionId, status: "incomplete" }`
+  naming the abandoned row — the **same** refusal a live `active` row gets (`I3`); the expired link does not
+  soften or change it, and it is not the `422`/`contactSalesUrl` shape a sales-assisted tier gets;
+- `details` is asserted to be **exactly** that key pair (`keysOf(details)` → `["status","subscriptionId"]`) with
+  explicit negatives for `checkout`, `expiresAt`, `contactSalesUrl` and `supportUrl`: the refusal carries
+  **no recovery affordance at all** — the stored link and its expiry are not echoed, and there is no
+  sales/support target and no retry hint. A caller cannot learn from this response how to get unstuck;
+- the provider is never called, the abandoned row is **untouched** (still `incomplete`, `mandateStatus:
+pending`, `cancelledAt: null`, still carrying its original expired link and expiry) and no second row is
+  written;
+- a **second** attempt under a fresh `Idempotency-Key` answers identically — the refusal is stable, because
+  nothing in this tree retires the row.
+
+**Who retires the row, and what happens in the meantime (the decision this pin records).** This route does
+not, and must not: §"Follow-up GREEN §1" removed `restart` deliberately, because retiring a pending mandate
+is unsafe from a _checkout_ (one caller's in-flight mandate may not be retired by another caller's request).
+The owner of the transition is the **webhook projection (OP-108)**: a vendor
+expiry / `mandate_failed` / `LINK_EXPIRED` status-changed event projected onto the row sets it terminal
+(`status: "expired"`, `mandateStatus: "expired"`, `cancelledAt` set), which both tells the truth about the
+mandate **and releases the one-live-row slot** so a later checkout can start a fresh one. Until that lane
+lands and the event arrives, the documented behaviour — now pinned rather than assumed — is that the
+workspace is refused with the `409` above **indefinitely**, and the only remedy is an operator retiring the
+abandoned row (or the mandate eventually expiring at the vendor and OP-108 projecting it). `I11` is the
+regression lock on that: if a future change starts retiring, replacing or re-serving an abandoned row from
+this route, `I11` fails (its row-integrity and `keysOf` assertions), and the response gaining any recovery
+hint fails its exact-key-set assertion.
+
+**Mutation evidence (the "no recovery affordance" clause has teeth).** Adding `supportUrl: "/support"` to
+`alreadyActiveError`'s `details` makes `I11` fail with
+`AssertionError: expected [ 'status', 'subscriptionId', …(1) ] to deeply equal [ 'status', 'subscriptionId' ]`.
+Restored byte-identical afterwards.
+
+### 4. Recorded, not reworked
+
+- **`decideExistingSubscription`'s unit table is untouched** (`subscription-checkout.test.ts`, 27 passed): the
+  `reuse` decision stays unreachable at the route level, and no `201` reuse echo is restored. That is a
+  deliberate non-change — a valid-link `201` echo and `I7`'s `[201, 409]` cannot both hold — and the reading
+  stands: §3.2's `GET /billing/subscription` is the way back to a _valid_ pending mandate.
+- `I10`, `I10b` and `I11` are **characterization pins**: the shipped route already answers them, so this card
+  created **no gated GREEN sibling**. The two mutation probes above are what stand in for "these pins are
+  meaningful" now that there is no red to hand off.
+
+### Evidence at this head (test-only; production untouched)
+
+| Command                                                                                                          | Result                                                                                                                            |
+| ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `TMPDIR=/root/tmp-mongo vitest run --project integration apps/web/src/test/integration/billing-checkout.test.ts` | **23 passed (23)** (was 20) — the whole focused file re-run **3×**, green each time (incl. `I7`/`I7b` with the index built)       |
+| `vitest run --project unit` (full)                                                                               | 1914 passed \| 3 skipped (1917) — see the figure note below                                                                       |
+| `TMPDIR=/root/tmp-mongo vitest run --project integration` (full)                                                 | **586 passed (586)** at the review head (`582` before merging `origin/main`; was `565` at `f35aac9`)                              |
+| `vitest run --project unit apps/web/src/test/unit/adr-numbering.test.ts`                                         | **29 passed (29)**                                                                                                                |
+| `pnpm typecheck`                                                                                                 | exit `0` (root + contracts + web)                                                                                                 |
+| `eslint` on the touched spec                                                                                     | 0 errors, 0 warnings                                                                                                              |
+| `prettier --check` on the touched spec                                                                           | clean                                                                                                                             |
+| mutation `DUPLICATE_KEY 11000 → 11001`                                                                           | `I10b` → `AssertionError: expected 500 to be 409` (route restored byte-identical)                                                 |
+| mutation `details += supportUrl`                                                                                 | `I11` → `AssertionError: expected [ 'status', 'subscriptionId', …(1) ] to deeply equal [ 'status', 'subscriptionId' ]` (restored) |
+
+**Figure note (recorded as measured, not copied).** The card quoted `unit 1900 passed | 3 skipped` and
+`integration 565 passed`; both are **stale snapshots of older heads** (the `t_be4e7022` sign-off had to
+correct this card's two other figures for the same reason). Measured here: integration `586` at the review
+head = `565` + the **3** pins this card adds + the **18** integration tests `origin/main` gained after the
+card was written (`payments-cashfree-request-projections.test.ts` +14 and `payments-cashfree-expiresat.test.ts`
++4 with the `payments-cashfree-adapter.test.ts` edit, i.e. OP-105 #316/#317). For the unit figure, the `unit` project
+(`vitest.config.ts`) includes `packages/contracts/src/**/*.test.ts` and `apps/web/src/**/*.test.ts` and
+**excludes** `**/test/integration/**`, and this card's only change is an integration spec — so the pins are
+**provably unit-neutral** and `1914` is the trunk's own count; the gate that matters (zero failures, only the
+3 known skips) holds.
+
+### Open items handed on
+
+- **`I11`'s recovery path is still product-open.** The pin records the _refusal_; the convergence point is
+  OP-108's projection retiring the row (above). Once OP-108 lands, a pin should assert the end-to-end
+  transition: an abandoned `incomplete` row → projected terminal → **the next checkout answers `201`** and
+  the one-live-row slot is free again. That belongs to the OP-108 lane, not here.
+- The `I9` name/phone fallbacks (`UNSET_CONTACT_PHONE`, `FALLBACK_CUSTOMER_NAME`) remain documented
+  placeholders (§"Decision §5", §"Follow-up pins §2") — unchanged by this card.
