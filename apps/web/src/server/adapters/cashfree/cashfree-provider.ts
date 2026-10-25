@@ -147,6 +147,16 @@ const REFUND_SUCCESS = "SUCCESS";
 type CashfreeWebhookData = z.infer<typeof cashfreeWebhookEventSchema>["data"];
 
 /**
+ * The message a `subscription_status` outside the pinned table carries.
+ *
+ * Shared by the pure table lookup and the wire path so the thrown error and the
+ * drift line always carry the same text (ADR-0380 §6).
+ */
+function unknownStatusMessage(vendorStatus: string): string {
+  return `Unknown Cashfree subscription status: ${vendorStatus}.`;
+}
+
+/**
  * Map a raw vendor status onto the `{status, mandateStatus}` pair.
  *
  * An unknown status throws rather than defaulting: extending entitlements on an
@@ -156,7 +166,7 @@ type CashfreeWebhookData = z.infer<typeof cashfreeWebhookEventSchema>["data"];
 function normalizeVendorStatus(vendorStatus: string): NormalizedStatus {
   const normalized = STATUS_TABLE.get(vendorStatus);
   if (normalized === undefined) {
-    throw new UpstreamContractError(`Unknown Cashfree subscription status: ${vendorStatus}.`);
+    throw new UpstreamContractError(unknownStatusMessage(vendorStatus));
   }
   return normalized;
 }
@@ -371,6 +381,32 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
     return new UpstreamContractError(message, { cause });
   }
 
+  /**
+   * Normalize a vendor `subscription_status` observed on the wire.
+   *
+   * ADR-0380 §6 pins `payments.upstream_contract_violation` as the signal an
+   * on-call engineer is paged on for a response that breaks the pinned
+   * contract. The wire schemas are deliberately non-strict on the status
+   * string, so an unknown status only fails the table lookup — the one
+   * detection path that must still leave a line, naming the surface that
+   * observed it. A status inside the table stays silent, so the line remains a
+   * drift signal rather than a per-call line.
+   *
+   * @param operation - The port operation that observed the status
+   *   (`fetchStatus` or `parseWebhook`).
+   * @param vendorStatus - The raw vendor `subscription_status`.
+   * @returns The normalized `{status, mandateStatus}` pair.
+   * @throws UpstreamContractError (via {@link contractViolation}) when the
+   *   status is outside the pinned table.
+   */
+  function normalizeWireStatus(operation: string, vendorStatus: string): NormalizedStatus {
+    try {
+      return normalizeVendorStatus(vendorStatus);
+    } catch (error) {
+      throw contractViolation(operation, unknownStatusMessage(vendorStatus), error);
+    }
+  }
+
   /** Issue one call: pinned headers, a timeout, and a validated response. */
   async function call<T>(request: CashfreeCall<T>): Promise<T> {
     const startedAtMs = Date.now();
@@ -482,7 +518,7 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
         schema: cashfreeSubscriptionStatusResponseSchema,
       });
 
-      return normalizeVendorStatus(response.subscription_status);
+      return normalizeWireStatus("fetchStatus", response.subscription_status);
     },
 
     verifyWebhook(rawBody: string, headers: WebhookHeaders): boolean {
@@ -528,9 +564,10 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
         throw new UpstreamContractError("Cashfree webhook carried an unparseable event_time.");
       }
 
-      const kind = kindForEvent(type, data);
       const vendorStatus = data.subscription_details?.subscription_status;
-      const normalized = vendorStatus === undefined ? null : normalizeVendorStatus(vendorStatus);
+      const normalized =
+        vendorStatus === undefined ? null : normalizeWireStatus("parseWebhook", vendorStatus);
+      const kind = kindForEvent(type, data);
 
       const externalRefs: ProviderRef[] = [];
       const subscriptionId = data.subscription_details?.subscription_id;
