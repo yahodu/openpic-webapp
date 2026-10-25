@@ -1,3 +1,9 @@
+## [1.33.0](https://github.com/yahodu/openpic-webapp/compare/v1.32.1...v1.33.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-107 checkout mandate creation ([#301](https://github.com/yahodu/openpic-webapp/issues/301)) ([38bad08](https://github.com/yahodu/openpic-webapp/commit/38bad08b40ceb59b8df6317b57da89f59ddab1f3))
+
 ## [1.32.1](https://github.com/yahodu/openpic-webapp/compare/v1.32.0...v1.32.1) (2026-10-25)
 
 ### Bug Fixes
