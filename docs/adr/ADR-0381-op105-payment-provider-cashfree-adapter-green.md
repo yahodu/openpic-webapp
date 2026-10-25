@@ -234,3 +234,73 @@ head, and the follow-ups' own records document what followed. At the time this s
   documents the outcome.
 - **F3–F5 are routed**, with their pins and implementation still in flight on the orchestrator's
   chain behind card `t_d4deaa7a`; their own records document what followed.
+
+## Post-review decision — `createMandate` is deliberately **not** retry-safe; OP-107 owns the retry-safe surface
+
+_Card `t_0c3a6391` · 2026-10-25 · append-only sign-off, **no ADR number consumed**._
+
+This section is **appended**. The `## Context`–`## Consequences` body and the round-1
+`## Review sign-off` above stand unchanged as the record at the GREEN head; this note records the
+orchestrator's decision on finding **F4** of that review.
+
+### F4 — `createMandate` mints a fresh vendor id per call, so a retried create double-subscribes (Low)
+
+`CreateMandateInput` carries no idempotency key, and `createMandate` mints a **fresh**
+`randomUUID()` as the Cashfree `subscription_id` on **every** call (`apps/web/src/server/adapters/`
+`cashfree/cashfree-provider.ts`, `subscription_id: randomUUID()` — `:431` at the GREEN head, `:467`
+on `main`; §7 above). The vendor keys its subscription on that id, so a caller that retried a create
+would get a **second subscription** instead of replaying the first. Recorded in the round-1 sign-off
+as **F4 (Low)** and routed to the orchestrator card `t_d4deaa7a`.
+
+### Decision — option (b): the adapter is not retry-safe _by design_; the route owns retry-safety
+
+The orchestrator chose **option (b)** (2026-10-25) and **rejected** option (a) (add an
+`idempotencyKey` to `CreateMandateInput` plus a vendor idempotency mechanism — a **contract change**
+to the port):
+
+- **The adapter never retries.** §7 above: "no call is ever retried … the retry policy belongs to the
+  caller, not the adapter." The adapter has no caller it could promise anything to, so a vendor
+  idempotency key on the port would protect nobody.
+- **The caller is the checkout route**, `POST /tenants/{t}/billing/checkout`, owned by **OP-107**:
+  GREEN card **`t_5f08f665` §1** ("idempotency required") with the acceptance criterion _"Idempotent
+  replays do not call the provider twice"_, pinned by RED card **`t_98bf1d99` I5** ("a replay with the
+  same `Idempotency-Key` calls the provider exactly once"). That is the repo's `idempotencyKeys`
+  middleware (API Contract §0.9 — `{key, scope}` unique, TTL 24 h), so a client retry carrying the
+  same key is answered from the store and **never reaches `createMandate` a second time**.
+- **A port change would have had no downstream owner and no test that needs it** — the opposite of
+  what this board's TDD flow requires. Ownership therefore sits at the route boundary, not here.
+- **Cited by card id on purpose.** The OP-107 records are named as cards `t_98bf1d99` (RED, the I5
+  pin) and `t_5f08f665` (GREEN, §1 + the acceptance criterion); both are **done** and the whole
+  OP-107 lane landed on `main` in PR [#301](https://github.com/yahodu/openpic-webapp/pull/301)
+  (squash-merged as `38bad08`). No ADR number is asserted for them here, because numbering is the
+  owning lane's record to write.
+
+### Correction by note — ADR-0380 §5's "idempotent reference" wording
+
+[ADR-0380](ADR-0380-op105-payment-provider-port-red.md) §5 describes the create body as carrying "a
+non-empty `subscription_id` (**the idempotent reference**)". That phrase **is misleading**: the id is
+minted per call and is therefore unique per call, not stable across a caller's retries. The value is
+the vendor's _reference field_, not a stable idempotency token; true retry-safety is the route-level
+`Idempotency-Key` described above.
+
+- **The historical text stands.** ADR-0380's body is frozen and is **not** edited by this card.
+- **Where the two conflict, this note supersedes the phrase**: read ADR-0380 §5's parenthetical as
+  naming the vendor's _reference field_, and treat this section as the correction of record.
+
+### Post-review status
+
+Re-checked against the live PR/card state when this section was written: **F4's decision is recorded
+here** (this card, in flight until its PR merges); **F1 is landed** (PR
+[#310](https://github.com/yahodu/openpic-webapp/pull/310), squash-merged as `dd9a027`,
+[ADR-0388](ADR-0388-op105-vendor-adapter-import-boundary-pin.md) /
+[ADR-0389](ADR-0389-op105-vendor-adapter-import-boundary-green.md) on `main`); **F2 is landed** (PR
+[#297](https://github.com/yahodu/openpic-webapp/pull/297), squash-merged as `2669c304`,
+[ADR-0386](ADR-0386-op105-drift-log-unknown-status-pin.md) /
+[ADR-0387](ADR-0387-op105-drift-log-unknown-status-green.md)); **F3/F5 are in flight** as TEST card
+`t_9f1dd822` → GREEN card `t_27873de6` (not merged); and the **retry-safe surface this decision relies
+on is landed** — OP-107 cards `t_98bf1d99` (the I5 pin) and `t_5f08f665` (the implementation and its
+acceptance criterion) shipped on `main` in PR
+[#301](https://github.com/yahodu/openpic-webapp/pull/301) (`38bad08`).
+
+Nothing in §Context–§Consequences or in the round-1 `## Review sign-off` above is retracted: those
+sections document the state at the GREEN head, and this note records what followed.
