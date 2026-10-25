@@ -126,7 +126,7 @@ npx vitest run --project integration \
 The `past_due` control, the OP-110 I3 pin (`billing-self-serve.test.ts` › I3)
 and OP-108's own `payment_succeeded` pins are green. Static gates: `tsc -p
 apps/web/tsconfig.json --noEmit` exit 0, ESLint 0 errors (the single pre-existing
-`security/detect-object-injection` warning on `webhook-projection.ts:564` is
+`security/detect-object-injection` warning on `webhook-projection.ts:572` is
 unchanged), `prettier --check` clean.
 
 ## Consequences

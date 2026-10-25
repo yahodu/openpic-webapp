@@ -153,7 +153,7 @@ before and after; `git diff` on the file empty):
 - The pin is test-only: no production file is in the branch diff. Suite hygiene
   at the pins head: `tsc -p apps/web/tsconfig.json --noEmit` exit 0, `eslint`
   0 errors (the single pre-existing `security/detect-object-injection` warning on
-  `webhook-projection.ts:564` is unchanged), `prettier --check` clean.
+  `webhook-projection.ts:572` is unchanged), `prettier --check` clean.
 
 ## Alternatives
 
