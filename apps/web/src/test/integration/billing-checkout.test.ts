@@ -8,6 +8,7 @@ import { z } from "zod";
 import { POST as startCheckout } from "@/app/api/v1/tenants/[tenantId]/billing/checkout/route";
 import { cashfreeCreateSubscriptionRequestSchema } from "@/server/adapters/cashfree/schemas";
 import { COLLECTIONS } from "@/server/db/collections";
+import { ensureIndexes } from "@/server/db/indexes";
 import { seedPlans } from "@/server/plans/seed-plans";
 
 import { body } from "../helpers/auth-requests";
@@ -43,6 +44,20 @@ import { server } from "./setup";
  *   I5  a replay under the same `Idempotency-Key` calls the provider exactly
  *       once;
  *   I6  a non-owner member is `403 forbidden`.
+ *
+ * The follow-up pins extend that list (ADR-0421 §"Follow-up pins" / §"Follow-up
+ * GREEN"): `I7`/`I7b` the concurrent double-submit, `I8` a retired plan, `I9`×3
+ * / `I9b` / `I9c` the mandate customer, and this card's `I10` / `I10b` / `I11` —
+ * the one-live-row **index** exit and what an abandoned `incomplete` row means.
+ *
+ * ## This suite runs against the bootstrapped schema
+ *
+ * `ensureIndexes(app.db)` runs in the `beforeAll` hook below, so the route faces
+ * the real `subscriptions_active_tenant_unique` partial index — §3.3's
+ * **cross-process** one-live-row arbiter — exactly as production does. Without
+ * it the harness carries only the `_id_` index and two racing inserts both
+ * succeed, which is why the insert exit could not be pinned before (ADR-0421's
+ * follow-up GREEN records it as "the index exit is still unpinned").
  *
  * Around those, the ordinary behaviour §3.3 implies: the `401`/`400` ladder
  * (`user:complete` auth, a required `Idempotency-Key`), the `422
@@ -124,6 +139,9 @@ const FIXTURE_EXPIRES_AT = "2026-11-01T05:00:46.000Z";
 /** The phone number on file for the mandate-customer pins (a fixed value). */
 const ACCOUNT_PHONE = "9812345670";
 
+/** The hosted link an abandoned `incomplete` row still carries (§3.3, `I11`). */
+const ABANDONED_LINK_URL = "https://payments-test.cashfree.com/links/abandoned-001";
+
 /** The payments selection this suite drives the route with. */
 const PAYMENTS_ENV: Record<string, string> = {
   PAYMENT_PROVIDER: "cashfree",
@@ -150,6 +168,13 @@ beforeAll(async () => {
   // The pricing catalogue is data (§14.1); the checkout resolves the sold price
   // from it, so a workspace cannot buy a tier the platform does not sell.
   await seedPlans({ db: app.db });
+  // §3.3's one-live-row invariant is arbitrated by the partial index
+  // `subscriptions_active_tenant_unique` (`{cancelledAt: null}`), and the route's
+  // `E11000` mapping is what answers the cross-process race with the same
+  // `409`. The schema the route runs against therefore has to be the bootstrapped
+  // one — the `plans-seed.test.ts:197` precedent — or `I10b` cannot reach the
+  // insert exit at all.
+  await ensureIndexes(app.db);
 }, MONGO_READY_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -235,10 +260,20 @@ async function addMember(
   await updateProfile(user.userId, { primaryTenantId: tenantId });
 }
 
-/** Seed one live `subscriptions` row (schema §14.3) and return its id. */
+/**
+ * Seed one `subscriptions` row that still occupies the workspace's live slot
+ * (schema §14.3) and return its id.
+ *
+ * `cancelledAt` is deliberately left `null`, so the row is a member of the
+ * `subscriptions_active_tenant_unique` partial index whatever its `status` —
+ * which is the disagreement `I10b` exercises, and why `status` admits the
+ * terminal values too.
+ */
 async function seedLiveSubscription(options: {
   tenantId: string;
-  status: "incomplete" | "active" | "past_due" | "downgraded";
+  status: "incomplete" | "active" | "past_due" | "downgraded" | "expired" | "cancelled";
+  /** The hosted link the row carries (absent for a link-less row). */
+  checkout?: { readonly url: string; readonly expiresAt: Date };
 }): Promise<ObjectId> {
   const _id = new ObjectId();
   await app.db.collection(COLLECTIONS.subscriptions).insertOne({
@@ -248,6 +283,7 @@ async function seedLiveSubscription(options: {
     subscribedPlanVersion: 1,
     activePlanKey: "starter",
     status: options.status,
+    ...(options.checkout === undefined ? {} : { checkout: options.checkout }),
     priceKey: "starter-monthly-inr",
     paymentMethodKind: "mandate_upi",
     mandateStatus: "pending",
@@ -1076,5 +1112,178 @@ describe("POST /api/v1/tenants/{tenantId}/billing/checkout", () => {
 
     expect(response.status).toBe(201);
     expect(mandate.customer().customer_phone).toBe("0000000000");
+  });
+
+  it("I10: with the one-live-row index built, two concurrent checkouts answer 201 and 409 and reach the provider once", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-index-double-submit",
+    });
+    const tenantPath = tenantId.toHexString();
+    const provider = countProviderCalls();
+
+    // `ensureIndexes` (in `beforeAll`) has built
+    // `subscriptions_active_tenant_unique`, so this pairing runs against the
+    // real schema instead of a database carrying only `_id_`. The observable
+    // contract is exactly `I7`'s: one caller wins, the loser is §3.3's `409`
+    // naming the winner, and nothing expires the winner's in-flight mandate.
+    const [one, two] = await Promise.all([
+      startCheckout(
+        checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+      ),
+      startCheckout(
+        checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+      ),
+    ]);
+
+    const statuses = [one.status, two.status].sort((left, right) => left - right);
+    expect(statuses).toEqual([201, 409]);
+
+    const winner = one.status === 201 ? one : two;
+    const loser = one.status === 201 ? two : one;
+    const winnerBody = await body(winner);
+    const error = await errorEnvelope(loser);
+    expect(error).toMatchObject({ code: "subscription_already_active" });
+    // The refusal names the row that won the race.
+    expect(error.details).toMatchObject({ subscriptionId: winnerBody.subscriptionId });
+
+    expect(provider.calls()).toBe(1);
+    const live = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .find({ tenantId: tenantPath, cancelledAt: null })
+      .toArray();
+    expect(live).toHaveLength(1);
+    expect(String(live[0]?._id)).toBe(winnerBody.subscriptionId);
+    expect(
+      await app.db
+        .collection(COLLECTIONS.subscriptions)
+        .countDocuments({ tenantId: tenantPath, status: "expired" })
+    ).toBe(0);
+  });
+
+  it("I10b: an insert the one-live-row index refuses is answered as the same 409, never a 500", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-index-refusal",
+    });
+    const tenantPath = tenantId.toHexString();
+
+    // The window a second process sees: the row holding the workspace's live
+    // slot is one this caller's read did not classify as live. Seeding it with a
+    // terminal `status` while `cancelledAt` is still null is exactly that
+    // disagreement — ADR-0421 §4 names it ("a row parked at `expired` with
+    // `cancelledAt` still null would keep occupying the one-live-row slot") —
+    // so the route decides `start`, inserts, and the partial index refuses the
+    // insert.
+    const occupantId = await seedLiveSubscription({ tenantId: tenantPath, status: "expired" });
+    const provider = countProviderCalls();
+
+    const response = await startCheckout(
+      checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+    );
+
+    // The driver's `E11000` is mapped to §3.3's refusal for the row that won. A
+    // raw `MongoServerError` falls through `errorResponse` as a `500`, which is
+    // the regression this pin exists for.
+    expect(response.status).toBe(409);
+    const error = await errorEnvelope(response);
+    expect(error).toMatchObject({ code: "subscription_already_active" });
+    expect(error.details).toMatchObject({
+      subscriptionId: occupantId.toHexString(),
+      status: "expired",
+    });
+
+    // The refused insert never reached the provider, added no row, and left the
+    // occupant exactly as it found it.
+    expect(provider.calls()).toBe(0);
+    const rows = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .find({ tenantId: tenantPath })
+      .toArray();
+    expect(rows.map((row) => String(row._id))).toEqual([occupantId.toHexString()]);
+    expect(rows[0]).toMatchObject({
+      status: "expired",
+      cancelledAt: null,
+      cancelReason: null,
+    });
+  });
+
+  it("I11: an abandoned `incomplete` mandate is the same 409 and is not retired by this route", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-abandoned-incomplete",
+    });
+    const tenantPath = tenantId.toHexString();
+    // Expired **by construction**, so the fact that matters — "the hosted link
+    // is no longer usable" — holds whatever wall clock the suite runs against.
+    const expiresAt = new Date(Date.now() - 60 * 60 * 1000);
+    const abandonedId = await seedLiveSubscription({
+      tenantId: tenantPath,
+      status: "incomplete",
+      checkout: { url: ABANDONED_LINK_URL, expiresAt },
+    });
+    const provider = countProviderCalls();
+
+    const refused = await startCheckout(
+      checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+    );
+
+    // An `incomplete` mandate whose link has expired is still **live**, so §3.3
+    // refuses it with the same `409 subscription_already_active` a live `active`
+    // row gets — naming the row and its status, with no provider call.
+    expect(refused.status).toBe(409);
+    const error = await errorEnvelope(refused);
+    expect(error).toMatchObject({
+      code: "subscription_already_active",
+      retryable: false,
+      details: { subscriptionId: abandonedId.toHexString(), status: "incomplete" },
+    });
+
+    // The refusal is exactly `{subscriptionId, status}`: it carries **no**
+    // recovery affordance. The stored (expired) link and its expiry are not
+    // echoed, and there is no sales/support target and no retry hint — the two
+    // plausible "how do I get unstuck" shapes a caller might hope for.
+    expect(keysOf(error.details)).toEqual(["status", "subscriptionId"]);
+    expect(error.details).not.toHaveProperty("checkout");
+    expect(error.details).not.toHaveProperty("expiresAt");
+    expect(error.details).not.toHaveProperty("contactSalesUrl");
+    expect(error.details).not.toHaveProperty("supportUrl");
+
+    // Nothing in this tree retires the row (the webhook projection that would is
+    // OP-108's, and no webhook route exists yet), so the refusal is stable: a
+    // second attempt under a **fresh** idempotency key answers identically.
+    const retried = await startCheckout(
+      checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+    );
+    expect(retried.status).toBe(409);
+    expect(await errorEnvelope(retried)).toMatchObject({
+      code: "subscription_already_active",
+      details: { subscriptionId: abandonedId.toHexString(), status: "incomplete" },
+    });
+    expect(provider.calls()).toBe(0);
+
+    // The abandoned row is untouched — still live, still `incomplete`, still
+    // carrying its expired link — and no second row was written.
+    const rows = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .find({ tenantId: tenantPath })
+      .toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: "incomplete",
+      mandateStatus: "pending",
+      cancelledAt: null,
+      cancelReason: null,
+    });
+    const storedCheckout = rows[0]?.checkout as
+      { readonly url: string; readonly expiresAt: Date } | undefined;
+    expect(storedCheckout?.url).toBe(ABANDONED_LINK_URL);
+    expect(storedCheckout?.expiresAt.getTime()).toBe(expiresAt.getTime());
   });
 });
