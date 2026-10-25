@@ -1,3 +1,9 @@
+## [1.32.1](https://github.com/yahodu/openpic-webapp/compare/v1.32.0...v1.32.1) (2026-10-25)
+
+### Bug Fixes
+
+- **payments:** OP-105 emit the drift log for a vendor status outside the pinned table ([#297](https://github.com/yahodu/openpic-webapp/issues/297)) ([2669c30](https://github.com/yahodu/openpic-webapp/commit/2669c304cbea01f121d09e1c83396a99df3e7123))
+
 ## [1.32.0](https://github.com/yahodu/openpic-webapp/compare/v1.31.0...v1.32.0) (2026-10-25)
 
 ### Features
