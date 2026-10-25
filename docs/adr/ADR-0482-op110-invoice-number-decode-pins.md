@@ -115,3 +115,70 @@ this record takes **`0482`**, the `Next free` value the ledger table carried imm
 before committing. The README's `OP-110 self-serve billing lane` row advances to `0483`,
 the index gains this row, and the pool cell (`0500`+) is untouched. No number outside the
 block is touched.
+
+## Review sign-off — 2026-10-25 (card `t_7f9ccfa0`, round 1 · artifact lens)
+
+**Verdict — approved and landed.** The round-1 review of the OP-110 invoice-number
+decode passed with no changes requested and **zero reviewer edits** to the
+deliverable — this section is the only thing the review wrote. The lane shipped as PR
+[#346](https://github.com/yahodu/openpic-webapp/pull/346), squash-merged to `main` as
+`c2ebc589`; the release bot then advanced the trunk to `1d1943b`
+(`chore(release): 1.40.1 [skip ci]`). The reviewed head was
+`85f50b0543544c047dbe5df33a13eff4579a3e4d`, stacked on the pins head `2418ce7`.
+
+**Tree identity — the reviewed paths are preserved.** Restricted to the PR's
+deliverable paths the branch head and the squash are byte-identical (`git diff 85f50b0
+c2ebc589 -- docs/adr/ADR-0482-… apps/web/src/app/api/v1/tenants/[tenantId]/billing/invoices/[invoiceNumber]/route.ts`
+is empty). The whole-tree `git diff --name-only 85f50b0 c2ebc589` is **not** empty: it
+lists exactly three **trunk-owned** files added while the PR was open by the two
+concurrent lane merges ([#345](https://github.com/yahodu/openpic-webapp/pull/345), the
+ADR-0308 ledger note; [#343](https://github.com/yahodu/openpic-webapp/pull/343), the
+ADR-0481 sign-off) plus the shared `docs/adr/README.md` ledger — every differing line
+is trunk's own text, so the squash carries no invented content. (The handoff's
+shorthand "`git diff --stat 85f50b0 c2ebc589` empty" holds only of the reviewed paths;
+it is recorded here in that precise form.)
+
+**Evidence the reviewer re-derived.** `git diff 2418ce7..85f50b0` is exactly the one
+production file, `…/invoices/[invoiceNumber]/route.ts` (**16 insertions / 2
+deletions**); no other production, test, mock, fixture or factory line moved. The
+focused integration spec `billing-self-serve.test.ts` is **37 passed (37)** — re-run
+at the reviewed head and again on the merged trunk `1d1943b`. The `adr-numbering`
+guard is **29 passed (29)**, re-run on the merge tree and on the trunk; `prettier
+--check` is clean on the PR's paths; `gh pr checks 346` shows every substantive job
+pass (`ci`, `lint`, `unit_test`, `test_coverage`, `audit`, `secret-scan`,
+`env-changes`, `validate-branch-name`, `validate-pr-title`, CodeQL) — the only red is
+`audit-dev`, which fails by design under `continue-on-error` (ADR-0301) and is not a
+gate.
+
+**Honesty check.** `grep -rn decodeURIComponent apps/web/src` (excluding tests)
+returns this one route and nothing else: there is **no second site** of the defect
+class. No fixture-shaped hardcoding, no test-environment conditional, and no test,
+mock, fixture or factory was edited (`tests_not_touched`) — the decode was made total
+behind the RED pin without weakening a single assertion.
+
+**F1 (High — routed; not a defect in this deliverable).** The OP-110 lane's
+`Next free` cell is a **snapshot**, not a lock, so the reactivation-boundary lane (PR
+[#344](https://github.com/yahodu/openpic-webapp/pull/344), head `89dbfd7`) minted the
+same **`0482`** four minutes after this lane's pins commit `2418ce7` — the second
+record is `docs/adr/ADR-0482-op110-reactivation-boundary-pins.md`. This is an
+allocation collision in the ledger, not a defect in the decode fix: the boundary lane
+must **renumber past `0483`** before its PR lands. It is routed, not fixed here — a
+renumber card gated on the boundary-pin card `t_805e17b6` (card `t_c83556f9`) and a
+durable allocation-rule card for the board's `openpic-orchestrator` (card
+`t_6b5e0fc9`). No ADR identifier for the renumber is asserted here: the boundary lane
+may renumber again while its PR is open.
+
+**Info.** The superseded pins PR
+[#342](https://github.com/yahodu/openpic-webapp/pull/342) was closed and its branch
+deleted once the pins rode in this lane's PR. A stale, uncommitted copy of the pin
+block was found dirty in the shared main checkout; it was proven byte-identical to the
+trunk version (hence redundant) and discarded before the `--ff-only` sync.
+
+**Post-review status.** F1 is routed (renumber card + allocation-rule card) and stays
+open until the boundary lane renumbers; the two Info items are closed (the superseded
+PR is gone, the stale copy discarded). Nothing in the historical sections above —
+_Context_, _Decision_, _Evidence_, _Alternatives considered_, _Consequences_ and _ADR
+number allocation_ — is retracted: they record what shipped at `c2ebc589`, and the
+follow-ups' own records document what followed. This sign-off consumes **no** ADR
+number: the lane's `Next free` cell is unchanged and `docs/adr/README.md` is
+byte-identical to `origin/main`.
