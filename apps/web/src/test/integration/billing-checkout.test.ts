@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import { ObjectId } from "mongodb";
+import { Collection, ObjectId, type Document, type InsertOneOptions } from "mongodb";
 import { http, HttpResponse } from "msw";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { POST as startCheckout } from "@/app/api/v1/tenants/[tenantId]/billing/checkout/route";
@@ -47,8 +47,10 @@ import { server } from "./setup";
  *
  * The follow-up pins extend that list (ADR-0421 §"Follow-up pins" / §"Follow-up
  * GREEN"): `I7`/`I7b` the concurrent double-submit, `I8` a retired plan, `I9`×3
- * / `I9b` / `I9c` the mandate customer, and this card's `I10` / `I10b` / `I11` —
- * the one-live-row **index** exit and what an abandoned `incomplete` row means.
+ * / `I9b` / `I9c` the mandate customer, this card's `I10` / `I10b` / `I11` —
+ * the one-live-row **index** exit and what an abandoned `incomplete` row means —
+ * and the follow-up `I12`, the symmetric half of `I10b`: a **non**-duplicate
+ * insert failure is a `500`, never the `409` refusal.
  *
  * ## This suite runs against the bootstrapped schema
  *
@@ -160,6 +162,25 @@ interface ErrorEnvelope {
 
 /** The `returnUrl` every accepted request carries (an allow-listed origin). */
 const RETURN_URL = new URL("/billing/return", APP_ORIGIN).toString();
+
+/**
+ * The driver's own `Collection#insertOne`, read off the prototype **descriptor**
+ * at module load — before any spec installs a stub.
+ *
+ * `I12` replaces `Collection.prototype.insertOne` with a spy so the route's
+ * claim insert fails with a **non**-duplicate driver error; every other
+ * collection's insert (the idempotency key, another spec's seed) must still
+ * reach the real driver. Resolving `Collection.prototype.insertOne` *at call
+ * time* would find the spy and recurse, so the original is captured here once,
+ * straight from the property descriptor.
+ */
+const driverInsertOne = ((): typeof Collection.prototype.insertOne => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "insertOne");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("the driver's Collection#insertOne is missing from the prototype");
+  }
+  return descriptor.value as typeof Collection.prototype.insertOne;
+})();
 
 let app: TestApp;
 
@@ -1285,5 +1306,61 @@ describe("POST /api/v1/tenants/{tenantId}/billing/checkout", () => {
       { readonly url: string; readonly expiresAt: Date } | undefined;
     expect(storedCheckout?.url).toBe(ABANDONED_LINK_URL);
     expect(storedCheckout?.expiresAt.getTime()).toBe(expiresAt.getTime());
+  });
+
+  it("I12: a non-duplicate insert failure is not masked as the 409 refusal", async () => {
+    const owner = await app.signIn(makeIdentity("op107-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op107-non-duplicate-insert-failure",
+    });
+    const tenantPath = tenantId.toHexString();
+    const provider = countProviderCalls();
+
+    // The workspace has **no** live row, so the route decides `start` and makes
+    // the claim insert this pin fails — the exact write `I10b` lets succeed into
+    // the partial index. The driver failure is deliberately *not* a duplicate
+    // key: `code: 91` is a transient primary-election error, which is the whole
+    // point (a `catch` that maps *any* insert failure to §3.3's refusal would
+    // answer a server error as a `409` naming a live row the workspace does not
+    // have).
+    const driverError = Object.assign(new Error("not primary"), { code: 91 });
+    const insertStub = vi.spyOn(Collection.prototype, "insertOne").mockImplementation(function (
+      this: Collection,
+      document: Document,
+      options?: InsertOneOptions
+    ) {
+      if (this.collectionName === COLLECTIONS.subscriptions) {
+        return Promise.reject(driverError);
+      }
+      return driverInsertOne.call(this, document, options);
+    });
+
+    let response: Response;
+    try {
+      response = await startCheckout(
+        checkoutRequest({ tenantPath, cookie: owner.cookie, idempotencyKey: randomUUID() })
+      );
+    } finally {
+      insertStub.mockRestore();
+    }
+
+    // The symmetric direction of `I10b`: a non-duplicate driver failure is
+    // rethrown and surfaces as the app-wide `500 internal_error`. It must never
+    // be reported as the `409 subscription_already_active`, which is what the
+    // swallowed-error regression would answer.
+    expect(response.status).toBe(500);
+    const error = await errorEnvelope(response);
+    expect(error.code).toBe("internal_error");
+    expect(error.code).not.toBe("subscription_already_active");
+    expect(error.details).toBeUndefined();
+
+    // The refused insert wrote nothing, reached no provider, and left the
+    // workspace with no row at all.
+    expect(provider.calls()).toBe(0);
+    expect(
+      await app.db.collection(COLLECTIONS.subscriptions).countDocuments({ tenantId: tenantPath })
+    ).toBe(0);
   });
 });
