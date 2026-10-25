@@ -4,6 +4,7 @@ import security from "eslint-plugin-security";
 import tseslint from "typescript-eslint";
 
 import noDirectCollectionAccess from "./eslint-rules/no-direct-collection-access.mjs";
+import noDirectVendorAdapterImport from "./eslint-rules/no-direct-vendor-adapter-import.mjs";
 
 export default tseslint.config(
   {
@@ -278,12 +279,30 @@ export default tseslint.config(
     files: ["apps/web/src/**/*.ts", "apps/web/src/**/*.tsx"],
     plugins: {
       openpic: {
-        rules: { "no-direct-collection-access": noDirectCollectionAccess },
+        rules: {
+          "no-direct-collection-access": noDirectCollectionAccess,
+          "no-direct-vendor-adapter-import": noDirectVendorAdapterImport,
+        },
       },
     },
     rules: {
       "openpic/no-direct-collection-access": "error",
+      // Payments vendor boundary (OP-105 F1, ADR-0388/ADR-0389): only the
+      // adapter itself (`src/server/adapters/cashfree/**`) and the one
+      // composition root (`src/server/payments/get-payment-provider.ts`) may
+      // import the Cashfree adapter. Everywhere else depends on the neutral
+      // port or on the composition root.
+      "openpic/no-direct-vendor-adapter-import": "error",
     },
+  },
+  {
+    // The vendor adapter boundary is a production-source invariant: specs,
+    // mocks, factories and e2e drive the adapter directly (its own integration
+    // suite constructs it), so the rule is off there — the same shape the
+    // test-file block above applies to `no-restricted-properties`. A `RuleTester`
+    // spec exercises the rule's own contract independently of this scope.
+    files: ["**/*.test.ts", "**/*.test.tsx", "**/test/**", "**/mocks/**", "**/e2e/**"],
+    rules: { "openpic/no-direct-vendor-adapter-import": "off" },
   },
   prettier
 );
