@@ -123,6 +123,16 @@ const DECISION_CASES: readonly DecisionCase[] = [
   ["an expired row", existing({ status: "expired", checkout: null }), "start"],
   ["an `incomplete` row whose hosted link is still valid", existing(), "reuse"],
   [
+    "an `incomplete` row whose hosted link has already expired",
+    existing({
+      checkout: {
+        url: "https://psp.example.com/checkout/abc",
+        expiresAt: new Date("2026-10-25T09:45:00.000Z"),
+      },
+    }),
+    "restart",
+  ],
+  [
     "an `incomplete` row whose hosted link expires exactly now",
     existing({ checkout: { url: "https://psp.example.com/checkout/abc", expiresAt: NOW } }),
     "restart",
