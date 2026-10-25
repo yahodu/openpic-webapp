@@ -123,3 +123,55 @@ Adopt **per-lane reserved ranges** as the binding allocation policy for
 - **Keep "lowest free number at commit time"** — rejected: it is the status quo
   that produced four renumbers in a day and two `CONFLICTING` PRs; the check is
   unenforceable because it is stale the moment it is computed.
+
+## §8 — Same-lane concurrency: reserve at creation (rule A)
+
+_2026-10-25, card `t_e5485868` (orchestrator) — the OP-105 lane follow-up that
+closes the two same-lane number collisions._
+
+§7 makes an in-flight allocation count as **taken**, but it still leaves the
+number to be _derived by the worker_ from the `Next free` cell it reads at its
+branch cut. That value is a **snapshot of shared state**: two same-lane branches
+cut from the same `origin/main` read the same cell and mint the same number. On
+the OP-105 lane (`0380`–`0399`) that happened **twice** — first `0382` (two
+records cut off `2baaf14`), then `0383`+`0384` (the drift-log pair against the
+memory-provider pair, the same cut) — and each collision cost a review loop on
+the lane (card `t_e5485868`; see the two _number collision_ notes in
+[README](README.md)). Rule (A) replaces the snapshot with a reservation made
+**before the branch exists**, so there is no shared value left to race on.
+
+8. **Reserve at creation (rule A).** The **orchestrator is the allocator** (item
+   1): it allocates each ADR number **when it creates the card** and writes
+   `**Consumes: NNNN**` into that card's body — `none` for a card that mints no
+   number, such as this in-place amendment. The worker takes the reserved number
+   as given and **never** derives one from the `Next free` cell: not at its
+   branch cut, not immediately before committing, not to "advance the counter".
+   The cell becomes **informational** — it records the lane's reservation
+   high-water, and the card that lands a ledger row sets it to
+   `max(consumed)+1`. A card with no reserved number asks the allocator; it never
+   invents one. This supersedes the practice the §7 notes describe ("the cell's
+   value re-read at the branch cut immediately before committing"), which is what
+   produced both OP-105 collisions.
+9. **Pre-push re-read of trunk _and_ sibling reservations.** Immediately before
+   pushing, the worker re-reads (a) **trunk** — is `ADR-0NNN` already a file on
+   `origin/main`? — and (b) the lane's **in-flight reservations**: the
+   `**Consumes:**` values of the sibling cards, and any open branch/PR of the
+   lane carrying an `ADR-0NNN-…` file. Either hit is a collision on a _claimed_
+   number: the worker comments on the card and **blocks** — it never silently
+   renumbers. Renumbering is what hides the collision; the reservation is the
+   allocator's to re-issue.
+10. **A `README.md` ledger conflict resolves as a union.** When the only conflict
+    is `docs/adr/README.md`, resolve it by keeping **both** sides' rows in
+    ascending numeric order and setting the lane's `Next free` cell to
+    `max(consumed)+1` across both — **never pick-a-side**. A pick-a-side
+    resolution silently drops the lane's own row, which is how the first OP-105
+    collision presented as an ordinary index-only conflict; the union keeps both
+    rows, so a duplicate number stays visible to the guard and to the reviewer.
+    The mechanical half (a `prettier --write` to normalise the widened column
+    padding) is recorded in `docs/CONVENTIONS.md` §11.
+
+Rationale for (A) over serialising same-lane chains: rule (A) is closed under
+concurrency _by construction_ — no card computes its number from shared state —
+and it costs the allocator one field at card-creation time, where serialisation
+costs the lane wall-clock and depends on a cross-chain ordering edge being
+remembered. The choice is recorded on card `t_e5485868`.
