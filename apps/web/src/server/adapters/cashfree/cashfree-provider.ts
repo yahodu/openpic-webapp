@@ -77,6 +77,22 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const REPLAY_WINDOW_MS = 300_000;
 
 /**
+ * The one `subscription_expiry_time` shape the adapter admits: a full ISO 8601
+ * date-time (seconds, optional fractional part of any precision) carrying an
+ * **explicit** zone designator — `Z` or a `±HH:MM` offset (ADR-0393). Cashfree
+ * answers with a `+05:30` IST offset; a canonical `Z`/ms value is admitted too.
+ * A zone-less date-time is refused even though `new Date()` would parse it,
+ * because `new Date()` reads such a string as **host-local** time: the same
+ * vendor bytes would then become different instants on different servers.
+ *
+ * The fractional case is written as its own alternative (rather than the
+ * equivalent `(\.\d+)?`) so the pattern stays free of a nested quantifier, which
+ * `eslint-plugin-security` flags as a possible catastrophic-backtracking risk.
+ */
+const VENDOR_EXPIRY_SHAPE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(?:Z|[+-]\d{2}:\d{2})$|^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
  * The vendor `subscription_status` → `{status, mandateStatus}` table
  * (ADR-0380 §1). The two axes are split because the schema stores them
  * independently (§14.3).
@@ -434,20 +450,27 @@ export function createCashfreeProvider(config: PaymentProviderConfig): PaymentPr
    * one boundary that already speaks the vendor's dialect — rather than carried
    * onto our wire.
    *
-   * A value that cannot become a valid instant is a contract break, never
-   * garbage to return: like the schema-drift path in {@link call}, it raises
-   * `UpstreamContractError` (and pages on the drift line) instead of handing a
-   * caller `Invalid Date` or a raw vendor string.
+   * Only {@link VENDOR_EXPIRY_SHAPE} — a full ISO 8601 date-time carrying an
+   * explicit `Z` or `±HH:MM` zone designator — is admitted. A value that
+   * `new Date()` happens to parse but that lacks that designator (a bare date,
+   * a partial date, a space- or `T`-separated zone-less time) is refused too:
+   * `new Date()` reads a zone-less string as **host-local** time, so identical
+   * vendor bytes would become different instants on different servers (ADR-0393).
+   *
+   * A value that is refused — misshaped or outright unparseable — is a contract
+   * break, never garbage to return: like the schema-drift path in {@link call},
+   * it raises `UpstreamContractError` (and pages on the drift line) instead of
+   * handing a caller `Invalid Date` or a raw vendor string.
    *
    * @param operation - The port operation that observed the value.
    * @param vendorExpiry - The raw vendor `subscription_expiry_time`.
    * @returns The RFC 3339 UTC ms `Z` timestamp.
    * @throws UpstreamContractError (via {@link contractViolation}) when the
-   *   value is not a parseable instant.
+   *   value is not the vendor's explicit-zone ISO 8601 date-time shape.
    */
   function normalizeExpiry(operation: string, vendorExpiry: string): string {
     const parsed = new Date(vendorExpiry);
-    if (Number.isNaN(parsed.getTime())) {
+    if (!VENDOR_EXPIRY_SHAPE.test(vendorExpiry) || Number.isNaN(parsed.getTime())) {
       throw contractViolation(
         operation,
         "Cashfree returned an unparseable subscription_expiry_time.",

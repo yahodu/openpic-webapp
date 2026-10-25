@@ -141,3 +141,38 @@ takes **`0393`**, the number the orchestrator reserved for this card (decision
 `Next free` cell is a snapshot, not the authority: `0393` was reserved by the
 orchestrator irrespective of the cell's value. No number outside the lane range
 `0380`–`0399` is touched.
+
+## Evidence at the GREEN head
+
+The gated GREEN (`t_cc5ab12f`, branch `OP-105-task-expiry-shape-guard-pin`,
+inheriting this pin's branch) implemented the guard in
+`apps/web/src/server/adapters/cashfree/cashfree-provider.ts`:
+
+- A module-level `VENDOR_EXPIRY_SHAPE` pins the admitted shape, and
+  `normalizeExpiry` now refuses whenever `!VENDOR_EXPIRY_SHAPE.test(vendorExpiry)`
+  **or** the resulting instant is `NaN` — both through the existing
+  `contractViolation(...)` helper, so `payments.upstream_contract_violation`
+  still fires. The conversion `new Date(<value>).toISOString()` is unchanged.
+- **Encoding note.** The pattern is written as two alternations —
+  `…:\d{2}\.\d+(?:Z|±HH:MM)$` for the fractional case, `…:\d{2}(?:Z|±HH:MM)$`
+  for the whole-second case — rather than the equivalent `(\.\d+)?` group. The
+  nested quantifier triggers `security/detect-unsafe-regex`
+  (`eslint-plugin-security` recommended set) as a spurious catastrophic-backtracking
+  warning; the two forms were proved to accept exactly the same language over a
+  202,400-case differential sweep (structured variations + random garbage, 0
+  differences against the literal pinned above). No lint suppression is used.
+
+Evidence, all run in the inherited worktree with `TMPDIR=/root/tmp-mongo` for
+integration:
+
+- Focused integration spec
+  `apps/web/src/test/integration/payments-cashfree-expiresat.test.ts`:
+  `Tests 8 passed (8)` — the four new **I3** rows are green, and the ADR-0392 §I1
+  (3) + §I2 rows stay green.
+- Full `--project unit`: `Test Files 110 passed (110)` · `Tests 1914 passed | 3 skipped`.
+- Full `--project integration`: `Test Files 79 passed (79)` · `Tests 587 passed`.
+- `npx tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` **0 problems**
+  on the changed production file; `prettier --check` clean.
+- **Production file + this ADR only** — no test, mock, fixture or factory file
+  touched beyond the parent pin; no `NODE_ENV`/`process.env`/test-mode
+  conditional; no dependency added; no lint suppression.
