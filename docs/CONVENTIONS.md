@@ -181,11 +181,19 @@ resolution as an ADR so the next reader inherits the decision.
 
 ADR numbers are allocated in **per-lane reserved ranges**, never from a shared
 high-water mark. The orchestrator is the allocator: when it creates a lane's cards
-it assigns that lane a disjoint block of numbers and writes the block into every
-card body of the lane. A lane takes the **next free number inside its own block**
-and never consults the shared high-water mark, the tail of `docs/adr/README.md` or
-another lane's refs. Numbers allocated before the policy (`≤ 0145`) are frozen
-history and are never moved.
+it assigns the lane a disjoint block of numbers, and it reserves each ADR number
+**at card-creation time**, writing `**Consumes: NNNN**` into that card's body
+(`none` for a card that mints no number). The worker takes the reserved number as
+given and **never** derives one from the ledger — not from the block counter, not
+from the `Next free` cell, not from the shared high-water mark, not from the tail
+of `docs/adr/README.md`. The `Next free` cell is **informational**: the card that
+lands a ledger row sets it to `max(consumed)+1`. A card with no reserved number
+asks the allocator; it never invents one. Reserving at creation — rather than each
+worker deriving a number at its branch cut from a shared snapshot — is what makes
+a lane closed under concurrency. The authority for this rule, its rationale and
+the rejected alternatives are
+`docs/adr/ADR-0300-adr-number-range-allocation-policy.md` §8. Numbers allocated
+before the policy (`≤ 0145`) are frozen history and are never moved.
 
 - **The ledger.** The live range table is `docs/adr/README.md` § "ADR number
   allocation" (ADR-0300) — the single source of truth. Do not copy or re-derive
@@ -209,11 +217,14 @@ history and are never moved.
   obligations for the reviewer**, recorded here rather than mechanised.
 - **Index-only merge conflicts.** When a PR's only conflict is the ADR index
   (`docs/adr/README.md`, one row per lane), it resolves at merge time rather than
-  bouncing the card back to the implementer for a further round: take the base
-  version plus the lane's own index blocks (its table row and its lane note), then
-  `prettier --write` to normalise the widened column padding. The reviewer/merger
-  may perform that mechanical refresh; the lane's content, numbering and assertions
-  are untouched by it.
+  bouncing the card back to the implementer for a further round. The resolution is
+  a **union** — keep **both** sides' ledger rows in ascending numeric order and set
+  the lane's `Next free` cell to `max(consumed)+1` across both; **never
+  pick-a-side**, because a pick-a-side resolution silently drops a side's row, which
+  is how the first OP-105 collision presented as an ordinary index conflict. After
+  the union, `prettier --write` normalises the widened column padding. The
+  reviewer/merger may perform that mechanical refresh; the lane's content, numbering
+  and assertions are untouched by it.
 - **Rejected alternatives** (letters follow ADR-0300, where (a) is the adopted rule
   stated above).
   - **(b) Merger-owned finalisation** — the merger assigns the number when the
