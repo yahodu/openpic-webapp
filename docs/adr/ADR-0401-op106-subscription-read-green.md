@@ -205,8 +205,9 @@ unstable (`0402`–`0419` may renumber).
   `t_09e53bea` (characterisation pins added to
   `apps/web/src/test/integration/subscription-read.test.ts`; branch
   `OP-106-task-subscription-read-followup-pins`, PR
-  [#299](https://github.com/yahodu/openpic-webapp/pull/299), open at the time of
-  writing): the zeroed `pendingDue` → `null` case, `scheduledChange.effectiveAt`/
+  [#299](https://github.com/yahodu/openpic-webapp/pull/299), since squash-merged
+  to `main` as `0f53970`, an ancestor of `origin/main`): the zeroed `pendingDue`
+  → `null` case, `scheduledChange.effectiveAt`/
   `updatedAt` as RFC 3339 strings plus the null case, the equal-`updatedAt`
   tie-break tracking insertion order rather than status, and the terminal
   `cancelled` row with `cancelAt` rendering `cancelling`. The pins characterise
