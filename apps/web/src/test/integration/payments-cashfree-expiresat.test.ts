@@ -12,7 +12,7 @@ import {
 import { server } from "./setup";
 
 /**
- * I1–I2 — `createMandate().expiresAt` is canonicalized at the adapter boundary
+ * I1–I3 — `createMandate().expiresAt` is canonicalized at the adapter boundary
  * (OP-105 follow-up, review finding F1).
  *
  * The contract fixes one shape for every `Timestamp`: `docs/API Contract.md`
@@ -30,6 +30,11 @@ import { server } from "./setup";
  *
  * I1: a vendor IST-offset expiry comes back as the RFC 3339 UTC ms `Z` value.
  * I2: a value that cannot be parsed is refused, never returned as garbage.
+ * I3: a value that `new Date(...)` *can* parse but that is not the vendor's
+ *     shape is refused too. `new Date()` reads a zone-less string as
+ *     **host-local** time, so the same vendor bytes would become different
+ *     instants on different servers — the adapter admits only a full ISO 8601
+ *     date-time carrying an explicit `Z` or `±HH:MM` designator.
  */
 
 /**
@@ -42,6 +47,15 @@ const RFC_3339_UTC_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
  * `subscription_expiry_time` is second-precision and carries no `Z`.
  */
 const VENDOR_IST_OFFSET = /[+-]\d{2}:\d{2}$/;
+
+/**
+ * An **explicit** zone designator at the end of a date-time: `Z` or a `±HH:MM`
+ * offset. The adapter admits a value only when it carries one (F-1, card
+ * `t_d91849b7`) — its *absence* is exactly what makes `new Date()` read the
+ * string as **host-local** time, so identical vendor bytes would become
+ * different instants on different servers.
+ */
+const HAS_EXPLICIT_ZONE_DESIGNATOR = /(?:Z$|[+-]\d{2}:\d{2}$)/;
 
 /** The sandbox subscriptions endpoint the adapter posts a mandate to. */
 const CREATE_URL = "https://sandbox.cashfree.com/pg/subscriptions";
@@ -99,4 +113,30 @@ describe("Cashfree createMandate expiry normalization (MSW)", () => {
       UpstreamContractError
     );
   });
+
+  it.each<[string, string]>([
+    ["2025-06-01", "a bare date with no time-of-day"],
+    ["2025", "a partial date"],
+    ["2025-06-01 10:20:12", "a space-separated date-time with no zone designator"],
+    ["2025-06-01T10:20:12", "a full time with no zone designator"],
+  ])(
+    "I3: refuses the Date-parseable but vendor-misshaped expiry %s (%s) with UpstreamContractError",
+    async (vendorExpiry) => {
+      // Arrange — every row is a *real* instant to `new Date(...)`; that is
+      // exactly the trap. Without an explicit zone, `new Date()` reads the
+      // string as host-local time, so identical vendor bytes would yield
+      // different instants on different servers. The value is nonetheless not
+      // the vendor's shape and must never be admitted.
+      expect(Number.isNaN(new Date(vendorExpiry).getTime())).toBe(false);
+      expect(vendorExpiry).not.toMatch(HAS_EXPLICIT_ZONE_DESIGNATOR);
+      answerCreateWith(vendorExpiry);
+      const provider = createCashfreeProvider(makePaymentProviderConfig());
+
+      // Act & Assert — refused exactly like the outright-unparseable I2 case,
+      // never silently coerced through a host-local `Date` parse.
+      await expect(provider.createMandate(makeCreateMandateInput())).rejects.toBeInstanceOf(
+        UpstreamContractError
+      );
+    }
+  );
 });
