@@ -1,3 +1,9 @@
+## [1.32.0](https://github.com/yahodu/openpic-webapp/compare/v1.31.0...v1.32.0) (2026-10-25)
+
+### Features
+
+- **payments:** OP-105 implement the in-process memory payment provider for e2e ([#296](https://github.com/yahodu/openpic-webapp/issues/296)) ([4c5a7eb](https://github.com/yahodu/openpic-webapp/commit/4c5a7eb961512e06a9aaa9780ee1218a6cc10ccb))
+
 ## [1.31.0](https://github.com/yahodu/openpic-webapp/compare/v1.30.0...v1.31.0) (2026-10-25)
 
 ### Features
