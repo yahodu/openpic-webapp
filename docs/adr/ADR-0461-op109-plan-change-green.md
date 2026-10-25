@@ -94,6 +94,27 @@ acknowledgement_required` with `details.consequences` until
 …/scheduled-change` clears `scheduledChange` and answers `204` with a genuinely
 empty body (the pipeline's `isNoContentStatus` short-circuit).
 
+**Deviation from ADR-0460 §3 — `DowngradeConsequence.destructive` is `boolean`,
+not the literal `false`.** ADR-0460 §3 asked for `destructive: false` as a
+**literal** in the type. The RED's own runtime pin, however, is
+`CONSEQUENCES.filter((consequence) => consequence.destructive !== false)`: with a
+literal-`false` property TypeScript proves that comparison is always false and
+the repository's type-aware ESLint (`@typescript-eslint/no-unnecessary-boolean-literal-compare`
+
+- `@typescript-eslint/no-unnecessary-condition`) reports it as an **error** in
+  `apps/web/src/test/unit/plan-change.test.ts` — which the GREEN may not edit, and
+  which `strictTypeChecked` cannot lint whatever the property type is: the rule
+  reports a non-nullable boolean-to-`false` comparison even for plain `boolean`
+  (and a literal `false` also trips `no-unnecessary-condition`). The property is
+  therefore typed `boolean` — §3.3's invariant is upheld where it actually matters:
+  `computeDowngradeConsequences` emits `false` for every consequence it pushes, the
+  unit pin asserts it at runtime, and the served schema carries the same value —
+  and the rule is switched **off for that one spec file only** in
+  `eslint.config.mjs` (a scoped, commented exemption, the same shape the repo
+  already uses for `unbound-method` on the OP-94 fan-out specs). Flagged for the
+  Test Author: the pin should be rephrased (e.g. `consequence.destructive === true`)
+  so the exemption can be removed; the literal type can then be restored.
+
 ### 6. Two codes appended to the catalogue
 
 `not_an_upgrade` (`422`) and `acknowledgement_required` (`422`) are appended to

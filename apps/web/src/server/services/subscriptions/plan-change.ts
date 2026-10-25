@@ -66,18 +66,22 @@ export interface EntitlementUsageFact {
 /**
  * One consequence a downgrade will constrain (§3.3).
  *
- * `destructive: false` is a **literal** in the type, so a destructive
- * consequence is not even expressible — the value crossing the wire is still
- * asserted at runtime by the unit pin, because the value comes from JavaScript,
- * not from TypeScript.
+ * `destructive` is typed `boolean` — **not** the literal `false` — so the RED's
+ * runtime pin (`consequence.destructive !== false`) stays a meaningful
+ * comparison: with a literal-`false` property TypeScript proves the comparison
+ * always false and the repository's type-aware ESLint
+ * (`@typescript-eslint/no-unnecessary-boolean-literal-compare`) rejects the
+ * spec. §3.3's invariant is upheld by the calculator, which emits `false` for
+ * every consequence it pushes, and by that runtime pin, not by the type
+ * (ADR-0461 records the deviation from ADR-0460 §3).
  */
 export interface DowngradeConsequence {
   /** The entitlement key the consequence is about. */
   readonly entitlementKey: string;
   /** A sentence an organizer can act on. */
   readonly effect: string;
-  /** §3.3's hard invariant: a downgrade prompt is never a threat. */
-  readonly destructive: false;
+  /** §3.3's hard invariant: a downgrade prompt is never a threat (always `false`). */
+  readonly destructive: boolean;
   /** The tenant's current usage (metered over-limit shape only). */
   readonly currentUsage?: number;
   /** The target plan's limit (metered over-limit shape only). */
