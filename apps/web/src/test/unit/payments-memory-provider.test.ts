@@ -32,7 +32,7 @@ import {
  * The memory provider's wire format is deliberately **our own normalized
  * event** (there is no vendor to emulate): the raw webhook body is
  * `JSON.stringify(<NormalizedProviderEvent with provider "memory">)`. That is
- * what `parseWebhook` validates and what an e2e signs — see ADR-0382.
+ * what `parseWebhook` validates and what an e2e signs — see ADR-0383.
  */
 
 /** The fixed instant the freshness window and the default timestamp are measured against. */
@@ -306,5 +306,103 @@ describe("memoryPaymentProvider — webhook signer and parser (§3)", () => {
 
     // Assert
     expect(verifier.verifyWebhook(rawBody, headers)).toBe(true);
+  });
+});
+
+/**
+ * The three port methods ADR-0384 §3 implemented but left unpinned. These are
+ * **characterization pins** of shipped behaviour (ADR-0385): the memory
+ * provider has no vendor to translate, so `normalizeStatus` /
+ * `normalizeFailureCategory` read *our own* vocabulary and fail safe on
+ * anything outside it, and `fetchStatus` reports a ref it minted as healthy
+ * because the provider holds no state.
+ */
+describe("memoryPaymentProvider — fetchStatus (§4)", () => {
+  it("reports a ref it minted as healthy: an active subscription on an active mandate", async () => {
+    // Arrange
+    const { memoryPaymentProvider } = await loadProvider();
+    const provider = memoryPaymentProvider({ env: "sandbox" });
+
+    // Act
+    const status = await provider.fetchStatus(SUBSCRIPTION_REF);
+
+    // Assert
+    expect(status).toEqual({ status: "active", mandateStatus: "active" });
+  });
+
+  it("holds no state: refs of different kinds and environments answer alike", async () => {
+    // Arrange
+    const { memoryPaymentProvider } = await loadProvider();
+    const sandbox = memoryPaymentProvider({ env: "sandbox" });
+    const production = memoryPaymentProvider({ env: "production" });
+
+    // Act
+    const statuses = await Promise.all([
+      sandbox.fetchStatus(SUBSCRIPTION_REF),
+      production.fetchStatus({ ...SUBSCRIPTION_REF, kind: "payment", id: "mem_pay_1" }),
+    ]);
+
+    // Assert
+    expect(statuses[0]).toEqual(statuses[1]);
+    expect(statuses[1]).toEqual({ status: "active", mandateStatus: "active" });
+  });
+});
+
+describe("memoryPaymentProvider — normalizeStatus (§4)", () => {
+  it.each([
+    ["incomplete", "incomplete", "pending"],
+    ["active", "active", "active"],
+    ["past_due", "past_due", "paused"],
+    ["downgraded", "downgraded", "revoked"],
+    ["cancelled", "cancelled", "revoked"],
+    ["expired", "expired", "expired"],
+  ])(
+    "maps our own %s status onto the %s / %s axis pair",
+    async (vendorStatus, status, mandateStatus) => {
+      // Arrange
+      const { memoryPaymentProvider } = await loadProvider();
+      const provider = memoryPaymentProvider({ env: "sandbox" });
+
+      // Act
+      const normalized = provider.normalizeStatus(vendorStatus);
+
+      // Assert
+      expect(normalized).toEqual({ status, mandateStatus });
+    }
+  );
+
+  it("defaults a value outside our own status vocabulary to incomplete / pending", async () => {
+    // Arrange
+    const { memoryPaymentProvider } = await loadProvider();
+    const provider = memoryPaymentProvider({ env: "sandbox" });
+
+    // Act + Assert
+    expect(provider.normalizeStatus("ON_HOLD")).toEqual({
+      status: "incomplete",
+      mandateStatus: "pending",
+    });
+  });
+});
+
+describe("memoryPaymentProvider — normalizeFailureCategory (§4)", () => {
+  it.each(["insufficient_funds", "mandate_revoked", "auth_required", "technical"])(
+    "maps our own %s category onto itself",
+    async (category) => {
+      // Arrange
+      const { memoryPaymentProvider } = await loadProvider();
+      const provider = memoryPaymentProvider({ env: "sandbox" });
+
+      // Act + Assert
+      expect(provider.normalizeFailureCategory(category)).toBe(category);
+    }
+  );
+
+  it("defaults a code outside our four categories to technical", async () => {
+    // Arrange
+    const { memoryPaymentProvider } = await loadProvider();
+    const provider = memoryPaymentProvider({ env: "sandbox" });
+
+    // Act + Assert
+    expect(provider.normalizeFailureCategory("CARD_DECLINED")).toBe("technical");
   });
 });
