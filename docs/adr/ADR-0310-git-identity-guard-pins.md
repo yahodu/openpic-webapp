@@ -295,3 +295,62 @@ carries this GREEN was made through it.
 **Residual, unchanged from before.** A brand-new clone has no `core.hooksPath`
 until its first `pnpm install` (the same window husky itself has), and a manual
 `npx husky` outside `prepare` resets the key until the next install.
+
+## Review sign-off — 2026-10-25 (card `t_5f824ce6`, round 1 · artifact + execution lens)
+
+Append-only: nothing above is retracted or edited. This section records the
+REVIEW/LAND of [PR #348](https://github.com/yahodu/openpic-webapp/pull/348) by the
+card `t_5f824ce6`, and it consumes **no** ADR number — the board-wide `Next free`
+cell and `docs/adr/README.md` are unchanged.
+
+**Heads.** Reviewed head `a545ebe` (PR #348, branch `OP-110-task-git-identity-guard`).
+Post-merge head `2019aa2`, after absorbing `origin/main` `10358d5`. Squash-merge
+`2f5a0806` — `git merge-base --is-ancestor 2f5a0806 origin/main` exits `0`, and
+local `main` == `origin/main` == `2f5a0806` at land time.
+
+**Guard-firing evidence (the point of the change).** Reproduced independently in a
+throwaway worktree of the reviewed SHA that was never installed (`node_modules`
+ABSENT, `.husky/_` ABSENT, `core.hooksPath` = `.husky`): a corrupt
+`user.name = --global` → commit **rc=1** with the guard's stderr message; a corrupt
+`user.email = user.email` → **rc=1**; a healthy identity → **rc=0**; and a
+**negative control** with husky's default `core.hooksPath = .husky/_` and a corrupt
+name → **rc=0** (no hook fires, so the `.husky` pin is load-bearing). Re-run at the
+merged head `2019aa2` and again on the merged trunk `2f5a0806`: same results.
+
+**Validator contract.** RED reproduced (`Cannot find module
+'../../../../../scripts/git/identity-guard'` with the module hidden) → GREEN
+`29 passed (29)`. An independent node probe over 12 classes (valid; `--global` /
+`user.email` as either field; empty; whitespace-only; unset; padded `" --global "`)
+matched the contract with `probe_failures=0`; the CLI exits `0` on a healthy
+identity and `1` with the message on stderr for either corrupt field, printing the
+config-key **names** only.
+
+**Gates at the head.** ESLint 0 problems, `prettier --check` clean, `tsc` on both
+projects exits `0`, full unit **115 files / 2005 passed | 3 skipped**, the
+`adr-numbering` guard **29/29** with no duplicate `ADR-NNNN`.
+
+**Ledger conflict (integration, not a renumber).** `origin/main` landed `ADR-0309`
+(PR [#353](https://github.com/yahodu/openpic-webapp/pull/353), `10358d5`) mid-review,
+so `docs/adr/README.md` conflicted at three places. The numbers are distinct and the
+guard is green on the merged tree, so it was resolved as a union: cell `0311`
+(highest), rows `0309` + `0310` ascending, the `0309` prose taken from main's landed
+wording with "Next free in the block is `0311`". No deliverable file was edited by
+the reviewer.
+
+**CI evidence at `2019aa2`.** `CI` (pull_request) success, `PR Checks`
+(pull_request) success, `CI Evidence Guard` (push) success, `CodeQL PR #348`
+success — all with `head_sha = 2019aa280c208ccd21c9d55ccc26b922f573c057`.
+
+**Findings routed (not fixed here).**
+
+- **F1 (Low).** `scripts/git/pin-hooks-path.mjs` swallows a failed `core.hooksPath`
+  pin in a bare `catch {}`, so a checkout where the pin cannot be written silently
+  loses the guard → TEST card `t_60e20c44` → gated GREEN card `t_de160aea`.
+- **F2 (Info).** This record's own "ADR-0309 … unmerged at this head" wording is
+  head-scoped and predates ADR-0309 landing. Recorded; no card.
+- **F3 (Info).** The guard is bypassable with `git commit --no-verify` and does not
+  cover server-side commits. Inherent to a hook and covered by the durable rule in
+  ADR-0309. Recorded; no card.
+
+No ADR number is asserted for the still-unmerged follow-ups: they are cited by card
+id (`t_60e20c44`, `t_de160aea`) and PR number only.
