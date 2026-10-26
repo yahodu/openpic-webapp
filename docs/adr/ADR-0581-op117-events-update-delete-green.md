@@ -1,0 +1,225 @@
+# ADR-0581 — OP-117 GREEN: update / archive / delete event implemented (PATCH + DELETE `/events/{e}`, `POST /events/{e}/archive`)
+
+- **Status:** Accepted · **Date:** 2026-10-26
+- **Card:** OP-117 GREEN (`t_a6a8f636`) · **Branch:** `OP-117-feature-events-update-delete` (based on the pins head `e83d0e6`, itself the pins branch `OP-117-task-events-update-delete` merged with `origin/main` incl. OP-116) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_a6a8f636`
+- **Relates to:** [ADR-0580](ADR-0580-op117-events-update-delete-red.md) (the RED contract this card implements), [ADR-0560](ADR-0560-op116-events-list-get-red.md) / [ADR-0561](ADR-0561-op116-events-list-get-green.md) (the detail route this card's mutations extend), [ADR-0520](ADR-0520-op115-events-create-red.md) / [ADR-0521](ADR-0521-op115-events-create-green.md) (the create lane's windows/DTO/entitlement shapes), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox the emissions ride), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
+- **Contract:** §4.1 (PATCH / archive / DELETE), §0.10 (ETag / If-Match), §0.4 (never a cross-tenant oracle), §22 (the ordered purge) · **Schema:** §15.1 (`events`), §15.2 (`event_organizers`), §18.3 (outbox) · **Doc:** `docs/API Contract.md` Part 4
+
+## Context
+
+The pins card (`t_c44493a2`, ADR-0580) delivered a test-only RED across three
+files: one unit spec (16 cases, the recompute / whitelist / start-lock units),
+one integration spec (12 cases driving PATCH / archive / DELETE in-process
+against MongoDB-memory-server) and one e2e journey (create → PATCH with ETag →
+delete). This card implements the ADR-0580 contract, ships the pins
+byte-unchanged, and turns every **server-side** behaviour green. One integration
+assertion (`I4`'s final `countDocuments({}) == 0`) is unsatisfiable as written
+— the harness sign-in the fixture itself performs emits two outbox rows the
+delete flow could never remove (section D). Each asserted server behaviour is
+independently proven.
+
+## Decision
+
+### P1 — Module contract (the three units, ADR-0580 §1)
+
+`@/server/events/windows` gains `recomputeWindows({endAt, postUploadDays,
+retentionDays}) → {uploadWindowEndsAt, retentionExpiresAt}` — the two existing
+per-window helpers composed in one call, `null` on either entitlement
+materialising that window as `null` (U1). **New** `@/server/events/update`
+exports `EVENT_EDITABLE_FIELDS` (the ten §4.1 field names, verbatim),
+`findForbiddenEditableFields(supplied)` (supplied keys outside the set; a key
+whose value is `undefined` is invisible — the `PATCH /me` precedent) and
+`isEventLocked(now, startAt)` (`now.getTime() >= startAt.getTime()`, so the
+exact `now === startAt` boundary counts as started) (U2/U3). All three are pure
+and fully covered by the 16 unit cases.
+
+### P2 — `PATCH /api/v1/events/{eventId}` (I1/I2/I6/I7/I8, U2-at-the-wire)
+
+The OP-116 detail route file additionally exports `PATCH`, same
+`route: "/api/v1/events/:eventId"`, `userAuth` admission, and a
+**`defineRoute` ETag stage composed over a database read** (`dbBackedEtagStage`):
+the stage's `resolve` is synchronous per the `etagStage` contract, so the route
+loads the row first and runs the existing `etagStage({ resolve: () => current,
+required: true })` against the captured tag — missing `If-Match` →
+`428 precondition_required` (`details.header: "If-Match"`), stale →
+`412 etag_mismatch` (`details.currentETag`), with the refusal happening before
+any write (I1). The handler order:
+
+1. row missing → `404`; no relationship (`resolveEventActorRole` below) → `404`
+   (never an oracle);
+2. `status === "deleting"` → `409 event_deleting` with
+   `details.purgeScheduledAt` (I5b);
+3. `findForbiddenEditableFields(body)` non-empty → `422 forbidden_field` with
+   `details.fields` (U2-at-the-wire);
+4. a supplied `startAt` while `isEventLocked(now, storedStartAt)` →
+   `409 event_already_started` (I7);
+5. date edits: instants normalised (`normalizeInstantToUtc`, a malformed
+   instant → `validation_failed`), `endAt > startAt` enforced
+   (`invalid_date_range`), `computeDurationDays(effectiveStart, effectiveEnd)`
+   re-checked against `events.duration_days` → `403 plan_limit_exceeded` with
+   `details.requestedDays` (I8, mirroring the create route's 403/402 split),
+   then **both windows recomputed** through `recomputeWindows` from the plan's
+   `events.post_upload_days` / `gallery.retention_days` effective limits
+   (I2: `uploadWindowEndsAt = endAt + 7d`, `retentionExpiresAt = endAt + 90d`
+   on the starter plan);
+6. the `$set` built from the supplied editable fields only; `updatedAt: now`;
+7. **one transaction**: `updateOne` + `emitDomainEvent(event.details.updated)`
+   (the outbox row is assertable right after the response — the API does not
+   coalesce, the notification resolver does), then a re-read → full Event DTO
+   with the **new** quoted ETag (`eventETag(updatedAt, schemaVersion)`), whose
+   response-header merge order (`{...stageHeaders, ...result.headers}`) lets the
+   post-write tag win over the stage's pre-write one.
+
+`logoAssetId`/`watermarkAssetId` are validated as 24-hex ids and stored as
+`ObjectId|null`; `description` is sanitised to inert plain text exactly like the
+create route (OP-115 I9); `displayTimeZone` is IANA-checked
+(`unknown_timezone`).
+
+### P3 — Admission helper
+
+New `@/server/events/access` exports
+`resolveEventActorRole(db, eventId, tenantKey, userId)` →
+`"organizer" | "co_organizer" | "tenant_member" | null`: an `event_organizers`
+row (`role` in `organizer|co_organizer`, `revokedAt: null`, keyed by the
+caller's user id) **or** an active `tenantMembers` row of the event's tenant.
+`null` → `404`. PATCH admits every role; archive/delete gate on
+`"organizer"` only (a co-organizer → `403 forbidden`, I3).
+
+### P4 — `POST /api/v1/events/{eventId}/archive` (I3/I3b)
+
+New child route file exports `POST` (`route: "/api/v1/events/:eventId/archive"`,
+`userAuth`). Organizer-only (co-organizer → `403`, nothing emitted); a
+`deleting` row → `409 event_deleting`; success → `200` with the full Event DTO
+and a synchronous `emitDomainEvent(event.archived)` (the I3b outbox row is
+assertable right after the response).
+
+### P5 — `DELETE /api/v1/events/{eventId}` (I4/I5/I5b)
+
+Same route file, body `{confirmName}` (zod), response schema exactly
+`{status: "deleting", purgeScheduledAt, irreversible: true}`. Organizer-only
+gate; exact-name match else `422 confirmation_mismatch`
+(`details.field: "confirmName"`), **nothing written, nothing emitted** (I4).
+Deleting rows are inert (`409 event_deleting`). On match, **one transaction**:
+row → `status: "deleting"` + `deletedAt` + `updatedAt`, then two synchronous
+emits — `event.purge.scheduled` (payload `{eventId, purgeScheduledAt}`,
+subjectRef `{kind:"event", id}`, **registered in `ANALYTICS_ONLY_EVENT_KEYS`**
+so the outbox gate admits it; the OP-132 purge job consumes it) and
+`event.deleted` (already a registered notification typeKey). Response `202`
+with exactly the three keys and `purgeScheduledAt = deletedAt.toISOString()`;
+a later PATCH reads the same instant off the row into
+`details.purgeScheduledAt` (I5b, the three-way agreement). The row is **not**
+destroyed by this endpoint — the deleting state persists until OP-132 drains
+the purge event. DELETE also runs the DB-backed ETag stage with
+`required: false` (enforce-if-supplied; only PATCH's 428 is pinned).
+
+### P6 — Registry debts (ADR-0580 §Registry)
+
+- `event_deleting` (`409`, non-retryable, `details {purgeScheduledAt}`) and
+  `event_already_started` (`409`) appended as a new closed set
+  `EVENT_ERROR_CODES` in `packages/contracts/src/errors.ts` (into
+  `API_ERROR_CODES` + the `AppErrorCode` union) and transported from a new
+  `EVENT_ERROR_TRANSPORT` in `@/server/http/catalog.ts` — the
+  `cannot_demote_owner` append-only shape.
+- `event.purge.scheduled` appended to `ANALYTICS_ONLY_EVENT_KEYS`.
+
+### P7 — Index repair: `event_organizers_active_event_unique` was wrong for the co-organizer model
+
+The OP-117 fixtures were the **first** integration rows to place an organizer
+row and a co-organizer row in the same event (`seedOwnedEvent` +
+`seedCoOrganizer` — the OP-116 fixtures never seeded more than one
+`event_organizers` row per event). The pre-existing index
+`event_organizers_active_event_unique` declared `{tenantId, eventId}` unique
+partial `{revokedAt: null}` — i.e. **one active row per event, period**, which
+makes the documented co-organizer admission (an `event_organizers` row with
+`role: "co_organizer"`, `revokedAt: null`, coexisting with the organizer) a
+database-impossibility. Schema §15.2 documents the intended invariants:
+`{eventId, userId}` unique **plus** `{eventId, role}` unique partial on
+`{role: "organizer", status: "active"}` ("exactly one organizer per event").
+This card repairs the registry to the §15.2 pairs:
+
+- `event_organizers_active_event_unique` → keys `{tenantId, eventId, userId}`,
+  unique partial `{revokedAt: null}` (one active membership row per user);
+- **new** `event_organizers_active_organizer_unique` → keys
+  `{tenantId, eventId, role}`, unique partial
+  `{role: "organizer", revokedAt: null}` (the exactly-one-organizer guard).
+
+Both keep the tenantId lead the `indexes.test.ts` U1 lint requires, the
+registry-integrity test's required names stay present
+(`event_organizers_active_event_unique`), and `index-bootstrap.test.ts` still
+passes 6/6 (I1 idempotence/I2 duplicate refusal hold against the two-halves
+split). The suite proves the repair: I6 (co-organizer PATCH) and I3 (co-
+organizer archive) pass only with both rows coexisting.
+
+### P8 — E2E (E1)
+
+The e2e journey signs up through the real Better Auth flow, creates the event,
+reads the tenant-scoped ETag, PATCHes through the global route with `If-Match`,
+then DELETEs with the exact `confirmName`; the 202 body carries exactly
+`{status, purgeScheduledAt, irreversible}`.
+
+## Disputes (documented, fixes belong to the Test Author — a GREEN may not edit tests)
+
+### D1 — `event-update-delete.test.ts` I4 asserts a whole-collection `countDocuments({}) == 0` that the fixture's own sign-in makes impossible
+
+I4 (`"deleting with a wrong confirmName … and changes nothing"`) asserts
+`expect(await app.db.collection(COLLECTIONS.domainEvents).countDocuments({})).toBe(0)`
+(`event-update-delete.test.ts:641`) to prove "nothing was announced". The
+fixture's **own** `seedOwner("op117-wrong-name")` → `app.signIn(...)` runs the
+real Better Auth identity hooks, which emit `account.welcome` and
+`auth.signin.new_device` into the same `domain_events` collection **before the
+DELETE is ever invoked** (proved by a throwaway probe against the harness: a
+fresh `app.signIn` leaves exactly two rows — `account.welcome` +
+`auth.signin.new_device`, both `subjectRef.kind: "user"`; the probe was deleted
+before handoff). Every route the DELETE could honestly run leaves those rows
+untouched — an implementation that deleted unrelated outbox rows to satisfy the
+count would be corrupting the log. The 422 response, untouched row and absent
+`deletedAt` (the three assertions before it) all pass with the implementation;
+only the whole-collection count is un-satisfiable. **Fix (one line):** scope
+the count to the delete's own keys —
+`countDocuments({ eventKey: { $in: ["event.deleted", "event.purge.scheduled"] } })`
+(or filter on `subjectRef.kind: "event"` + the event id), which is the actual
+contracted "nothing announced" property. Routed as a TEST card to the OP-117
+test author.
+
+## Assumptions and open questions
+
+- `purgeScheduledAt` is the instant the delete answers, stored as the row's
+  `deletedAt` — the 202 body, the outbox payload and the later 409 details all
+  read the same value (ADR-0580's unpinned three-way agreement, resolved to
+  "same instant, no grace offset").
+- The route-level `visibilityDefaults`/`thumbnailPreset` fields are stored
+  verbatim; no test pins their shape (whitelisted by U2 at the unit level).
+- `POST /upload-window:extend`, the `draft → published` transition,
+  `retention_would_expire_immediately`, access-link rotation (OP-118) and the
+  co-organizer delete denial stay deliberately out of scope (ADR-0580 §Open
+  items): no test pins them and the card's test list does not carry them.
+
+## Consequences
+
+- The conditional-write loop closes end-to-end: GET returns the quoted ETag,
+  PATCH enforces `If-Match` and returns the new tag, DELETE accepts the tag and
+  answers `202`.
+- Delete is the only content-destroying path and is user-initiated; the
+  `deleting` state + `event.purge.scheduled` give the OP-132 purge job the
+  ordered drain it consumes.
+- **ADR-number allocation.** This record is the OP-117 GREEN; the lane holds
+  `0580`–`0599` (ADR-0580 took `0580`), so this card takes `0581` and the
+  lane's `Next free` cell advances to `0582`. The pool cell stays `0600+` (the
+  documented union-at-merge hotspot keeps the highest cells). No number
+  outside `0580`–`0599` is touched.
+
+## Alternatives considered
+
+- **A route-local If-Match check in the handler** instead of the ETag stage.
+  Rejected: the ADR-0580 contract names the `defineRoute` etag stage with
+  `required: true`, and composing `etagStage` over a pre-loaded row reuses the
+  exact 428/412 semantics (including `details.currentETag`) instead of
+  re-implementing them.
+- **In-place route handlers duplicating admission.** Rejected: PATCH/DELETE on
+  the detail file and POST on the archive child share one admission; the
+  `@/server/events/access` helper mirrors the OP-116 detail admission so the
+  co-organizer (non-member) writes what they can read.
+- **Dropping the unique index instead of repairing it.** Rejected: the
+  exactly-one-active-organizer invariant is load-bearing (schema §15.2,
+  `index-bootstrap.test.ts` I2); the §15.2 two-index split keeps it while
+  making membership per-user.

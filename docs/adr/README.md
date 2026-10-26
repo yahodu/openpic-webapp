@@ -52,7 +52,7 @@ the rejected alternatives are recorded in
 | OP-111 billing jobs lane            | `0500`–`0519`                   | `0504`    |
 | OP-115 events lane                  | `0520`–`0539`                   | `0522`    |
 | OP-116 events list/get lane         | `0560`–`0579`                   | `0562`    |
-| OP-117 events update lane           | `0580`–`0599`                   | `0581`    |
+| OP-117 events update lane           | `0580`–`0599`                   | `0582`    |
 | unallocated (future lanes)          | `0600`+ (20 per lane, in order) | `0600`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -312,6 +312,7 @@ _The **board-wide** [`0308`](ADR-0308-one-owner-per-branch-landing.md) record ga
 | [0560](ADR-0560-op116-events-list-get-red.md) | OP-116 RED: the event list/detail/stats surface pinned — `q` regex escaping, the pipeline-status derivation table (idle/indexing/indexed/delayed/partial_failure), the closes-in-hours ceil rounding, the tenant list (status filter + cursor pages), the co-organizer/tenant detail access and the ETag-on-read contract | Accepted |
 | [0561](ADR-0561-op116-events-list-get-green.md) | OP-116 GREEN: the event list/detail surface implemented — the `search`/`pipeline`/`windows` units, the tenant list (`status`/`q`/cursor pages) and the global detail route (tenant-member/co-organizer admission, `404` non-oracle, quoted `ETag`); the RED spec's I1 pages-2/3 `page.data` read is disputed (§D) | Accepted |
 | [0580](ADR-0580-op117-events-update-delete-red.md) | OP-117 RED: the update/archive/delete surface pinned — the recompute/whitelist/start-lock units, `PATCH /events/{e}` (If-Match 428/412, forbidden-field 422, start-lock 409, duration 403, both windows recomputed), the organizer-only archive and the confirmName delete (202 + the purge domain event) | Accepted |
+| [0581](ADR-0581-op117-events-update-delete-green.md) | OP-117 GREEN: update/archive/delete implemented — PATCH (ETag stage over a DB read, forbidden-field 422, start-lock 409, duration 403, windows recomputed, `event.details.updated`), organizer-only archive (`event.archived`), confirmName DELETE (202 `{status, purgeScheduledAt, irreversible}` + `event.purge.scheduled`/`event.deleted`), the two `EVENT_ERROR_CODES` rows, the purge key registration, and the §15.2 index repair letting organizer + co-organizer rows coexist; I4's whole-collection `countDocuments == 0` is disputed (§D) | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
