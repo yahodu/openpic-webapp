@@ -102,16 +102,21 @@ pass, and the cursor pages return exactly `["Pub 6","Pub 4"]` then `["Pub 2"]`
 when read through the top-level `data` the contract documents. Routed as a TEST
 card to the OP-116 test author together with D2.
 
-### D2 — `event-create.test.ts` D1/D2 (already documented upstream by the OP-115 lane)
+### D2 — `event-create.test.ts` D1/D2 (fixed upstream by the OP-115 lane's Test Author repairs)
 
-The full integration suite is red on the **base branch** for 11 `event-create`
-cases: `E11000 plans_key_unique` at seed (the spec never clears `plans` between
-tests) and `TypeError: Body is unusable: Body has already been read` (seven
-cases call `errorCodeOf(response)` then `body(response)` on the same one-shot
-`Response`). Both are already recorded in ADR-0521 §D by the OP-115 GREEN and
-routed to the Test Author as cards `t_4916ad9c` (D1+D2) and `t_7db5345e` (D3).
-Verified here that they reproduce on the pristine base with **all OP-116
-changes stashed** — they are not a regression of this card.
+On this card's **pre-merge pins base** the full integration suite was red on 11
+`event-create` cases: `E11000 plans_key_unique` at seed (the spec never cleared
+`plans` between tests) and `TypeError: Body is unusable: Body has already been
+read` (seven cases call `errorCodeOf(response)` then `body(response)` on the
+same one-shot `Response`). Both were already recorded in ADR-0521 §D by the
+OP-115 GREEN and routed to the Test Author as cards `t_4916ad9c` (D1+D2) and
+`t_7db5345e` (D3); verified here that they reproduced on the pristine base with
+**all OP-116 changes stashed** — they were not a regression of this card.
+`origin/main` subsequently shipped PR #372 **with those test-side repairs
+landed** (the `beforeEach` cleanup + single-body-read and the `randomUUID`
+phone), so after this branch merged `origin/main` in, `event-create.test.ts`
+passes **14/14** and the full integration suite is **1 failed | 732 passed** —
+the single failure being this card's own disputed I1 pages-2/3 (D1 above).
 
 ## Assumptions and open questions
 
