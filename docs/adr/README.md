@@ -51,7 +51,7 @@ the rejected alternatives are recorded in
 | OP-110 self-serve billing lane      | `0480`–`0499`                   | `0485`    |
 | OP-111 billing jobs lane            | `0500`–`0519`                   | `0504`    |
 | OP-115 events lane                  | `0520`–`0539`                   | `0522`    |
-| OP-116 events list/get lane         | `0560`–`0579`                   | `0561`    |
+| OP-116 events list/get lane         | `0560`–`0579`                   | `0562`    |
 | unallocated (future lanes)          | `0580`+ (20 per lane, in order) | `0580`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -309,6 +309,7 @@ _The **board-wide** [`0308`](ADR-0308-one-owner-per-branch-landing.md) record ga
 | [0520](ADR-0520-op115-events-create-red.md) | OP-115 RED: the create-event surface pinned — window/slug/date units, `POST /tenants/{t}/events` + ETag/Location, the `events:validate` route, the two owed error codes and the `accessLinks.slug` index | Accepted |
 | [0521](ADR-0521-op115-events-create-green.md) | OP-115 GREEN: the create-event surface implemented — the three unit modules, `POST /tenants/{t}/events` (materialised windows, slug collision retry, required idempotency, one-transaction row set), `events:validate`, the GET twin for E1, the two error codes and the `accessLinks.slug` index | Accepted |
 | [0560](ADR-0560-op116-events-list-get-red.md) | OP-116 RED: the event list/detail/stats surface pinned — `q` regex escaping, the pipeline-status derivation table (idle/indexing/indexed/delayed/partial_failure), the closes-in-hours ceil rounding, the tenant list (status filter + cursor pages), the co-organizer/tenant detail access and the ETag-on-read contract | Accepted |
+| [0561](ADR-0561-op116-events-list-get-green.md) | OP-116 GREEN: the event list/detail surface implemented — the `search`/`pipeline`/`windows` units, the tenant list (`status`/`q`/cursor pages) and the global detail route (tenant-member/co-organizer admission, `404` non-oracle, quoted `ETag`); the RED spec's I1 pages-2/3 `page.data` read is disputed (§D) | Accepted |
 
 Template: Context · Decision · Consequences · Alternatives.
 
