@@ -12,17 +12,53 @@
 // unconditionally, from the worktree's own copy of the file.
 //
 // Runs after `husky` in the `prepare` script; a no-op outside a git work tree,
-// so it can never break an install.
+// so it can never break an install. Inside a work tree a *failed* pin is
+// reported on stderr instead of being swallowed (ADR-0311): a checkout where
+// the key cannot be written (a read-only `.git/config`, a `.git` owned by
+// another user) silently loses the commit-time identity guard this pin exists
+// to arm, so the install output has to say so.
 import { execFileSync } from "node:child_process";
+import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 /** @param {readonly string[]} args */
 function git(args) {
-  return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
-try {
-  git(["rev-parse", "--is-inside-work-tree"]);
-  git(["config", "core.hooksPath", ".husky"]);
-} catch {
-  // No work tree to configure (e.g. an install from a source tarball).
+/**
+ * Pin `core.hooksPath` to the tracked `.husky` directory, distinguishing "not
+ * inside a work tree" (silent, tolerated) from "inside a work tree but the pin
+ * failed" (reported on stderr, still non-fatal).
+ *
+ * @param {{ runGit: (args: readonly string[]) => void,
+ *           stderr: { write(chunk: string): unknown } }} deps
+ * @returns {number} the process exit code
+ */
+export function pinHooksPath(deps) {
+  try {
+    deps.runGit(["rev-parse", "--is-inside-work-tree"]);
+  } catch {
+    // No work tree to configure (e.g. an install from a source tarball).
+    return 0;
+  }
+
+  try {
+    deps.runGit(["config", "core.hooksPath", ".husky"]);
+  } catch (error) {
+    // `execFileSync`'s message embeds the child's stderr, which may be
+    // multi-line; collapse it so the diagnostic is always a single line.
+    const reason = (error instanceof Error ? error.message : String(error))
+      .trim()
+      .replace(/\s+/g, " ");
+    deps.stderr.write(`pin-hooks-path: could not pin core.hooksPath to .husky — ${reason}\n`);
+  }
+
+  return 0;
+}
+
+// The real wiring runs only when this file is the process entry point: an
+// import (e.g. from the spec) must never touch the worktree config or exit.
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = pinHooksPath({ runGit: git, stderr: process.stderr });
 }
