@@ -290,7 +290,7 @@ describe("GET /api/v1/tenants/{tenantId}/events — list", () => {
     expect(secondResponse.status).toBe(200);
     const secondPage = await body(secondResponse);
     const page2 = secondPage.page as Record<string, unknown>;
-    const data2 = page2.data as Array<Record<string, unknown>>;
+    const data2 = secondPage.data as Array<Record<string, unknown>>;
     expect(data2.map((row) => row.name)).toEqual(["Pub 6", "Pub 4"]);
     const nextCursor2 = page2.nextCursor as string;
     expect(page2.hasMore).toBe(true);
@@ -305,7 +305,7 @@ describe("GET /api/v1/tenants/{tenantId}/events — list", () => {
     expect(thirdResponse.status).toBe(200);
     const thirdPage = await body(thirdResponse);
     const page3 = thirdPage.page as Record<string, unknown>;
-    const data3 = page3.data as Array<Record<string, unknown>>;
+    const data3 = thirdPage.data as Array<Record<string, unknown>>;
     expect(data3.map((row) => row.name)).toEqual(["Pub 2"]);
     expect(page3.hasMore).toBe(false);
     expect(page3.nextCursor).toBeNull();
