@@ -239,3 +239,18 @@ clean on all four files.
 - The `details` payload of each job's `CronResult` (§10.2's example carries
   `{ downgraded: 7 }`) is not pinned beyond shape — the framework validates
   `details` as a record and no assertion here depends on a specific counter.
+
+## Carried unchanged — PR #352 (round-1 review)
+
+This pins record rode into the trunk **unchanged** with PR #352 (the OP-111
+billing-jobs GREEN): the four spec files are byte-identical to the pins head
+(`git rev-parse 9bb1aa8:<spec>` equals `git rev-parse 5ecfc18:<spec>` for
+`dunning-reminders.test.ts`, `renewal-reminders.test.ts`, the C6 boundary spec
+and `billing-crons.test.ts`), and they were re-verified byte-identical again
+when the follow-up TEST `t_f7717e2c` shipped with PR #365 — no assertion in
+this record was weakened or re-read more loosely. The round-1 review of this
+record is documented in the
+[ADR-0501](ADR-0501-op111-billing-jobs-green.md) Review sign-off section
+(card `t_71cc5e0c`, verdict APPROVED WITH FINDINGS); it consumes **no** ADR
+number — the OP-111 lane `Next free` cell stays `0504` and
+`docs/adr/README.md` is unchanged.

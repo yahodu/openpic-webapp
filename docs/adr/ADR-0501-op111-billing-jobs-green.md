@@ -227,3 +227,94 @@ OP-111 is a dependent ticket and holds its own block (`0500`–`0519`, ADR-0300 
 `0500` is consumed by the RED, so this record takes **`0501`**, the lane cell's value
 re-read on the pins head immediately before committing; the lane's `Next free`
 advances to `0502`. No number outside `0500`–`0519` is touched.
+
+## Review sign-off — 2026-10-25 (card t_71cc5e0c, round 1 · artifact lens)
+
+Append-only: nothing above is retracted or edited. This section records the
+round-1 review of [PR #352](https://github.com/yahodu/openpic-webapp/pull/352)
+(the OP-111 billing-jobs GREEN, branch `OP-111-feature-billing-jobs-green`,
+card `t_71cc5e0c`) by this lane's reviewer, and it consumes **no** ADR number
+— the OP-111 lane `Next free` cell stays `0504` and `docs/adr/README.md` is
+unchanged. The pins record [ADR-0500](ADR-0500-op111-billing-jobs-red.md)
+shipped in the same squash and is covered here (see its "Carried unchanged —
+PR #352" note) rather than in a section of its own.
+
+**Verdict: APPROVED WITH FINDINGS, shipped as `5ecfc18`** — the squash-merge
+of PR #352 (`feat(billing): OP-111 billing cron jobs — dunning, reminders,
+renewals, scheduled changes, reconcile and the projection sweep (#352)`,
+2026-10-25 17:54:13), carrying the pins commit `9bb1aa8` and the GREEN head
+`d6f3983`. The reviewed head was the branch's `origin/main` merge `c8aeb30`
+(parents `d6f3983` + `origin/main`).
+
+**Criteria → evidence, measured by the reviewer on the merged tree in a
+private probe worktree.**
+
+- **Tree identity over the merge** — the merge-head diff
+  `git diff d6f3983 c8aeb30 -- apps packages eslint.config.mjs` prints
+  nothing: the `origin/main` merge into the GREEN branch touched only
+  main's docs.
+- **The four pins byte-identical** — `git rev-parse 9bb1aa8:<spec>` equals
+  `git rev-parse HEAD:<spec>` at `c8aeb30` for
+  `apps/web/src/test/unit/dunning-reminders.test.ts`,
+  `apps/web/src/test/unit/renewal-reminders.test.ts`,
+  `apps/web/src/test/unit/eslint/dunning-content-import-boundary.test.ts` and
+  `apps/web/src/test/integration/billing-crons.test.ts`, and each blob is
+  also identical at the squash `5ecfc18`.
+- **Focused unit 66 passed (66)** — U1 `14`, U2 `13`, U3 `10`,
+  `adr-numbering` `29`.
+- **Integration `billing-crons.test.ts` 19 passed (19)** — re-run at `c8aeb30`
+  **and** at the squash `5ecfc18`.
+- **`checkAdrDirectory` 29/29** on the merged ledger — the only conflicted
+  file was `docs/adr/README.md`, an index-only union rather than a renumber
+  collision.
+- **Prettier clean** — `prettier --check docs/adr/README.md` passes.
+- **CI / PR Checks on `c8aeb30`** — success (run
+  [40218811181](https://github.com/yahodu/openpic-webapp/actions/runs/40218811181),
+  aggregate `ci` last), with `audit-dev` red-and-non-blocking by design
+  (ADR-0301), and the CI Evidence Guard pass (run
+  [40218221027](https://github.com/yahodu/openpic-webapp/actions/runs/40218221027)).
+
+**Findings, each marked with its disposition.**
+
+- **F1 (Medium, routed → card `t_f7717e2c` (TEST) → `t_2f274985` (GREEN))** —
+  `admin.billing.manual_review` is not emitted for the reconcile mismatch
+  class the §10.2 row names.
+- **F2 (Medium, routed → the same two cards)** — the reconcile classes
+  unpinned (72.7 % lines / 58.5 % branches).
+- **F3 (Low, pinned inside `t_f7717e2c`)** — the reconcile two-stamp
+  requirement (`updatedAt` missing ⇒ never reconciled) is only a window
+  reading, not a pin; the missing-stamp case was unpinned.
+- **F4 (Info, decision inside `t_f7717e2c`)** — `cronBearerAnyMethod`
+  (flagged to the Test Author in §"The route wiring"): the ladder's
+  `POST` + cron-bearer shape conflicts with the GET-only default the trunk
+  pins (U4b); the flag records the divergence.
+- **F5 (Info, no card)** — main's `board-wide / process` README paragraph
+  left unwrapped by the union resolution.
+- **F6 (Info/hotspot, no card)** — the concurrent worker that pushed the
+  `origin/main` merge `c8aeb30` while the review started.
+
+**Post-review status.** F1 and F2 are **addressed** by card `t_2f274985`
+(GREEN; PR [#365](https://github.com/yahodu/openpic-webapp/pull/365), merged
+as `f61d425`, 2026-10-26): `billing-reconcile.ts` now emits
+`admin.billing.manual_review` for the crossing-only mismatch class (auto-apply
+only drift toward `active`; mismatch writes nothing and is counted `skipped`),
+and the admin-alert pins from `t_f7717e2c`
+(`billing-cron-admin-alerts.test.ts`, 11 cases) landed in the same squash,
+closing the reconcile coverage gap. F3 is **addressed** — `t_f7717e2c` pinned
+the two-stamp candidate filter (a missing stamp is not fresh; both-present
+rows keep the `AND`), shipped with PR #365. F4 is **resolved by decision**
+inside `t_f7717e2c`: `cronBearerAnyMethod` is retained (the route-ladder
+alternative was not adopted; U4b stays green). F5 is **resolved on `main`**
+by the docs repair PRs #363 (`be9b072`, truncated board-wide tail deleted) and
+#364 (`db0ca53`, OP-110 cell claim corrected) — no card was opened from F5
+itself. F6 is **resolved as a process rule**: the run-level one-owner hazard
+is codified in ADR-0308 §Recurrence (card `t_1deaf426`,
+[PR #358](https://github.com/yahodu/openpic-webapp/pull/358)). No finding
+remains open.
+
+**Measurement note.** All figures above were re-measured for this append at
+the post-follow-up trunk head `96bc00d`; the four pin files and the
+`adr-numbering` spec are byte-identical across `9bb1aa8`, `c8aeb30`,
+`5ecfc18` and `origin/main`, and the re-runs land at the same counts (unit
+66/66, integration 19/19, `prettier --check docs/adr/README.md` clean). No
+correction to the review's `c8aeb30`/`5ecfc18` pair is needed.
