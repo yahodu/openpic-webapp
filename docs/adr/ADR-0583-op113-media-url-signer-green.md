@@ -1,14 +1,14 @@
-# ADR-0523 — OP-113 GREEN: the path-bound HMAC media URL signer implemented — secret rotation, the TTL invariants and the shared vector fixture
+# ADR-0583 — OP-113 GREEN: the path-bound HMAC media URL signer implemented — secret rotation, the TTL invariants and the shared vector fixture
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-113 GREEN (`t_f74453a8`) · **Branch:** `OP-113-feature-media-url-signer` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_f74453a8`, stacked on the RED head `1b6c25c`
-- **Relates to:** [ADR-0522](ADR-0522-op113-media-url-signer-red.md) (the RED contract this card turns green), [ADR-072](ADR-0072-op92-message-transport-and-novu-drift-guard-red.md)* (the OP-72 Runtime Primitives epic the signer reuses — `hmacSha256Base64Url` / `timingSafeEqualStr` in `@/server/runtime/crypto`, the `Clock` port in `@/server/runtime/clock`), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card takes the lane's next free `0523`), [ADR-0306](ADR-0306-op101-stale-branch-deletion.md) (RED-by-design posture)
+- **Relates to:** [ADR-0582](ADR-0582-op113-media-url-signer-red.md) (the RED contract this card turns green), [ADR-072](ADR-0072-op92-message-transport-and-novu-drift-guard-red.md)* (the OP-72 Runtime Primitives epic the signer reuses — `hmacSha256Base64Url` / `timingSafeEqualStr` in `@/server/runtime/crypto`, the `Clock` port in `@/server/runtime/clock`), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card takes the lane's next free `0583`), [ADR-0306](ADR-0306-op101-stale-branch-deletion.md) (RED-by-design posture)
 
 \* The runtime-crypto/clock modules are OP-72; if ADR-0072 is not the OP-72 record, the import line above resolves to the correct OP-72 ADR number on the merged lane.
 
 ## Context
 
-ADR-0522 fixed the executable contract the RED's 25-case unit spec (U1–U7)
+ADR-0582 fixed the executable contract the RED's 25-case unit spec (U1–U7)
 encodes. This GREEN implements `@/server/media/signer` — the single pure
 module the ADR's module table names — with the one unit spec, the
 `factories/media.ts` file and the `media-signing-vectors.json` fixture carried
@@ -21,7 +21,7 @@ the Worker parity fixture.
 
 ### 1. `sign` and `verify` answer through one `createMediaSigner({ currentSecret, previousSecret?, clock? })`
 
-As ADR-0522 §1 prescribes — no env read at import. `currentSecret` minted the
+As ADR-0582 §1 prescribes — no env read at import. `currentSecret` minted the
 URL with `sign`; `verify` tries `currentSecret` first, then `previousSecret`
 only when configured (U5), and never throws on malformed/missing input
 (returns `false`, so the Worker answers a uniform `403`). `clock` defaults to
@@ -64,9 +64,9 @@ team's bytes, making the fixture the cross-implementation parity contract.
 
 ## Number allocation
 
-This card consumes the lane's **`0523`** (ADR-0522: "The gated GREEN
-`t_f74453a8` consumes `0523` next") and advances the lane's `Next free` cell to
-`0524`. No number outside the lane range `0520`–`0539` is touched.
+This card consumes the lane's **`0583`** (ADR-0582: "The gated GREEN
+`t_f74453a8` consumes `0583` next") and advances the lane's `Next free` cell to
+`0584`. No number outside the lane range `0580`–`0599` is touched.
 
 ## Consequences
 
