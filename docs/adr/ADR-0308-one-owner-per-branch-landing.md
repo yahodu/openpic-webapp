@@ -185,3 +185,63 @@ ready`, verify green CI, `gh pr merge` — is held by **one card that can be
 `0308`, the board-wide cell's value re-read on a fresh `origin/main` (`2be55fb`)
 immediately before committing, and advances the cell to `0309`. No number outside
 `0300`–`0319` is touched.
+
+## §Recurrence — the handoff ends the implementer's write ownership (2026-10-25, card `t_1deaf426`)
+
+ADR-0308's rule is **card-level**: no two _cards_ share a branch's landing. On
+2026-10-25 the OP-111 GREEN landing reproduced the same hazard in a **run-level**
+shape this record does not cover — **one** card, **two** runs, one branch and one
+worktree.
+
+| run    | profile                      | recorded end                                      | worker pid | what it did                                                                    |
+| ------ | ---------------------------- | ------------------------------------------------- | ---------- | ------------------------------------------------------------------------------ |
+| `1114` | openpic-webapp-backend-coder | `review_requested` @ `1792950451`                 | `3460167`  | pushed the `origin/main` merge **`c8aeb30`** at 17:48:07 — _after_ the handoff |
+| `1122` | openpic-webapp-reviewer      | claimed @ `1792950455` (`source_status = review`) | `3608599`  | about to build the same resolution                                             |
+
+The dispatcher keeps a worker **alive for up to `TERMINAL_WORKER_REAP_GRACE_SECONDS`
+(120 s) after `kanban_request_review` returns** — deliberately, for the final
+assistant turn and session persistence (`hermes_cli/kanban_db_dispatch.py:44-48`) —
+while the **review run is claimable immediately** (in OP-111, 4 s after the handoff)
+and the claim does not consult the implementer's workspace. `reap_terminal_workers`
+(`:501-517`) keys on the closed run's retained `worker_pid`; in this event the reaped
+pid was `3460131` while the live writer `3460167` survived ~527 s past the run's end
+and pushed `c8aeb30` (parents `d6f3983` + `10358d5`). The review run verified the
+foreign commit instead of re-pushing (`git diff --stat d6f3983 c8aeb30 -- apps
+packages eslint.config.mjs .github` empty; the four RED pins hash-identical;
+`checkAdrDirectory` 29/29) and merged the observed head unchanged (squash `5ecfc18`).
+**Content-equivalent by luck** — the foreign commit touched only `docs/adr/README.md`;
+the same collision on a production file would have been silent.
+
+**Recurrence count.** Second recorded occurrence of this record's class (after the
+OP-110 sibling pair `t_81899e24` + `t_0a36d165`); first of the run-level shape.
+
+5. **The handoff ends the implementer's write ownership.** `kanban_request_review`
+   (and every terminal board call) must **end the implementer's writer role at the
+   moment of handoff**: the worker may finish its final turn and persist its session,
+   but it **must not be able to write the lane worktree** after the handoff — its
+   workspace is **detached/repointed** at the transition (not made read-only: the
+   review run inherits the path). A handoff therefore cannot produce a commit; any
+   workspace change still needed is a **new card gated on the review**
+   (`parents=[review]`), never an inline edit by the lingering run.
+6. **A claim gate backs it.** The dispatcher **must not claim a card in the `review`
+   lane while a live worker process still owns that task's `workspace_path`** (or the
+   same `current_run_id`'s implementer process is still up). 5 removes the writer,
+   6 removes the window; 6 alone leaves the writer alive and delays the review behind
+   an unreaped process — it is the containment backstop, not the fix.
+7. **A reviewer never lands inside a peer's live worktree.** Because the grace window
+   is deliberate, the reviewer does its merge/land in its **own probe worktree** off
+   the reviewed head, and on a foreign commit ahead of the reviewed head it
+   **verifies** (per-path diff, pin hashes, the ADR guard) rather than re-pushing —
+   the shape the OP-111 review actually used.
+
+### Alternatives (run-level)
+
+- **Claim gate alone.** Rejected as the primary fix: it does not remove the writer,
+  and here a gate keyed on the reaped pid (`3460131`) would have considered the
+  worktree free while the writer (`3460167`) was alive. Kept as clause 6's backstop.
+- **Mark the implementer's workspace read-only at the handoff.** Rejected: the review
+  run **inherits** that path (one worktree per lane, serialised by `parents=[...]`), so
+  a read-only worktree breaks the reviewer. Detach/repoint is the usable arm of clause 5.
+- **Lengthen `TERMINAL_WORKER_REAP_GRACE_SECONDS`.** Rejected: the grace exists for the
+  final turn and session persistence; lengthening it widens the overlap rather than
+  closing it.
