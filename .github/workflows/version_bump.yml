@@ -40,6 +40,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # A GitHub runner has no git identity in any config scope (system/global/
+      # local), and the pinned pre-commit guard (ADR-0309/0310) refuses the
+      # release commit that @semantic-release/git creates, so every Version Bump
+      # run has failed since the guard landed. Provision the repo-local identity
+      # (ADR-0309 clause 3: explicit --local scope) and validate it with the
+      # guard itself before semantic-release runs.
+      - name: Configure release git identity
+        run: |
+          git config --local user.name "semantic-release-bot"
+          git config --local user.email "semantic-release-bot@users.noreply.github.com"
+          pnpm check:git-identity
+
       - name: Release
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
