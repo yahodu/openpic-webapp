@@ -198,6 +198,22 @@ export const BILLING_ERROR_CODES = [
 export type BillingErrorCode = (typeof BILLING_ERROR_CODES)[number];
 
 /**
+ * Media-upload codes (contract Appendix A.2).
+ *
+ * `file_too_large` (`413`, `{ maxBytes, actualBytes }`) is documented in
+ * Appendix A.2 — the size refusal of the one byte-accepting endpoint, the
+ * branding asset upload — but is not a member of {@link ERROR_CODES}, which
+ * the server error catalogue pins to exactly the base Appendix A rows. It is
+ * appended to the client-facing enum ({@link API_ERROR_CODES}) and transported
+ * from its own table (both `413`, non-retryable) so both stay exact.
+ * Append-only, like every other code (ADR-0540).
+ */
+export const MEDIA_ERROR_CODES = ["file_too_large"] as const;
+
+/** A member of the closed {@link MEDIA_ERROR_CODES} set. */
+export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -263,6 +279,7 @@ export const API_ERROR_CODES = [
   ...TENANCY_ERROR_CODES,
   ...ENTITLEMENT_ERROR_CODES,
   ...BILLING_ERROR_CODES,
+  ...MEDIA_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -283,7 +300,8 @@ export type AppErrorCode =
   | NotificationErrorCode
   | TenancyErrorCode
   | EntitlementErrorCode
-  | BillingErrorCode;
+  | BillingErrorCode
+  | MediaErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
