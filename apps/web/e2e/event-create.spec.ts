@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { expect, test } from "@playwright/test";
 
 import { E2E_BASE_URL } from "./ports";
@@ -24,9 +26,9 @@ test.describe("create an event over the real HTTP surface", () => {
   test("E1: sign-up, create an event as a brand-new organizer, then GET it", async ({
     request,
   }) => {
-    const stamp = `${String(Date.now())}-${Math.random().toString(16).slice(2)}`;
+    const stamp = randomUUID();
     const email = `e2e-op115-${stamp}@example.com`;
-    const phone = `+91${String(Math.floor(100000000 + Math.random() * 899999999))}`;
+    const phone = `+91${String(100000000 + (parseInt(stamp.replace(/-/g, "").slice(0, 9), 16) % 900000000))}`;
 
     // 1. Sign up with the email OTP handshake (real Better Auth flow).
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
