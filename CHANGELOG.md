@@ -1,3 +1,9 @@
+## [1.44.0](https://github.com/yahodu/openpic-webapp/compare/v1.43.0...v1.44.0) (2026-10-26)
+
+### Features
+
+- **events:** OP-116 list and get events with cursor pages and ETag ([#374](https://github.com/yahodu/openpic-webapp/issues/374)) ([e874268](https://github.com/yahodu/openpic-webapp/commit/e874268a076e0b1b64be6e9fbb1316cb866472b3))
+
 ## [1.43.0](https://github.com/yahodu/openpic-webapp/compare/v1.42.0...v1.43.0) (2026-10-26)
 
 ### Features
