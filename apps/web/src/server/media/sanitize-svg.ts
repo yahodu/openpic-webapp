@@ -41,6 +41,74 @@ const LINK_ATTRIBUTE_NAMES = new Set(["href", "xlink:href"]);
 /** The URI scheme that is stripped from link attributes (case-insensitive). */
 const BLOCKED_URI_SCHEME = "javascript:";
 
+/** A parse base for relative link values; only the `protocol` is read. */
+const LINK_BASE_URL = "https://openpic.in/";
+
+/** The five XML predefined character references, decoded in a single pass. */
+const XML_NAMED_REFERENCES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&apos;": "'",
+};
+
+/** Match one character reference: `&#dd;`, `&#xhh;` or an XML named entity. */
+const CHARACTER_REFERENCE = /&(?:#(\d+)|#x([0-9a-f]+)|amp|lt|gt|quot|apos);/gi;
+
+/**
+ * Decode the character references of an attribute value the way the SVG
+ * parser will when a browser renders the stored document.
+ *
+ * The sanitizer inspects the raw uploaded text, but a browser decodes
+ * `&#x73;` → `s` and `&amp;` → `&` while parsing an attribute, so a
+ * `href="java&#x73;cript:alert(1)"` would become `javascript:` at render
+ * time. The scheme check must therefore look at the decoded value. The
+ * replacement is single-pass (references are never re-scanned), mirroring
+ * the XML decoder: `&amp;#106;` becomes the literal text `&#106;`.
+ *
+ * @param value - The raw attribute value, quotes already stripped.
+ * @returns The decoded value a browser would see.
+ */
+function decodeCharacterReferences(value: string): string {
+  return value.replace(
+    CHARACTER_REFERENCE,
+    (match, decimal: string | undefined, hex: string | undefined) => {
+      if (decimal !== undefined) {
+        return String.fromCodePoint(Number.parseInt(decimal, 10));
+      }
+      if (hex !== undefined) {
+        return String.fromCodePoint(Number.parseInt(hex, 16));
+      }
+      return XML_NAMED_REFERENCES[match] ?? match;
+    }
+  );
+}
+
+/**
+ * Whether a link attribute value carries the blocked URI scheme.
+ *
+ * The check parses the **decoded** value with the WHATWG URL parser, which
+ * is exactly how a browser decides the scheme of an `href`: character
+ * references resolve first, ASCII tab/LF/CR inside the scheme are folded
+ * away (`java\nscript:` still reads `javascript:`), and the scheme is
+ * case-folded. A relative or unparseable value resolves to the base's
+ * `https:` protocol and is never reported blocked.
+ *
+ * @param value - The raw attribute value.
+ * @returns Whether a browser would see the `javascript:` scheme.
+ */
+function hasBlockedUriScheme(value: string): boolean {
+  try {
+    return new URL(decodeCharacterReferences(value), LINK_BASE_URL).protocol === BLOCKED_URI_SCHEME;
+  } catch {
+    // An unparseable value is not a javascript: URI. (The WHATWG parser
+    // only throws for some internals-invalid inputs; treating them as safe
+    // matches a browser refusing to navigate to them.)
+    return false;
+  }
+}
+
 /** Lowercase the local (post-colon) part of a name, trimming nothing else. */
 function localName(name: string): string {
   const lastColon = name.lastIndexOf(":");
@@ -348,7 +416,7 @@ export function sanitizeSvg(xml: string): string {
     let cursor = nameEnd;
     for (const attribute of attributes) {
       const isLink = LINK_ATTRIBUTE_NAMES.has(attribute.name);
-      const blockedScheme = attribute.value.trim().toLowerCase().startsWith(BLOCKED_URI_SCHEME);
+      const blockedScheme = hasBlockedUriScheme(attribute.value);
       if (isLink && blockedScheme) {
         cursor = attribute.end;
         continue;
