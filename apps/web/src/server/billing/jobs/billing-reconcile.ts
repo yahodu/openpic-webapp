@@ -1,5 +1,8 @@
+import { ObjectId } from "mongodb";
+
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
+import { emitDomainEvent } from "@/server/domain/domain-events";
 import type { CronRunOutcome } from "@/server/jobs/cron-job";
 import { getLogger } from "@/server/logging";
 import { getPaymentProvider } from "@/server/payments/get-payment-provider";
@@ -31,6 +34,8 @@ const RECONCILABLE_STATUSES: readonly string[] = ["incomplete", "past_due"];
 /** The stored fields the reconcile runner reads off a candidate row. */
 interface ReconcileCandidate {
   readonly _id: unknown;
+  readonly tenantId: string;
+  readonly subjectId: string | null;
   readonly status: string;
   readonly mandateStatus: string;
   readonly ref: ProviderRef | null;
@@ -63,17 +68,20 @@ function asReconcileCandidate(value: unknown): ReconcileCandidate | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
-  const { _id, status, mandateStatus, externalRefs } = value as {
+  const { _id, status, mandateStatus, externalRefs, tenantId } = value as {
     _id?: unknown;
     status?: unknown;
     mandateStatus?: unknown;
     externalRefs?: unknown;
+    tenantId?: unknown;
   };
   if (_id === undefined || typeof status !== "string") {
     return null;
   }
   return {
     _id,
+    tenantId: typeof tenantId === "string" ? tenantId : "",
+    subjectId: _id instanceof ObjectId ? _id.toHexString() : null,
     status,
     mandateStatus: typeof mandateStatus === "string" ? mandateStatus : "",
     ref: subscriptionRefOf(externalRefs),
@@ -86,12 +94,16 @@ function asReconcileCandidate(value: unknown): ReconcileCandidate | null {
  * A row is a candidate only when it is `incomplete`/`past_due` **and** neither
  * its `createdAt` nor its `updatedAt` has moved inside the last hour — the
  * double stamp is deliberate: a row created long ago but touched a minute ago is
- * progressing and must not be raced. The correction is a conditional
+ * progressing and must not be raced. A missing stamp counts as *not fresh*
+ * (`$lt` never matches an absent field, so each stamp is `$lt` OR absent);
+ * a both-present row keeps the shipped **and**. The correction is a conditional
  * `updateOne` whose filter carries the prior `status`, so a webhook that lands
- * mid-run wins and this job records a `skipped` no-op instead. A drift the job
- * cannot resolve on its own is the `admin.billing.manual_review` class and is
- * **not** pinned here (ADR-0500 §"Open questions"); the resolvable drift emits
- * no domain event at all.
+ * mid-run wins and this job records a `skipped` no-op instead. The job
+ * auto-applies only drift toward `active` (the missed activation/reactivation
+ * webhook, which fabricates no side effects); any other status divergence is the
+ * `admin.billing.manual_review` class — the row is left untouched and one outbox
+ * row is emitted for an operator (contract §10.2; ADR-0502). A mandate-only
+ * drift (same `status`, different `mandateStatus`) stays resolvable and silent.
  *
  * @param options - Database/clock seams and the per-run limit.
  * @returns The §10.2 run outcome (`hasMore` when the candidate window filled).
@@ -106,8 +118,10 @@ export async function runBillingReconcile(options: BillingJobRunOptions): Promis
   const raw: unknown = await subscriptions
     .find({
       status: { $in: RECONCILABLE_STATUSES },
-      createdAt: { $lt: staleBefore },
-      updatedAt: { $lt: staleBefore },
+      $and: [
+        { $or: [{ createdAt: { $lt: staleBefore } }, { createdAt: { $exists: false } }] },
+        { $or: [{ updatedAt: { $lt: staleBefore } }, { updatedAt: { $exists: false } }] },
+      ],
     })
     .sort({ createdAt: 1 })
     .limit(options.limit)
@@ -135,6 +149,33 @@ export async function runBillingReconcile(options: BillingJobRunOptions): Promis
         event: "billing.reconcile.provider_error",
         provider: row.ref.provider,
         processError: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+
+    // Any status divergence other than drift toward `active` needs the missed
+    // webhook's own side effects (a grace clock, a dunning reset, a refund, an
+    // access cut) that a reconciler must not invent: leave the row untouched
+    // and hand it to an operator (contract §10.2; ADR-0502).
+    if (fetched.status !== row.status && fetched.status !== "active") {
+      skipped += 1;
+      if (row.tenantId !== "" && row.subjectId !== null) {
+        await emitDomainEvent(
+          {
+            eventKey: "admin.billing.manual_review",
+            tenantId: row.tenantId,
+            actorRef: { kind: "system", id: "billing-reconcile" },
+            subjectRef: { kind: "subscription", id: row.subjectId },
+            payload: { fromStatus: row.status, toStatus: fetched.status },
+          },
+          { db, clock }
+        );
+      }
+      getLogger().warn("billing reconcile could not auto-apply a provider divergence", {
+        event: "billing.reconcile.manual_review",
+        provider: row.ref.provider,
+        fromStatus: row.status,
+        toStatus: fetched.status,
       });
       continue;
     }
