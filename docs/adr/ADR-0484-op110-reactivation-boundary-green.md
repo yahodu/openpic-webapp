@@ -164,3 +164,68 @@ unchanged), `prettier --check` clean.
   refund shape).** Equally legitimate per ADR-0483, but it changes the ledger's
   period/bookkeeping side-effects for a payment that is still real; the card's
   narrowest change keeps money-side effects and gates only the access-side flip.
+
+## Review sign-off — 2026-10-25 (card t_c83556f9, round 1 · artifact lens)
+
+Append-only: nothing above is retracted or edited. This section records the
+round-1 review of [PR #354](https://github.com/yahodu/openpic-webapp/pull/354)
+(the reactivation-boundary GREEN, branch `OP-110-task-reactivation-boundary-green`)
+by the card `t_c83556f9`, and it consumes **no** ADR number — the OP-110 lane
+`Next free` cell stays `0485` and `docs/adr/README.md` is unchanged.
+
+**Verdict: approved, landed as `2ac32c14`** — the squash-merge of PR #354
+(`fix(billing): OP-110 narrow the reactivation predicate to the recovery pair
+(#354)`, 2026-10-25 18:10:34). The reviewed head was `4e62d5d` (parents
+`29ffd59` + `origin/main` `5ecfc18`), and local `main` == `origin/main` ==
+`2ac32c14` at land time.
+
+**Tree-identity proof.** `git rev-parse 4e62d5d^{tree} 2ac32c14^{tree}`
+resolves both to `309346514258ab3d0b3dc274f06bfe67b3551582` — the reviewed
+head's tree is the shipped tree — and `git diff --stat 4e62d5d 2ac32c14` is
+empty. Everything below was re-derived in throwaway probe worktrees at that tree
+(per-package `node_modules` symlinked, probes removed afterwards).
+
+**The six checks.**
+
+- **ADR-numbering guard on the merged tree** — `vitest run --project unit
+apps/web/src/test/unit/adr-numbering.test.ts` → **29 passed (29)**.
+- **No duplicate numbers** — `ls docs/adr/ | grep -oE 'ADR-[0-9]{4}' | sort |
+uniq -d` → empty; trunk `docs/adr/` carries `0480`–`0484` with no duplicate.
+- **Full suites** — unit **2042 passed | 3 skipped (118 files)** and
+  integration **704 passed (84 files)**.
+- **Focused acceptance + mutation probe** — `-t "the reactivation boundary"` →
+  **3 passed (21 skipped)**; with the predicate widened back to
+  `subscription.status !== "active"` in the probe tree the two new pins go RED
+  (`expected 'active' to be 'cancelled'`, `expected 'active' to be
+'incomplete'`), the `past_due` control stays green, and the OP-108 U1
+  colocated spec stays green (16 passed) — i.e. the `reachesActive` deviation is
+  forced by U1, not a fixture special-case.
+- **Docs and PR gates** — `prettier --check "docs/adr/**/*.md"` clean; PR
+  Checks on `4e62d5d` pass (`ci`, `unit_test`, `test_coverage`, `lint`,
+  `audit`, `env-changes`, `secret-scan`, `validate-*`, CodeQL, Analyze), with
+  `audit-dev` red **by design** (ADR-0301).
+- **Ledger union resolution** — **+7/−1** vs `origin/main` (OP-110 cell
+  `0483`→`0485`, the two index rows, the two OP-110 prose paragraphs — main's
+  rows/prose verbatim).
+
+**Findings routed (not fixed here).**
+
+- **F1 (Medium, routed → card `t_517c30ca`)** — trunk `docs/adr/README.md` is
+  truncated at EOF (`5ecfc18`, PR #352, dropped the body of the board-wide
+  `0309`→`0310` paragraph: `2f5a080` 572 lines properly terminated vs `5ecfc18`
+  552 dangling). Repaired by that card, not by this one.
+- **F2 (Low, routed → the same card `t_517c30ca`, second edit)** — the OP-110
+  pins ledger paragraph claims "the cell's value re-read on the base immediately
+  before committing" while its named base `2be55fb` read `0482` (`git show
+2be55fb:docs/adr/README.md | grep 'OP-110 self-serve billing lane'`); the
+  allocation is right, the clause is not.
+- **F3 (Low, reviewer action)** — draft PR
+  [#344](https://github.com/yahodu/openpic-webapp/pull/344)
+  (`OP-110-task-reactivation-boundary-pin`, `89dbfd7`) was superseded by #354
+  and closed as such; its three files ride in the squash (the pins ADR identical
+  apart from the H1 renumber `ADR-0482` → `ADR-0483` and one in-text
+  source-line reference `:564` → `:572`).
+
+The follow-up card `t_517c30ca` is cited by id only — no ADR number it may still
+mint and no PR number that does not exist yet. The findings above are **not**
+retracted; the follow-up's own record documents what followed.

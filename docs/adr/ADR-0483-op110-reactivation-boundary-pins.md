@@ -167,3 +167,13 @@ before and after; `git diff` on the file empty):
   only the events.
 - **Pin the period/grace fields for a non-recovery payment.** Rejected as
   over-constraining; see Consequences.
+
+## Carried unchanged — PR #354 (round-1 review)
+
+This pins record rode into the trunk **unchanged** with PR #354 (the
+reactivation-boundary GREEN): the test cases are byte-identical (the test file's
+diff against the pins base `89dbfd7` is empty) and the record itself is identical
+apart from its H1 renumber `ADR-0482` → `ADR-0483` and one in-text source-line
+reference `:564` → `:572`. It was covered by the same round-1 review — see the
+[ADR-0484](ADR-0484-op110-reactivation-boundary-green.md) Review sign-off
+section for the evidence — and nothing in this record is retracted.
