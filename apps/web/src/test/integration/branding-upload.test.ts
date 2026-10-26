@@ -583,4 +583,77 @@ describe("POST /api/v1/events/{eventId}/assets/branding", () => {
     expect(rows[0]._id.toHexString()).toBe(payload.assetId);
     expect(rows[0].kind).toBe("event_logo");
   });
+
+  // Round-1 review pin: the event twin's denial uniformity. A caller with no
+  // active `event_organizers` row and a malformed `{eventId}` both answer
+  // `404 not_found` (ADR-0540 assumption A4 — recorded as "unpinned"), the
+  // probe's deliberate non-oracle denial, while the tenant twin answers
+  // `403 forbidden` to a member (I5). These pins lock the asymmetry so a later
+  // change of the event denial to the oracle `403` cannot pass silently.
+  it("answers 404 not_found to an authenticated caller with no event_organizers row", async () => {
+    const outsider = await app.signIn(makeIdentity("op114-nonorg"));
+    const tenantId = await insertTenant({
+      slug: "op114-denial",
+      name: "Denial Studio",
+    });
+    const eventId = new ObjectId();
+    await app.db.collection(COLLECTIONS.events).insertOne({
+      _id: eventId,
+      tenantId: tenantId.toHexString(),
+      name: "Private Party",
+      status: "draft",
+      createdAt: new Date(),
+      schemaVersion: 1,
+    });
+
+    const response = await eventBrandingUpload(
+      uploadRequest(
+        outsider.cookie,
+        `${EVENTS_BASE}/${eventId.toHexString()}/assets/branding`,
+        { name: "logo.png", type: "image/png", bytes: PNG_BYTES },
+        "event_logo"
+      )
+    );
+
+    expect(response.status).toBe(404);
+    expect((await errorOf(response)).code).toBe("not_found");
+    // The denial is total: no row, no stored object.
+    expect(
+      await app.db.collection(COLLECTIONS.mediaAssets).countDocuments({
+        contentHash: sha256Hex(PNG_BYTES),
+      })
+    ).toBe(0);
+  });
+
+  it("answers 404 not_found to a malformed event id", async () => {
+    const caller = await app.signIn(makeIdentity("op114-badid"));
+
+    const response = await eventBrandingUpload(
+      uploadRequest(
+        caller.cookie,
+        `${EVENTS_BASE}/not-a-valid-objectid/assets/branding`,
+        { name: "logo.png", type: "image/png", bytes: PNG_BYTES },
+        "event_logo"
+      )
+    );
+
+    expect(response.status).toBe(404);
+    expect((await errorOf(response)).code).toBe("not_found");
+  });
+
+  it("answers 404 not_found to a well-formed event id that names no event", async () => {
+    const caller = await app.signIn(makeIdentity("op114-noevent"));
+
+    const response = await eventBrandingUpload(
+      uploadRequest(
+        caller.cookie,
+        `${EVENTS_BASE}/${new ObjectId().toHexString()}/assets/branding`,
+        { name: "logo.png", type: "image/png", bytes: PNG_BYTES },
+        "event_logo"
+      )
+    );
+
+    expect(response.status).toBe(404);
+    expect((await errorOf(response)).code).toBe("not_found");
+  });
 });
