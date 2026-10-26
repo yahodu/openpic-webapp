@@ -354,3 +354,51 @@ success — all with `head_sha = 2019aa280c208ccd21c9d55ccc26b922f573c057`.
 
 No ADR number is asserted for the still-unmerged follow-ups: they are cited by card
 id (`t_60e20c44`, `t_de160aea`) and PR number only.
+
+## CI fix sign-off — 2026-10-26 (card `t_ee30e3b7`)
+
+Append-only: nothing above is retracted or edited. This section records the
+FIX/LAND of [PR #362](https://github.com/yahodu/openpic-webapp/pull/362) — the
+card that restored the `Version Bump` workflow — and it consumes **no** ADR
+number (no row in `docs/adr/README.md` is touched).
+
+**The failure, as designed.** The `Version Bump` workflow
+(`.github/workflows/version_bump.yml`) failed on every `main` push from
+`2f5a0806` (PR #348, 2026-10-25T17:51Z) onwards, four runs in a row, all at
+`@semantic-release/git`'s `git commit -F -` with the guard's refusal message.
+This is the guard **working as designed**: the pinned pre-commit hook fires on
+every commit the hook path can observe, and on a GitHub runner it observed a
+corrupt identity (runner images carry a non-empty but unusable
+`user.name`/`user.email`; `git commit` accepts it, the guard refuses it). CI
+cannot see the workers' identity (ADR-0309 §Evidence), but the runner's own
+identity is exactly the corruption class the guard rejects.
+
+**The fix.** The workflow now provisions a repo-local identity — ADR-0309
+clause 3, applied to the machine that owns the release commit — and validates
+it with the guard itself before `semantic-release` runs:
+
+```yaml
+- name: Configure release git identity
+  run: |
+    git config --local user.name "semantic-release-bot"
+    git config --local user.email "semantic-release-bot@users.noreply.github.com"
+    pnpm check:git-identity
+```
+
+Writes name their scope (`--local`); the check is a `--get` read; no env
+sniffing was added to `check-identity.ts`. A GitHub runner has no identity in
+any scope at checkout, so the old job also died to git's own
+`Author identity unknown` before the guard could fire; provisioning makes both
+git and the guard agree, deterministically, on every runner.
+
+**Probe (local, `git 2.4x` on the dev box).** Fresh clone of `1f60a95` in a
+scratch dir — no identity in any scope, mirroring the runner: git's own commit
+refuses; injecting the corrupt pair (`--global` / `user.email`) via
+`GIT_CONFIG_COUNT` reproduces the exact CI stderr and `rc=1`; after the two
+`git config --local` writes, `pnpm check:git-identity` exits `0` and the same
+`chore(release): 1.41.0 [skip ci]` commit succeeds, authored
+`semantic-release-bot <semantic-release-bot@users.noreply.github.com>`. The
+mechanism (`pnpm install` → `prepare` → `husky` + `pin-hooks-path.mjs` →
+`core.hooksPath = .husky` → the hook in the runner's checkout) matches the
+failed runs' logs, where the guard's message is the last line before the plugin
+reports exit code 1.
