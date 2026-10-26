@@ -124,16 +124,34 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     expireAfterSeconds: 0,
   },
 
-  // event_organizers — one active organizer per event (revoked rows excluded).
+  // event_organizers — one active membership row per (event, user); an event
+  // may carry its organizer plus any number of co-organizers (schema §15.2:
+  // `{eventId, userId}` unique). Revoked rows are excluded from uniqueness.
   {
     collection: COLLECTIONS.eventOrganizers,
     name: "event_organizers_active_event_unique",
     keys: [
       ["tenantId", 1],
       ["eventId", 1],
+      ["userId", 1],
     ],
     unique: true,
     partialFilterExpression: { revokedAt: null },
+  },
+
+  // event_organizers — exactly one active ORGANIZER per event (schema §15.2:
+  // `{eventId, role}` unique partial on `{role:"organizer"}`). Co-organizer
+  // rows carry a different role, so this never blocks them.
+  {
+    collection: COLLECTIONS.eventOrganizers,
+    name: "event_organizers_active_organizer_unique",
+    keys: [
+      ["tenantId", 1],
+      ["eventId", 1],
+      ["role", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { role: "organizer", revokedAt: null },
   },
 
   // notification_dispatches — one dispatch per dedupeKey (null keys excluded).
