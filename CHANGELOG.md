@@ -1,3 +1,9 @@
+## [1.45.0](https://github.com/yahodu/openpic-webapp/compare/v1.44.0...v1.45.0) (2026-10-26)
+
+### Features
+
+- **storage:** OP-112 object storage port with logical locations and opaque handles ([#367](https://github.com/yahodu/openpic-webapp/issues/367)) ([8d866d3](https://github.com/yahodu/openpic-webapp/commit/8d866d313b0c428a06b7af9b6f6f011d3b3e0045))
+
 ## [1.44.0](https://github.com/yahodu/openpic-webapp/compare/v1.43.0...v1.44.0) (2026-10-26)
 
 ### Features
