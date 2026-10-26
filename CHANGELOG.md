@@ -1,3 +1,16 @@
+## [1.41.0](https://github.com/yahodu/openpic-webapp/compare/v1.40.1...v1.41.0) (2026-10-26)
+
+### Features
+
+- **billing:** OP-111 billing cron jobs — dunning, reminders, renewals, scheduled changes, reconcile and the projection sweep ([#352](https://github.com/yahodu/openpic-webapp/issues/352)) ([5ecfc18](https://github.com/yahodu/openpic-webapp/commit/5ecfc1885a82c1de6cab2902a4519f81020f8ec8))
+- **git:** OP-110 guard the shared repo-local commit identity in every worktree ([#348](https://github.com/yahodu/openpic-webapp/issues/348)) ([2f5a080](https://github.com/yahodu/openpic-webapp/commit/2f5a080671585d43cb57d0c121a9715a9d51e92b))
+
+### Bug Fixes
+
+- **billing:** OP-110 narrow the reactivation predicate to the recovery pair ([#354](https://github.com/yahodu/openpic-webapp/issues/354)) ([2ac32c1](https://github.com/yahodu/openpic-webapp/commit/2ac32c147ba709095f42c55de2703ee0948e9e44))
+- **ci:** OP-110 configure a git identity for the semantic-release step ([#362](https://github.com/yahodu/openpic-webapp/issues/362)) ([f0d79d4](https://github.com/yahodu/openpic-webapp/commit/f0d79d42a8ef9aeb79577ea44abf73c32b9d77eb))
+- **git:** OP-110 report a failed core.hooksPath pin instead of swallowing it ([#356](https://github.com/yahodu/openpic-webapp/issues/356)) ([3950c22](https://github.com/yahodu/openpic-webapp/commit/3950c2232cd9321ae140368ef129f9496f497e9c))
+
 ## [1.40.1](https://github.com/yahodu/openpic-webapp/compare/v1.40.0...v1.40.1) (2026-10-25)
 
 ### Bug Fixes
