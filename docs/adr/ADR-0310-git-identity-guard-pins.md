@@ -402,3 +402,78 @@ mechanism (`pnpm install` → `prepare` → `husky` + `pin-hooks-path.mjs` →
 `core.hooksPath = .husky` → the hook in the runner's checkout) matches the
 failed runs' logs, where the guard's message is the last line before the plugin
 reports exit code 1.
+
+## Round-1 review sign-off — 2026-10-26 (card `t_ee30e3b7`)
+
+Append-only: nothing above is retracted or edited. This section records the
+round-1 REVIEW/LAND of [PR #362](https://github.com/yahodu/openpic-webapp/pull/362)
+by the card `t_ee30e3b7` (the CI fix whose sign-off is the section immediately
+above), and it consumes **no** ADR number — the board-wide `Next free` cell and
+`docs/adr/README.md` are unchanged.
+
+**Verdict / landing.** PR #362 reviewed (artifactId, round 1) and
+squash-merged; merge commit `f0d79d42`; local and remote trunk synced at
+`68cab8d` (release commit included).
+
+**Independent verification performed by the reviewer (not the implementer's):**
+
+- Guard refusal reproduced in a scratch `git init` with no identity in any
+  scope — exact CI stderr: `The shared repo-local git identity is corrupt:
+user.name and user.email …` — and with the corrupt pair
+  (`user.name=--global`, `user.email=user.email` via `GIT_CONFIG_COUNT`) —
+  both rc=1.
+- After the PR's two `git config --local` writes: `pnpm check:git-identity`
+  rc=0 and the identical `chore(release): 1.41.0 [skip ci]` commit succeeds.
+- Env bypass attempt (`GIT_CONFIG_COUNT` on top of a valid local identity)
+  still refused — the guard never reads `process.env`; not weakenable, as
+  designed.
+- Guard suite at head `c82d005`: `git-identity-guard.test.ts` +
+  `adr-numbering.test.ts` = 58/58 (29 identity + 29 ADR-numbering); suite
+  untouched by the PR.
+- Prettier clean on both changed files; PR scope exactly 2 files (+60/−0);
+  `git merge-tree --write-tree origin/main <head>` exit 0 (MERGEABLE —
+  `BLOCKED` was only the ruleset review gate).
+
+**End-to-end proof (post-merge, the real gate).** Version Bump run
+`40274211839` on merge `f0d79d42` → **success**; `chore(release): 1.41.0
+[skip ci]` (`68cab8d`) on `main`; tag `v1.41.0`; GitHub release published by
+`yahodu-version-bump-bot[bot]` covering the whole backlog since `v1.40.1`
+(feat ×2, fix ×3). Release commit scope = CHANGELOG.md + package.json only.
+Merged-trunk `ci`/`unit_test`/`test_coverage`/`lint`/`secret-scan` green on
+`f0d79d4`.
+
+**Correction to the parent card's figures.** The release run's analyzed range
+included `fix(git) 3950c22 (#356)` and the PR itself, so the release notes
+list five commits, not four — still v1.41.0 (minor). Nothing in §D\* of the
+previous sign-off is retracted.
+
+## Accuracy note — 2026-10-26 (card `t_19afcb0d`)
+
+Append-only: nothing above is retracted or edited. This section records the
+Low finding routed from the round-1 review of [PR #362](https://github.com/yahodu/openpic-webapp/pull/362)
+(card `t_ee30e3b7`): the CI-fix sign-off above states two contradictory
+identity mechanisms for the runner.
+
+**The contradiction.** (a) "runner images carry a non-empty but unusable
+`user.name`/`user.email`; `git commit` accepts it, the guard refuses it", vs
+(b) "A GitHub runner has no identity in any scope at checkout, so the old job
+also died to git's own `Author identity unknown` before the guard could fire".
+
+**Reconciliation (gold evidence favours (a)).** The failed runs' last line is
+the **guard's** message, and git's `Author identity unknown` aborts _before_
+any pre-commit hook runs — so a hook firing implies git had already resolved
+an identity it accepted. Mechanism (a) is kept; claim (b) is dropped. The
+YAML comment on the new step ("no git identity in any config scope") is the
+same oversimplification — this note is the reconciliation, and no code PR was
+opened for it (a one-line alignment may land with any future touch of
+`.github/workflows/version_bump.yml`).
+
+**Factual signature.** The landed release commit is authored
+`semantic-release-bot <semantic-release-bot@martynus.net>` —
+`@semantic-release/git`'s **plugin-default** identity (no `gitAuthor` in
+`.releaserc.json`), which it injects via env; the workflow-configured
+`semantic-release-bot@users.noreply.github.com` therefore never appears as
+the commit author. The configured local identity exists to satisfy the
+guard's `git config --get` read (guard + git agree, deterministically). If
+exact noreply authorship ever matters, set `gitAuthor` in `.releaserc.json`
+— out of scope here, recorded as a note.
