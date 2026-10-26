@@ -1,4 +1,4 @@
-import { ObjectId } from "mongodb";
+import { ObjectId, type Document } from "mongodb";
 import { z } from "zod";
 
 import { getConfig } from "@/server/config/env";
@@ -7,13 +7,15 @@ import { getDb } from "@/server/db/mongo";
 import { withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { normalizeInstantToUtc } from "@/server/events/dates";
-import { eventDtoSchema, toEventDto } from "@/server/events/dto";
+import { eventDtoSchema, toEventDto, type EventRow } from "@/server/events/dto";
+import { buildNamePrefixRegex } from "@/server/events/search";
 import { generateAccessLinkSlug } from "@/server/events/slug";
 import {
   computeDurationDays,
   computeRetentionExpiresAt,
   computeUploadWindowEndsAt,
 } from "@/server/events/windows";
+import { buildCursorPage, parsePageQuery } from "@/server/http/cursor";
 import { created, defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { eventETag } from "@/server/http/etag";
@@ -412,6 +414,104 @@ export const POST = defineRoute({
     return {
       ...response,
       headers: { ...response.headers, etag: eventETag(now, EVENT_SCHEMA_VERSION) },
+    };
+  },
+});
+
+/**
+ * The list page envelope: `{ data, page: { nextCursor, hasMore, limit } }`
+ * (contract §0.8).
+ */
+const eventListSchema = z.object({
+  data: z.array(eventDtoSchema),
+  page: z.object({
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
+    limit: z.number(),
+  }),
+});
+
+/** The `startAt` part of a cursor key (contract §0.8). */
+function cursorInstant(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : new Date(String(value)).toISOString();
+}
+
+/** The `_id` part of a cursor key (contract §0.8). */
+function cursorId(value: unknown): string {
+  return value instanceof ObjectId ? value.toHexString() : String(value);
+}
+
+/**
+ * `GET /api/v1/tenants/{tenantId}/events` — list the tenant's events
+ * (OP-116 I1, contract §4.1 + §0.8; ADR-0560).
+ *
+ * The organizer browses their events, one cursor page at a time, newest first
+ * (`startAt` desc). `?status=` filters the rows (`published` | `draft`); an
+ * absent `status` returns every event of the tenant. `?q=` is a
+ * case-insensitive **prefix** on the event name built from the escaped query
+ * (`@/server/events/search`, U1). `?cursor=&limit=` continue on the compound
+ * `(startAt, _id)` key, so a repeat of the same query returns the same first
+ * page and paging never skips or repeats a row.
+ *
+ * The route stays **tenant-members-only** (the same tenant stage the create
+ * route runs): a co-organizer who is not a tenant member reaches the shared
+ * event through the global detail path instead (ADR-0560).
+ */
+export const GET = defineRoute({
+  route: "/api/v1/tenants/:tenantId/events",
+  response: eventListSchema,
+  auth: (ctx, request) => userAuth()(ctx, request),
+  tenant: tenantStage(),
+  handler: async (ctx) => {
+    const scope = requireTenantScope(ctx);
+    const db = getDb();
+    const config = getConfig();
+    const tenantKey = scope.tenantId.toHexString();
+    const params = new URL(ctx.request.url).searchParams;
+
+    const status = params.get("status");
+    const q = params.get("q");
+    const pageQuery = parsePageQuery(params);
+
+    const match: Document = {};
+    if (status !== null) {
+      match.status = status;
+    }
+    if (q !== null) {
+      match.name = buildNamePrefixRegex(q);
+    }
+    if (pageQuery.cursor !== null) {
+      const cursorStartAt = new Date(pageQuery.cursor.c);
+      const cursorObjectId = new ObjectId(pageQuery.cursor.i);
+      match.$or = [
+        { startAt: { $lt: cursorStartAt } },
+        { startAt: cursorStartAt, _id: { $lt: cursorObjectId } },
+      ];
+    }
+
+    const rows = await tenantRepo(tenantKey, db)
+      .collection(COLLECTIONS.events)
+      .find(match)
+      .sort({ startAt: -1, _id: -1 })
+      .limit(pageQuery.limit + 1)
+      .toArray();
+
+    const page = buildCursorPage(rows, pageQuery.limit, (row) => ({
+      c: cursorInstant(row.startAt),
+      i: cursorId(row._id),
+    }));
+
+    return {
+      body: {
+        data: page.items.map((row) => {
+          const dto = toEventDto(row as unknown as EventRow, config.app.baseUrl);
+          if (dto === null) {
+            throw appError("internal_error");
+          }
+          return dto;
+        }),
+        page: { nextCursor: page.nextCursor, hasMore: page.hasMore, limit: pageQuery.limit },
+      },
     };
   },
 });
