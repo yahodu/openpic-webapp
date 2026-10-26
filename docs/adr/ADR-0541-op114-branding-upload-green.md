@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-114 GREEN (`t_73dd4924`) · **Branch:** `OP-114-task-branding-asset-upload` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_2adaddec`, stacked on the RED head `a9b39ed` with the OP-112 (`OP-112-feature-object-storage-port`) and OP-113 (`OP-113-feature-media-url-signer`) lanes merged into the base
-- **Relates to:** [ADR-0540](ADR-0540-op114-branding-upload-red.md) (the RED contract this card turns green), [ADR-0520](ADR-0520-op112-object-storage-port-red.md)/[ADR-0521](ADR-0521-op112-object-storage-port-green.md) (the storage port + `branding` location + key builder this route calls), [ADR-0522](ADR-0522-op113-media-url-signer-red.md)/[ADR-0523](ADR-0523-op113-media-url-signer-green.md) (the signer this route mints the URL with), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card takes the lane's next free `0541`), [ADR-0306](ADR-0306-op101-stale-branch-deletion.md) (RED-by-design posture)
+- **Relates to:** [ADR-0540](ADR-0540-op114-branding-upload-red.md) (the RED contract this card turns green), [ADR-0580](ADR-0580-op112-object-storage-port-red.md)/[ADR-0581](ADR-0581-op112-object-storage-port-green.md) (the storage port + `branding` location + key builder this route calls), [ADR-0582](ADR-0582-op113-media-url-signer-red.md)/[ADR-0583](ADR-0583-op113-media-url-signer-green.md) (the signer this route mints the URL with), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card takes the lane's next free `0541`), [ADR-0306](ADR-0306-op101-stale-branch-deletion.md) (RED-by-design posture)
 
 ## Context
 

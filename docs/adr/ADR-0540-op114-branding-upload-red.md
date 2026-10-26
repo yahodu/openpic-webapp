@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-114 RED (`t_2adaddec`) · **Branch:** `OP-114-task-branding-asset-upload` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_2adaddec`
-- **Relates to:** [ADR-0520](ADR-0520-op112-object-storage-port-red.md) / [ADR-0521](ADR-0521-op112-object-storage-port-green.md) (the OP-112 storage port this route calls), [ADR-0522](ADR-0522-op113-media-url-signer-red.md) / [ADR-0523](ADR-0523-op113-media-url-signer-green.md) (the signer this route mints the URL with), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card draws its **own** block `0540`–`0559`, see §8), [ADR-0306](ADR-0306-op101-stale-branch-deletion.md) (RED-by-design posture)
+- **Relates to:** [ADR-0580](ADR-0580-op112-object-storage-port-red.md) / [ADR-0581](ADR-0581-op112-object-storage-port-green.md) (the OP-112 storage port this route calls), [ADR-0582](ADR-0582-op113-media-url-signer-red.md) / [ADR-0583](ADR-0583-op113-media-url-signer-green.md) (the signer this route mints the URL with), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card draws its **own** block `0540`–`0559`, see §8), [ADR-0306](ADR-0306-op101-stale-branch-deletion.md) (RED-by-design posture)
 - **Contract:** §2.1 of `docs/API Contract.md` — **"The one byte-accepting endpoint"**:
 
   ```
@@ -18,7 +18,7 @@
   **either** direction — every other image endpoint returns or accepts a
   (presigned) URL — and this route is the lone, volume-negligible exception
   that may accept bytes. Schema §16.1 (`mediaAssets`), the OP-112 lane
-  (ADR-0520/0521) and the OP-113 lane (ADR-0522/0523) supply the storage port,
+  (ADR-0580/0581) and the OP-113 lane (ADR-0582/0583) supply the storage port,
   the `branding` location, the content-addressed key builder and the media URL
   signer this route composes.
 
@@ -158,13 +158,13 @@ A dependent ticket does not continue its parent's range (ADR-0300 §7): OP-114
 depends on OP-112/113 but is the **first card of its own lane** (epic
 "Tenancy", phase 3), so it draws the next free 20-number block from the
 `unallocated (future lanes)` pool. The in-flight OP-112 media lane's branch
-holds the `0520`–`0539` block (its pool edit reads `0540`+), and under
+holds the `0580`–`0599` block (its pool edit reads `0600`+), and under
 ADR-0300 §7 an in-flight allocation counts as taken — so this card takes
 **`0540`–`0559`**, writes the lane row `OP-114 branding upload lane |
 `0540`–`0559`| Next free`0541``, and advances the pool cell to **`0560`+**.
 The shared-ledger union at merge keeps every cell at its highest value (the
-media lane's `0524` next-free and this lane's `0541` both stand; the pool
-settles at `0560`+). The GREEN successor `t_73dd4924` consumes `0541` next.
+media lane's `0584` next-free and this lane's `0541` both stand; the pool
+settles at `0600`+). The GREEN successor `t_73dd4924` consumes `0541` next.
 
 ## Evidence (RED)
 

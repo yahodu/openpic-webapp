@@ -1,12 +1,12 @@
-# ADR-0521 — OP-112 GREEN: the object storage port implemented — the R2 adapter, memory adapter, location map, key builder and HMAC handles
+# ADR-0581 — OP-112 GREEN: the object storage port implemented — the R2 adapter, memory adapter, location map, key builder and HMAC handles
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-112 GREEN (`t_a9d218d5`) · **Branch:** `OP-112-feature-object-storage-port` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_a9d218d5`, stacked on the RED head `4fb9ec0`
-- **Relates to:** [ADR-0520](ADR-0520-op112-object-storage-port-red.md) (the RED contract this card turns green), [ADR-0001](ADR-0001-ports-and-adapters.md) (the port shape), [ADR-0072](ADR-0072-op92-message-transport-and-novu-drift-guard-red.md) (the shared transport/drift classification), [ADR-0380](ADR-0380-op105-payment-provider-port-red.md) (the explicit-config adapter factory shape), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card takes the lane's next free `0521`)
+- **Relates to:** [ADR-0580](ADR-0580-op112-object-storage-port-red.md) (the RED contract this card turns green), [ADR-0001](ADR-0001-ports-and-adapters.md) (the port shape), [ADR-0072](ADR-0072-op92-message-transport-and-novu-drift-guard-red.md) (the shared transport/drift classification), [ADR-0380](ADR-0380-op105-payment-provider-port-red.md) (the explicit-config adapter factory shape), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card takes the lane's next free `0581`)
 
 ## Context
 
-ADR-0520 fixed the executable contract the RED's four unit specs (U1–U4) and
+ADR-0580 fixed the executable contract the RED's four unit specs (U1–U4) and
 one MSW integration spec (I1–I3) encode. This GREEN implements it — the five
 pinned modules, the two dependency additions the RED deferred, and the
 provider-neutral port contract driving both adapters — with the six test
@@ -16,7 +16,7 @@ files carried byte-unchanged.
 
 ### 1. The `ObjectStorage` port type has a home: `@/server/storage/object-storage`
 
-ADR-0520 §1's module table names the five runtime modules; the twelve-method
+ADR-0580 §1's module table names the five runtime modules; the twelve-method
 port surface (§2) lives as a **types-only** module the two adapters implement
 (`ObjectStorage`, `PresignedPut`, `CreatedMultipart`, `UploadedPart`,
 `ListedParts`, `CompletedPart`, `CompletedMultipart`, `ObjectHead`,
@@ -32,12 +32,12 @@ The RED's spec passes `[{ PartNumber, ETag }]` — no `Size` — to
 that input. The port therefore types the acknowledgement as `CompletedPart`
 (`{ PartNumber: number; ETag: string }`), the caller echoing back what
 `listParts` handed it; `Size` is the vendor's bookkeeping and stays out of
-the client-asserted shape (ADR-0520 §7 calls the three-field shape the
+the client-asserted shape (ADR-0580 §7 calls the three-field shape the
 _list_ contract, not the complete input).
 
 ### 3. The handle's object key is unrecoverable from the token — and that made the service stateful
 
-ADR-0520 §5 and its Consequences promise "the object key is unrecoverable
+ADR-0580 §5 and its Consequences promise "the object key is unrecoverable
 from the token", with the service taking only `{ secret }`. A token that
 carries the object key (even base64url-encoded) is decodable by the client
 Uppy echoes it to, which would hand the storage layout to the client — the
@@ -58,7 +58,7 @@ in-process, so a handle is resolvable for the life of the issuing process.
 A deployment that must resolve handles across restarts or instances moves
 this map behind a shared store (the existing Upstash Redis) — the refusal
 surface is identical. The signing secret's env source also stays unpinned
-(ADR-0520 open item): `createHandleService({ secret })` takes it explicitly.
+(ADR-0580 open item): `createHandleService({ secret })` takes it explicitly.
 
 ### 4. Vendor quirks pinned by the live MSW↔SDK handshake (the RED could not see the wire)
 
@@ -79,7 +79,7 @@ things no stub could:
 
 ### 5. Undriven port methods are `not_implemented` refusals on both adapters
 
-ADR-0520 §2 explicitly permits minimal bodies "until a lane drives them":
+ADR-0580 §2 explicitly permits minimal bodies "until a lane drives them":
 `presignPart`, `abortMultipart`, `deleteObject`, `getObjectStream` (and
 `putObject`/`getObject`/`getObjectRange` on the R2 adapter) refuse with
 `AppError("not_implemented")` (501). Writing untested vendor calls now would
@@ -87,7 +87,7 @@ ship the next cycle's liability (the OP-105 `createPlan`/`cancelMandate`
 precedent, ADR-0381 D3). The port surface pin (`Object.keys(...)` equality)
 holds on both adapters regardless.
 
-### 6. Everything else implements the ADR-0520 pin exactly
+### 6. Everything else implements the ADR-0580 pin exactly
 
 `locations` (type guard + `bucketForLocation` via `ConfigError` naming the
 location, never `undefined`), `object-key` (total `images/<64-hex>.<ext>`
@@ -110,9 +110,9 @@ no findings.
 
 ## Number allocation
 
-This card consumes the lane's **`0521`** (ADR-0520: "The gated GREEN
-`t_a9d218d5` consumes `0521` next") and advances the lane's `Next free` cell
-to `0522`. No number outside the lane range `0520`–`0539` is touched.
+This card consumes the lane's **`0581`** (ADR-0580: "The gated GREEN
+`t_a9d218d5` consumes `0581` next") and advances the lane's `Next free` cell
+to `0582`. No number outside the lane range `0580`–`0599` is touched.
 
 ## Consequences
 

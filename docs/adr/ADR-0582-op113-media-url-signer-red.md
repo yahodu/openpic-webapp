@@ -1,8 +1,8 @@
-# ADR-0522 — OP-113 RED: the path-bound HMAC media URL signer — known vectors, secret rotation and the TTL invariants
+# ADR-0582 — OP-113 RED: the path-bound HMAC media URL signer — known vectors, secret rotation and the TTL invariants
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-113 RED (`t_d7caeeb0`) · **Branch:** `OP-113-task-media-url-signer` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_d7caeeb0`
-- **Relates to:** [ADR-0520](ADR-0520-op112-object-storage-port-red.md) / [ADR-0521](ADR-0521-op112-object-storage-port-green.md) (the sibling storage lane — the opaque-handle HMAC precedent this signer mirrors, and the `MEDIA_SIGNING_SECRET_CURRENT` note), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card continues the lane's `0520`–`0539` block), [ADR-0306](ADR-0306-op101-stale-branch-deletion.md) (RED-by-design posture)
+- **Relates to:** [ADR-0580](ADR-0580-op112-object-storage-port-red.md) / [ADR-0581](ADR-0581-op112-object-storage-port-green.md) (the sibling storage lane — the opaque-handle HMAC precedent this signer mirrors, and the `MEDIA_SIGNING_SECRET_CURRENT` note), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation — this card continues the lane's `0580`–`0599` block), [ADR-0306](ADR-0306-op101-stale-branch-deletion.md) (RED-by-design posture)
 - **Contract:** §5.6 (media signed URLs — `{url, expiresAt}`, token lifetimes "thumbnails **24 h**, originals **15 min**. Never invert these") and §5.7 (the data plane — the signature scheme `payload = METHOD + "\n" + PATH + "\n" + EXPIRY`, `signature = base64url(HMAC-SHA256(MEDIA_SIGNING_SECRET, payload))`, `GET https://pic.openpic.in/{t|o}/<sha256>.<ext>?exp=<unix>&sig=<base64url>`) of `docs/API Contract.md`, and the media doc §8/§21 references they name. The media data plane is a Cloudflare Worker **outside the byte path of the control plane** — the Worker authorizes image delivery purely from the URL this signer mints.
 
 ## Context
@@ -40,7 +40,7 @@ and `@/server/runtime/clock` (OP-72: `Clock`, `systemClock`) already exist on
 "inject a `Clock`" pattern applied to §5.7. The module is **pure**: it reads no
 environment at import. Secrets and the clock are injected through
 `createMediaSigner({ currentSecret, previousSecret?, clock? })` (the
-`createHandleService({ secret })` shape, ADR-0520 §1); the composition root
+`createHandleService({ secret })` shape, ADR-0580 §1); the composition root
 (GREEN's free choice, unpinned) reads `config.media.signingSecretCurrent` /
 `signingSecretPrevious` — the `MEDIA_SIGNING_SECRET_CURRENT` /
 `MEDIA_SIGNING_SECRET_PREVIOUS` env keys already validated by OP-70's
@@ -130,10 +130,10 @@ factories verifies the published vectors.
 - `verify` never throws → the Worker's failure mode is uniformly `403`, matching
   §5.7's client contract ("403 means expired or invalid signature → refresh,
   retry once").
-- The README ledger gains the lane row (`0520`–`0539`, `Next free 0523`) and
-  advances the `unallocated (future lanes)` pool to `0540`+. The unmerged
-  OP-112 branch already holds the identical row with `Next free 0522` and the
-  same pool edit; union-resolution at merge keeps `0523` (every cell at its
+- The README ledger gains the lane row (`0580`–`0599`, `Next free 0583`) and
+  advances the `unallocated (future lanes)` pool to `0600`+. The unmerged
+  OP-112 branch already holds the identical row with `Next free 0582` and the
+  same pool edit; union-resolution at merge keeps `0583` (every cell at its
   highest value) — flagged in the handoff.
 
 ## Assumptions and open questions
@@ -144,7 +144,7 @@ factories verifies the published vectors.
   new pins.
 - **`contentHash`/`ext` are not validated by the signer.** The signer binds
   whatever path it is given; the 64-hex shape is the _key builder's_ concern
-  (ADR-0520 U2) and the caller's responsibility here. The vector fixture and all
+  (ADR-0580 U2) and the caller's responsibility here. The vector fixture and all
   factories use a valid lowercase hex SHA-256.
 - **The host is not signed** (the §5.7 preimage has no host line), and the
   fixed base is `https://pic.openpic.in` — the Worker fronts exactly one host,
@@ -163,9 +163,9 @@ factories verifies the published vectors.
 
 ## ADR number allocation
 
-Consumed `0522` — the lane's `Next free` per the OP-112 GREEN handoff (`lane
-Next free 0522`), re-read on the current base `a247a42`. As the card that lands
-the ledger row, this record writes the lane's `Next free` cell to `0523`. No
-number outside the lane range `0520`–`0539` is touched; the shared
+Consumed `0582` (Renumbered 2026-10-26 from `0522`, which collided with OP-115's merged `0520`/`0521`) — the lane's `Next free` per the OP-112 GREEN handoff (`lane
+Next free 0582`), re-read on the current base `a247a42`. As the card that lands
+the ledger row, this record writes the lane's `Next free` cell to `0583`. No
+number outside the lane range `0580`–`0599` is touched; the shared
 `docs/adr/README.md` is the known hotspot and is union-resolved at merge (the
-unmerged OP-112 branch holds `0520`/`0521` and the same row).
+unmerged OP-112 branch holds `0580`/`0581` and the same row).
