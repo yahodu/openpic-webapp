@@ -168,8 +168,8 @@ URL structurally (origin, `/t/` segment, 64-hex hash, `exp`/`sig`).
   names are lexed with correct value scanning, and the output is rebuilt from
   original slices so benign markup stays byte-identical. The four payload
   classes are unchanged (script/foreignObject subtrees removed, `on*` stripped,
-  `javascript:` hrefs dropped, all case-insensitive); the stored output for a
+  `javascript:`-class hrefs dropped, all case-insensitive); the stored output for a
   given input differs from the regex version only by fixing those bypasses.
   No dependency was added (the contract's DOMPurify/jsdom suggestion was
   considered; a tokenizer keeps the module dependency-free and never throws).
-  CodeQL re-scan of the new head reports **0 alerts**.
+  CodeQL re-scan of the final head reports **0 alerts**.

@@ -12,8 +12,10 @@
  *      (nested occurrences included);
  *   2. `<foreignObject>` elements are removed together with their contents;
  *   3. `on*` event-handler attributes are stripped;
- *   4. `href` / `xlink:href` attributes whose value is a `javascript:` URI are
- *      dropped (the attribute, not the element).
+ *   4. link attributes (`href` / `xlink:href`) whose value resolves to one of
+ *      the blocked URI schemes (`javascript:`, `vbscript:`, `data:`, `file:`,
+ *      `blob:`, `about:`, `mhtml:`) are dropped (the attribute, not the
+ *      element) — a browser would otherwise execute or embed them.
  *
  * Everything else — benign elements, attributes and harmless `https` links —
  * passes through byte-identically. The transformation is case-insensitive for
@@ -35,11 +37,19 @@
 /** Element local names whose entire subtree is removed (case-insensitive). */
 const SUPPRESSED_ELEMENTS = new Set(["script", "foreignobject"]);
 
-/** `href` attribute names whose value is checked for a `javascript:` URI. */
+/** `href` attribute names whose value is checked for blocked URI schemes. */
 const LINK_ATTRIBUTE_NAMES = new Set(["href", "xlink:href"]);
 
-/** The URI scheme that is stripped from link attributes (case-insensitive). */
-const BLOCKED_URI_SCHEME = "javascript:";
+/** The URI schemes stripped from link attributes (case-insensitive). */
+const BLOCKED_URI_SCHEMES = new Set([
+  "javascript:",
+  "vbscript:",
+  "data:",
+  "file:",
+  "blob:",
+  "about:",
+  "mhtml:",
+]);
 
 /** A parse base for relative link values; only the `protocol` is read. */
 const LINK_BASE_URL = "https://openpic.in/";
@@ -96,15 +106,17 @@ function decodeCharacterReferences(value: string): string {
  * `https:` protocol and is never reported blocked.
  *
  * @param value - The raw attribute value.
- * @returns Whether a browser would see the `javascript:` scheme.
+ * @returns Whether a browser would see one of the blocked URI schemes.
  */
 function hasBlockedUriScheme(value: string): boolean {
   try {
-    return new URL(decodeCharacterReferences(value), LINK_BASE_URL).protocol === BLOCKED_URI_SCHEME;
+    return BLOCKED_URI_SCHEMES.has(
+      new URL(decodeCharacterReferences(value), LINK_BASE_URL).protocol
+    );
   } catch {
-    // An unparseable value is not a javascript: URI. (The WHATWG parser
-    // only throws for some internals-invalid inputs; treating them as safe
-    // matches a browser refusing to navigate to them.)
+    // An unparseable value is not a URI with a blocked scheme. (The WHATWG
+    // parser only throws for some internals-invalid inputs; treating them as
+    // safe matches a browser refusing to navigate to them.)
     return false;
   }
 }
@@ -269,7 +281,7 @@ function lexAttributes(xml: string, bodyEnd: number, nameEnd: number): LexedAttr
  *
  * Removes `<script>` and `<foreignObject>` subtrees (nested included), strips
  * `on*` event-handler attributes, and drops `href`/`xlink:href` attributes
- * whose URI scheme is `javascript:`. Everything else is preserved
+ * whose URI scheme is in the blocked set. Everything else is preserved
  * byte-identically. Never throws.
  *
  * @param xml - The original uploaded SVG text.
@@ -410,7 +422,7 @@ export function sanitizeSvg(xml: string): string {
     }
 
     // A retained start tag: rebuild it from the original slices, dropping
-    // `on*` handlers and `javascript:` links.
+    // `on*` handlers and blocked-scheme links.
     const attributes = lexAttributes(xml, close, nameEnd);
     let tag = xml.slice(open, nameEnd);
     let cursor = nameEnd;
