@@ -1,3 +1,9 @@
+## [1.46.0](https://github.com/yahodu/openpic-webapp/compare/v1.45.0...v1.46.0) (2026-10-26)
+
+### Features
+
+- **media:** OP-113 HMAC media URL signer with secret rotation ([#370](https://github.com/yahodu/openpic-webapp/issues/370)) ([f6782a3](https://github.com/yahodu/openpic-webapp/commit/f6782a336af46833da0fd9ebf68d640782b7dd93))
+
 ## [1.45.0](https://github.com/yahodu/openpic-webapp/compare/v1.44.0...v1.45.0) (2026-10-26)
 
 ### Features
