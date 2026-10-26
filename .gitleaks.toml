@@ -19,4 +19,10 @@ regexTarget = "secret"
 regexes = [
   '''insightface-antelopev2-2026-03''',
   '''e2e-unsubscribe-signing-secret-0123456789abcd''',
+  # The OP-115 event access-link alphabet (ADR-0520): a public constant
+  # exported from @/server/events/slug and mirrored by the integration spec's
+  # own SLUG_ALPHABET copy. It is a character set, not a secret — gitleaks'
+  # generic-api-key entropy heuristic flags it, so the exact non-secret value
+  # is allowlisted (the same treatment the docs' modelKey example receives).
+  '''abcdefghjkmnpqrstuvwxyz23456789''',
 ]
