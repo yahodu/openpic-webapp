@@ -6,6 +6,7 @@ import type {
   EntitlementErrorCode,
   ErrorCode,
   InternalErrorCode,
+  MediaErrorCode,
   NotificationErrorCode,
   PipelineErrorCode,
   RequestShapeErrorCode,
@@ -399,6 +400,22 @@ export const BILLING_ERROR_TRANSPORT: Readonly<Record<BillingErrorCode, ErrorCat
 };
 
 /**
+ * Transport for the media-upload codes (contract Appendix A.2, ADR-0540).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the tenancy and
+ * entitlement codes: that table stays the exact base Appendix A copy.
+ * `file_too_large` is the branding-upload size refusal (`413`, non-retryable,
+ * `{ maxBytes, actualBytes }` — the appendix documents the details shape).
+ */
+export const MEDIA_ERROR_TRANSPORT: Readonly<Record<MediaErrorCode, ErrorCatalogEntry>> = {
+  file_too_large: {
+    status: 413,
+    retryable: false,
+    message: "The uploaded file exceeds the maximum allowed size.",
+  },
+};
+
+/**
  * Every client-facing code's transport: Appendix A first, then the pipeline,
  * auth, request-shape, internal, account, notification and tenancy tables.
  */
@@ -413,6 +430,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...TENANCY_ERROR_TRANSPORT,
   ...ENTITLEMENT_ERROR_TRANSPORT,
   ...BILLING_ERROR_TRANSPORT,
+  ...MEDIA_ERROR_TRANSPORT,
 };
 
 /**
