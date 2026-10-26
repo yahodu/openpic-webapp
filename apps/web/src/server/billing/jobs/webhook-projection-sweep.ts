@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import { projectProviderWebhookEvent } from "@/server/billing/webhook-projection";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
+import { emitDomainEvent } from "@/server/domain/domain-events";
 import type { CronRunOutcome } from "@/server/jobs/cron-job";
 import { getLogger } from "@/server/logging";
 import { platformRepo } from "@/server/repos";
@@ -27,6 +28,23 @@ import type { BillingJobRunOptions } from "./run-options";
 /** How long an unprocessed inbox row waits before the sweep retries it. */
 const SWEEP_GRACE_MS = 60 * 1000;
 
+/**
+ * How many consecutive failed sweeps a single row may accumulate before the
+ * `admin.provider.failing` escalation is raised (§10.2; ADR-0502). Two failures
+ * are the transient tolerance; the third is a pattern.
+ */
+const FAILURE_ALERT_THRESHOLD = 3;
+
+/** The stored per-row consecutive-failure counter field (absent ⇒ `0`). */
+const FAILURE_COUNT_FIELD = "sweepFailureCount";
+
+/**
+ * The outbox `tenantId` for a platform-scoped escalation. The inbox row carries
+ * no tenant and §10.2 names no subject for `admin.provider.failing`, so the
+ * alert is filed against the platform sentinel (ADR-0502 §"Open items").
+ */
+const PLATFORM_TENANT_ID = "platform";
+
 /** The stored fields the sweep reads off a candidate inbox row. */
 interface InboxCandidate {
   readonly _id: ObjectId;
@@ -48,9 +66,10 @@ function asInboxCandidate(value: unknown): InboxCandidate | null {
  * The selection is `processedAt: null` **and** `receivedAt < now - 60 s`;
  * `projectProviderWebhookEvent` re-reads, re-parses, orders and applies the
  * event in one transaction and settles the row, so a row that still fails keeps
- * `processedAt: null` and is counted in `errors` (the repeated-failure signal
- * `admin.provider.failing` is raised from — the job itself emits no alert
- * inline, contract §10.2 rule 3).
+ * `processedAt: null` and is counted in `errors`. A row that keeps failing
+ * accumulates a consecutive-failure counter, and once it crosses the repeat
+ * threshold the sweep emits one `admin.provider.failing` escalation
+ * (deduplicated per row; always mobile — §10.1.2 line 3171; §10.2; ADR-0502).
  *
  * @param options - Database/clock seams and the per-run limit.
  * @returns The §10.2 run outcome (`hasMore` when the candidate window filled).
@@ -87,6 +106,36 @@ export async function runWebhookProjectionSweep(
       affected += 1;
     } else {
       errors += 1;
+      // The projection's own failure path rewrites only `processedAt`/
+      // `processResult`/`processError`, so the sweep carries its own
+      // consecutive-failure counter on the row, `$inc`ing it after each failed
+      // re-projection (an absent counter reads as 0). The escalation is raised
+      // crossing-only, on the sweep that reaches the threshold — sweeps 4+
+      // neither re-raise nor re-attempt. The `dedupeKey` is the outbox-side
+      // backstop for a racing concurrent sweep (§10.2; ADR-0502).
+      const incremented: unknown = await inbox.findOneAndUpdate(
+        { _id: row._id },
+        { $inc: { [FAILURE_COUNT_FIELD]: 1 } },
+        { returnDocument: "after" }
+      );
+      const failureCount =
+        typeof incremented === "object" && incremented !== null
+          ? (incremented as { readonly sweepFailureCount?: unknown }).sweepFailureCount
+          : undefined;
+      if (failureCount === FAILURE_ALERT_THRESHOLD) {
+        const eventId = row._id.toHexString();
+        await emitDomainEvent(
+          {
+            eventKey: "admin.provider.failing",
+            tenantId: PLATFORM_TENANT_ID,
+            actorRef: { kind: "system", id: "webhook-projection-sweep" },
+            subjectRef: { kind: "providerWebhookEvent", id: eventId },
+            payload: { mobile: true },
+            dedupeKey: `admin.provider.failing:${eventId}`,
+          },
+          { db, clock }
+        );
+      }
     }
   }
 
