@@ -152,6 +152,31 @@ rely on a clean counter period), and (2) read the error body once per case
 details from it) — the existing `errorCodeOf` helper makes the second `body`
 redundant.
 
+### D1/D2 repair (Test Author follow-up t_4916ad9c, landed on this branch)
+
+Both harness defects above are fixed **test-file-only** in
+`apps/web/src/test/integration/event-create.test.ts`; no production file
+changed.
+
+- **D1:** `beforeEach` is now async and clears the shared collections before
+  every case — `plans`, `subscriptions`, `usageCounters`, `entitlementGrants`,
+  `domainEvents` (the OP-103 precedent set, all present in `COLLECTIONS` so no
+  new imports) plus `events`, `eventOrganizers` and `mediaAssets` so the
+  "persists nothing" cases (I2/I3/I8/I11/I12) assert against a clean state and
+  I5/I8b seed their fixtures fresh. `ensureIndexes(app.db)` still runs once in
+  `beforeAll`; the unique `plans_key_unique` index now kicks in per-case as
+  intended.
+- **D2:** the seven double-read sites (I2/I3/I4/I7/I8/I11/I12) now parse the
+  error body **once** — `const parsed = (await body(response)) as { error: {
+code: string; details?: … } }` — and derive both `parsed.error.code` and
+  `parsed.error.details` from that single read; the now-unused `errorCodeOf`
+  helper was deleted (no case reads the body once afterwards, so it had no
+  remaining call site).
+- **Evidence:** the full integration project on this head is **729 passed
+  (729) / 86 files** (the OP-115 file went from 11 failed | 3 passed to
+  **14 passed (14)**); `tsc -p apps/web/tsconfig.json --noEmit` exit `0`,
+  `eslint` and `prettier --check` clean on the touched file.
+
 ### D3 — CodeQL `js/insecure-randomness` in the RED e2e spec (disputed, left red)
 
 GitHub default-setup CodeQL reports two **high** `js/insecure-randomness`

@@ -132,7 +132,23 @@ afterAll(async () => {
   await app.cleanup();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
+  // The app boots once for the whole file, so every case must seed against a
+  // clean database. The shared collections were the OP-115 D1 defect: fixed
+  // plan keys (op115-starter, …) collided on `plans_key_unique` from the second
+  // case on (E11000 before the route ran). The OP-103 precedent
+  // (entitlements.test.ts) clears plans, subscriptions, counters, grants and
+  // the outbox; OP-115 additionally clears `events` / `event_organizers` /
+  // `media_assets` so the "persists nothing" cases (I2/I3/I8/I11/I12) assert
+  // against a clean state and I5/I8b seed their fixtures fresh.
+  await app.db.collection(COLLECTIONS.plans).deleteMany({});
+  await app.db.collection(COLLECTIONS.subscriptions).deleteMany({});
+  await app.db.collection(COLLECTIONS.usageCounters).deleteMany({});
+  await app.db.collection(COLLECTIONS.entitlementGrants).deleteMany({});
+  await app.db.collection(COLLECTIONS.domainEvents).deleteMany({});
+  await app.db.collection(COLLECTIONS.events).deleteMany({});
+  await app.db.collection(COLLECTIONS.eventOrganizers).deleteMany({});
+  await app.db.collection(COLLECTIONS.mediaAssets).deleteMany({});
   slugMock.generateAccessLinkSlug.mockReset();
   slugMock.generateAccessLinkSlug.mockImplementation(randomSlug);
 });
@@ -286,12 +302,6 @@ function isoPlusDays(iso: string, days: number): string {
   return new Date(new Date(iso).getTime() + days * 86_400_000).toISOString();
 }
 
-/** The `error.code` of a rejected response. */
-async function errorCodeOf(response: Response): Promise<string> {
-  const parsed = (await body(response)).error as { code: string };
-  return parsed.code;
-}
-
 describe("POST /api/v1/tenants/{tenantId}/events", () => {
   it("I1: creates the event with materialised windows, one organizer row and the counter +1 in one transaction", async () => {
     const { user, tenantId } = await seedOwner("op115-happy");
@@ -409,9 +419,14 @@ describe("POST /api/v1/tenants/{tenantId}/events", () => {
     const response = await createEvent(createRequest(user.cookie, tenantKey, eventBody()));
 
     expect(response.status).toBe(403);
-    expect(await errorCodeOf(response)).toBe("plan_limit_exceeded");
-    const parsed = (await body(response)).error as { details?: Record<string, unknown> };
-    expect(parsed.details).toMatchObject({
+    // One body read (the Response body is one-shot): derive both the code and
+    // the details from the same parse (OP-115 D2 — `errorCodeOf` + `body` on
+    // the same response threw `Body has already been read`).
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(parsed.error.code).toBe("plan_limit_exceeded");
+    expect(parsed.error.details).toMatchObject({
       entitlementKey: "events.active",
       limit: 1,
       used: 1,
@@ -419,7 +434,7 @@ describe("POST /api/v1/tenants/{tenantId}/events", () => {
       scope: "tenant",
       reason: "plan_limit",
     });
-    expect(parsed.details?.upgradePath).toBeTypeOf("string");
+    expect(parsed.error.details?.upgradePath).toBeTypeOf("string");
 
     // Nothing persisted: no event, no organizer row, counter untouched.
     expect(await app.db.collection("events").countDocuments({ tenantId: tenantKey })).toBe(0);
@@ -451,15 +466,18 @@ describe("POST /api/v1/tenants/{tenantId}/events", () => {
     const response = await createEvent(createRequest(user.cookie, tenantKey, eventBody()));
 
     expect(response.status).toBe(402);
-    expect(await errorCodeOf(response)).toBe("payment_required");
-    const parsed = (await body(response)).error as { details?: Record<string, unknown> };
-    expect(parsed.details).toMatchObject({
+    // One body read (see I2 — the Response body is one-shot).
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(parsed.error.code).toBe("payment_required");
+    expect(parsed.error.details).toMatchObject({
       entitlementKey: "events.active",
       reason: "payment_downgrade",
       pendingDueMinor: 49_900,
       currency: "INR",
     });
-    expect(parsed.details?.payNowUrl).toBeTypeOf("string");
+    expect(parsed.error.details?.payNowUrl).toBeTypeOf("string");
 
     expect(await app.db.collection("events").countDocuments({ tenantId: tenantKey })).toBe(0);
   });
@@ -476,9 +494,12 @@ describe("POST /api/v1/tenants/{tenantId}/events", () => {
     );
 
     expect(response.status).toBe(422);
-    expect(await errorCodeOf(response)).toBe("invalid_date_range");
-    const parsed = (await body(response)).error as { details?: Record<string, unknown> };
-    expect(parsed.details).toMatchObject({ startAt, endAt });
+    // One body read (see I2 — the Response body is one-shot).
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(parsed.error.code).toBe("invalid_date_range");
+    expect(parsed.error.details).toMatchObject({ startAt, endAt });
 
     expect(await app.db.collection("events").countDocuments({ tenantId: tenantKey })).toBe(0);
   });
@@ -565,11 +586,15 @@ describe("POST /api/v1/tenants/{tenantId}/events", () => {
     );
 
     expect(response.status).toBe(422);
-    expect(await errorCodeOf(response)).toBe("validation_failed");
-    const parsed = (await body(response)).error as {
-      details?: { fields?: Array<{ path: string }> };
+    // One body read (see I2 — the Response body is one-shot).
+    const parsed = (await body(response)) as {
+      error: {
+        code: string;
+        details?: { fields?: Array<{ path: string }> };
+      };
     };
-    expect(parsed.details?.fields?.some((field) => field.path === "description")).toBe(true);
+    expect(parsed.error.code).toBe("validation_failed");
+    expect(parsed.error.details?.fields?.some((field) => field.path === "description")).toBe(true);
     expect(await app.db.collection("events").countDocuments({ tenantId: tenantKey })).toBe(0);
   });
 
@@ -598,11 +623,15 @@ describe("POST /api/v1/tenants/{tenantId}/events", () => {
     );
 
     expect(response.status).toBe(422);
-    expect(await errorCodeOf(response)).toBe("validation_failed");
-    const parsed = (await body(response)).error as {
-      details?: { fields?: Array<{ path: string }> };
+    // One body read (see I2 — the Response body is one-shot).
+    const parsed = (await body(response)) as {
+      error: {
+        code: string;
+        details?: { fields?: Array<{ path: string }> };
+      };
     };
-    expect(parsed.details?.fields?.some((field) => field.path === "logoAssetId")).toBe(true);
+    expect(parsed.error.code).toBe("validation_failed");
+    expect(parsed.error.details?.fields?.some((field) => field.path === "logoAssetId")).toBe(true);
     expect(await app.db.collection("events").countDocuments({ tenantId: tenantKey })).toBe(0);
   });
 
@@ -747,9 +776,12 @@ describe("POST /api/v1/tenants/{tenantId}/events", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await errorCodeOf(response)).toBe("plan_limit_exceeded");
-    const parsed = (await body(response)).error as { details?: Record<string, unknown> };
-    expect(parsed.details).toMatchObject({
+    // One body read (see I2 — the Response body is one-shot).
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(parsed.error.code).toBe("plan_limit_exceeded");
+    expect(parsed.error.details).toMatchObject({
       entitlementKey: "events.duration_days",
       limit: 30,
       requestedDays: 45,
@@ -787,9 +819,12 @@ describe("POST /api/v1/tenants/{tenantId}/events", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await errorCodeOf(response)).toBe("plan_limit_exceeded");
-    const parsed = (await body(response)).error as { details?: Record<string, unknown> };
-    expect(parsed.details).toMatchObject({ entitlementKey: "events.post_upload_days" });
+    // One body read (see I2 — the Response body is one-shot).
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(parsed.error.code).toBe("plan_limit_exceeded");
+    expect(parsed.error.details).toMatchObject({ entitlementKey: "events.post_upload_days" });
     expect(await app.db.collection("events").countDocuments({ tenantId: tenantKey })).toBe(0);
   });
 
