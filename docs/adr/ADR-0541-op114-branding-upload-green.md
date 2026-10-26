@@ -157,3 +157,19 @@ URL structurally (origin, `/t/` segment, 64-hex hash, `exp`/`sig`).
 - The signed URL stays the **thumbnail** `/t/` derivative per the contract's
   own example — the OP-113 lane's `/o/` and `/p/` segments exist for later
   image-pipeline lanes, not for branding.
+- **Sanitizer implementation (follow-up):** `sanitizeSvg` was shipped as a
+  regex-based rewriter and GitHub's default-setup CodeQL (a merge gate via the
+  `code_quality: warnings` rule) rejected it — `Bad HTML filtering regexp`
+  (the `</script\s*>` end-tag pattern misses `</script\n  bar>`) and
+  `Incomplete multi-character sanitization` (the chained `replace` can leave
+  a bare `<script` fragment from nesting). The GREEN rewrote the module as a
+  **quote-aware XML tokenizer** — each `<…>` construct is classified
+  (start/end tag, comment, CDATA, PI, declaration), element and attribute
+  names are lexed with correct value scanning, and the output is rebuilt from
+  original slices so benign markup stays byte-identical. The four payload
+  classes are unchanged (script/foreignObject subtrees removed, `on*` stripped,
+  `javascript:` hrefs dropped, all case-insensitive); the stored output for a
+  given input differs from the regex version only by fixing those bypasses.
+  No dependency was added (the contract's DOMPurify/jsdom suggestion was
+  considered; a tokenizer keeps the module dependency-free and never throws).
+  CodeQL re-scan of the new head reports **0 alerts**.
