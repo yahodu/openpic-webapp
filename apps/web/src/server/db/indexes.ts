@@ -254,6 +254,20 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     partialFilterExpression: { revokedAt: null },
   },
 
+  // events — the embedded public-link slot is globally unique per active slug
+  // (schema §15.1, OP-115 ADR-0520). `accessLinks` is embedded, so the unique
+  // multikey index keyed on `accessLinks.slug` restricted to rows that carry an
+  // active link is what the create-route collision retry (I5) runs on: a
+  // second event drawing an occupied slug is rejected with E11000 and the
+  // route regenerates.
+  {
+    collection: COLLECTIONS.events,
+    name: "events_active_slug_unique",
+    keys: [["accessLinks.slug", 1]],
+    unique: true,
+    partialFilterExpression: { "accessLinks.active": true },
+  },
+
   // media_assets — content-addressed dedupe within a tenant (§16.1).
   {
     collection: COLLECTIONS.mediaAssets,
