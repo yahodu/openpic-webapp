@@ -1,3 +1,9 @@
+## [1.42.0](https://github.com/yahodu/openpic-webapp/compare/v1.41.0...v1.42.0) (2026-10-26)
+
+### Features
+
+- **billing:** OP-111 emit the §10.2 admin alerts and close the reconcile classes ([#365](https://github.com/yahodu/openpic-webapp/issues/365)) ([f61d425](https://github.com/yahodu/openpic-webapp/commit/f61d425712c91c14e6f1e5ae6c1df9104b26e5a0))
+
 ## [1.41.0](https://github.com/yahodu/openpic-webapp/compare/v1.40.1...v1.41.0) (2026-10-26)
 
 ### Features
