@@ -1,4 +1,4 @@
-# ADR-0520 — OP-112 RED: the object storage port — opaque HMAC handles, content-addressed keys, the location→bucket map, the memory and R2 adapters
+# ADR-0580 — OP-112 RED: the object storage port — opaque HMAC handles, content-addressed keys, the location→bucket map, the memory and R2 adapters
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-112 RED (`t_3d79f253`) · **Branch:** `OP-112-task-object-storage-port` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_3d79f253`
@@ -200,11 +200,11 @@ MSW intercepts at the `node:http(s)`/fetch layer (both are patched by
 
 This lane had no reserved range on `main`, so — as its first card — it drew
 the next block from the allocator's `unallocated (future lanes)` pool:
-**`0520`–`0539`**. The table gains an `OP-112 media foundations lane` row
-with `Next free = 0521`, the pool advances to `0540`+, and this record
-consumes `0520`. The gated GREEN `t_a9d218d5` consumes `0521` next and must
+**`0580`–`0599`** (Renumbered 2026-10-26: this lane originally drew `0520`–`0539`; OP-115 merged first and owns `0520`/`0521` on `main`, so the lane re-drew `0580`–`0599`, clear of OP-114's `0540`–`0559` and OP-116's `0560`–`0579`). The table gains an `OP-112 media foundations lane` row
+with `Next free = 0581`, the pool advances to `0600`+, and this record
+consumes `0580`. The gated GREEN `t_a9d218d5` consumes `0581` next and must
 base its branch on this pins branch, not bare `origin/main`. No number
-outside the lane range `0520`–`0539` is touched.
+outside the lane range `0580`–`0599` is touched.
 
 ## Consequences
 
