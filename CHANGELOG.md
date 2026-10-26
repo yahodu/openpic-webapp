@@ -1,3 +1,9 @@
+## [1.47.0](https://github.com/yahodu/openpic-webapp/compare/v1.46.0...v1.47.0) (2026-10-26)
+
+### Features
+
+- OP-114 branding asset upload endpoint (the single byte-accepting endpoint) ([#371](https://github.com/yahodu/openpic-webapp/issues/371)) ([87e1170](https://github.com/yahodu/openpic-webapp/commit/87e1170bf8dcd1b8a67e529c31f0924403215c06)), closes [#x73](https://github.com/yahodu/openpic-webapp/issues/x73)
+
 ## [1.46.0](https://github.com/yahodu/openpic-webapp/compare/v1.45.0...v1.46.0) (2026-10-26)
 
 ### Features
