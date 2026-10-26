@@ -33,7 +33,7 @@ the rejected alternatives are recorded in
 
 | Holder (lane)                       | Reserved range                  | Next free |
 | ----------------------------------- | ------------------------------- | --------- |
-| board-wide / process (orchestrator) | `0300`–`0319`                   | `0311`    |
+| board-wide / process (orchestrator) | `0300`–`0319`                   | `0312`    |
 | OP-96 notifications follow-up       | `0146`–`0179`                   | `0149`    |
 | OP-97 in-app feed                   | `0180`–`0199`                   | `0183`    |
 | OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
@@ -81,8 +81,10 @@ sibling; card `t_58139e6e`, branch `OP-110-task-one-owner-per-branch-adr`), and
 `0309` (ADR-0309, the `git config` read-vs-write identity guard — read identity
 only with `--get`, write it only in an explicit local scope, never `--global`,
 and set the repo-local identity explicitly when provisioning a checkout/worktree;
-card `t_cdacca2f`, branch `OP-110-task-git-identity-guard-adr`). Next free in the
-block is `0311`.
+card `t_cdacca2f`, branch `OP-110-task-git-identity-guard-adr`), and `0310` (ADR-0310, the git identity
+guard's pinned contract — card `t_54545281`), and `0311` (ADR-0311, the
+`pin-hooks-path` warning pin — card `t_60e20c44`). Next free in the block is
+`0312`.
 
 _The **board-wide** [`0308`](ADR-0308-one-owner-per-branch-landing.md) record gained a **§Recurrence** section (card `t_1deaf426`, orchestrator; branch `OP-111-task-adr-0308-recurrence`) after the OP-111 GREEN landing (`t_71cc5e0c`, PR #352) reproduced the one-owner hazard in a new, **run-level** shape — a live implementer worker mutated the lane worktree after its handoff while the review run owned the same path. No number is consumed: the block cell stays `0311`._
 
@@ -249,6 +251,7 @@ _The **board-wide** [`0308`](ADR-0308-one-owner-per-branch-landing.md) record ga
 | [0308](ADR-0308-one-owner-per-branch-landing.md)                                   | One card owns a branch's landing (one-owner-per-branch/worktree)                                                        | Accepted                  |
 | [0309](ADR-0309-git-config-read-vs-write-identity-guard.md)                        | The `git config` read-vs-write identity guard: read with `--get`, write identity only in an explicit local scope        | Accepted                  |
 | [0310](ADR-0310-git-identity-guard-pins.md)                                        | Pin the commit-time git identity guard: the validator contract and the worktree hook-firing fact                        | Accepted                  |
+| [0311](ADR-0311-pin-hooks-path-warning.md)                                         | Pin that a failed `core.hooksPath` pin in `prepare` is reported, not swallowed                                          | Accepted                  |
 | [0320](ADR-0320-op102-public-plans-endpoint-red.md)                                | OP-102 RED: the public plans endpoint — generic `display`, version ETag, ignored `includeInactive`, separate add-ons    | Accepted                  |
 | [0321](ADR-0321-op102-public-plans-endpoint-green.md)                              | OP-102 GREEN: project the catalogue onto the §3.1/§3.6 served shapes and wire both public reads onto the pipeline       | Accepted                  |
 | [0322](ADR-0322-op102-plans-etag-representation-red.md)                            | OP-102 follow-up RED: pin that the `GET /plans` ETag identifies the served representation                               | Accepted                  |
@@ -558,3 +561,36 @@ _The **OP-111** lane had no reserved range on `main`, so — as its first card �
 _The **OP-111** lane `Next free` cell advanced from `0501` to `0502` (card `t_71cc5e0c`, OP-111 GREEN — the billing cron jobs; branch `OP-111-feature-billing-jobs-green`, worktree `/root/openpic/openpic-webapp/.worktrees/t_71cc5e0c`, based on the pins head `9bb1aa8`). `0500` is consumed by [ADR-0500](ADR-0500-op111-billing-jobs-red.md) (the RED contract), so this record takes `0501` — the cell's value re-read on the pins head immediately before committing [ADR-0501](ADR-0501-op111-billing-jobs-green.md). The GREEN implements the ADR-0500 contract unedited: the six runners under `@/server/billing/jobs/**` (each a bounded candidate read followed by one conditional `findOneAndUpdate`/`updateOne` per row whose filter carries the prior state, with `hasMore = scanned === limit`), the composition module `@/server/billing/billing-cron-jobs`, the six `POST` route modules behind `_lib/run-billing-cron-route`, and the C6 `no-restricted-imports` object scoped to `apps/web/src/server/billing/jobs/dunning.ts` after the `apps/web/src/server/**` object (ADR-0074). One shipped module gained an additive, default-preserving opt-in — `cronBearerAnyMethod` on `internalAuthStage` / `authorizeInternalRequest` — because the pins drive the route ladder with an unsigned `POST` carrying only the `CRON_SECRET` bearer while `internal-hmac.test.ts` **U4b** pins that exception as GET-only for the default; only the six billing routes pass `true`, so U4b and every shipped route are behaviourally unchanged (the alternative — a one-line `cronRequest` fix in the pins — is recorded in the ADR as a flag to the Test Author). Evidence at the head: the four pins unedited are green (U1 14, U2 13, U3 10 — `37 passed (37)` — and `billing-crons.test.ts` **19 passed (19)**, including the C6 whole-database diff, the concurrency pair, the reminder idempotency/mobile hint, the MSW reconcile, the healed sweep and the `?limit=1` envelope); `tsc` exit `0` on all three projects; `eslint .` 0 errors (106 pre-existing warnings, none on a touched file) and `prettier --check .` clean; `vitest run --project unit --project integration --coverage` exit `0` — 201 files, `2714 passed | 3 skipped` — with statements `92.29 %`, branches `80.79 %`, functions `96.55 %`, lines `92.67 %` and no threshold relaxed (measured at the reviewed head `a9aa770`, the pins head `9bb1aa8` merged with `origin/main` `d79a3f2`; the only conflict was this ledger, union-resolved); PR Checks run [40217176682](https://github.com/yahodu/openpic-webapp/actions/runs/40217176682) on that head is **success** (`audit-dev` is red and non-blocking by design, ADR-0301 — 5 pre-existing `undici` dev-toolchain advisories, no dependency added). The diff is production code plus the ADR and these ledger cells — **no test, mock, fixture or factory edited**; the pins ship in the PR byte-unchanged. No number outside the lane range `0500`–`0519` is touched._
 
 _The **board-wide / process** `Next free` cell advanced from `0309` to `0310`
+
+_The **board-wide / process** `Next free` cell advanced from `0311` to `0312`
+(card `t_60e20c44`, OP-110 follow-up TEST — report a failed `core.hooksPath` pin
+instead of swallowing it; branch `OP-110-task-pin-hooks-path-warning`, worktree
+`/root/openpic/openpic-webapp/.worktrees/t_54545281`, off `origin/main` `5ecfc18`;
+the cell's value `0311` was re-read on that `origin/main` immediately before
+committing). `0300`–`0309` are consumed on `main` and `0310` by
+[ADR-0310](ADR-0310-git-identity-guard-pins.md) (all count as taken under
+[ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §7), so this record
+takes `0311` and the cell moves to `0312`.
+[ADR-0311](ADR-0311-pin-hooks-path-warning.md) pins the **observability**
+contract of the `prepare` step `scripts/git/pin-hooks-path.mjs`, whose bare
+`catch {}` cannot tell "not a work tree" (a source-tarball install — stay silent,
+exit 0) apart from a **failed pin** (a read-only `.git/config`, `detected dubious
+ownership`, any `git config` failure — today silently swallowed, so the ADR-0309
+identity guard is silently absent in every worktree of that checkout, the exact
+state it exists for). The seam is the `.mjs` itself: it must export
+`pinHooksPath({ runGit, stderr }): number`, returning the process exit code, so a
+spec drives the three behaviours through injected I/O with no side effect at
+import (the `prepare` wiring stays `node scripts/git/pin-hooks-path.mjs`, so a
+`.ts` seam is unreachable — no default type stripping on the pinned Node floor).
+This RED delivers **one test file + this ADR + the README ledger cells only**: no
+file under `scripts/`, `.husky/` or `package.json` and no existing test, mock,
+fixture or factory is touched. Evidence at the RED head: focused spec
+`7 failed (7)` naming the missing export; full unit `1 failed | 118 passed (119)`
+files · `7 failed | 2042 passed | 3 skipped (2052)` tests (baseline 118 files /
+2045 tests — measured at this head, not copied); `tsc` exit `0` on all three
+projects; ESLint 0 problems; `prettier --check` clean. A two-stub discrimination
+probe (deleted; the `.mjs` restored byte-identically, sha256 `7b5135b3…dafd`)
+showed the bare-`catch` shape `4 failed | 3 passed` and the pinned contract
+`7 passed`, so the pin fails today only on the missing diagnostic. Finding F1
+(Low) from the REVIEW/LAND card `t_5f824ce6`; the gated GREEN is `t_de160aea`.
+No number outside the board-wide range `0300`–`0319` is touched._
