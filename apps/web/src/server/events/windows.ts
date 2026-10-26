@@ -34,6 +34,29 @@ export function computeUploadWindowEndsAt(endAt: Date, postUploadDays: number | 
 }
 
 /**
+ * The upload-window countdown in whole hours, rounded **up** (OP-116 U3).
+ *
+ * The event detail response derives `closesInHours` from the materialised
+ * `uploadWindowEndsAt` and the current clock. An **upward** rounding means a
+ * window closing in 2h03m reports `3`, never `2`, so a UI countdown can never
+ * claim more time than the caller actually has. A window already past reports
+ * `0` (closed), and an **unlimited** window (`uploadWindowEndsAt === null`)
+ * reports `null`.
+ *
+ * @param uploadWindowEndsAt - The materialised upload-window close, or `null`
+ *   when the window is unlimited.
+ * @param now - The current clock instant.
+ * @returns The upward-rounded whole hours until close (clamped at `0`), or
+ *   `null` when the window is unlimited.
+ */
+export function uploadClosesInHours(uploadWindowEndsAt: Date | null, now: Date): number | null {
+  if (uploadWindowEndsAt === null) {
+    return null;
+  }
+  return Math.max(0, Math.ceil((uploadWindowEndsAt.getTime() - now.getTime()) / 3_600_000));
+}
+
+/**
  * Materialise the gallery expiry: `endAt` plus `retentionDays` whole days.
  *
  * @param endAt - The event end instant.
