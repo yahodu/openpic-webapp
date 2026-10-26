@@ -70,8 +70,19 @@ export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[number];
  * Appendix A rows the HTTP-pipeline story enumerated. They are appended to the
  * client-facing enum ({@link API_ERROR_CODES}) and transported from their own
  * table (both `422`, non-retryable) so both stay exact. Append-only.
+ *
+ * OP-115 appends the two create-event request-shape refusals of contract §4.1 /
+ * Appendix A.2 in the same shape: `invalid_date_range` (`422`, details
+ * `{ startAt, endAt }` — `endAt` must come after `startAt`) and
+ * `start_too_far_past` (`422`, the `startAt` guard at now − 30 days; details
+ * unpinned by the card) (ADR-0520).
  */
-export const REQUEST_SHAPE_ERROR_CODES = ["unknown_timezone", "forbidden_field"] as const;
+export const REQUEST_SHAPE_ERROR_CODES = [
+  "unknown_timezone",
+  "forbidden_field",
+  "invalid_date_range",
+  "start_too_far_past",
+] as const;
 
 /** A member of the closed {@link REQUEST_SHAPE_ERROR_CODES} set. */
 export type RequestShapeErrorCode = (typeof REQUEST_SHAPE_ERROR_CODES)[number];

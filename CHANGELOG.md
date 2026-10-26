@@ -1,3 +1,21 @@
+## [1.45.0](https://github.com/yahodu/openpic-webapp/compare/v1.44.0...v1.45.0) (2026-10-26)
+
+### Features
+
+- **storage:** OP-112 object storage port with logical locations and opaque handles ([#367](https://github.com/yahodu/openpic-webapp/issues/367)) ([8d866d3](https://github.com/yahodu/openpic-webapp/commit/8d866d313b0c428a06b7af9b6f6f011d3b3e0045))
+
+## [1.44.0](https://github.com/yahodu/openpic-webapp/compare/v1.43.0...v1.44.0) (2026-10-26)
+
+### Features
+
+- **events:** OP-116 list and get events with cursor pages and ETag ([#374](https://github.com/yahodu/openpic-webapp/issues/374)) ([e874268](https://github.com/yahodu/openpic-webapp/commit/e874268a076e0b1b64be6e9fbb1316cb866472b3))
+
+## [1.43.0](https://github.com/yahodu/openpic-webapp/compare/v1.42.0...v1.43.0) (2026-10-26)
+
+### Features
+
+- **events:** OP-115 create event with materialised windows ([#372](https://github.com/yahodu/openpic-webapp/issues/372)) ([c3a00a4](https://github.com/yahodu/openpic-webapp/commit/c3a00a41ee34578e339c81fb662581435482d509))
+
 ## [1.42.0](https://github.com/yahodu/openpic-webapp/compare/v1.41.0...v1.42.0) (2026-10-26)
 
 ### Features

@@ -188,6 +188,21 @@ export const REQUEST_SHAPE_ERROR_TRANSPORT: Readonly<
     retryable: false,
     message: "The request contains a field that may not be changed here.",
   },
+  // OP-115 (ADR-0520): the create-event date-range refusal (contract §4.1,
+  // Appendix A.2) — `endAt` must come after `startAt`, and the refusal carries
+  // the two instants in `details`.
+  invalid_date_range: {
+    status: 422,
+    retryable: false,
+    message: "The event end must be after its start.",
+  },
+  // OP-115 (ADR-0520): a `startAt` more than 30 days in the past is refused
+  // (contract §4.1); the card names the refusal but pins no details shape.
+  start_too_far_past: {
+    status: 422,
+    retryable: false,
+    message: "The event start cannot be more than 30 days in the past.",
+  },
 };
 
 /**
