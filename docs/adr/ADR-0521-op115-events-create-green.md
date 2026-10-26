@@ -191,6 +191,15 @@ already imported for the idempotency key, or `crypto.getRandomValues`). Note
 the repo's own CodeQL Analyse jobs pass — only the default-setup alert record
 on this file fails.
 
+**Resolution (follow-up card `t_7db5345e`):** the spec now mints the E1 email
+and phone from a single `randomUUID()` CSPRNG draw (`node:crypto`, same source
+as the idempotency key) instead of `Math.random()` — the phone keeps the
+`+91` + 9-digit format the previous line produced, and each run stays unique
+for the `auth.otp` / `auth.verify` rate-limit buckets. Test-file-only change
+(`apps/web/e2e/event-create.spec.ts`); no production code touched. Verified:
+E1 passes against a standalone server built at this head, and `tsc` +
+`prettier` are clean on the spec.
+
 ### P6 — gitleaks allowlist for the public alphabet constant
 
 `secret-scan` (gitleaks, `generic-api-key` entropy heuristic) flags the 31-char
