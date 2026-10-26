@@ -152,6 +152,31 @@ rely on a clean counter period), and (2) read the error body once per case
 details from it) — the existing `errorCodeOf` helper makes the second `body`
 redundant.
 
+### D3 — CodeQL `js/insecure-randomness` in the RED e2e spec (disputed, left red)
+
+GitHub default-setup CodeQL reports two **high** `js/insecure-randomness`
+alerts in the pins' `apps/web/e2e/event-create.spec.ts`: the phone number E1
+mints with `Math.random()` (line 29) flows into `POST /api/auth/phone-number/
+send-otp` and `/verify` (lines 55/68) — a security context. The finding is in
+the RED **Playwright spec** (a test file this GREEN may not edit), is present
+unchanged at the pins commit `04970e1` (CodeQL analyses for that SHA also show
+2 results), and is unrelated to any production line in this diff. Fix belongs
+to the Test Author: derive the phone from a CSPRNG (`crypto.randomUUID()`,
+already imported for the idempotency key, or `crypto.getRandomValues`). Note
+the repo's own CodeQL Analyse jobs pass — only the default-setup alert record
+on this file fails.
+
+### P6 — gitleaks allowlist for the public alphabet constant
+
+`secret-scan` (gitleaks, `generic-api-key` entropy heuristic) flags the 31-char
+`ACCESS_LINK_ALPHABET` exported by `@/server/events/slug` and its mirrored
+`SLUG_ALPHABET` copy in the integration spec as a secret. It is a **public
+character set** documented in ADR-0520 (U3 pins its exact value), not a
+credential, so the exact value joins the existing `.gitleaks.toml` allowlist
+(the same treatment the docs' `modelKey` example and the OP-99 e2e fixture
+literal receive). Verified: `gitleaks detect` over `04970e1..HEAD` → 0
+findings.
+
 ## Consequences
 
 - **Evidence at the head:** unit **24 passed (24)** on the three new specs; the
