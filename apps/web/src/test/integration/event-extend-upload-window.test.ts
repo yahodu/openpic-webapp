@@ -1,5 +1,5 @@
-import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { Collection, ObjectId } from "mongodb";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as eventExtendRoute from "@/app/api/v1/events/[eventId]/upload-window:extend/route";
 import { COLLECTIONS } from "@/server/db/collections";
@@ -498,5 +498,125 @@ describe("POST /api/v1/events/{eventId}/upload-window:extend — extend the uplo
     const error = await errorOf(response);
     expect(error.code).toBe("event_deleting");
     expect(await storedUploadWindowEndsAt(eventId)).toBe(windowBefore);
+  });
+});
+
+/**
+ * Review round 2 (card `t_95c68c28`) — two `upload-window:extend` paths the
+ * round-1 pins did not cover. Both are **characterisation pins**: the behaviour
+ * is already shipped, so they must be green on `origin/main` and pass without a
+ * production change.
+ *
+ * - **E7** the stored close is `null` (an unlimited plan): the row stays
+ *   unlimited — the extension is an `updatedAt` bump only, never an invented
+ *   close.
+ * - **E8** the lost-race refusal (the conditional write matched nothing)
+ *   answers `412 etag_mismatch` carrying **no** `details.currentETag`, because
+ *   this route has no `If-Match` contract; the concurrent writer's value
+ *   survives.
+ */
+describe("POST /api/v1/events/{eventId}/upload-window:extend — review round 2 edge paths", () => {
+  /** The driver's own `updateOne`, captured at module load (never the spy). */
+  const driverUpdateOne = ((): typeof Collection.prototype.updateOne => {
+    const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "updateOne");
+    if (descriptor === undefined || typeof descriptor.value !== "function") {
+      throw new Error("expected Collection.prototype.updateOne to be a function");
+    }
+    return descriptor.value as typeof Collection.prototype.updateOne;
+  })();
+
+  it("E7: an unlimited plan whose stored close is null answers 200 and keeps uploadWindowEndsAt null", async () => {
+    const { user, tenantId } = await seedOwner("op117-extend-unlimited");
+    const tenantKey = tenantId.toHexString();
+    // `events.post_upload_days` with `limit: null` is the plan's *unlimited*
+    // verdict, the one case where `computeUploadWindowEndsAt` derives no close.
+    await seedPlan("op117-unlimited", {
+      ...starterEntitlements(),
+      "events.post_upload_days": makeEntitlement({
+        limit: null,
+        resetPeriod: "none",
+        scope: "event",
+        enforcement: "hard",
+      }),
+    });
+    await seedSubscription(tenantKey, "op117-unlimited");
+    // A row stored before any close was materialised, with an old `updatedAt`
+    // so the bump the write performs is observable.
+    const seededUpdatedAt = new Date(fixtureInstant("12:00:00.000Z", -3));
+    const eventId = await seedOwnedEvent(tenantKey, user.userId, {
+      uploadWindowEndsAt: null,
+      updatedAt: seededUpdatedAt,
+    });
+
+    const response = await extendUploadWindowRoute(
+      extendRequest(user.cookie, eventId.toHexString(), { additionalDays: 3 })
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    // There is no close to extend, so none is invented.
+    expect(payload.uploadWindowEndsAt).toBeNull();
+
+    const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect(row?.uploadWindowEndsAt).toBeNull();
+    // The write is the version bump alone.
+    const storedUpdatedAt = row?.updatedAt;
+    expect(storedUpdatedAt instanceof Date ? storedUpdatedAt.getTime() : 0).toBeGreaterThan(
+      seededUpdatedAt.getTime()
+    );
+  });
+
+  it("E8: a concurrent write between the read and the conditional write answers 412 etag_mismatch with no currentETag, and its value survives", async () => {
+    const { user, tenantId } = await seedOwner("op117-extend-lost-race");
+    const tenantKey = tenantId.toHexString();
+    await seedStarterWorkspace(tenantKey);
+    const seededWindow = new Date(fixtureInstant("12:00:00.000Z", 12));
+    const eventId = await seedOwnedEvent(tenantKey, user.userId, {
+      uploadWindowEndsAt: seededWindow,
+    });
+    const concurrentWindow = new Date(fixtureInstant("12:00:00.000Z", 40));
+    const concurrentUpdatedAt = new Date(fixtureInstant("13:00:00.000Z", 30));
+
+    // Deterministic lost-race: the first `updateOne` this route issues against
+    // `events` is preceded by another writer's committed write, so the read
+    // row's `updatedAt` in the predicate no longer matches.
+    let injected = false;
+    const updateSpy = vi
+      .spyOn(Collection.prototype, "updateOne")
+      .mockImplementation(async function (this: Collection, filter, update, options) {
+        if (!injected && this.collectionName === COLLECTIONS.events) {
+          injected = true;
+          await driverUpdateOne.call(
+            this,
+            { _id: eventId },
+            {
+              $set: {
+                uploadWindowEndsAt: concurrentWindow,
+                updatedAt: concurrentUpdatedAt,
+              },
+            }
+          );
+        }
+        return driverUpdateOne.call(this, filter, update, options);
+      });
+
+    let response: Response;
+    try {
+      response = await extendUploadWindowRoute(
+        extendRequest(user.cookie, eventId.toHexString(), { additionalDays: 3 })
+      );
+    } finally {
+      updateSpy.mockRestore();
+    }
+    expect(injected).toBe(true);
+
+    expect(response.status).toBe(412);
+    const error = await errorOf(response);
+    expect(error.code).toBe("etag_mismatch");
+    // No `If-Match` contract on this route, so the refusal names no client tag.
+    expect(Object.keys(error.details ?? {})).not.toContain("currentETag");
+
+    // The losing extension did not overwrite the concurrent writer's close.
+    expect(await storedUploadWindowEndsAt(eventId)).toBe(concurrentWindow.toISOString());
   });
 });
