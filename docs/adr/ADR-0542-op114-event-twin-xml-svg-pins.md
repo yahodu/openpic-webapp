@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-114 follow-up TEST (`t_630fbbd8`) · **Branch:** `OP-114-task-event-twin-xml-svg-pins` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_630fbbd8` · **Base:** `origin/main` `c055cac` (squash `87e1170` of PR #371 is an ancestor)
-- **Relates to:** [ADR-0540](ADR-0540-op114-branding-upload-red.md) (the RED, whose §1 recorded the event route's no-organizer denial as `404 not_found` **non-oracle, unpinned** — assumption A4; and whose §2 named the `<?xml` declaration as an SVG root without pinning the sanitized output), [ADR-0541](ADR-0541-op114-branding-upload-green.md) (the GREEN, which shipped both behaviours), [ADR-0306](ADR-0306-op93-red-by-design-ci.md) (RED-by-design posture — here the pins are GREEN-on-arrival and prove discrimination by mutation probe instead)
+- **Relates to:** [ADR-0540](ADR-0540-op114-branding-upload-red.md) (the RED, whose §1 recorded the event route's no-organizer denial as `404 not_found` **non-oracle, unpinned** — assumption A4; and whose §2 named the `<?xml` declaration as an SVG root without pinning the sanitized output), [ADR-0541](ADR-0541-op114-branding-upload-green.md) (the GREEN, which shipped both behaviours), [ADR-0306](ADR-0306-op101-stale-branch-deletion.md) (RED-by-design posture — here the pins are GREEN-on-arrival and prove discrimination by mutation probe instead)
 - **Contract:** §2.1 of `docs/API Contract.md` (the branding upload — both the tenant route's `403 forbidden` for a `member` and the event twin's `404 not_found` denials), the event twin route `POST /events/{eventId}/assets/branding` (organizer-row authorisation)
 
 ## Context
