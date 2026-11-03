@@ -1,3 +1,9 @@
+## [1.48.0](https://github.com/yahodu/openpic-webapp/compare/v1.47.0...v1.48.0) (2026-11-03)
+
+### Features
+
+- **events:** OP-117 update, archive and delete event ([#380](https://github.com/yahodu/openpic-webapp/issues/380)) ([858fe39](https://github.com/yahodu/openpic-webapp/commit/858fe39c2fe2906e92f4b923012da2e3ef1f2ca3))
+
 ## [1.47.0](https://github.com/yahodu/openpic-webapp/compare/v1.46.0...v1.47.0) (2026-10-26)
 
 ### Features
