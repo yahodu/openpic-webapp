@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+import { clientIpFor } from "./client-ip";
 import { E2E_BASE_URL } from "./ports";
+
+const CLIENT_IP = clientIpFor("tenant-provisioning.spec.ts");
 
 /**
  * E1 — tenant provisioning through the deployed HTTP surface (OP-100, contract
@@ -30,7 +33,7 @@ test.describe("tenant provisioning over the API", () => {
     const workspaceName = "E2E Studio";
 
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
-      headers: { origin: E2E_BASE_URL },
+      headers: { origin: E2E_BASE_URL, "x-forwarded-for": CLIENT_IP },
       data: { email, type: "sign-in" },
     });
     expect(sent.status()).toBe(200);

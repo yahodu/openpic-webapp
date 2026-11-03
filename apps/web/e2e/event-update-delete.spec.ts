@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
 
+import { clientIpFor } from "./client-ip";
 import { E2E_BASE_URL } from "./ports";
+
+const CLIENT_IP = clientIpFor("event-update-delete.spec.ts");
 
 /**
  * E1 — create, PATCH with its ETag, then delete an event (OP-117, contract
@@ -33,7 +36,7 @@ test.describe("update and delete an event over the real HTTP surface", () => {
 
     // 1. Sign up with the email OTP handshake (real Better Auth flow).
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
-      headers: { origin: E2E_BASE_URL },
+      headers: { origin: E2E_BASE_URL, "x-forwarded-for": CLIENT_IP },
       data: { email, type: "sign-in" },
     });
     expect(sent.status()).toBe(200);
@@ -53,7 +56,7 @@ test.describe("update and delete an event over the real HTTP surface", () => {
 
     // 2. Complete the account: bind and verify a phone number.
     const phoneSent = await request.post("/api/auth/phone-number/send-otp", {
-      headers: { origin: E2E_BASE_URL },
+      headers: { origin: E2E_BASE_URL, "x-forwarded-for": CLIENT_IP },
       data: { phoneNumber: phone },
     });
     expect(phoneSent.status()).toBe(200);

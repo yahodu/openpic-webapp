@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+import { clientIpFor } from "./client-ip";
 import { E2E_BASE_URL } from "./ports";
+
+const CLIENT_IP = clientIpFor("branding-upload.spec.ts");
 
 /**
  * E1 — branding asset upload through the deployed HTTP surface (OP-114, API
@@ -30,7 +33,7 @@ test.describe("branding asset upload over the API", () => {
     const origin = E2E_BASE_URL;
 
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
-      headers: { origin },
+      headers: { origin, "x-forwarded-for": CLIENT_IP },
       data: { email, type: "sign-in" },
     });
     expect(sent.status()).toBe(200);
