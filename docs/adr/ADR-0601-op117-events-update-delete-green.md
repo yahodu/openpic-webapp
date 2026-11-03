@@ -201,6 +201,18 @@ the count to the delete's own keys —
 contracted "nothing announced" property. Routed as a TEST card to the OP-117
 test author.
 
+**Resolved by the Test Author (card `t_be8b01a5`) — the fix landed, the pin was
+not weakened.** The scoped count above was applied verbatim at
+`c543a6e531f9f9f158c977db4b2c2df4cc20417e` (`test(events): OP-117 scope I4's
+outbox count to the delete's own keys`, +8/−2 on the one spec file), followed by
+`2d95709fdd512b521736f076ac016c33e42ae31b` recording it in ADR-0600; this GREEN
+merged `2d95709` (`1aa30d9`). The fix is discriminating, not a relaxation: a
+mutation probe that emits `event.deleted` **before** the `confirmName` gate
+reddens the pin (`expected 1 to be +0`), so I4 still bites on a delete that
+announces anything on the mismatch path. This GREEN makes **no** production
+change for D1 — the implementation was already honest; only the assertion was
+unsatisfiable. No new ADR number is consumed (lane `Next free` stays `0602`).
+
 ## Assumptions and open questions
 
 - `purgeScheduledAt` is the instant the delete answers, stored as the row's
