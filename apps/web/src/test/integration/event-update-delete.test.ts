@@ -1,5 +1,5 @@
-import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { Collection, ObjectId } from "mongodb";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as eventArchiveRoute from "@/app/api/v1/events/[eventId]/archive/route";
 import * as eventRoute from "@/app/api/v1/events/[eventId]/route";
@@ -728,5 +728,225 @@ describe("DELETE /api/v1/events/{eventId} — delete an event (contract §4.1, �
     };
     expect(parsed.error.code).toBe("event_deleting");
     expect(parsed.error.details?.purgeScheduledAt).toBe(purgeScheduledAt);
+  });
+});
+
+/**
+ * Review round 1 (card `t_32869a83`) — the four server-side findings the
+ * first pin set did not cover. Every case below is RED against the reviewed
+ * GREEN head `25bb395`; each names the contract clause it pins.
+ *
+ * - **R1** §4.1 PATCH auth is `event role organizer|co_organizer` and Appendix
+ *   D's *Edit event details* row denies a bare tenant member. A tenant member
+ *   is *related* to the event's tenant, so the answer is `403 forbidden` (the
+ *   `404` is reserved for a caller with no relationship at all, §0.4).
+ * - **R2** §4.1: a date edit whose recomputed `retentionExpiresAt` lands in the
+ *   past is refused `422 retention_would_expire_immediately` with
+ *   `details.computedRetentionExpiresAt` (Appendix A table line 3556).
+ * - **R3** §4.1: `status` is editable `draft → published` **only**; the reverse
+ *   move is a request-validation failure (`422 validation_failed`), not a new
+ *   error code.
+ * - **R4** §0.10: `If-Match` must be part of the write, not only of the read
+ *   that computes the tag. A concurrent write landing between the stage read
+ *   and the transaction must lose to `412 etag_mismatch`, and its value must
+ *   survive.
+ * - **R6** schema §15.1 (`events.status` includes `archived`; *`published`
+ *   gates the public link*): `POST /archive` must store `archived`, otherwise
+ *   the public link keeps resolving after the organizer archived the event.
+ */
+describe("OP-117 review round 1 — PATCH role gate, retention guard, status transition", () => {
+  it("R1: a tenant member with no event_organizers row is refused 403 forbidden and the row is unchanged", async () => {
+    const owner = await seedOwner("op117-r1-owner");
+    const tenantKey = owner.tenantId.toHexString();
+    await seedStarterWorkspace(tenantKey);
+    const eventId = await seedOwnedEvent(tenantKey, owner.user.userId);
+
+    // Signed in, active tenant member (`role: "member"`), but no
+    // `event_organizers` row at all — a reader of the tenant, not an editor of
+    // the event. Appendix D's "Edit event details" row is `—` for this caller.
+    const member = await app.signIn(makeIdentity("op117-r1-member"));
+    await app.db.collection(COLLECTIONS.tenantMembers).insertOne({
+      tenantId: owner.tenantId,
+      userId: member.userId,
+      role: "member",
+      status: "active",
+      joinedAt: new Date(),
+    });
+
+    const response = await patchEvent(
+      patchRequest(
+        member.cookie,
+        eventId.toHexString(),
+        { description: "Member edit" },
+        await currentETagOf(eventId)
+      )
+    );
+
+    // Related to the event's tenant, so `403` — not the `404` "no
+    // relationship" answer (§0.4).
+    expect(response.status).toBe(403);
+    const parsed = (await body(response)) as { error: { code: string } };
+    expect(parsed.error.code).toBe("forbidden");
+
+    const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect(row?.description).toBe("");
+  });
+
+  it("R2: a date edit that pushes retentionExpiresAt into the past answers 422 retention_would_expire_immediately", async () => {
+    const { user, tenantId } = await seedOwner("op117-r2");
+    const tenantKey = tenantId.toHexString();
+    await seedStarterWorkspace(tenantKey);
+    // A literal 2020 timeline is what makes the *recomputed* retention land in
+    // the past; the value is never stored, so the ADR-0148 TTL rule (which
+    // protects stored `expireAt` fields) does not apply to this fixture.
+    const eventId = await seedOwnedEvent(tenantKey, user.userId, {
+      startAt: new Date("2020-01-01T00:00:00.000Z"),
+      endAt: new Date("2020-01-02T00:00:00.000Z"),
+      retentionExpiresAt: new Date("2020-04-01T00:00:00.000Z"),
+      uploadWindowEndsAt: new Date("2020-01-09T00:00:00.000Z"),
+    });
+    const id = eventId.toHexString();
+
+    const newEndAt = "2020-01-03T00:00:00.000Z";
+    const response = await patchEvent(
+      patchRequest(user.cookie, id, { endAt: newEndAt }, await currentETagOf(eventId))
+    );
+
+    expect(response.status).toBe(422);
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(parsed.error.code).toBe("retention_would_expire_immediately");
+    // The refusal names the value the edit would have written, so the client
+    // can see exactly how far past the horizon the new end date falls.
+    expect(parsed.error.details?.computedRetentionExpiresAt).toBe(isoPlusDays(newEndAt, 90));
+
+    // Nothing was written: neither the date nor either window moved.
+    const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect((row?.endAt as Date).toISOString()).toBe("2020-01-02T00:00:00.000Z");
+    expect((row?.retentionExpiresAt as Date).toISOString()).toBe("2020-04-01T00:00:00.000Z");
+  });
+
+  it("R3: a published event cannot move back to draft — 422 validation_failed naming the status field", async () => {
+    const { user, tenantId } = await seedOwner("op117-r3-back");
+    const tenantKey = tenantId.toHexString();
+    await seedStarterWorkspace(tenantKey);
+    // Seeded `published` — the only transition §4.1 allows is draft → published.
+    const eventId = await seedOwnedEvent(tenantKey, user.userId);
+    const id = eventId.toHexString();
+
+    const response = await patchEvent(
+      patchRequest(user.cookie, id, { status: "draft" }, await currentETagOf(eventId))
+    );
+
+    expect(response.status).toBe(422);
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: { fields?: { path?: string }[] } };
+    };
+    expect(parsed.error.code).toBe("validation_failed");
+    expect(parsed.error.details?.fields?.[0]?.path).toBe("status");
+
+    const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect(row?.status).toBe("published");
+  });
+
+  it("R3 guard: a draft event can still move forward to published", async () => {
+    const { user, tenantId } = await seedOwner("op117-r3-fwd");
+    const tenantKey = tenantId.toHexString();
+    await seedStarterWorkspace(tenantKey);
+    const eventId = await seedOwnedEvent(tenantKey, user.userId, { status: "draft" });
+    const id = eventId.toHexString();
+
+    const response = await patchEvent(
+      patchRequest(user.cookie, id, { status: "published" }, await currentETagOf(eventId))
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(payload.status).toBe("published");
+
+    const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect(row?.status).toBe("published");
+  });
+});
+
+describe("OP-117 review round 1 — the If-Match guard must be part of the write", () => {
+  /** The driver's own `updateOne`, captured at module load (never the spy). */
+  const driverUpdateOne = ((): typeof Collection.prototype.updateOne => {
+    const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "updateOne");
+    if (descriptor === undefined || typeof descriptor.value !== "function") {
+      throw new Error("expected Collection.prototype.updateOne to be a function");
+    }
+    return descriptor.value as typeof Collection.prototype.updateOne;
+  })();
+
+  it("R4: a concurrent write between the ETag read and the transaction answers 412 and its value survives", async () => {
+    const { user, tenantId } = await seedOwner("op117-r4");
+    const tenantKey = tenantId.toHexString();
+    await seedStarterWorkspace(tenantKey);
+    const eventId = await seedOwnedEvent(tenantKey, user.userId);
+    const id = eventId.toHexString();
+    const etag = await currentETagOf(eventId);
+    const concurrentUpdatedAt = new Date(fixtureInstant("12:00:00.000Z", 30));
+
+    // Deterministic lost-update race: the first `updateOne` the route issues
+    // against `events` is preceded by a **different writer's** committed write,
+    // exactly as if that writer's request had landed between the ETag stage's
+    // read and this request's transaction. Both callers hold the *same* valid
+    // tag, so only a predicate that carries the tag into the write can tell
+    // them apart.
+    let injected = false;
+    const updateSpy = vi
+      .spyOn(Collection.prototype, "updateOne")
+      .mockImplementation(async function (this: Collection, filter, update, options) {
+        if (!injected && this.collectionName === COLLECTIONS.events) {
+          injected = true;
+          await driverUpdateOne.call(
+            this,
+            { _id: eventId },
+            { $set: { description: "Written by the other caller", updatedAt: concurrentUpdatedAt } }
+          );
+        }
+        return driverUpdateOne.call(this, filter, update, options);
+      });
+
+    let response: Response;
+    try {
+      response = await patchEvent(patchRequest(user.cookie, id, { description: "Mine" }, etag));
+    } finally {
+      updateSpy.mockRestore();
+    }
+    expect(injected).toBe(true);
+
+    expect(response.status).toBe(412);
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(parsed.error.code).toBe("etag_mismatch");
+
+    // The losing writer's payload is NOT applied over the concurrent write.
+    const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect(row?.description).toBe("Written by the other caller");
+  });
+});
+
+describe("OP-117 review round 1 — archive changes state (schema §15.1)", () => {
+  it("R6: archiving stores status archived and returns it in the DTO", async () => {
+    const { user, tenantId } = await seedOwner("op117-r6");
+    const tenantKey = tenantId.toHexString();
+    await seedStarterWorkspace(tenantKey);
+    const eventId = await seedOwnedEvent(tenantKey, user.userId);
+    const id = eventId.toHexString();
+
+    const response = await archiveEvent(archiveRequest(user.cookie, id));
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    // `published` is what gates the public link (§15.1), so a "successful"
+    // archive that leaves it in place has archived nothing.
+    expect(payload.status).toBe("archived");
+
+    const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect(row?.status).toBe("archived");
   });
 });

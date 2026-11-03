@@ -338,3 +338,55 @@ Measured on the same build and head, full `--project=api` run against a fresh
   exactly-one-active-organizer invariant is load-bearing (schema §15.2,
   `index-bootstrap.test.ts` I2); the §15.2 two-index split keeps it while
   making membership per-user.
+
+## Review round 1 — additional failing pins (TEST card `t_32869a83`)
+
+The reviewer of this GREEN found six contract obligations the first pin set did
+not cover. The pins below were added **test-only** on the same lane branch; no
+production file changed with them (all six are RED at head `25bb395`).
+
+| Pin | Contract                                                                                          | Current behaviour (RED)                                                                                     | Pinned behaviour                                                                                 |
+| --- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| R1  | §4.1 PATCH auth `organizer\|co_organizer`; Appendix D _Edit event details_ denies a tenant member | a bare tenant member gets `200` and the description is stored                                               | `403 forbidden`, row unchanged                                                                   |
+| R2  | §4.1 retention rule (Appendix A line 3556)                                                        | recomputed `retentionExpiresAt` in the past is stored → immediate purge scheduled                           | `422 retention_would_expire_immediately` + `details.computedRetentionExpiresAt`, nothing written |
+| R3  | §4.1 `status` editable `draft → published` **only**                                               | `published → draft` answers `200` and stores `draft`                                                        | `422 validation_failed` with `details.fields[0].path === "status"`; the forward move stays `200` |
+| R4  | §0.10 `If-Match` is a write precondition                                                          | the tag is only read; a concurrent write between the stage read and the transaction is silently overwritten | `412 etag_mismatch`; the concurrent value survives                                               |
+| R5  | schema §15.2 index invariants                                                                     | `ensureIndexes` reconciles by **name** only, so a drifted definition is never repaired                      | the live key set equals `INDEX_SPECS`' and a co-organizer row inserts                            |
+| R6  | schema §15.1 (`status` includes `archived`; `published` gates the public link)                    | `POST /archive` emits `event.archived` and writes nothing — the public link keeps resolving                 | stored `status: "archived"`, returned DTO reflects it                                            |
+
+### Decisions recorded
+
+- **R1 is `403`, not `404`.** The caller is a member of the event's tenant, so
+  they are _related_ to the event; §0.4's `404` exists only to deny the
+  cross-tenant existence oracle. The role gate must therefore drop
+  `tenant_member` from PATCH's admitted set, not from admission entirely.
+- **R3 mints no new error code.** A forbidden transition is a request-validation
+  failure and reuses `422 validation_failed` with `details.fields[]` naming
+  `status`; the contract's error catalogue is append-only and does not carry a
+  transition code.
+- **R2 needs a catalogue row.** `retention_would_expire_immediately` is listed in
+  the contract (Appendix A + the code list) but absent from
+  `EVENT_ERROR_CODES` / `EVENT_ERROR_TRANSPORT`, so the GREEN owes that
+  append-only entry as well as the guard.
+- **R6 changes state.** `POST /archive`'s contract line only says `→ 200, emits
+event.archived`, but §15.1 states that `published` _gates the public link_;
+  an archive that leaves the row `published` has archived nothing. The DTO's
+  `status` enum must widen to include `archived` or the `200` body fails strict
+  serialisation.
+- **R5 asserts the definition, not the report.** The pin compares the live
+  index key set with the declared one and then proves the behaviour with two
+  inserts (organizer + co-organizer on one event). Whether the bootstrap
+  recreates or renames is the GREEN's choice.
+- **R4 is deterministic without timing.** A `Collection.prototype.updateOne`
+  spy applies the other writer's committed `$set` immediately before delegating
+  the route's own write, so both callers hold the same valid tag by
+  construction.
+
+### Satisfiability probe
+
+A throwaway minimal fix (role-list narrowing, retention guard, transition check,
+conditional `updateOne` + `matchedCount === 0` → `412`, `archived` write + DTO
+enum, key-comparing reconcile) turns **all 26 cases in the two touched specs
+green** (`26 passed`), and every touched production file was restored
+byte-identically (`sha256` verified). The pins are therefore RED for the stated
+reasons and satisfiable without loosening.
