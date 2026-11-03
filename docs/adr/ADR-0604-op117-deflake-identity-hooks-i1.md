@@ -105,3 +105,52 @@ in-flight reservations per CONVENTIONS §11 rule B: `0600`–`0603` are landed o
 holds `0604`. Per the card's boundary, `docs/adr/README.md` is **not** touched;
 the lane's `Next free` cell must be advanced to `0605` by the next
 ledger-touching card. No number outside `0604` is consumed.
+
+## Review — round 1 (artifact lens, card `t_f5245b6c`)
+
+| Field         | Value                                                                                                                       |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Reviewed head | `cd19936` on `OP-117-bug-deflake-identity-hooks-i1`                                                                         |
+| Landed        | PR #394, squash-merged as `e395fdf` (origin/main)                                                                           |
+| Verdict       | **APPROVED WITH FINDINGS** — every pinned criterion holds; the one Medium finding is outside the pinned criteria (§Routing) |
+
+### What was verified
+
+The reviewer's own measurements on the reviewed head, not the implementer's numbers.
+
+| Check                                                                      | Result                                                                                                                              |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Bytes landed = bytes reviewed (`git diff cd19936 e395fdf -- <both paths>`) | **empty**; squash is 2 files, +127/−1 — **no production file**                                                                      |
+| Focused `identity-hooks.test.ts` integration run                           | **34 passed (34)**, 5 consecutive green, 32–34 s wall each                                                                          |
+| Mutation probe (constant `30_000` → `300`)                                 | all 34 cases fail `Test timed out in 300ms` — the file budget is really applied, not the 5 s default                                |
+| `vitest run --project unit --project integration --coverage`               | **234 files, 3084 passed                                                                                                            | 3 skipped (3087), exit 0** (127 s) |
+| Coverage                                                                   | statements 91.63 %, branches 80.26 %, functions 95.37 %, lines 91.93 %                                                              |
+| `adr-numbering` guard                                                      | **29 passed (29)**; no duplicate `ADR-NNNN` under `docs/adr/`                                                                       |
+| `prettier --check` on the spec and `docs/adr/**/*.md`                      | clean                                                                                                                               |
+| Honesty audit                                                              | no `process.env`/`.only`/`.skip`/`.todo` branch in the spec; the diff adds only the constant, its TSDoc and the `vi.setConfig` call |
+| PR #394 checks                                                             | 15 pass / 0 fail, incl. `test_coverage`, `ci`, `audit`, `secret-scan`                                                               |
+
+### Findings
+
+- **F1 (Medium) — ADR ledger drift.** `docs/adr/README.md` still reads the OP-117
+  lane's `Next free = 0604` although `0604` is consumed on `main`, and the index
+  table has no row for `ADR-0604`. The card boundary forbade touching
+  `README.md`, so this was correct implementer behaviour, but the obligation needs
+  an owner → routed to the follow-up DOCS card `t_41698149`.
+- **F2 (Low) — the budget is file-scoped, not case-scoped.** All 34 cases in the
+  file now have a 30 s ceiling, so a future genuine hang in any of them fails at
+  30 s instead of 5 s. Accepted as-is: it mirrors the `notification-seed.test.ts`
+  precedent, and the alternative (`it(..., { timeout: 30_000 })` on I1 alone) would
+  only re-mask the same class if a different case becomes first in a filtered run.
+- **F3 (Info) — the real cost is the harness.** `withTestDb` calls `ensureIndexes`
+  (~50 sequential `createIndex` round trips, ~768 ms) inside every timed body.
+  Parallelising it (`Promise.all`) would cut real cost rather than raise a budget.
+  Out of scope for this card; recorded, no card.
+
+### Routing
+
+- F1 → `t_41698149` (DOCS ledger card: advance the lane cell `0604` → `0605` and
+  add the `ADR-0604` index row). Distinct from this sign-off card: the two touch
+  different files (`README.md` vs `ADR-0604`) and are serialised by the task graph.
+- F2/F3 → recorded here, no card.
+- Nothing in the reviewed delivery is retracted; no Critical or High finding.
