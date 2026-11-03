@@ -355,6 +355,11 @@ export const EVENT_ERROR_TRANSPORT: Readonly<Record<EventErrorCode, ErrorCatalog
     retryable: false,
     message: "This event has already started and its start cannot be changed.",
   },
+  retention_would_expire_immediately: {
+    status: 422,
+    retryable: false,
+    message: "The new end date would expire the gallery's retention immediately.",
+  },
 };
 
 /**

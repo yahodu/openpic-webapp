@@ -176,8 +176,17 @@ export type EntitlementErrorCode = (typeof ENTITLEMENT_ERROR_CODES)[number];
  * base Appendix A table — so they are appended to the client-facing enum
  * ({@link API_ERROR_CODES}) and transported from their own table, in the same
  * append-only shape as `cannot_demote_owner` (OP-117, ADR-0580).
+ *
+ * OP-117's review round 1 appends `retention_would_expire_immediately` (`422`,
+ * `{ computedRetentionExpiresAt }`) — a date edit whose recomputed gallery
+ * retention lands in the past, so the write would purge the gallery at once
+ * (§4.1, Appendix A line 3556).
  */
-export const EVENT_ERROR_CODES = ["event_deleting", "event_already_started"] as const;
+export const EVENT_ERROR_CODES = [
+  "event_deleting",
+  "event_already_started",
+  "retention_would_expire_immediately",
+] as const;
 
 /** A member of the closed {@link EVENT_ERROR_CODES} set. */
 export type EventErrorCode = (typeof EVENT_ERROR_CODES)[number];
