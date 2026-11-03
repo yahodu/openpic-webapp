@@ -511,6 +511,55 @@ describe("POST /api/v1/events/{eventId}/access-links:rotate — rotate a share l
     expect(response.status).toBe(401);
     expect((await errorBody(response)).code).toBe("authentication_required");
   });
+
+  it("R1: eight concurrent rotations leave exactly one active link and answer no 500", async () => {
+    const { user, tenantId } = await seedOwner("op118-rotate-concurrent");
+    const tenantKey = tenantId.toHexString();
+    const seeded = await seedOwnedEvent(tenantKey, user.userId);
+    const id = seeded.id.toHexString();
+
+    // Eight rotations of the same event in flight at once. The contract is the
+    // *stored* invariant — a two-step deactivate-then-push would leave a window
+    // with zero or two active links — so a loser may serialise, retry or answer
+    // `409`; only a thrown request or a `500` is a failure.
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, () => rotateAccessLink(rotateRequest(user.cookie, id, undefined)))
+    );
+
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.filter((status) => status === 500)).toEqual([]);
+
+    const winners = responses.filter((response) => response.status === 200);
+    expect(winners.length).toBeGreaterThanOrEqual(1);
+    const answers = (await Promise.all(
+      winners.map((response) => body(response))
+    )) as unknown as RotateAnswer[];
+
+    // Every successful answer is still the §4.2 body, exactly.
+    expect(answers.map((answer) => keysOf(answer))).toEqual(
+      answers.map(() => ROTATE_RESPONSE_KEYS)
+    );
+    const answeredActiveSlugs = answers.flatMap((answer) =>
+      answer.accessLinks.filter((link) => link.active).map((link) => link.slug)
+    );
+
+    // ...and the stored row ends with exactly one active link, everything else
+    // stamped with a revocation instant.
+    const links = storedLinks(await readEventRow(seeded.id));
+    const active = links.filter((link) => link.active === true);
+    expect(active).toHaveLength(1);
+    const survivor = active[0];
+    if (survivor === undefined) {
+      throw new Error("expected exactly one active access link after the concurrent rotations");
+    }
+    const revokedLinks = links.filter((link) => link.active !== true);
+    expect(revokedLinks.map((link) => link.revokedAt)).toEqual(
+      revokedLinks.map(() => expect.any(Date))
+    );
+    // The surviving link is one some rotation actually answered as active (it
+    // cannot be a slug no rotation minted).
+    expect(answeredActiveSlugs).toContain(survivor.slug);
+  });
 });
 
 describe("GET /api/v1/events/{eventId}/access-links/{slug}/qr — generate a QR code (contract §4.2)", () => {
@@ -666,6 +715,44 @@ describe("GET /api/v1/events/{eventId}/access-links/{slug}/qr — generate a QR 
     const response = await getQrCode(qrRequest(outsider.cookie, id, seeded.slug));
 
     expect(response.status).toBe(404);
+    expect(await app.db.collection(COLLECTIONS.mediaAssets).countDocuments({})).toBe(0);
+  });
+
+  it("R2: a slug that is not on this event answers 404 and generates nothing", async () => {
+    const { user, tenantId } = await seedOwner("op118-qr-unknown-slug");
+    const tenantKey = tenantId.toHexString();
+    const seeded = await seedOwnedEvent(tenantKey, user.userId);
+    const id = seeded.id.toHexString();
+    const putSpy = vi.spyOn(getObjectStorage(), "putObject");
+
+    // A well-formed slug (valid unambiguous alphabet) that this event never
+    // handed out — the seeded slug is the only one in `accessLinks`. A
+    // malformed string would be refused for the wrong reason (format), so the
+    // pin uses a valid-but-unknown handle to isolate the object-level scope.
+    const response = await getQrCode(qrRequest(user.cookie, id, "abcdefgh"));
+
+    expect(response.status).toBe(404);
+    expect((await errorBody(response)).code).toBe("not_found");
+    expect(putSpy).not.toHaveBeenCalled();
+    expect(await app.db.collection(COLLECTIONS.mediaAssets).countDocuments({})).toBe(0);
+  });
+
+  it("R2: a slug of another tenant's event answers 404 and generates nothing", async () => {
+    const owner = await seedOwner("op118-qr-cross-tenant");
+    const seeded = await seedOwnedEvent(owner.tenantId.toHexString(), owner.user.userId);
+    const other = await seedOwner("op118-qr-cross-tenant-other");
+    const otherEvent = await seedOwnedEvent(other.tenantId.toHexString(), other.user.userId);
+    const putSpy = vi.spyOn(getObjectStorage(), "putObject");
+
+    // The slug is globally unique, so only the event scope can bound it: the
+    // owner of *this* event cannot mint a QR for a link of another event.
+    const response = await getQrCode(
+      qrRequest(owner.user.cookie, seeded.id.toHexString(), otherEvent.slug)
+    );
+
+    expect(response.status).toBe(404);
+    expect((await errorBody(response)).code).toBe("not_found");
+    expect(putSpy).not.toHaveBeenCalled();
     expect(await app.db.collection(COLLECTIONS.mediaAssets).countDocuments({})).toBe(0);
   });
 

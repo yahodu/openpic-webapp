@@ -107,6 +107,12 @@ describe("U1 — the QR payload builder uses the configured public base URL", ()
       buildAccessLinkShareUrl("https://openpic.in", "p9z4nn2k")
     );
   });
+
+  it("R3: the share-URL builder itself collapses a trailing slash on the base URL", () => {
+    expect(buildAccessLinkShareUrl("https://openpic.in/", "k7m2xq9p")).toBe(
+      "https://openpic.in/e/k7m2xq9p"
+    );
+  });
 });
 
 describe("U2 — the QR size/format validator", () => {
