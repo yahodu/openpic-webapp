@@ -1,3 +1,9 @@
+## [1.49.0](https://github.com/yahodu/openpic-webapp/compare/v1.48.1...v1.49.0) (2026-11-03)
+
+### Features
+
+- **events:** OP-118 rotate access links and cache QR exports ([#385](https://github.com/yahodu/openpic-webapp/issues/385)) ([1aeca52](https://github.com/yahodu/openpic-webapp/commit/1aeca5296cce14a5faf58693dd66f95e2753fa79))
+
 ## [1.48.1](https://github.com/yahodu/openpic-webapp/compare/v1.48.0...v1.48.1) (2026-11-03)
 
 ### Bug Fixes
