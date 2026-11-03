@@ -715,33 +715,16 @@ async function listLiveIndexes(db: Db, collection: string): Promise<Map<string, 
  * structural comparison must sort keys to avoid reporting a false drift.
  */
 function canonicalDefinition(value: unknown): string {
-  if (value === undefined || value === null) {
-    return "null";
-  }
-  if (value instanceof Date) {
-    return `date:${value.toISOString()}`;
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => canonicalDefinition(entry)).join(",")}]`;
-  }
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
-      left < right ? -1 : left > right ? 1 : 0
+  return JSON.stringify(value, (_key, entry: unknown) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return entry;
+    }
+    return Object.fromEntries(
+      Object.entries(entry as Record<string, unknown>).sort(([left], [right]) =>
+        left < right ? -1 : left > right ? 1 : 0
+      )
     );
-    return `{${entries.map(([key, entry]) => `${key}:${canonicalDefinition(entry)}`).join(",")}}`;
-  }
-  switch (typeof value) {
-    case "string":
-      return `string:${value}`;
-    case "number":
-    case "boolean":
-    case "bigint":
-      return `${typeof value}:${value.toString()}`;
-    default:
-      // A symbol or a function never appears in an index definition, but the
-      // rendering must stay deterministic if one ever did.
-      return `unrenderable:${typeof value}`;
-  }
+  });
 }
 
 /**

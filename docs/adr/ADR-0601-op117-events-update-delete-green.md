@@ -390,3 +390,57 @@ enum, key-comparing reconcile) turns **all 26 cases in the two touched specs
 green** (`26 passed`), and every touched production file was restored
 byte-identically (`sha256` verified). The pins are therefore RED for the stated
 reasons and satisfiable without loosening.
+
+## Review round 1 — GREEN delivery (card `t_f493a63a`)
+
+The pins above were turned green on the same lane branch, with no pin touched.
+Card map for this round: pins `t_32869a83` (test-only, ADR section above), this
+implementation `t_f493a63a`, and the reviewer card `t_a6a8f636` (which verifies
+and lands PR #380).
+
+| Finding                                                                                                                                          | Fix shipped                                                                                                                                                                                                                                                                                                                                                                                                                      | Pin that now guards it                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **F1** PATCH admitted `tenant_member`, so any reader of the tenant could rewrite the event                                                       | The admission helper is unchanged (`resolveEventActorRole` still admits an organizer row _or_ tenant membership, so the unrelated caller stays `404`); the **role gate** in `PATCH /events/{e}` is now `["organizer", "co_organizer"]`, so a related non-organizer gets `403 forbidden`                                                                                                                                          | `event-update-delete.test.ts` → `R1`                                                |
+| **F2** a date edit could recompute `retentionExpiresAt` into the past and store an already-elapsed gallery                                       | Before the write, a recomputed retention `<= now` is refused `422 retention_would_expire_immediately` with `details.computedRetentionExpiresAt`; the code is appended to `EVENT_ERROR_CODES` (`packages/contracts/src/errors.ts`) and to `EVENT_ERROR_TRANSPORT` (`@/server/http/catalog`) as a `422`, non-retryable row                                                                                                         | `event-update-delete.test.ts` → `R2`                                                |
+| **F3** `status` was freely writable both ways                                                                                                    | Only `draft → published` passes; every other move is `422 validation_failed` with `details.fields[0].path === "status"` (no new catalogue code)                                                                                                                                                                                                                                                                                  | `event-update-delete.test.ts` → `R3` (and `R3 guard` pins the allowed forward move) |
+| **F4** `If-Match` was checked on the read only, so a concurrent writer was silently overwritten                                                  | The tag's version is now part of the write: `updateOne({_id, updatedAt: <row the handler read>, status}, …)` inside the transaction, and `matchedCount === 0` answers `412 etag_mismatch` with `details.currentETag` from a re-read                                                                                                                                                                                              | `event-update-delete.test.ts` → `R4`                                                |
+| **F5** `ensureIndexes` skipped a spec when only the _name_ matched, so OP-117's widened membership index could never repair an existing database | The bootstrap now compares the whole declaration (ordered keys, `unique`, partial filter, TTL) against `listIndexes()` and **drops + recreates** a drifted index, reporting it under a new `reconciled` list and logging `db.indexes.reconciled`; the name stays `event_organizers_active_event_unique`, so no legacy-name drop is needed and `scripts/db/ensure-indexes.ts` leaves any existing database with the §15.2 key set | `index-bootstrap.test.ts` → `R5a` (key set) and `R5b` (co-organizer insert)         |
+| **F6** `POST /archive` emitted `event.archived` but wrote nothing, leaving the public link live                                                  | The route writes `status: "archived"` and `updatedAt` in the **same transaction** as the `event.archived` emission and returns the reloaded DTO; `eventDtoSchema.status` widened to include `archived`                                                                                                                                                                                                                           | `event-update-delete.test.ts` → `R6`                                                |
+
+### Why `retention_would_expire_immediately` is its own set
+
+`ERROR_CATALOG` is pinned to be the **exact base Appendix A table**, and the
+tenancy, entitlement, billing and media codes already follow that rule: a
+contract code outside the base table is appended to `API_ERROR_CODES` and
+transported from its own `Readonly<Record<…>>`. `retention_would_expire_immediately`
+is exactly that kind of row — documented in Appendix A (line 3556) and in the
+code list, but not a base-table member — so it joins the existing
+`EVENT_ERROR_CODES` / `EVENT_ERROR_TRANSPORT` pair rather than widening
+`ERROR_CODES`. Append-only, ADR-0421.
+
+### Behaviour-preserving refactors folded in
+
+- `eventIdFromRequest` lived twice (PATCH/DELETE read the last path segment,
+  archive read the one before it). One helper now lives in
+  `@/server/events/event-id` and takes `{ segmentFromEnd }`; the archive route
+  passes `2`.
+- The two `gallery.retention_days` / `events.post_upload_days` reads in a date
+  edit ran sequentially; they now run through `Promise.all`.
+- A malformed date reported **both** `startAt` and `endAt` whatever the client
+  sent. `parseSuppliedInstant(value, path)` now reports only the field that was
+  supplied _and_ failed.
+
+### The unpinned DELETE predicate (implemented anyway)
+
+`DELETE` had no pin in this round, but it shares the lost-update shape: its
+transition now writes with the same `_id`/`status`/`updatedAt` predicate and
+answers `412 etag_mismatch` (with the current tag) when the row moved, so a
+double submit cannot schedule the purge twice. This is an implementation
+requirement from card `t_f493a63a`, not a pinned behaviour — the next pin cycle
+may wish to pin it.
+
+### Gates
+
+Full `vitest run --project unit --project integration` green (see the card
+handoff for the counts), `npm run typecheck` exit 0, `npm run lint` 0 errors,
+`prettier --check .` clean, `adr-numbering` guard green.
