@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { sniffBrandingFormat } from "@/server/media/branding-type";
 import { sanitizeSvg } from "@/server/media/sanitize-svg";
 
 /**
@@ -72,5 +73,35 @@ describe("sanitizeSvg", () => {
     expect(output.toLowerCase()).toContain("<svg");
     expect(output.toLowerCase()).toContain("rect");
     expect(output).toContain("https://example.com/brand");
+  });
+});
+
+describe("sanitizeSvg with a leading <?xml declaration", () => {
+  // Round-1 review pin: `sniffBrandingFormat` accepts a `<?xml` declaration
+  // before the root, and `sanitizeSvg` runs over the whole text — but nothing
+  // pinned that the sanitized result retains the leading declaration
+  // byte-identical. A regression that stripped (or mangled) the declaration
+  // would pass every earlier assertion; this block pins the declaration as
+  // part of the retained document.
+  const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>';
+  const XML_PREFIXED_SVG = `${XML_DECLARATION}\n<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><script>document.body.innerHTML = "pwned"</script><rect width="2" height="2" /></svg>`;
+
+  it("detects an <?xml-prefixed SVG as svg (detection covers the declaration)", () => {
+    expect(sniffBrandingFormat(new TextEncoder().encode(XML_PREFIXED_SVG))).toBe("svg");
+  });
+
+  it("retains the leading <?xml declaration byte-identical through sanitization", () => {
+    const output = sanitizeSvg(XML_PREFIXED_SVG);
+
+    expect(output.startsWith(XML_DECLARATION)).toBe(true);
+    expect(output.indexOf(XML_DECLARATION)).toBe(0);
+  });
+
+  it("still removes the script payload from an <?xml-prefixed SVG", () => {
+    const output = sanitizeSvg(XML_PREFIXED_SVG);
+
+    expect(output.toLowerCase()).not.toContain("script");
+    expect(output).not.toContain("pwned");
+    expect(output).toContain('<rect width="2" height="2" />');
   });
 });
