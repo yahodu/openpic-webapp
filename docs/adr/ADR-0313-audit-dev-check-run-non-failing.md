@@ -155,3 +155,47 @@ below is either routed to another card or recorded as accepted.
 F1 and F5 are open follow-ups on the cards named above; F2 and F3 are recorded
 here with no card; F4 was remediated during the review run. No finding retracts
 the decision above.
+
+## Test pin (follow-up card `t_f5588c70`)
+
+This record deliberately did not consume a second number: the decision above is
+unchanged, and the follow-up only locks it (this section closes finding F1 of the round-1
+sign-off below). `apps/web/src/test/unit/ci-audit-dev-nongating.test.ts`
+is the regression pin, in the same idiom as the repo's other two workflow guards
+(`workflow-shell-safety.test.ts`, `ci-evidence-guard.test.ts`) — every invariant
+is asserted on the real `.github/workflows/ci.yml` **and** on synthetic fixtures
+derived from it, so the assertion is a guard rather than a snapshot of today's
+file. The scanner is line-based and lives inside the spec (no exported helper:
+a characterisation pin has no downstream consumer for a scanner API).
+
+The pinned properties, and nothing else: `audit-dev` exists; it declares no
+`needs:`; **no** step in it that runs `pnpm audit` can fail the job — either its
+`run:` ends in a shell form that exits `0` on a non-zero audit (`|| true`,
+`|| :`, `|| exit 0`, `|| echo …`) **or** the step carries `continue-on-error:
+true`; the job still runs `pnpm audit --dev` (so deleting or downgrading it
+cannot satisfy the pin vacuously); and the blocking `audit` job still exists as
+its own job. The literal `|| true` string is deliberately **not** pinned, and
+the blocking job is not asserted on beyond existence.
+
+A **job-level** `continue-on-error: true` alone must not satisfy the pin — that
+is the pre-record defect — so the negative control is derived mechanically from
+the live workflow (strip the exit-`0` suffix from every line) and keeps the
+job-level flag; it must report `nonGating: false`. Two further controls prove
+the guard bites for invariants 1 and 3 (`needs: [ci]` injected -> reported; the
+`--dev` flag removed -> `runsDevAudit: false`), and one proves the accepted
+_second_ shape (suffix stripped, step-level `continue-on-error: true` added ->
+`nonGating: true`).
+
+Evidence at the head: the new spec is green on the trunk (10 passed); the full
+`unit` project is **142 files · 2286 passed | 3 skipped** (the card's baseline
+141 / 2276 plus this file's 10 cases); the mutation probe that reverts
+`.github/workflows/ci.yml` to the pre-record line
+(`run: pnpm audit --dev --audit-level=moderate`, no suffix, no step-level flag)
+turns exactly this spec RED — 3 cases inside it — and no other file (`1 failed |
+141 passed` files); the workflow is restored byte-identically (sha256 equal,
+`git diff` empty). `tsc` is exit `0` on all three projects, `eslint` reports 0
+errors (one accepted `security/detect-non-literal-fs-filename` warning, the
+class the two existing guards already carry) and `prettier --check` is clean.
+
+Scope boundary: this pin changes no workflow, no production code and no ADR
+number, and `docs/adr/README.md` is left byte-identical.
