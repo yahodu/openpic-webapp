@@ -622,3 +622,76 @@ Branch-coverage note for the next test cycle: this route's uncovered branches
 are the ones a single-writer spec cannot reach — the `null` stored close (and
 the `?? computeUploadWindowEndsAt` fallback it selects), the `matchedCount === 0`
 lost-race refusal, and the `updatedAt`-less write predicate.
+
+## Review sign-off — round 2 (card `t_7cd963c6`, execution lens)
+
+Round 2 re-measured the shipped OP-117 surface on the **merged trunk**, not on
+the lane head round 1 reviewed. Nothing above is retracted: §D1, §D2, the
+round-1 pin tables and every claim they make stand as written. This section only
+adds what independent re-execution at `d09b8cc` shows.
+
+Landed review artifact: PR #384 (`OP-117-task-archive-conditional-write`, head
+`a705541`) — the round-2 pins of [ADR-0602](ADR-0602-op117-archive-concurrency-pins.md)
+(PR #382, closed as superseded) plus the F11 conditional write — squash-merged
+as `d09b8cc`. The round-1 delivery (PR #380, head `7aa13f3`) is on the trunk as
+`858fe39`. Every figure below was reproduced at `d09b8cc` (`HEAD` identical to
+`origin/main` at the time of writing); none is transcribed from a handoff. The
+`3052 passed` figure quoted in earlier handoffs is stale: the round-2 pins add
+three cases (`R7`, `E7`, `E8`), so the trunk count is `3055`.
+
+### Acceptance criteria → evidence (re-measured at `d09b8cc`)
+
+| Card criterion                                                       | Pin that proves it                                                                                                                                                                   | Re-run evidence                                                                      |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| If-Match enforced (`428`/`412`)                                      | `I1` twice (`event-update-delete.test.ts`: missing header → `428`, stale → `412` with `details.currentETag`) and `R4` (concurrent write → `412`, the other caller's value survives)  | both `I1` cases and `R4` green in the full run; the `R4` mutation probe reddens `R4` |
+| Windows recomputed on date edits                                     | `I2` (an `endAt` move returns both recomputed windows), `U1` (`recomputeWindows` unit), `R2` (a recomputed retention in the past → `422 retention_would_expire_immediately`)         | all green in the full run; the `R2` probe reddens the retention case                 |
+| Delete is the only content-destroying path, and it is user-initiated | `I4` (wrong `confirmName` → `422`, nothing written), `I5` (`202 {status, purgeScheduledAt, irreversible}` + the ordered purge event), `I5b` (a later `PATCH` → `409 event_deleting`) | all green in the full run                                                            |
+
+Gates reproduced at `d09b8cc`:
+
+| Gate          | Result                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Suite         | `vitest run --project unit --project integration`: **232 files passed (232)**, `3055 passed \| 3 skipped (3058)`, exit 0                    |
+| Types         | `npm run typecheck` (root, `packages/contracts`, `apps/web`): three projects, exit 0                                                        |
+| Lint          | `eslint .`: 0 errors, 161 pre-existing warnings                                                                                             |
+| Docs format   | `prettier --check "docs/adr/**/*.md"`: clean                                                                                                |
+| ADR numbering | `adr-numbering` unit guard: 29 passed (29)                                                                                                  |
+| PR CI         | #380 green at head `7aa13f3` and #384 green at head `a705541`, each except the non-blocking `audit-dev` job (`continue-on-error`, ADR-0301) |
+
+### Round-1 corrections verified by mutation probe
+
+At `d09b8cc` each round-1 correction was reverted in isolation: the production
+line was mutated back to its round-1 behaviour, the named pin was run alone,
+then the file was restored with `git checkout` and `git status --porcelain` was
+confirmed empty. Every probe reddened exactly its pin, and no probe was left in
+the tree.
+
+| Correction         | Mutation applied                                                                                            | Pin                                         | Probe result              |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------- |
+| F1 role gate       | `apps/web/src/app/api/v1/events/[eventId]/route.ts`: the `PATCH` role list re-admits `tenant_member`        | `R1` — `event-update-delete.test.ts`        | 1 failed, 18 skipped (19) |
+| F2 retention       | same file: the `retention.getTime() <= now.getTime()` guard is disabled                                     | `R2` — same file                            | 1 failed, 18 skipped (19) |
+| F3 status          | same file: the `draft → published` transition check is bypassed (`forward = true`)                          | `R3` — same file                            | 1 failed, 18 skipped (19) |
+| F4 write predicate | same file: `eventWritePredicate` drops `updatedAt` from the filter                                          | `R4` — same file                            | 1 failed, 18 skipped (19) |
+| F5 index reconcile | `apps/web/src/server/db/indexes.ts`: `definitionDiffers` is ignored, so a name-only match counts as present | `R5a`/`R5b` — `index-bootstrap.test.ts`     | 2 failed, 6 skipped (8)   |
+| F6 archive state   | `…/[eventId]/archive/route.ts`: the `$set` no longer writes `status: "archived"`                            | `R6` — `event-update-delete.test.ts`        | 1 failed, 18 skipped (19) |
+| E4 extend cap      | `…/[eventId]/upload-window:extend/route.ts`: the `events.post_upload_days` allowance comparison is disabled | `E4` — `event-extend-upload-window.test.ts` | 1 failed, 11 skipped (12) |
+
+### Findings routed, not retracted
+
+| Finding                                                                                                                                                               | Severity | Routed to                                    | State at `d09b8cc`                                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **F11** the archive write carried no read-version predicate, so a concurrent `DELETE` was overwritten from `deleting` back to `archived`                              | Medium   | TEST `t_95c68c28` → GREEN `t_473da231`       | Closed: the write is conditional on `{_id, status, updatedAt}`, a zero match is refused (`409 event_deleting` on a deleting re-read, otherwise `412 etag_mismatch`), `event.archived` is emitted only when the write matched; `R7` pins the `409` arm |
+| **F12** two unpinned `upload-window:extend` edge paths — the `null` stored close on an unlimited plan, and the lost-race `412` with no `details.currentETag`          | Low      | TEST `t_95c68c28` (`E7`/`E8`)                | Closed: both characterisation pins are green on the trunk and no production change was needed                                                                                                                                                         |
+| **F13** the archive's `412 etag_mismatch` arm (a concurrent writer that leaves the row not `deleting`) is implemented but unpinned; `R7` exercises only the `409` arm | Low      | TEST `t_77fdac73` (created by this sign-off) | Open                                                                                                                                                                                                                                                  |
+| Contract §4.1 spells `upload-window:extend` tenant-scoped; it is implemented on the global `/api/v1/events/{eventId}` family                                          | Info     | recorded in “Path deviation” above           | Accepted deviation, unchanged                                                                                                                                                                                                                         |
+
+### Post-review status
+
+- F1–F6 are addressed on the merged trunk (`858fe39`), F11 and F12 on `d09b8cc`.
+  The §0.10 conditional write is now uniform across `PATCH`, `DELETE`,
+  `archive` and `upload-window:extend`.
+- Open: F13 on `t_77fdac73`, plus the `DELETE` predicate noted at round 1 as
+  “implemented anyway”, which still has no pin.
+- §D1 and §D2 stay as recorded and are not retracted: D1's assertion was
+  corrected by the Test Author (`t_be8b01a5`) and D2's shared `auth.otp` bucket
+  by `t_26504ca0`.
