@@ -166,6 +166,32 @@ export const ENTITLEMENT_ERROR_CODES = ["plan_limit_exceeded", "feature_not_avai
 export type EntitlementErrorCode = (typeof ENTITLEMENT_ERROR_CODES)[number];
 
 /**
+ * Event-lifecycle codes (contract §4.1, Appendix A "Table 3553").
+ *
+ * `event_deleting` (`409`, `{ purgeScheduledAt }`) refuses any write once a
+ * delete has been confirmed and the ordered purge is scheduled, and
+ * `event_already_started` (`409`) refuses a `startAt` move once the event has
+ * begun. Both are contract catalogue rows that are **not** members of
+ * {@link ERROR_CODES}, which the server error catalogue pins to exactly the
+ * base Appendix A table — so they are appended to the client-facing enum
+ * ({@link API_ERROR_CODES}) and transported from their own table, in the same
+ * append-only shape as `cannot_demote_owner` (OP-117, ADR-0580).
+ *
+ * OP-117's review round 1 appends `retention_would_expire_immediately` (`422`,
+ * `{ computedRetentionExpiresAt }`) — a date edit whose recomputed gallery
+ * retention lands in the past, so the write would purge the gallery at once
+ * (§4.1, Appendix A line 3556).
+ */
+export const EVENT_ERROR_CODES = [
+  "event_deleting",
+  "event_already_started",
+  "retention_would_expire_immediately",
+] as const;
+
+/** A member of the closed {@link EVENT_ERROR_CODES} set. */
+export type EventErrorCode = (typeof EVENT_ERROR_CODES)[number];
+
+/**
  * Billing-checkout codes (contract §3.3, Appendix A.2/A.4).
  *
  * The seven refusals `POST /tenants/{tenantId}/billing/{checkout,upgrade,downgrade}`
@@ -291,6 +317,7 @@ export const API_ERROR_CODES = [
   ...ENTITLEMENT_ERROR_CODES,
   ...BILLING_ERROR_CODES,
   ...MEDIA_ERROR_CODES,
+  ...EVENT_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -312,7 +339,8 @@ export type AppErrorCode =
   | TenancyErrorCode
   | EntitlementErrorCode
   | BillingErrorCode
-  | MediaErrorCode;
+  | MediaErrorCode
+  | EventErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);

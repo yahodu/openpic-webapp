@@ -34,7 +34,13 @@ import { getPlatformSettings } from "@/server/settings/platform-settings";
  */
 
 /** The registered analytics-only event keys (no notification type) — contract §7.7. */
-export const ANALYTICS_ONLY_EVENT_KEYS: readonly string[] = ["event.viewed"];
+export const ANALYTICS_ONLY_EVENT_KEYS: readonly string[] = [
+  "event.viewed",
+  // OP-117 (ADR-0580): the ordered purge for the OP-132 purge job — a queue
+  // consumer key with no notification type, emitted synchronously when an
+  // organizer confirms a delete.
+  "event.purge.scheduled",
+];
 
 /** The payload keys that must never reach the outbox (ADR-0029 §3). */
 const FORBIDDEN_PAYLOAD_KEYS: ReadonlySet<string> = new Set([

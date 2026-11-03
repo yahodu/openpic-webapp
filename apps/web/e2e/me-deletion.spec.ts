@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+import { clientIpFor } from "./client-ip";
 import { E2E_BASE_URL } from "./ports";
+
+const CLIENT_IP = clientIpFor("me-deletion.spec.ts");
 
 /**
  * E1 — account deletion request and cancel over the deployed HTTP surface
@@ -25,7 +28,7 @@ test.describe("account deletion cancel window over the API", () => {
 
     // Sign in with a real email OTP session cookie.
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
-      headers: { origin: E2E_BASE_URL },
+      headers: { origin: E2E_BASE_URL, "x-forwarded-for": CLIENT_IP },
       data: { email, type: "sign-in" },
     });
     expect(sent.status()).toBe(200);

@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { expect, test } from "@playwright/test";
 
+import { clientIpFor } from "./client-ip";
 import { E2E_BASE_URL } from "./ports";
+
+const CLIENT_IP = clientIpFor("billing-checkout.spec.ts");
 
 /**
  * E1 — checkout through the deployed HTTP surface (OP-107, contract §3.3;
@@ -67,7 +70,7 @@ test.describe("POST /api/v1/tenants/current/billing/checkout", () => {
     const email = `e2e-op107-${String(Date.now())}-${Math.random().toString(16).slice(2)}@example.com`;
 
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
-      headers: { origin: E2E_BASE_URL },
+      headers: { origin: E2E_BASE_URL, "x-forwarded-for": CLIENT_IP },
       data: { email, type: "sign-in" },
     });
     expect(sent.status()).toBe(200);

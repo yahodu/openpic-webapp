@@ -124,16 +124,34 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     expireAfterSeconds: 0,
   },
 
-  // event_organizers — one active organizer per event (revoked rows excluded).
+  // event_organizers — one active membership row per (event, user); an event
+  // may carry its organizer plus any number of co-organizers (schema §15.2:
+  // `{eventId, userId}` unique). Revoked rows are excluded from uniqueness.
   {
     collection: COLLECTIONS.eventOrganizers,
     name: "event_organizers_active_event_unique",
     keys: [
       ["tenantId", 1],
       ["eventId", 1],
+      ["userId", 1],
     ],
     unique: true,
     partialFilterExpression: { revokedAt: null },
+  },
+
+  // event_organizers — exactly one active ORGANIZER per event (schema §15.2:
+  // `{eventId, role}` unique partial on `{role:"organizer"}`). Co-organizer
+  // rows carry a different role, so this never blocks them.
+  {
+    collection: COLLECTIONS.eventOrganizers,
+    name: "event_organizers_active_organizer_unique",
+    keys: [
+      ["tenantId", 1],
+      ["eventId", 1],
+      ["role", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { role: "organizer", revokedAt: null },
   },
 
   // notification_dispatches — one dispatch per dedupeKey (null keys excluded).
@@ -601,12 +619,14 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
   },
 ];
 
-/** The outcome of a bootstrap run: which indexes were built and which existed. */
+/** The outcome of a bootstrap run: which indexes were built, repaired and found. */
 export interface IndexBootstrapReport {
   /** Names of the indexes created by this run. */
   readonly created: readonly string[];
-  /** Names of the declared indexes that were already present. */
+  /** Names the run found present and already matching their declaration. */
   readonly existing: readonly string[];
+  /** Names the run dropped and rebuilt because the definition had drifted. */
+  readonly reconciled: readonly string[];
 }
 
 /** MongoDB server error code for a missing collection/namespace. */
@@ -622,14 +642,14 @@ function isMissingNamespace(error: unknown): boolean {
   );
 }
 
-/**
- * Narrow an untyped driver result to an array.
- *
- * `listIndexes()` is typed `any[]` by the driver, so the result is funnelled
- * through `unknown` and re-narrowed here rather than trusting the broad type.
- */
-function asArray(value: unknown): readonly unknown[] {
-  return Array.isArray(value) ? (value as readonly unknown[]) : [];
+/** One live index description, narrowed to the parts a spec can declare. */
+interface LiveIndex {
+  readonly name: string;
+  /** The keys in index order, as the server reports them. */
+  readonly key?: Readonly<Record<string, unknown>>;
+  readonly unique?: boolean;
+  readonly partialFilterExpression?: unknown;
+  readonly expireAfterSeconds?: unknown;
 }
 
 /** True when `value` is an index description carrying a string `name`. */
@@ -640,6 +660,102 @@ function hasStringName(value: unknown): value is { readonly name: string } {
     "name" in value &&
     typeof (value as { name?: unknown }).name === "string"
   );
+}
+
+/**
+ * Narrow an untyped driver result to an array.
+ *
+ * `listIndexes()` is typed `any[]` by the driver, so the result is funnelled
+ * through `unknown` and re-narrowed here rather than trusting the broad type.
+ */
+function asArray(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? (value as readonly unknown[]) : [];
+}
+
+/** True when `value` is an object that can be read as a live index. */
+function isLiveIndex(value: unknown): value is LiveIndex {
+  if (!hasStringName(value)) {
+    return false;
+  }
+  const candidate = value as { readonly key?: unknown };
+  return (
+    candidate.key === undefined || (typeof candidate.key === "object" && candidate.key !== null)
+  );
+}
+
+/**
+ * Index definitions already present on a collection, keyed by name.
+ *
+ * A collection that does not exist yet has no indexes: MongoDB answers with a
+ * "namespace not found" error, which is treated as an empty map so the caller
+ * can proceed to create them.
+ */
+async function listLiveIndexes(db: Db, collection: string): Promise<Map<string, LiveIndex>> {
+  try {
+    const raw: unknown = await db.collection(collection).listIndexes().toArray();
+    const indexes = new Map<string, LiveIndex>();
+    for (const entry of asArray(raw)) {
+      if (isLiveIndex(entry)) {
+        indexes.set(entry.name, entry);
+      }
+    }
+    return indexes;
+  } catch (error) {
+    if (isMissingNamespace(error)) {
+      return new Map();
+    }
+    throw error;
+  }
+}
+
+/**
+ * A deterministic rendering of one index-definition fragment.
+ *
+ * The server reports `partialFilterExpression` with its own key order, so a
+ * structural comparison must sort keys to avoid reporting a false drift.
+ */
+function canonicalDefinition(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return entry;
+    }
+    return Object.fromEntries(
+      Object.entries(entry as Record<string, unknown>).sort(([left], [right]) =>
+        left < right ? -1 : left > right ? 1 : 0
+      )
+    );
+  });
+}
+
+/**
+ * Whether a live index disagrees with its declaration.
+ *
+ * The comparison covers the whole definition a spec can declare — the ordered
+ * key list, uniqueness, the partial filter and the TTL — because MongoDB
+ * refuses to change any of them on an existing index: a name-only check leaves
+ * a drifted definition live forever (schema §15.2).
+ */
+function definitionDiffers(spec: IndexSpec, live: LiveIndex): boolean {
+  const liveKeys = live.key === undefined ? [] : Object.entries(live.key);
+  if (liveKeys.length !== spec.keys.length) {
+    return true;
+  }
+  for (const [position, [field, direction]] of spec.keys.entries()) {
+    const liveKey = liveKeys[position];
+    if (liveKey?.[0] !== field || Number(liveKey[1]) !== direction) {
+      return true;
+    }
+  }
+  if ((live.unique === true) !== (spec.unique === true)) {
+    return true;
+  }
+  if (
+    canonicalDefinition(live.partialFilterExpression) !==
+    canonicalDefinition(spec.partialFilterExpression)
+  ) {
+    return true;
+  }
+  return (live.expireAfterSeconds ?? null) !== (spec.expireAfterSeconds ?? null);
 }
 
 /** Turn the ordered key list into the driver's index specification document. */
@@ -666,44 +782,24 @@ function toIndexOptions(spec: IndexSpec): CreateIndexesOptions {
 }
 
 /**
- * List the index names already present on a collection.
- *
- * A collection that does not exist yet has no indexes: MongoDB answers with a
- * "namespace not found" error, which is treated as an empty set so the caller
- * can proceed to create them.
- */
-async function listIndexNames(db: Db, collection: string): Promise<Set<string>> {
-  try {
-    const raw: unknown = await db.collection(collection).listIndexes().toArray();
-    const names = new Set<string>();
-    for (const entry of asArray(raw)) {
-      if (hasStringName(entry)) {
-        names.add(entry.name);
-      }
-    }
-    return names;
-  } catch (error) {
-    if (isMissingNamespace(error)) {
-      return new Set();
-    }
-    throw error;
-  }
-}
-
-/**
- * Create every index in {@link INDEX_SPECS} that is not already present.
+ * Create every index in {@link INDEX_SPECS}, reconciling a drifted definition.
  *
  * Idempotent: a second run against the same database creates nothing and
- * reports every declared index as `existing`. Indexes present in the database
- * but absent from the registry are never dropped — the bootstrap only ever adds
- * (a destructive drop is a deliberate, separate operator action).
+ * reports every declared index as `existing`. An index whose **name** is
+ * present but whose **definition** disagrees with its declaration is dropped
+ * and rebuilt, because MongoDB refuses to alter an existing index's keys,
+ * uniqueness, filter or TTL — a name-only check would leave a drifted
+ * definition live forever (schema §15.2). Indexes present in the database but
+ * absent from the registry are never dropped: the bootstrap only ever adds or
+ * repairs what it declares.
  *
  * @param db - The database to build indexes on.
- * @returns The report of created and already-existing index names.
+ * @returns The report of created, reconciled and already-present index names.
  */
 export async function ensureIndexes(db: Db): Promise<IndexBootstrapReport> {
   const created: string[] = [];
   const existing: string[] = [];
+  const reconciled: string[] = [];
 
   const specsByCollection = new Map<string, IndexSpec[]>();
   for (const spec of INDEX_SPECS) {
@@ -716,22 +812,37 @@ export async function ensureIndexes(db: Db): Promise<IndexBootstrapReport> {
   }
 
   for (const [collection, specs] of specsByCollection) {
-    const present = await listIndexNames(db, collection);
+    const present = await listLiveIndexes(db, collection);
     for (const spec of specs) {
-      if (present.has(spec.name)) {
-        existing.push(spec.name);
-      } else {
+      const live = present.get(spec.name);
+      if (live === undefined) {
         await db
           .collection(collection)
           .createIndex(toIndexSpecification(spec.keys), toIndexOptions(spec));
         created.push(spec.name);
+        continue;
       }
+      if (!definitionDiffers(spec, live)) {
+        existing.push(spec.name);
+        continue;
+      }
+      await db.collection(collection).dropIndex(spec.name);
+      await db
+        .collection(collection)
+        .createIndex(toIndexSpecification(spec.keys), toIndexOptions(spec));
+      reconciled.push(spec.name);
     }
   }
 
   if (created.length > 0) {
     getLogger().info("db.indexes.created", { event: "db.indexes.created", names: created });
   }
+  if (reconciled.length > 0) {
+    getLogger().info("db.indexes.reconciled", {
+      event: "db.indexes.reconciled",
+      names: reconciled,
+    });
+  }
 
-  return { created, existing };
+  return { created, existing, reconciled };
 }

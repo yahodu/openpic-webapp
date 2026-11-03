@@ -5,6 +5,7 @@ import type {
   BillingErrorCode,
   EntitlementErrorCode,
   ErrorCode,
+  EventErrorCode,
   InternalErrorCode,
   MediaErrorCode,
   NotificationErrorCode,
@@ -332,6 +333,36 @@ export const ENTITLEMENT_ERROR_TRANSPORT: Readonly<
 };
 
 /**
+ * Transport for the event-lifecycle codes (contract §4.1, Appendix A "Table
+ * 3553").
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the tenancy and
+ * entitlement codes: that table stays the exact base Appendix A copy. Both rows
+ * are `409`, non-retryable — `event_deleting` (details `{purgeScheduledAt}`)
+ * for a write against an event whose ordered purge is already scheduled, and
+ * `event_already_started` for a `startAt` move once the event has begun. The
+ * events story owns these rows and feeds them into the same dispatch table,
+ * in the `cannot_demote_owner` append-only shape (ADR-0580).
+ */
+export const EVENT_ERROR_TRANSPORT: Readonly<Record<EventErrorCode, ErrorCatalogEntry>> = {
+  event_deleting: {
+    status: 409,
+    retryable: false,
+    message: "This event is being deleted and can no longer be changed.",
+  },
+  event_already_started: {
+    status: 409,
+    retryable: false,
+    message: "This event has already started and its start cannot be changed.",
+  },
+  retention_would_expire_immediately: {
+    status: 422,
+    retryable: false,
+    message: "The new end date would expire the gallery's retention immediately.",
+  },
+};
+
+/**
  * Transport for the billing-checkout codes (contract §3.3, Appendix A.2/A.4).
  *
  * Kept out of {@link ERROR_CATALOG} for the same reason as the tenancy and
@@ -431,6 +462,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...ENTITLEMENT_ERROR_TRANSPORT,
   ...BILLING_ERROR_TRANSPORT,
   ...MEDIA_ERROR_TRANSPORT,
+  ...EVENT_ERROR_TRANSPORT,
 };
 
 /**

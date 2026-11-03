@@ -67,6 +67,63 @@ export function computeRetentionExpiresAt(endAt: Date, retentionDays: number): D
   return addDays(endAt, retentionDays);
 }
 
+/** Inputs for {@link recomputeWindows}: the new end instant and the plan's
+ * entitlement values (a `null` on either side means that window is unlimited). */
+export interface RecomputeWindowsInput {
+  readonly endAt: Date;
+  readonly postUploadDays: number | null;
+  readonly retentionDays: number | null;
+}
+
+/** The result of {@link recomputeWindows}: both materialised windows. */
+export interface RecomputeWindowsResult {
+  readonly uploadWindowEndsAt: Date | null;
+  readonly retentionExpiresAt: Date | null;
+}
+
+/**
+ * Recompute **both** materialised windows from a moved `endAt` (OP-117 U1,
+ * contract §4.1).
+ *
+ * A date edit moves the event's end, so both windows — the upload close
+ * (`endAt + events.post_upload_days`) and the gallery retention
+ * (`endAt + gallery.retention_days`) — are derived from the **new** end
+ * instant and the plan's entitlement values in one call. `null` on either
+ * entitlement materialises that window as `null` (the unlimited cases), and
+ * whole-day shifts preserve the time of day, exactly like the create route's
+ * per-window helpers.
+ *
+ * @param input - The new end instant and the two entitlement values.
+ * @returns Both recomputed windows.
+ */
+export function recomputeWindows(input: RecomputeWindowsInput): RecomputeWindowsResult {
+  return {
+    uploadWindowEndsAt: computeUploadWindowEndsAt(input.endAt, input.postUploadDays),
+    retentionExpiresAt:
+      input.retentionDays === null
+        ? null
+        : computeRetentionExpiresAt(input.endAt, input.retentionDays),
+  };
+}
+
+/**
+ * Extend an existing upload-window close by `additionalDays` whole days
+ * (OP-117 §3, contract §4.1).
+ *
+ * The organizer's "extend the upload window" action moves the **materialised**
+ * close, not the entitlement: `uploadWindowEndsAt + additionalDays` whole days,
+ * preserving the time of day, exactly like {@link computeUploadWindowEndsAt}
+ * derives it from `endAt`. The instant handed in is never mutated.
+ *
+ * @param uploadWindowEndsAt - The row's current upload-window close.
+ * @param additionalDays - Whole days to add (the route refuses anything that is
+ *   not a strictly positive integer).
+ * @returns A new `Date` `additionalDays` after `uploadWindowEndsAt`.
+ */
+export function extendUploadWindow(uploadWindowEndsAt: Date, additionalDays: number): Date {
+  return addDays(uploadWindowEndsAt, additionalDays);
+}
+
 /**
  * The event duration in whole days, **rounded up** (contract §4.1).
  *

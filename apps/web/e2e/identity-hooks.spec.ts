@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+import { clientIpFor } from "./client-ip";
 import { E2E_BASE_URL } from "./ports";
+
+const CLIENT_IP = clientIpFor("identity-hooks.spec.ts");
 
 /**
  * E1 — sign-up via email OTP then `GET /me` shows the profile defaults (OP-89,
@@ -22,7 +25,7 @@ test.describe("identity lifecycle over the API", () => {
     const email = `e2e-op89-${String(Date.now())}-${Math.random().toString(16).slice(2)}@example.com`;
 
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
-      headers: { origin: E2E_BASE_URL },
+      headers: { origin: E2E_BASE_URL, "x-forwarded-for": CLIENT_IP },
       data: { email, type: "sign-in" },
     });
     expect(sent.status()).toBe(200);
