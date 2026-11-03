@@ -1023,4 +1023,78 @@ describe("OP-117 review round 2 — the archive write must be conditional on the
       .findOne({ eventKey: "event.archived", tenantId: tenantKey });
     expect(emitted).toBeNull();
   });
+
+  it("R8: a concurrent PATCH that commits between the archive read and its write answers 412 etag_mismatch naming the re-read tag, and nothing is archived", async () => {
+    const { user, tenantId } = await seedOwner("op117-r8");
+    const tenantKey = tenantId.toHexString();
+    await seedStarterWorkspace(tenantKey);
+    const eventId = await seedOwnedEvent(tenantKey, user.userId);
+    const id = eventId.toHexString();
+    const seedTag = await currentETagOf(eventId);
+    const concurrentUpdatedAt = new Date(fixtureInstant("13:00:00.000Z", 30));
+    const concurrentName = "Renamed by the other caller";
+
+    // Deterministic archive-vs-PATCH race: the first `updateOne` the archive
+    // route issues against `events` is preceded by a **different writer's**
+    // committed edit — exactly as if that PATCH had landed between this
+    // request's read (which still saw the seed row, hence the same valid tag)
+    // and its write. The row is not `deleting`, so this is the *other* refusal
+    // arm: a version mismatch that is not a lost delete. A regression to an
+    // unconditional `updateOne({ _id })` would overwrite the edit and announce
+    // an archive over it.
+    let injected = false;
+    const updateSpy = vi
+      .spyOn(Collection.prototype, "updateOne")
+      .mockImplementation(async function (this: Collection, filter, update, options) {
+        if (!injected && this.collectionName === COLLECTIONS.events) {
+          injected = true;
+          await driverUpdateOne.call(
+            this,
+            { _id: eventId },
+            { $set: { name: concurrentName, updatedAt: concurrentUpdatedAt } }
+          );
+        }
+        return driverUpdateOne.call(this, filter, update, options);
+      });
+
+    let response: Response;
+    try {
+      response = await archiveEvent(archiveRequest(user.cookie, id));
+    } finally {
+      updateSpy.mockRestore();
+    }
+    expect(injected).toBe(true);
+
+    expect(response.status).toBe(412);
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(parsed.error.code).toBe("etag_mismatch");
+
+    // `details.currentETag` is the **re-read** row's tag — computed from the
+    // row the concurrent writer left behind, not the tag this request read —
+    // so a retry against it is the one that can succeed.
+    const reRead = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    if (reRead === null) {
+      throw new Error("expected the event row to exist after the refused archive");
+    }
+    expect((reRead.updatedAt as Date).toISOString()).toBe(concurrentUpdatedAt.toISOString());
+    expect(parsed.error.details?.currentETag).toBe(
+      eventETag(
+        reRead.updatedAt as Date,
+        typeof reRead.schemaVersion === "number" ? reRead.schemaVersion : 1
+      )
+    );
+    expect(parsed.error.details?.currentETag).not.toBe(seedTag);
+
+    // The losing archive did NOT overwrite the other writer's state.
+    expect(reRead.name).toBe(concurrentName);
+    expect(reRead.status).toBe("published");
+
+    // A refused archive announces nothing.
+    const emitted = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .findOne({ eventKey: "event.archived", tenantId: tenantKey });
+    expect(emitted).toBeNull();
+  });
 });
