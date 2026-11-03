@@ -33,6 +33,9 @@ const ADMITTED_EXTENSIONS: readonly string[] = [
   "tif",
   "tiff",
   "svg",
+  // OP-118 (ADR-0620): a QR code may be exported as PDF, so the builder admits
+  // the one non-image extension the export derivative produces.
+  "pdf",
 ];
 
 /**

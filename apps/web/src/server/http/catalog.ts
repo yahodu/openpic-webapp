@@ -360,6 +360,14 @@ export const EVENT_ERROR_TRANSPORT: Readonly<Record<EventErrorCode, ErrorCatalog
     retryable: false,
     message: "The new end date would expire the gallery's retention immediately.",
   },
+  // OP-118 (ADR-0620 §A6): a slug that exists but was rotated away. The link is
+  // gone, not missing — `410` keeps "never existed" (`404`) distinguishable for
+  // the organiser's audit trail.
+  access_link_revoked: {
+    status: 410,
+    retryable: false,
+    message: "This access link has been rotated and no longer works.",
+  },
 };
 
 /**
