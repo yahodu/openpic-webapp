@@ -1,3 +1,9 @@
+## [1.48.1](https://github.com/yahodu/openpic-webapp/compare/v1.48.0...v1.48.1) (2026-11-03)
+
+### Bug Fixes
+
+- **events:** OP-117 make the archive write conditional on the read row version ([#384](https://github.com/yahodu/openpic-webapp/issues/384)) ([d09b8cc](https://github.com/yahodu/openpic-webapp/commit/d09b8cc4f4c758102514976228647cc8f8f80b37))
+
 ## [1.48.0](https://github.com/yahodu/openpic-webapp/compare/v1.47.0...v1.48.0) (2026-11-03)
 
 ### Features
