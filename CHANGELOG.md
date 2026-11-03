@@ -1,3 +1,9 @@
+## [1.49.1](https://github.com/yahodu/openpic-webapp/compare/v1.49.0...v1.49.1) (2026-11-03)
+
+### Bug Fixes
+
+- **ci:** OP-117 make the audit-dev check-run non-failing ([#389](https://github.com/yahodu/openpic-webapp/issues/389)) ([7fc7abf](https://github.com/yahodu/openpic-webapp/commit/7fc7abf04276b41f50a4019e5e9e1883e0ed0916))
+
 ## [1.49.0](https://github.com/yahodu/openpic-webapp/compare/v1.48.1...v1.49.0) (2026-11-03)
 
 ### Features
