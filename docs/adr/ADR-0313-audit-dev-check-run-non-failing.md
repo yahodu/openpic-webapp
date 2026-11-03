@@ -98,10 +98,69 @@ The `Next free` cell read `0313` on a fresh `origin/main` (`f3b70d9`)
 immediately before committing; this record consumes `0313` and advances the cell
 to `0314`. No number outside `0300`–`0319` is touched.
 
+## Review sign-off (round 1, artifact lens) — 2026-11-03
+
+**Verdict: APPROVED WITH FINDINGS** by `openpic-webapp-reviewer` (card
+`t_f8e45c00`, OP-117 follow-up DEPS/CI). No Critical or High finding. **Nothing
+in this record is retracted**: the §Decision stands as merged, and every finding
+below is either routed to another card or recorded as accepted.
+
+### Reviewed and reproduced (not taken from the handoff)
+
+- **Reviewed:** PR #389 head `9b28dc4` → squash `7fc7abf` (merged
+  2026-11-03T20:04:32Z); re-verified on the then-current trunk `b683c3c` and on
+  the newest pushed head `6f675bc1`.
+- **Merged bytes are the reviewed bytes:** the per-path diff from the reviewed
+  head to the squash is empty.
+- **Check-runs:** on `7fc7abf` → `audit-dev :: success` with 0 failures (the same
+  on trunk `b683c3c`; `audit-dev :: success` on `6f675bc1`). `gh pr checks 389`
+  is all `pass`.
+- **The advisory report is preserved:** job `126172435455` (head `7fc7abf`) still
+  prints the `undici` advisories in its log — `GHSA-xjj6-f33q-929c`,
+  `GHSA-4w7w-5xrc-9h26` and the TLS-certificate-validation-bypass entry — so the
+  ADR-0301 visibility guarantee holds.
+- **Suites on the merged trunk (`b683c3c`):** `unit` project 141 files /
+  2276 passed | 3 skipped; the four ADR/workflow guards (`adr-numbering`,
+  `ci-evidence-guard`, `workflow-shell-safety`, `git-identity-guard`) 122 passed.
+- **Scope and hygiene:** the squash touches `.github/workflows/ci.yml` (+15/−6),
+  this ADR (+99) and the `docs/adr/README.md` `Next free` cell only;
+  `prettier --check` is clean on the touched files and no duplicate `ADR-NNNN`
+  exists.
+
+### Findings — routed, not retracted; none is inside this record's decision
+
+- **F1 (Medium, coverage gap) → card `t_f5588c70`** (TEST): a characterisation
+  pin of the non-gating `audit-dev` job shape (job-level `continue-on-error` plus
+  the step-level `|| true`), so that a future edit which re-gates or re-reddens
+  the job fails a test instead of a check-run consumer.
+- **F2 (Low, robustness) — recorded, accepted, no card:** `|| true` also swallows
+  a genuine `pnpm`/registry failure, so a broken registry would let `audit-dev`
+  conclude `success` with no advisory output. This is the accepted cost of the
+  shell-level determinism chosen in §Alternatives; the blocking `audit` (`--prod`)
+  job remains the real supply-chain gate.
+- **F3 (Info, process) — recorded only, no card:** this record's number came from
+  the `docs/adr/README.md` `Next free` cell rather than a card-body `Consumes`
+  line (DoD §9 wording). No collision: `0313` was free in the `0300`–`0319`
+  block and the cell advanced to `0314`.
+- **F4 (Low, hygiene) — recorded, remediated in-run, no card:** the shared
+  checkout arrived with staged reverse edits; the reviewer restored them
+  net-zero before the docs branch was cut, so no file was left changed.
+- **F5 (High, board config, outside this ADR) → card `t_8be5a785`**
+  (orchestrator): repoint the OP-119–OP-140 cards off the shared main checkout.
+  This is a board-configuration matter; the frozen content of this ADR is not
+  affected.
+
+### Post-review status (2026-11-03)
+
+F1 and F5 are open follow-ups on the cards named above; F2 and F3 are recorded
+here with no card; F4 was remediated during the review run. No finding retracts
+the decision above.
+
 ## Test pin (follow-up card `t_f5588c70`)
 
 This record deliberately did not consume a second number: the decision above is
-unchanged, and the follow-up only locks it. `apps/web/src/test/unit/ci-audit-dev-nongating.test.ts`
+unchanged, and the follow-up only locks it (this section closes finding F1 of the round-1
+sign-off below). `apps/web/src/test/unit/ci-audit-dev-nongating.test.ts`
 is the regression pin, in the same idiom as the repo's other two workflow guards
 (`workflow-shell-safety.test.ts`, `ci-evidence-guard.test.ts`) — every invariant
 is asserted on the real `.github/workflows/ci.yml` **and** on synthetic fixtures
