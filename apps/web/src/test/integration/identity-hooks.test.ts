@@ -1,5 +1,5 @@
 import { ObjectId, type Db, type Document } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAuth, type AuthLike } from "@/server/auth";
 import { NEW_DEVICE_WINDOW_MS, hashFingerprint } from "@/server/auth/device-fingerprint";
@@ -178,6 +178,25 @@ interface ContactChangeFanout {
 
 /** The injected attendee-session claim seam the session-created hook calls. */
 type ClaimAttendeeSession = (input: { userId: string; token: string }) => Promise<unknown>;
+
+/**
+ * CI budget for the integration specs in this file.
+ *
+ * Every case builds a fresh, fully-indexed throwaway database (`withTestDb`),
+ * so each one pays ~50 sequential `createIndex` round trips against the replica
+ * set; the sign-up cases additionally drive the real Better Auth email-OTP
+ * surface. On a loaded CI runner the *first* timed case absorbs the process-cold
+ * database/index build and intermittently exceeded Vitest's default 5_000ms
+ * budget — the flake that reddened a docs-only PR (OP-117, ADR-0604). The
+ * budget below is an explicit ceiling for a slow-but-correct run, not a licence
+ * for a hang: {@link waitForMongoReady} (in `beforeAll`) keeps a cold connection
+ * out of every timed spec, and no assertion is relaxed.
+ */
+const INTEGRATION_TEST_TIMEOUT_MS = 30_000;
+
+// Raise the test budget for this file only. `vi.setConfig` is scoped to the
+// file, so the default 5s budget is replaced without touching any spec body.
+vi.setConfig({ testTimeout: INTEGRATION_TEST_TIMEOUT_MS });
 
 beforeAll(async () => {
   await setupMongoTestEnv({
