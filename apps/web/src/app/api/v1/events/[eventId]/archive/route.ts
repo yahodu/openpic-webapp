@@ -1,7 +1,7 @@
-import { ObjectId } from "mongodb";
-
 import { getConfig } from "@/server/config/env";
+import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
+import { withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import {
   assertEventNotDeleting,
@@ -9,10 +9,11 @@ import {
   requireEventRole,
   requirePrincipal,
 } from "@/server/events/access";
+import { eventIdFromRequest } from "@/server/events/event-id";
 import { eventDtoSchema, toEventDtoOrThrow, type EventRow } from "@/server/events/dto";
 import { defineRoute } from "@/server/http/define-route";
-import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
+import { platformRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { userAuth } from "@/server/tenancy/route-scope";
 
@@ -21,25 +22,17 @@ import { userAuth } from "@/server/tenancy/route-scope";
  * contract §4.1; ADR-0580).
  *
  * The **organizer** archives their event; a co-organizer is refused with
- * `403 forbidden` and nothing is emitted (I3). On success the route answers
- * `200` with the full Event DTO and emits `event.archived` (I3b) — the
- * notification resolver owns any downstream fan-out.
+ * `403 forbidden` and nothing is emitted (I3). On success the row is written
+ * `status: "archived"` — `published` is what gates the public link (schema
+ * §15.1), so an archive that left it in place would archive nothing — and the
+ * `event.archived` domain event is emitted in the same transaction. The answer
+ * is `200` with the full Event DTO reflecting the new state (I3b).
  *
  * A caller with no relationship to the event receives `404`, never a `403`
  * (contract §0.4: the endpoint must not become a cross-tenant existence
  * oracle). A row whose ordered purge is already scheduled is inert
  * (`409 event_deleting`).
  */
-
-/** The `{eventId}` segment before the literal `archive`; a malformed id denies `404`. */
-function eventIdFromRequest(request: Request): ObjectId {
-  const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
-  const raw = String(segments.at(-2));
-  if (!/^[0-9a-f]{24}$/i.test(raw)) {
-    throw appError("not_found");
-  }
-  return new ObjectId(raw);
-}
 
 /** The stored `events` row fields the archive route needs beyond the DTO. */
 interface EventArchiveRow extends EventRow {
@@ -57,7 +50,8 @@ export const POST = defineRoute({
     const db = getDb();
     const config = getConfig();
     const now = systemClock.now();
-    const eventId = eventIdFromRequest(ctx.request);
+    // The literal `archive` suffix follows the id in this route's path.
+    const eventId = eventIdFromRequest(ctx.request, { segmentFromEnd: 2 });
     const id = eventId.toHexString();
     const row = await loadEventRow<EventArchiveRow>(db, eventId);
 
@@ -66,16 +60,21 @@ export const POST = defineRoute({
     await requireEventRole(db, eventId, row.tenantId, principal, ["organizer"]);
     assertEventNotDeleting(row, now);
 
-    await emitDomainEvent(
-      {
-        eventKey: "event.archived",
-        tenantId: row.tenantId,
-        actorRef: { kind: "user", id: principal },
-        subjectRef: { kind: "event", id },
-        payload: { eventId: id },
-      },
-      { db }
-    );
+    await withTransaction(async (session) => {
+      await platformRepo(db)
+        .collection(COLLECTIONS.events)
+        .updateOne({ _id: eventId }, { $set: { status: "archived", updatedAt: now } }, { session });
+      await emitDomainEvent(
+        {
+          eventKey: "event.archived",
+          tenantId: row.tenantId,
+          actorRef: { kind: "user", id: principal },
+          subjectRef: { kind: "event", id },
+          payload: { eventId: id },
+        },
+        { db, session }
+      );
+    });
 
     getLogger().info("event archived", {
       event: "event.archived",
@@ -83,7 +82,8 @@ export const POST = defineRoute({
       eventId: id,
     });
 
-    const dto = toEventDtoOrThrow(row, config.app.baseUrl, "internal_error");
+    const archived = await loadEventRow<EventArchiveRow>(db, eventId);
+    const dto = toEventDtoOrThrow(archived, config.app.baseUrl, "internal_error");
     return { body: dto };
   },
 });

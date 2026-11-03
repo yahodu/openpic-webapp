@@ -24,7 +24,7 @@ export const accessLinkDtoSchema = z.object({
 export const eventDtoSchema = z.object({
   id: idSchema,
   name: z.string(),
-  status: z.enum(["draft", "published"]),
+  status: z.enum(["draft", "published", "archived"]),
   startAt: isoDateTimeSchema,
   endAt: isoDateTimeSchema,
   displayTimeZone: z.string(),

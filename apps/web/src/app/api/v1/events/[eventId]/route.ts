@@ -7,6 +7,7 @@ import { getDb } from "@/server/db/mongo";
 import { withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { normalizeInstantToUtc } from "@/server/events/dates";
+import { eventIdFromRequest } from "@/server/events/event-id";
 import { eventDtoSchema, toEventDtoOrThrow, type EventRow } from "@/server/events/dto";
 import {
   assertEventNotDeleting,
@@ -63,16 +64,6 @@ import { userAuth } from "@/server/tenancy/route-scope";
 /** The upgrade offer the plan-limit refusals carry (§0.14). */
 const UPGRADE_PATH = "/api/v1/tenants/current/billing/upgrade";
 
-/** The `{eventId}` segment of the matched path; a malformed id denies `404`. */
-function eventIdFromRequest(request: Request): ObjectId {
-  const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
-  const raw = String(segments.at(-1));
-  if (!/^[0-9a-f]{24}$/i.test(raw)) {
-    throw appError("not_found");
-  }
-  return new ObjectId(raw);
-}
-
 /** The stored `events` row fields the global routes need beyond the DTO. */
 interface EventDetailRow extends EventRow {
   readonly tenantId: string;
@@ -108,6 +99,50 @@ function assetIdOrNull(value: string | null | undefined): ObjectId | null | unde
     return undefined;
   }
   return value === null ? null : new ObjectId(value);
+}
+
+/**
+ * Parse one supplied `startAt`/`endAt` instant.
+ *
+ * A malformed value fails with `422 validation_failed` naming **only** this
+ * field, so a client that sent one bad date is never told to fix the other.
+ *
+ * @param value - The supplied instant string.
+ * @param path - The request-body field the value came from.
+ * @returns The normalised UTC instant.
+ */
+function parseSuppliedInstant(value: string, path: "startAt" | "endAt"): Date {
+  try {
+    return new Date(normalizeInstantToUtc(value));
+  } catch {
+    throw appError("validation_failed", {
+      details: {
+        fields: [{ path, code: "invalid_instant", message: "must be an RFC 3339 instant" }],
+      },
+    });
+  }
+}
+
+/**
+ * The `events` write predicate that carries the read row's version into the
+ * write (contract §0.10).
+ *
+ * The handler's own read supplies both the ETag it answered `200` with and this
+ * predicate's `updatedAt`; a concurrent writer that commits in between makes
+ * the predicate match nothing, so the mutation is refused with `412` instead of
+ * silently overwriting the other caller's value. A row stored without an
+ * `updatedAt` has no version to compare, so only its id is matched.
+ *
+ * @param eventId - The event being written.
+ * @param row - The row this request read.
+ * @returns The `updateOne` filter.
+ */
+function eventWritePredicate(eventId: ObjectId, row: EventDetailRow): Document {
+  const predicate: Document = { _id: eventId, status: row.status };
+  if (row.updatedAt instanceof Date) {
+    predicate.updatedAt = row.updatedAt;
+  }
+  return predicate;
 }
 
 /**
@@ -252,11 +287,11 @@ export const PATCH = defineRoute({
     const eventId = eventIdFromRequest(ctx.request);
     const id = eventId.toHexString();
     const row = await loadEventRow<EventDetailRow>(db, eventId);
-    await requireEventRole(db, eventId, row.tenantId, principal, [
-      "organizer",
-      "co_organizer",
-      "tenant_member",
-    ]);
+    // Edit is the organizer's or a co-organizer's right only (contract §4.1,
+    // Appendix D "Edit event details"). A tenant member is *related* to the
+    // event's tenant, so the refusal is `403`; the `404` stays reserved for a
+    // caller with no relationship at all (§0.4).
+    await requireEventRole(db, eventId, row.tenantId, principal, ["organizer", "co_organizer"]);
 
     // A row whose purge is scheduled is inert: every later write is refused.
     assertEventNotDeleting(row, now);
@@ -273,26 +308,36 @@ export const PATCH = defineRoute({
       throw appError("event_already_started");
     }
 
+    // `status` is editable `draft → published` only (contract §4.1). Any other
+    // move is a request-validation failure, not a new catalogue code.
+    if (supplied.status !== undefined) {
+      const forward = row.status === "draft" && supplied.status === "published";
+      if (!forward) {
+        throw appError("validation_failed", {
+          details: {
+            fields: [
+              {
+                path: "status",
+                code: "invalid_status_transition",
+                message: "status can only change from draft to published",
+              },
+            ],
+          },
+        });
+      }
+    }
+
     // ── date edits: normalise, re-validate duration, recompute both windows ──
     let effectiveStartAt = row.startAt;
     let effectiveEndAt = row.endAt;
     if (supplied.startAt !== undefined || supplied.endAt !== undefined) {
-      try {
-        if (supplied.startAt !== undefined) {
-          effectiveStartAt = new Date(normalizeInstantToUtc(supplied.startAt));
-        }
-        if (supplied.endAt !== undefined) {
-          effectiveEndAt = new Date(normalizeInstantToUtc(supplied.endAt));
-        }
-      } catch {
-        throw appError("validation_failed", {
-          details: {
-            fields: [
-              { path: "startAt", code: "invalid_instant", message: "must be an RFC 3339 instant" },
-              { path: "endAt", code: "invalid_instant", message: "must be an RFC 3339 instant" },
-            ],
-          },
-        });
+      // Only the field that was supplied and failed is reported, so the client
+      // is never told about a field it did not send.
+      if (supplied.startAt !== undefined) {
+        effectiveStartAt = parseSuppliedInstant(supplied.startAt, "startAt");
+      }
+      if (supplied.endAt !== undefined) {
+        effectiveEndAt = parseSuppliedInstant(supplied.endAt, "endAt");
       }
       if (effectiveEndAt.getTime() <= effectiveStartAt.getTime()) {
         throw appError("invalid_date_range", {
@@ -372,34 +417,40 @@ export const PATCH = defineRoute({
     // The windows recomputed above must land on the row whenever a date moved.
     if (supplied.startAt !== undefined || supplied.endAt !== undefined) {
       const tenantKey = row.tenantId;
-      const postUploadVerdict = await checkEntitlement(
-        tenantKey,
-        "events.post_upload_days",
-        0,
-        { counts: 0 },
-        { db }
-      );
-      const retentionVerdict = await checkEntitlement(
-        tenantKey,
-        "gallery.retention_days",
-        0,
-        { counts: 0 },
-        { db }
-      );
+      const [postUploadVerdict, retentionVerdict] = await Promise.all([
+        checkEntitlement(tenantKey, "events.post_upload_days", 0, { counts: 0 }, { db }),
+        checkEntitlement(tenantKey, "gallery.retention_days", 0, { counts: 0 }, { db }),
+      ]);
       const windows = recomputeWindows({
         endAt: effectiveEndAt,
         postUploadDays: postUploadVerdict.effectiveLimit,
         retentionDays: retentionVerdict.effectiveLimit,
       });
+
+      // A retention that has already elapsed would make the gallery purge at
+      // once, so the edit is refused before anything is written (§4.1,
+      // Appendix A line 3556).
+      const retention = windows.retentionExpiresAt;
+      if (retention !== null && retention.getTime() <= now.getTime()) {
+        throw appError("retention_would_expire_immediately", {
+          details: { computedRetentionExpiresAt: retention.toISOString() },
+        });
+      }
+
       set.uploadWindowEndsAt = windows.uploadWindowEndsAt;
       set.retentionExpiresAt = windows.retentionExpiresAt;
     }
 
     // ── the conditional write + the announcement, atomically ──
-    await withTransaction(async (session) => {
-      await platformRepo(db)
+    const applied = await withTransaction(async (session) => {
+      const result = await platformRepo(db)
         .collection(COLLECTIONS.events)
-        .updateOne({ _id: eventId }, { $set: set }, { session });
+        .updateOne(eventWritePredicate(eventId, row), { $set: set }, { session });
+      // A zero match means another writer changed the row between this
+      // request's read and its write: the tag it presented is stale.
+      if (result.matchedCount === 0) {
+        return false;
+      }
       await emitDomainEvent(
         {
           eventKey: "event.details.updated",
@@ -410,7 +461,13 @@ export const PATCH = defineRoute({
         },
         { db, session }
       );
+      return true;
     });
+
+    if (!applied) {
+      const current = await loadEventRow<EventDetailRow>(db, eventId);
+      throw appError("etag_mismatch", { details: { currentETag: currentETagOf(current) } });
+    }
 
     getLogger().info("event details updated", {
       event: "event.details.updated",
@@ -461,14 +518,20 @@ export const DELETE = defineRoute({
 
     const purgeScheduledAt = now.toISOString();
 
-    await withTransaction(async (session) => {
-      await platformRepo(db)
+    const scheduled = await withTransaction(async (session) => {
+      const result = await platformRepo(db)
         .collection(COLLECTIONS.events)
         .updateOne(
-          { _id: eventId },
+          eventWritePredicate(eventId, row),
           { $set: { status: "deleting", deletedAt: now, updatedAt: now } },
           { session }
         );
+      // A concurrent writer (or a double submit) that already moved the row
+      // makes this transition match nothing: refuse it instead of scheduling a
+      // second purge.
+      if (result.matchedCount === 0) {
+        return false;
+      }
 
       // The ordered purge: a queue/analytics event the OP-132 purge job
       // consumes. `event.deleted` is the user-facing announcement.
@@ -492,7 +555,13 @@ export const DELETE = defineRoute({
         },
         { db, session }
       );
+      return true;
     });
+
+    if (!scheduled) {
+      const current = await loadEventRow<EventDetailRow>(db, eventId);
+      throw appError("etag_mismatch", { details: { currentETag: currentETagOf(current) } });
+    }
 
     getLogger().info("event deleted", {
       event: "event.deleted",
