@@ -265,6 +265,34 @@ skips the limiter (a test-environment conditional changing real behaviour).
 harness. Routed as a TEST card to the OP-117 test author; `ci`'s E2E step stays
 red until it lands.
 
+**Resolved on the lane (test-only, no number consumed).** The TEST card landed
+option 2 — the durable fix, so the next two-token lane is not stranded at 14/15.
+`apps/web/e2e/client-ip.ts` exports `clientIpFor(specFile)`, which derives a
+private `10/8` address from the **spec's own file name** (sha256 → three octets,
+host octet kept in 1..254), and all 14 OTP-sending specs now send that value as
+`x-forwarded-for` on every `auth.otp`-guarded call (`send-verification-otp` and
+`phone-number/send-otp`). The identity comes from the file name rather than a
+hand-written label, so a new spec cannot collide with an existing bucket by
+copy-paste, and no spec metadata has to be maintained. `classes.ts`,
+`rate-limit-hook.ts` and the `auth.otp` allowances are untouched — the limiter
+still enforces 5/hour/contact and 15/hour/IP.
+`apps/web/src/test/unit/e2e-client-ip.test.ts` pins the suite-level property:
+every e2e spec derives a distinct private address, and every spec that calls an
+OTP send path both sets `x-forwarded-for` and derives its own identity (so a
+future OTP spec that forgets the header fails the unit suite).
+
+Measured on the same build and head, full `--project=api` run against a fresh
+`e2e/start-server.mjs` (`LOG_LEVEL=info`, `TMPDIR=/root/tmp-mongo`):
+
+- **Before** (the 14 spec edits stashed): **24 passed, 1 failed** —
+  `webhook-inbox.spec.ts:69 expect(sent.status()).toBe(200)` → `Received: 429`;
+  server log `auth.otp.sent` = **15** (the 16th attempt is the denial), i.e. the
+  exact symptom this section records.
+- **After**: **25 passed** with `auth.otp.sent` = **16** and **0** `auth.otp`
+  denials; the only `status: 429` in the log is `rate-limit.spec.ts`'s deliberate
+  `write.normal` burst. (The card's "24 tests" is one short of this head: the
+  OP-117 E1 spec is the 25th. Measured, not copied.)
+
 ## Assumptions and open questions
 
 - `purgeScheduledAt` is the instant the delete answers, stored as the row's
