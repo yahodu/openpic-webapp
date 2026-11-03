@@ -196,6 +196,40 @@ the purge key is new.
   union-at-merge hotspot: resolution keeps the highest cells (`0600`+).
 - No number outside the range `0580`–`0599` is touched.
 
+## Disputed pin repair — I4's outbox count (card `t_be8b01a5`)
+
+I4's last assertion was `countDocuments({}) === 0` on `domain_events`. It is
+unsatisfiable as written, for a reason inside the fixture: the case's own
+`seedOwner("op117-wrong-name")` signs a user in through the real Better Auth
+hooks, which emit `account.welcome` and `auth.signin.new_device` into that same
+collection **before** the DELETE runs. Reproduced on the GREEN head `3adb64b`
+with the original pin: `AssertionError: expected 2 to be +0` (11 passed, 1
+failed), and a throwaway probe printed those two rows — nothing the delete path
+could honestly remove. Deleting unrelated outbox rows to satisfy the count would
+corrupt the log, so the pin was repaired, not the code.
+
+**Decision.** Scope the "nothing was announced" property to the two keys this
+DELETE owns (`route.ts` emits them inside the delete transaction):
+
+```ts
+countDocuments({ eventKey: { $in: ["event.deleted", "event.purge.scheduled"] } });
+```
+
+Landed at `c543a6e` on `OP-117-task-events-update-delete` (tests only, one file,
++8/−2); the comment above it names the sign-in rows so the scope is not read as
+an accident. This consumes no ADR number: the pins branch's ledger cell still
+reads `0581`, and the GREEN's renumbering of the lane to `0600`–`0619`
+(`Next free = 0602`, ADR-0601 §Consequences) is unaffected. The GREEN's own
+ADR-0601 §D1 is the section that named this repair; its merge commit should
+record this SHA beside it.
+
+**Evidence.** GREEN head + this pin: `event-update-delete.test.ts` 12/12, full
+`--project integration` 91 files / 769 tests passed. The replacement pin still
+discriminates: an `event.deleted` emit injected _before_ the `confirmName` gate
+makes I4 fail `expected 1 to be +0` (route restored byte-identically, `git diff`
+empty). Merging the pins head into the GREEN head is a clean three-way merge
+(one file changed) and that merged head is the one measured above.
+
 ## Alternatives considered
 
 - **A route-local recompute / whitelist / lock.** Rejected: the card names
