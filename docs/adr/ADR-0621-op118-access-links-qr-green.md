@@ -136,3 +136,88 @@ Behaviours this GREEN implements that the current pins do not constrain:
    (answers `409 conflict` today, nothing written).
 4. A `slug` that is not on this event at all (answers `404`) — named as finding
    F2 and routed to `t_451b5476`.
+
+## Review — round 1 (artifact lens)
+
+| Field         | Value                                                                                                                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reviewer card | `t_f55a6e5f` (this docs-only sign-off)                                                                                                                                                 |
+| Reviewed head | `7ddeee8` on `OP-118-feature-access-links-qr`                                                                                                                                          |
+| Base          | `origin/main` `fc9f625` (the trunk moved to `e354b19` during the review — a docs-only ADR append by another lane, no shared file, so the merge stayed clean)                           |
+| Landed        | PR #385, squash-merged as `1aeca52`                                                                                                                                                    |
+| Verdict       | **APPROVED WITH FINDINGS** — every pinned criterion holds; all findings sit outside the pinned criteria, so the delivery ships and the follow-ups run next (see §Findings and routing) |
+
+### What was verified
+
+The numbers below are the reviewer's own, measured on the reviewed head. They are
+not transcribed from the implementer's handoff.
+
+| Check                                                                        | Result                                                                                                                                                                           |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `access-links-qr.test.ts` (unit pins)                                        | **14 passed (14)**                                                                                                                                                               |
+| `event-access-links.test.ts` (integration pins)                              | **14 passed (14)**                                                                                                                                                               |
+| Full `--project unit`                                                        | **141 files, 2276 passed / 3 skipped**                                                                                                                                           |
+| Full `--project integration`                                                 | **93 files, 807 passed** (the handoff said 804 — see F6)                                                                                                                         |
+| ADR guard (`adr-numbering.test.ts`)                                          | **29/29**, no duplicate `ADR-NNNN` under `docs/adr/`                                                                                                                             |
+| `prettier --check` on both ADRs, the README, the two modules and both routes | clean                                                                                                                                                                            |
+| PR checks                                                                    | `ci`, `test_coverage`, `unit_test`, `lint`, `secret-scan`, `env-changes` and `CodeQL` pass; `audit-dev` is the only red, and it is `continue-on-error` and non-gating (ADR-0301) |
+
+The delivered surface matches the card: the rotation is one transactional
+`findOneAndUpdate` array-pipeline write with `returnDocument: "before"`, the QR
+answer is content-addressed with the signed `export` URL persisted on the
+`mediaAssets` row so a repeat answer is byte-identical, `access_link_revoked`
+(`410`) is appended to `EVENT_ERROR_CODES` and `EVENT_ERROR_TRANSPORT` and
+**not** to `ERROR_CATALOG`, and `pdf` is admitted by `buildObjectKey`. No
+fixture-specific hardcoding was found: `parseQrQuery` and both builders are
+general, and no test name or fixture value appears in production code. No test,
+mock or fixture was modified.
+
+### The probe that found F1
+
+The reviewer's throwaway probe seeded an owned event whose only access link was
+already revoked, then sent one rotation:
+
+```
+PROBE1 {"status":409,"storedCount":2,"storedActive":1,
+        "slugs":["atc4hzcn","op000000"],"emitted":1}
+```
+
+The request answered `409`, yet the stored array grew from one element to two,
+one element is active, and one `event.link.rotated` row was emitted: the refusal
+is thrown at `route.ts:198`, after the `withTransaction` block at `:173` has
+committed the rotation and its outbox row. The caller is therefore told the
+request failed while the rotation and the notification happened.
+
+This **contradicts** §Coverage gaps item 3 above, which says the no-active-link
+path answers `409` with "nothing written". The historical sections of this ADR
+are **not retracted**: this section records the correction, and the follow-up
+card's own record documents what followed.
+
+### Findings and routing
+
+| Finding | Severity | What it is                                                                                                                                                                                                                                                                                                      | Routed to                                                | State at `1aeca52` |
+| ------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------ |
+| **F1**  | Medium   | The no-active-link `409` is thrown after the rotation and `event.link.rotated` have committed (probe above).                                                                                                                                                                                                    | pin `t_b0d14648` → GREEN `t_673c5b48`                    | Open               |
+| **F2**  | Medium   | The QR is rendered on every request: `renderQrCode` at `route.ts:145` runs before the cache read at `:151`, so the cache saves storage but not work. A PDF download also pays `pdf-lib`'s embed and save (probe: `format=pdf&size=1024` produced 27,421 bytes through `putObject`).                             | pin `t_0be9980d` → GREEN `t_d0ac3946`                    | Open               |
+| **F3**  | Low      | The cache row is not scoped to its kind: the read `findOne({ tenantId, contentHash })` (`:151`) and the upsert at `:173` both omit `kind: "export"`, so a same-bytes row of another kind could be reused and stamped with `qrUrl` / `qrExpiresAt`.                                                              | same chain as F2 (`t_0be9980d` → `t_d0ac3946`)           | Open               |
+| **F4**  | Low      | The racing first-time upsert does not absorb `E11000` from `media_assets_tenant_content_hash_unique`, so the loser of a true first-time race surfaces as `500`; the repository already absorbs this pattern in `seed-notification-types.ts`. Not reproduced in 4 samples (staggered renders narrow the window). | folded into the `t_0be9980d` chain as an acceptance item | Open               |
+| **F5**  | Info     | A revoked slug with an invalid query answers `422 validation_failed`, not `410 access_link_revoked`: validate first, then state. Defensible; recorded, no card.                                                                                                                                                 | —                                                        | Accepted           |
+| **F6**  | Info     | Count correction: the handoff's full-integration figure was 804; the reviewer measured 807 on the same head.                                                                                                                                                                                                    | this section (`t_f55a6e5f`)                              | Recorded           |
+| **F7**  | Info     | `accessLinks` grows by one element per rotation. Schema §15.1 designs the embedded array for dozens of links, so this is by design. Recorded, no card.                                                                                                                                                          | —                                                        | Accepted           |
+
+The follow-up PR numbers are not yet open at the time of this sign-off, so the
+routing cites the card ids and the source review PR (#385) only. ADR numbers are
+deliberately not cited: a follow-up ADR may renumber while its PR is open.
+
+### Post-review status
+
+- The four code findings are routed to pin cards that are promoted by the
+  review's completion, so they run next, before unrelated work.
+- No pinned criterion regressed: the one-active-link invariant, the
+  content-hash cache, `410` for a revoked slug, the auth matrix and the query
+  validation all hold as ADR-0620 §Decision fixed them, and the pins are
+  behaviour-level, not implementation-coupled.
+- The pre-existing concurrency chain (`t_451b5476` → `t_20c75ee0` →
+  `t_da9cbf64`) is untouched and keeps running against the lane worktree.
+- The accepted deviations and assumptions of ADR-0620 (A1–A7, the global route
+  family) were not contradicted by this review.
