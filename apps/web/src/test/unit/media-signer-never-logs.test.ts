@@ -11,7 +11,7 @@ import {
 } from "../factories/media";
 
 /**
- * OP-113 round-1 follow-up (ADR-0584) — the pure signer **itself** logs
+ * OP-113 round-1 follow-up (ADR-0585) — the pure signer **itself** logs
  * nothing, so no signed URL can leave it through a sink.
  *
  * ADR-0582/ADR-0583 require "never log full signed URLs; log counts of URLs
@@ -53,7 +53,7 @@ function captureLogs(): MemoryTransport {
   return sink;
 }
 
-describe("the media signer never logs (OP-113 follow-up, ADR-0584)", () => {
+describe("the media signer never logs (OP-113 follow-up, ADR-0585)", () => {
   it("emits no log entry through the process logging port while signing and verifying", () => {
     // Arrange — a live, debug-floored capture.
     const sink = captureLogs();

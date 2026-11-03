@@ -1,4 +1,4 @@
-# ADR-0584 — OP-113 follow-up TEST: pin "signed URLs are never logged" at the seams that exist, and keep the signer's assumptions assumptions
+# ADR-0585 — OP-113 follow-up TEST: pin "signed URLs are never logged" at the seams that exist, and keep the signer's assumptions assumptions
 
 - **Status:** Accepted · **Date:** 2026-11-03
 - **Lane:** OP-113 / OP-112 media foundations, reserved range `0580`–`0599`
@@ -6,7 +6,7 @@
   acquisition), worktree `/root/openpic/openpic-webapp/.worktrees/t_c103668d`, branch
   `OP-113-task-signer-logging-pins`, off `origin/main` `c055cac` (the `1.47.0`
   release chore on top of the OP-113 squash `f6782a3`)
-- **Consumes:** `0584`
+- **Consumes:** `0585`
 - **Fixes:** the round-1 review findings on PR #370 — **Pin 1 (Medium):** the
   "signed URLs are never logged" property is recorded but unpinned; **Pin 2 (Low):**
   the signer's recorded assumptions are prose only.

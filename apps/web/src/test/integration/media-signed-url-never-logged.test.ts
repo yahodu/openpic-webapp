@@ -20,7 +20,7 @@ import { APP_ORIGIN, makeIdentity, startTestApp, type TestApp } from "../helpers
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
 
 /**
- * OP-113 round-1 follow-up (ADR-0584) — **a signed media URL never reaches a
+ * OP-113 round-1 follow-up (ADR-0585) — **a signed media URL never reaches a
  * log**, pinned at the composition boundary that mints one today.
  *
  * ADR-0582/ADR-0583 record "never log full signed URLs; log counts of URLs
@@ -161,7 +161,7 @@ function entryStrings(entries: readonly LogEntry[]): string[] {
   return entries.map((entry) => JSON.stringify(entry));
 }
 
-describe("a signed media URL never reaches a log (OP-113 follow-up, ADR-0584)", () => {
+describe("a signed media URL never reaches a log (OP-113 follow-up, ADR-0585)", () => {
   it("a successful branding upload signs a URL and emits no entry carrying it", async () => {
     // Arrange — a live capture, floored at debug so a debug leak cannot hide.
     const sink = captureLogs();

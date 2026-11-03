@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * OP-113 round-1 follow-up (ADR-0584) — the lint half of the "signed URLs are
+ * OP-113 round-1 follow-up (ADR-0585) — the lint half of the "signed URLs are
  * never logged" pin.
  *
  * `test/unit/media-signer-never-logs.test.ts` proves behaviourally that the
@@ -20,13 +20,13 @@ import { describe, expect, it } from "vitest";
  * `no-restricted-imports` are core, non-type-aware rules whose per-path options
  * are precisely what `eslint.config.mjs` produces.
  *
- * ## Honest boundary (recorded in ADR-0584)
+ * ## Honest boundary (recorded in ADR-0585)
  *
  * The resolved config deliberately **permits** the `@/server/logging` barrel
  * (the `Logger` port — that is the point of the "Import only the Logger port
  * from `@/server/logging`" message), so the "no logger at all" property for the
  * signer rests on the behavioural spec, not on lint. A future **route** lane
- * that calls `sign` is visible to neither pin: ADR-0584 records what it must
+ * that calls `sign` is visible to neither pin: ADR-0585 records what it must
  * do (never pass a signed URL to `requestLogger`; log counts at debug only).
  */
 
@@ -74,7 +74,7 @@ async function reportedRuleIds(filePath: string, code: string): Promise<string[]
     .filter((ruleId): ruleId is string => ruleId !== null);
 }
 
-describe("the media signer's no-logging lint boundary (OP-113 follow-up, ADR-0584)", () => {
+describe("the media signer's no-logging lint boundary (OP-113 follow-up, ADR-0585)", () => {
   it("flags a console.* call in the signer module as a no-console error", async () => {
     // Act — the exact leak shape the behavioural pin exists for.
     const ruleIds = await reportedRuleIds(SIGNER_MODULE, "console.log(url);\n");

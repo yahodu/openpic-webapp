@@ -10,7 +10,7 @@ import {
 } from "../factories/media";
 
 /**
- * OP-113 round-1 follow-up (ADR-0584) — the signer's **recorded assumptions
+ * OP-113 round-1 follow-up (ADR-0585) — the signer's **recorded assumptions
  * stay assumptions**.
  *
  * ADR-0582 §"Assumptions and open questions" records two properties as prose
@@ -34,7 +34,7 @@ import {
 
 const T0 = new Date("2026-10-26T00:00:00.000Z");
 
-describe("the signer's documented assumptions stay assumptions (OP-113 follow-up, ADR-0584)", () => {
+describe("the signer's documented assumptions stay assumptions (OP-113 follow-up, ADR-0585)", () => {
   it("signs an export to the /o/ originals segment — there is no /e/", () => {
     // Arrange
     const signer = createMediaSigner({
