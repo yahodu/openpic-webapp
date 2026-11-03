@@ -107,6 +107,24 @@ export function recomputeWindows(input: RecomputeWindowsInput): RecomputeWindows
 }
 
 /**
+ * Extend an existing upload-window close by `additionalDays` whole days
+ * (OP-117 §3, contract §4.1).
+ *
+ * The organizer's "extend the upload window" action moves the **materialised**
+ * close, not the entitlement: `uploadWindowEndsAt + additionalDays` whole days,
+ * preserving the time of day, exactly like {@link computeUploadWindowEndsAt}
+ * derives it from `endAt`. The instant handed in is never mutated.
+ *
+ * @param uploadWindowEndsAt - The row's current upload-window close.
+ * @param additionalDays - Whole days to add (the route refuses anything that is
+ *   not a strictly positive integer).
+ * @returns A new `Date` `additionalDays` after `uploadWindowEndsAt`.
+ */
+export function extendUploadWindow(uploadWindowEndsAt: Date, additionalDays: number): Date {
+  return addDays(uploadWindowEndsAt, additionalDays);
+}
+
+/**
  * The event duration in whole days, **rounded up** (contract §4.1).
  *
  * A same-day event (`08:00 → 17:00`) is one day, an exact 24h span is one
