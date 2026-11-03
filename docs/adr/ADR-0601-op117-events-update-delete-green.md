@@ -444,3 +444,63 @@ may wish to pin it.
 Full `vitest run --project unit --project integration` green (see the card
 handoff for the counts), `npm run typecheck` exit 0, `npm run lint` 0 errors,
 `prettier --check .` clean, `adr-numbering` guard green.
+
+## Review round 1 — pins for the missing `upload-window:extend` endpoint (card `t_29fcc2ce`)
+
+The reviewer found a **scope gap**, not a defect: OP-117's card §3 lists
+`POST /upload-window:extend` ("as an organizer, I want to … extend … my event"),
+and contract §4.1 documents it, but the RED pins (`t_c44493a2`, ADR-0600) never
+covered it, so the GREEN never built it. This round adds the pins only — no
+production code — on the same lane branch.
+
+### Path deviation (deliberate, recorded)
+
+The contract spells the endpoint tenant-scoped
+(`POST /api/v1/tenants/{tenantId}/events/{eventId}/upload-window:extend`). This
+lane's OP-116/OP-117 mutations all live on the **global**
+`/api/v1/events/{eventId}` family (`PATCH`/`DELETE` on the detail file,
+`POST …/archive`), because the global path is the one that admits a
+co-organizer who is not a tenant member (ADR-0580). The pins therefore target
+`POST /api/v1/events/:eventId/upload-window:extend`, as the review directed. The
+GREEN should implement it at
+`@/app/api/v1/events/[eventId]/upload-window:extend/route.ts` and read the id
+with `eventIdFromRequest(request, { segmentFromEnd: 2 })` (the literal
+`upload-window:extend` suffix follows the id). The colon segment is already a
+precedent in this app (`app/api/v1/me/sessions:revoke-all`,
+`app/api/v1/tenants/[tenantId]/events:validate`).
+
+### Pins delivered (test-only)
+
+`apps/web/src/test/integration/event-extend-upload-window.test.ts` — E1–E6.
+`apps/web/src/test/unit/event-windows-extend.test.ts` — E7
+(`extendUploadWindow`, read through a naming guard so the RED message names the
+missing export).
+
+| Pin | Behaviour                                                                                                                                                                                                         |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E1  | organizer + `{additionalDays: 3}` → `200`, body and stored row carry the current `uploadWindowEndsAt` shifted 3 whole days (time of day kept); nothing else on the event moves                                    |
+| E2  | co-organizer → `403 forbidden`; row unchanged and the outbox count unchanged (nothing emitted)                                                                                                                    |
+| E3  | caller with no relationship → `404 not_found`; nothing written or emitted                                                                                                                                         |
+| E4  | extension past `events.post_upload_days` → `403 plan_limit_exceeded` with `details.entitlementKey === "events.post_upload_days"` and `details.upgradePath`, mirroring the PATCH duration refusal; nothing written |
+| E5  | `additionalDays` missing / `0` / negative / fractional / a string → `422 validation_failed` with `details.fields[0].path === "additionalDays"`; nothing written                                                   |
+| E6  | `status: "deleting"` row → `409 event_deleting`; nothing written                                                                                                                                                  |
+| E7  | unit: `extendUploadWindow(uploadWindowEndsAt, additionalDays)` shifts by whole days, keeps the time of day, adds exactly `N × 86,400,000 ms`, does not mutate its argument                                        |
+
+### Entitlement reading is left open on purpose
+
+`events.post_upload_days` can be read as "days the extension may add" or "total
+days the window may stay open after `endAt`". E4 requests `additionalDays: 10`
+against the starter plan's 7-day limit, which exceeds the allowance under
+**either** reading, and E1 seeds a window at `endAt + 2 days` before adding 3
+so the happy path stays inside the allowance under **either** reading. The
+pins therefore constrain the refusal, not the interpretation.
+
+The `details.upgradePath` value is pinned to the lane's existing plan-limit
+offer (`/api/v1/tenants/current/billing/upgrade`), the same constant `PATCH`
+uses; a different offer would be a contract change, not a GREEN detail.
+
+### RED evidence (current head, before any production change)
+
+- integration: `Error: Cannot find package '@/app/api/v1/events/[eventId]/upload-window:extend/route' imported from …/event-extend-upload-window.test.ts` — the route does not exist.
+- unit: `Error: @/server/events/windows must export extendUploadWindow(uploadWindowEndsAt, additionalDays)`.
+- Stub probe (throwaway route returning `500` plus a throwaway helper, both deleted afterwards, `git status` clean): the suite reports `13 failed | 1 passed` at **assertion** level (`expected 500 to be 200/403/404/409/422`, `expected 2026-11-16T18:00:00.000Z to deeply equal 2026-11-30T18:00:00.000Z`) and `tsc -p apps/web/tsconfig.json --noEmit` exits `0` — so the pins are type-correct and fail for the stated reasons, not for a harness accident.
