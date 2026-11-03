@@ -61,6 +61,30 @@ etag_mismatch` with **no** `details.currentETag` (this route has no `If-Match`
 - `E7`/`E8` green on `origin/main` without any production change: focused file
   `12 passed (12)`.
 
+## Implementation (GREEN `t_473da231`)
+
+`apps/web/src/app/api/v1/events/[eventId]/archive/route.ts` now writes through
+`archiveWritePredicate(eventId, row)` — `{ _id, status: row.status }` plus
+`updatedAt: row.updatedAt` when the read row carries one, the same shape as
+`eventWritePredicate` (PATCH / DELETE) and `extendWritePredicate`
+(`upload-window:extend`). The `event.archived` emit stays inside the existing
+transaction and runs only when `matchedCount !== 0`; the transaction returns
+that boolean.
+
+On `matchedCount === 0` the handler re-reads the row and refuses before any
+further write or announcement:
+
+- re-read `status: "deleting"` → `409 event_deleting` (`assertEventNotDeleting`,
+  so `details.purgeScheduledAt` carries the winning DELETE’s `deletedAt`);
+- otherwise → `412 etag_mismatch` with `details.currentETag` from the re-read
+  row, the tag PATCH/DELETE already report.
+
+No other archive behaviour moved: co-organizer `403` (I3), organizer `200` +
+`event.archived` (I3b) and the pre-existing `deleting` → `409 event_deleting`
+admission check are untouched. `R7` is green; `E7`/`E8` stay green with no
+production change on their route. No ADR number consumed — the OP-117 lane
+`Next free` remains `0603`.
+
 ## Consequences
 
 - The GREEN card `t_473da231` owes the conditional write, the `409`/`412`
