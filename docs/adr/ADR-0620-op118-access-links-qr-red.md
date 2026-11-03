@@ -161,3 +161,9 @@ returned`, `expected 500 to be 200/403/404/410/422/401`).
 - `eslint` 0 errors (1 accepted `security/detect-object-injection` warning on
   the shared `requireHandler` helper, the OP-117 precedent) and
   `prettier --check` clean on both files.
+
+## Review — round 1 (carried unchanged)
+
+The round-1 review of the paired GREEN (`t_f55a6e5f`) found no contradiction in
+this RED record — the A1–A7 assumptions and the pinned answer shapes hold on the
+merged trunk; the findings and routing are in ADR-0621 §Review — round 1.
