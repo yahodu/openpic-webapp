@@ -504,3 +504,121 @@ uses; a different offer would be a contract change, not a GREEN detail.
 - integration: `Error: Cannot find package '@/app/api/v1/events/[eventId]/upload-window:extend/route' imported from …/event-extend-upload-window.test.ts` — the route does not exist.
 - unit: `Error: @/server/events/windows must export extendUploadWindow(uploadWindowEndsAt, additionalDays)`.
 - Stub probe (throwaway route returning `500` plus a throwaway helper, both deleted afterwards, `git status` clean): the suite reports `13 failed | 1 passed` at **assertion** level (`expected 500 to be 200/403/404/409/422`, `expected 2026-11-16T18:00:00.000Z to deeply equal 2026-11-30T18:00:00.000Z`) and `tsc -p apps/web/tsconfig.json --noEmit` exits `0` — so the pins are type-correct and fail for the stated reasons, not for a harness accident.
+
+## Review round 1 — §3 upload-window extend (card `t_24161625`)
+
+The GREEN for the pins delivered by `t_29fcc2ce`: OP-117's card §3
+`POST /upload-window:extend`, contract §4.1, Appendix D "Extend upload window".
+No pin was touched.
+
+### Path deviation (same decision as the pins, now implemented)
+
+The contract spells the endpoint tenant-scoped
+(`POST /api/v1/tenants/{tenantId}/events/{eventId}/upload-window:extend`). It is
+implemented on the **global** family instead —
+`POST /api/v1/events/:eventId/upload-window:extend` at
+`apps/web/src/app/api/v1/events/[eventId]/upload-window:extend/route.ts` — because
+that is the family the rest of this lane's mutations live on (PATCH/DELETE on the
+detail route, `POST …/archive`), and it is the family that admits a
+co-organizer who is not a tenant member (ADR-0580). The event id is read with
+`eventIdFromRequest(request, { segmentFromEnd: 2 })`, since the literal
+`upload-window:extend` suffix follows the id; the colon segment has two
+precedents in this app (`me/sessions:revoke-all`,
+`tenants/[tenantId]/events:validate`).
+
+### Implementation
+
+`@/server/events/windows` gains `extendUploadWindow(uploadWindowEndsAt, additionalDays)`
+= `addDays(uploadWindowEndsAt, additionalDays)` — whole-day shift, time of day
+preserved, argument never mutated (E7). The route reuses the module's existing
+`computeUploadWindowEndsAt` (for the un-materialised base) and
+`computeDurationDays` (for the allowance) rather than re-deriving date maths.
+
+Handler order, all through the shared `defineRoute` pipeline:
+
+1. `userAuth`; body schema `z.object({ additionalDays: z.number().int().positive() })`
+   — a missing / zero / negative / fractional / non-numeric value is the
+   pipeline's `422 validation_failed` with `details.fields[0].path ===
+"additionalDays"` (E5);
+2. row missing → `404`; `requireEventRole(…, ["organizer"])` → a co-organizer
+   `403 forbidden`, a caller with no relationship `404 not_found` (never an
+   oracle, §0.4) (E2/E3);
+3. `assertEventNotDeleting` → `409 event_deleting` with
+   `details.purgeScheduledAt`, before any entitlement read or write (E6);
+4. base close = the stored `uploadWindowEndsAt`, or `endAt + effectiveLimit`
+   whole days when the stored value is `null`; the new close is
+   `extendUploadWindow(base, additionalDays)`;
+5. allowance: `checkEntitlement(tenantId, "events.post_upload_days", 0, {counts: 0}, {db})`
+   — the **read** shape the create/PATCH paths use — and the **total**
+   post-upload span `computeDurationDays(endAt, newClose)` is compared with
+   `effectiveLimit`; over it → `403 plan_limit_exceeded` with
+   `details.entitlementKey`, `details.limit`, `details.upgradePath`
+   (`/api/v1/tenants/current/billing/upgrade`, the PATCH constant),
+   `details.requestedDays` (E4);
+6. one conditional `updateOne` on `{_id, status, updatedAt}` writing
+   `uploadWindowEndsAt` + `updatedAt: now`; a zero match (a concurrent writer
+   moved the row between the read and the write) is refused `412
+etag_mismatch` instead of overwriting the other value. The refusal names no
+   `details.currentETag`: this route has no `If-Match` contract (see
+   "Deliberate non-additions"), so there is no client tag for it to echo;
+7. `info` log `event.upload_window.extended`, then a re-read → full Event DTO
+   carrying the new `uploadWindowEndsAt` (E1).
+
+### Entitlement shape — the reading the pins left open
+
+The pins deliberately do not force an interpretation of `events.post_upload_days`
+(E4's +10 exceeds the starter 7-day allowance under either reading; E1 seeds
+`endAt + 2 days` before adding 3). The implementation takes the **total-span**
+reading: the entitlement caps how many days the window may stay open after
+`endAt`, not merely the size of one increment. Consequences, recorded so the
+next test cycle can pin them if it wants:
+
+- a window already at the plan's limit cannot be extended at all (any positive
+  increment exceeds the total) — that is what a cap means;
+- the comparison is rounded **up** to whole days (`computeDurationDays`), so a
+  window with a partial-day offset is charged as the next whole day;
+- an **unlimited** plan (`effectiveLimit === null`) admits any extension, and a
+  row whose stored close is `null` stays `null` (the window has no close to
+  move) — the write is then a version bump of `updatedAt` only. The pins do not
+  cover the unlimited case.
+
+`details.upgradePath` is the PATCH `UPGRADE_PATH` constant, as pinned.
+
+### Deliberate non-additions
+
+- **No `If-Match` / ETag stage.** The pins send no `If-Match` header, so a
+  required ETag stage would answer `428` and break E1; the contract §4.1 also
+  names `If-Match` for PATCH only, and the `200` names no ETag either. The write
+  is still conditional on the read row's `updatedAt`, so a lost race is a
+  `412 etag_mismatch` (no client tag to compare), not a silent overwrite.
+- **No domain event.** The contract lists no emission for this endpoint (only
+  the `200` and the `403`), and E2/E3 assert the outbox count is unchanged on
+  refusal; the transition is logged at `info` instead. A notification
+  (`event.upload_window.closed` / the `extend_upload_window` action) belongs to
+  the notification lane, not here.
+- **No `payment_downgrade` → `402` split.** The limit is read with `amount: 0`
+  (as the create route reads it), so a downgraded subscription never denies at
+  this point; the 402 split belongs to the consuming check, which this endpoint
+  does not perform.
+
+### Pins that guard this work
+
+`apps/web/src/test/integration/event-extend-upload-window.test.ts` — E1–E6
+(organizer `200` + stored row, co-organizer `403`, unrelated `404`,
+`plan_limit_exceeded` + `upgradePath`, five invalid `additionalDays` → `422`
+naming the field, `deleting` → `409`) and
+`apps/web/src/test/unit/event-windows-extend.test.ts` — E7
+(`extendUploadWindow`). Both files ship byte-unchanged.
+
+### Gates at the GREEN head
+
+`pnpm test:coverage` (unit + integration, thresholds live in CI): 232 files
+passed, 3046 passed | 3 skipped, branches 80.09% / statements 91.51% /
+functions 95.29% / lines 91.81% — over the global 80% gate. `npm run typecheck`
+exit 0, `npm run lint` 0 errors (161 pre-existing warnings, none in the new
+files), `prettier --check .` clean, `adr-numbering` 29 passed.
+
+Branch-coverage note for the next test cycle: this route's uncovered branches
+are the ones a single-writer spec cannot reach — the `null` stored close (and
+the `?? computeUploadWindowEndsAt` fallback it selects), the `matchedCount === 0`
+lost-race refusal, and the `updatedAt`-less write predicate.
