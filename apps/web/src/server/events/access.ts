@@ -1,6 +1,7 @@
 import { ObjectId, type Db } from "mongodb";
 
 import { COLLECTIONS } from "@/server/db/collections";
+import { appError } from "@/server/http/errors";
 import { platformRepo } from "@/server/repos";
 
 /**
@@ -44,11 +45,8 @@ export async function resolveEventActorRole(
       revokedAt: null,
       role: { $in: ["organizer", "co_organizer"] },
     })) as { readonly role?: string } | null;
-  if (organizerRow !== null && organizerRow.role === "co_organizer") {
-    return "co_organizer";
-  }
   if (organizerRow !== null) {
-    return "organizer";
+    return organizerRow.role === "co_organizer" ? "co_organizer" : "organizer";
   }
 
   const membership = await platformRepo(db)
@@ -58,5 +56,61 @@ export async function resolveEventActorRole(
       userId: new ObjectId(userId),
       status: "active",
     });
-  return membership === null ? null : "tenant_member";
+  if (membership !== null) {
+    return "tenant_member";
+  }
+  return null;
+}
+
+/** The authenticated principal the auth stage established. */
+export function requirePrincipal(ctx: { readonly principal?: string }): string {
+  const principal = ctx.principal;
+  if (principal === undefined) {
+    throw appError("authentication_required");
+  }
+  return principal;
+}
+
+/** Load the event behind `{eventId}`, or deny `404`. */
+export async function loadEventRow<T>(db: Db, eventId: ObjectId): Promise<T> {
+  const row = (await platformRepo(db)
+    .collection(COLLECTIONS.events)
+    .findOne({ _id: eventId })) as T | null;
+  if (row === null) {
+    throw appError("not_found");
+  }
+  return row;
+}
+
+/**
+ * The mutation role gate: a caller with no relationship gets `404` (never an
+ * oracle), a related caller outside `roles` gets `403`.
+ */
+export async function requireEventRole(
+  db: Db,
+  eventId: ObjectId,
+  tenantKey: string,
+  userId: string,
+  roles: readonly EventActorRole[]
+): Promise<EventActorRole> {
+  const role = await resolveEventActorRole(db, eventId, tenantKey, userId);
+  if (role === null) {
+    throw appError("not_found");
+  }
+  if (!roles.includes(role)) {
+    throw appError("forbidden");
+  }
+  return role;
+}
+
+/** Refuse every write on a row whose ordered purge is already scheduled. */
+export function assertEventNotDeleting(
+  row: { readonly status?: string; readonly deletedAt?: Date },
+  now: Date
+): void {
+  if (row.status === "deleting") {
+    throw appError("event_deleting", {
+      details: { purgeScheduledAt: (row.deletedAt ?? now).toISOString() },
+    });
+  }
 }

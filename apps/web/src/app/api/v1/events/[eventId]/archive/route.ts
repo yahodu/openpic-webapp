@@ -1,15 +1,18 @@
 import { ObjectId } from "mongodb";
 
 import { getConfig } from "@/server/config/env";
-import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { emitDomainEvent } from "@/server/domain/domain-events";
-import { resolveEventActorRole } from "@/server/events/access";
-import { eventDtoSchema, toEventDto, type EventRow } from "@/server/events/dto";
+import {
+  assertEventNotDeleting,
+  loadEventRow,
+  requireEventRole,
+  requirePrincipal,
+} from "@/server/events/access";
+import { eventDtoSchema, toEventDtoOrThrow, type EventRow } from "@/server/events/dto";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
-import { platformRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { userAuth } from "@/server/tenancy/route-scope";
 
@@ -31,7 +34,7 @@ import { userAuth } from "@/server/tenancy/route-scope";
 /** The `{eventId}` segment before the literal `archive`; a malformed id denies `404`. */
 function eventIdFromRequest(request: Request): ObjectId {
   const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
-  const raw = segments.at(-2) ?? "";
+  const raw = String(segments.at(-2));
   if (!/^[0-9a-f]{24}$/i.test(raw)) {
     throw appError("not_found");
   }
@@ -50,38 +53,18 @@ export const POST = defineRoute({
   response: eventDtoSchema,
   auth: (ctx, request) => userAuth()(ctx, request),
   handler: async (ctx) => {
-    const principal = ctx.principal;
-    if (principal === undefined) {
-      throw appError("authentication_required");
-    }
+    const principal = requirePrincipal(ctx);
     const db = getDb();
     const config = getConfig();
     const now = systemClock.now();
     const eventId = eventIdFromRequest(ctx.request);
     const id = eventId.toHexString();
-
-    const row = (await platformRepo(db)
-      .collection(COLLECTIONS.events)
-      .findOne({ _id: eventId })) as EventArchiveRow | null;
-    if (row === null) {
-      throw appError("not_found");
-    }
+    const row = await loadEventRow<EventArchiveRow>(db, eventId);
 
     // Archive is organizer-only. A related caller without the role is refused
     // with `403`, a caller with no relationship with `404` (never an oracle).
-    const role = await resolveEventActorRole(db, eventId, row.tenantId, principal);
-    if (role === null) {
-      throw appError("not_found");
-    }
-    if (role !== "organizer") {
-      throw appError("forbidden");
-    }
-
-    if (row.status === "deleting") {
-      throw appError("event_deleting", {
-        details: { purgeScheduledAt: row.deletedAt?.toISOString() ?? now.toISOString() },
-      });
-    }
+    await requireEventRole(db, eventId, row.tenantId, principal, ["organizer"]);
+    assertEventNotDeleting(row, now);
 
     await emitDomainEvent(
       {
@@ -100,10 +83,7 @@ export const POST = defineRoute({
       eventId: id,
     });
 
-    const dto = toEventDto(row, config.app.baseUrl);
-    if (dto === null) {
-      throw appError("internal_error");
-    }
+    const dto = toEventDtoOrThrow(row, config.app.baseUrl, "internal_error");
     return { body: dto };
   },
 });

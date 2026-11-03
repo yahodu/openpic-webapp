@@ -1,6 +1,8 @@
 import { idSchema, isoDateTimeSchema } from "@openpic/contracts";
 import { z } from "zod";
 
+import { appError } from "@/server/http/errors";
+
 /**
  * The Event DTO — the shared response shape of the events routes (OP-115,
  * contract §4.1, schema §15.1).
@@ -88,4 +90,26 @@ export function toEventDto(row: EventRow | null, baseUrl: string): EventDto | nu
     shareUrl: `${baseUrl}/e/${slug}`,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+/**
+ * Project a stored row onto the Event DTO, refusing a row the projection
+ * cannot render.
+ *
+ * @param row - The stored row (already known to exist).
+ * @param baseUrl - The app origin the public `/e/<slug>` link is served from.
+ * @param code - The refusal code: `not_found` on a read, `internal_error`
+ *   after a write that should have produced a renderable row.
+ * @returns The DTO.
+ */
+export function toEventDtoOrThrow(
+  row: EventRow,
+  baseUrl: string,
+  code: "not_found" | "internal_error"
+): EventDto {
+  const dto = toEventDto(row, baseUrl);
+  if (dto === null) {
+    throw appError(code);
+  }
+  return dto;
 }

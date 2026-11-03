@@ -7,8 +7,13 @@ import { getDb } from "@/server/db/mongo";
 import { withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { normalizeInstantToUtc } from "@/server/events/dates";
-import { eventDtoSchema, toEventDto, type EventRow } from "@/server/events/dto";
-import { resolveEventActorRole } from "@/server/events/access";
+import { eventDtoSchema, toEventDtoOrThrow, type EventRow } from "@/server/events/dto";
+import {
+  assertEventNotDeleting,
+  loadEventRow,
+  requireEventRole,
+  requirePrincipal,
+} from "@/server/events/access";
 import { findForbiddenEditableFields, isEventLocked } from "@/server/events/update";
 import { computeDurationDays, recomputeWindows } from "@/server/events/windows";
 import { defineRoute, type RouteStage } from "@/server/http/define-route";
@@ -61,7 +66,7 @@ const UPGRADE_PATH = "/api/v1/tenants/current/billing/upgrade";
 /** The `{eventId}` segment of the matched path; a malformed id denies `404`. */
 function eventIdFromRequest(request: Request): ObjectId {
   const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
-  const raw = segments.at(-1) ?? "";
+  const raw = String(segments.at(-1));
   if (!/^[0-9a-f]{24}$/i.test(raw)) {
     throw appError("not_found");
   }
@@ -95,6 +100,14 @@ function currentETagOf(row: EventDetailRow): string {
     updatedAt instanceof Date ? updatedAt : new Date(),
     typeof schemaVersion === "number" ? schemaVersion : 1
   );
+}
+
+/** A §4.1 branding-asset reference: absent, an ObjectId, or an explicit `null`. */
+function assetIdOrNull(value: string | null | undefined): ObjectId | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value === null ? null : new ObjectId(value);
 }
 
 /**
@@ -158,25 +171,30 @@ const deleteEventResponseSchema = z.object({
   irreversible: z.literal(true),
 });
 
+/** The §4.1 editable surface the PATCH body may carry. */
+interface PatchEventBody {
+  readonly name?: string;
+  readonly description?: string;
+  readonly startAt?: string;
+  readonly endAt?: string;
+  readonly displayTimeZone?: string;
+  readonly logoAssetId?: string | null;
+  readonly watermarkAssetId?: string | null;
+  readonly thumbnailPreset?: string;
+  readonly visibilityDefaults?: Record<string, unknown>;
+  readonly status?: string;
+}
+
 export const GET = defineRoute({
   route: "/api/v1/events/:eventId",
   response: eventDtoSchema,
   auth: (ctx, request) => userAuth()(ctx, request),
   handler: async (ctx) => {
-    const principal = ctx.principal;
-    if (principal === undefined) {
-      throw appError("authentication_required");
-    }
+    const principal = requirePrincipal(ctx);
     const db = getDb();
     const config = getConfig();
     const eventId = eventIdFromRequest(ctx.request);
-
-    const row = (await platformRepo(db)
-      .collection(COLLECTIONS.events)
-      .findOne({ _id: eventId })) as EventDetailRow | null;
-    if (row === null) {
-      throw appError("not_found");
-    }
+    const row = await loadEventRow<EventDetailRow>(db, eventId);
 
     // A tenant member of the event's tenant, or a co-organizer recorded in
     // `event_organizers` (`role: "co_organizer"`, not necessarily a member).
@@ -199,10 +217,7 @@ export const GET = defineRoute({
       throw appError("not_found");
     }
 
-    const dto = toEventDto(row, config.app.baseUrl);
-    if (dto === null) {
-      throw appError("not_found");
-    }
+    const dto = toEventDtoOrThrow(row, config.app.baseUrl, "not_found");
 
     return {
       body: dto,
@@ -230,37 +245,24 @@ export const PATCH = defineRoute({
   auth: (ctx, request) => userAuth()(ctx, request),
   etag: dbBackedEtagStage(true),
   handler: async (ctx) => {
-    const principal = ctx.principal;
-    if (principal === undefined) {
-      throw appError("authentication_required");
-    }
+    const principal = requirePrincipal(ctx);
     const db = getDb();
     const config = getConfig();
     const now = systemClock.now();
     const eventId = eventIdFromRequest(ctx.request);
     const id = eventId.toHexString();
-
-    const row = (await platformRepo(db)
-      .collection(COLLECTIONS.events)
-      .findOne({ _id: eventId })) as EventDetailRow | null;
-    if (row === null) {
-      throw appError("not_found");
-    }
-
-    const role = await resolveEventActorRole(db, eventId, row.tenantId, principal);
-    if (role === null) {
-      throw appError("not_found");
-    }
+    const row = await loadEventRow<EventDetailRow>(db, eventId);
+    await requireEventRole(db, eventId, row.tenantId, principal, [
+      "organizer",
+      "co_organizer",
+      "tenant_member",
+    ]);
 
     // A row whose purge is scheduled is inert: every later write is refused.
-    if (row.status === "deleting") {
-      throw appError("event_deleting", {
-        details: { purgeScheduledAt: row.deletedAt?.toISOString() ?? now.toISOString() },
-      });
-    }
+    assertEventNotDeleting(row, now);
 
     // Supplied keys outside the §4.1 editable set are refused outright.
-    const supplied: Record<string, unknown> = ctx.body;
+    const supplied = ctx.body as PatchEventBody & Record<string, unknown>;
     const forbidden = findForbiddenEditableFields(supplied);
     if (forbidden.length > 0) {
       throw appError("forbidden_field", { details: { fields: forbidden } });
@@ -276,10 +278,10 @@ export const PATCH = defineRoute({
     let effectiveEndAt = row.endAt;
     if (supplied.startAt !== undefined || supplied.endAt !== undefined) {
       try {
-        if (typeof supplied.startAt === "string") {
+        if (supplied.startAt !== undefined) {
           effectiveStartAt = new Date(normalizeInstantToUtc(supplied.startAt));
         }
-        if (typeof supplied.endAt === "string") {
+        if (supplied.endAt !== undefined) {
           effectiveEndAt = new Date(normalizeInstantToUtc(supplied.endAt));
         }
       } catch {
@@ -340,44 +342,31 @@ export const PATCH = defineRoute({
 
     // ── build the $set from the supplied editable fields ──
     const set: Document = { updatedAt: now };
-    if (typeof supplied.name === "string") {
-      set.name = supplied.name;
+    const suppliedFields = supplied;
+    const verbatim: Record<string, unknown> = {
+      name: suppliedFields.name,
+      description:
+        suppliedFields.description === undefined
+          ? undefined
+          : sanitizeDescription(suppliedFields.description),
+      startAt: suppliedFields.startAt === undefined ? undefined : effectiveStartAt,
+      endAt: suppliedFields.endAt === undefined ? undefined : effectiveEndAt,
+      logoAssetId: assetIdOrNull(suppliedFields.logoAssetId),
+      watermarkAssetId: assetIdOrNull(suppliedFields.watermarkAssetId),
+      thumbnailPreset: suppliedFields.thumbnailPreset,
+      visibilityDefaults: suppliedFields.visibilityDefaults,
+      status: suppliedFields.status,
+    };
+    for (const [field, value] of Object.entries(verbatim)) {
+      if (value !== undefined) {
+        set[field] = value;
+      }
     }
-    if (typeof supplied.description === "string") {
-      set.description = sanitizeDescription(supplied.description);
-    }
-    if (supplied.startAt !== undefined) {
-      set.startAt = effectiveStartAt;
-    }
-    if (supplied.endAt !== undefined) {
-      set.endAt = effectiveEndAt;
-    }
-    if (typeof supplied.displayTimeZone === "string") {
-      if (!isValidIanaTimeZone(supplied.displayTimeZone)) {
+    if (suppliedFields.displayTimeZone !== undefined) {
+      if (!isValidIanaTimeZone(suppliedFields.displayTimeZone)) {
         throw appError("unknown_timezone");
       }
-      set.displayTimeZone = supplied.displayTimeZone;
-    }
-    if (supplied.logoAssetId !== undefined) {
-      set.logoAssetId =
-        supplied.logoAssetId === null || typeof supplied.logoAssetId !== "string"
-          ? null
-          : new ObjectId(supplied.logoAssetId);
-    }
-    if (supplied.watermarkAssetId !== undefined) {
-      set.watermarkAssetId =
-        supplied.watermarkAssetId === null || typeof supplied.watermarkAssetId !== "string"
-          ? null
-          : new ObjectId(supplied.watermarkAssetId);
-    }
-    if (typeof supplied.thumbnailPreset === "string") {
-      set.thumbnailPreset = supplied.thumbnailPreset;
-    }
-    if (supplied.visibilityDefaults !== undefined) {
-      set.visibilityDefaults = supplied.visibilityDefaults;
-    }
-    if (typeof supplied.status === "string") {
-      set.status = supplied.status;
+      set.displayTimeZone = suppliedFields.displayTimeZone;
     }
 
     // The windows recomputed above must land on the row whenever a date moved.
@@ -429,16 +418,8 @@ export const PATCH = defineRoute({
       eventId: id,
     });
 
-    const updated = (await platformRepo(db)
-      .collection(COLLECTIONS.events)
-      .findOne({ _id: eventId })) as EventDetailRow | null;
-    if (updated === null) {
-      throw appError("internal_error");
-    }
-    const dto = toEventDto(updated, config.app.baseUrl);
-    if (dto === null) {
-      throw appError("internal_error");
-    }
+    const updated = await loadEventRow<EventDetailRow>(db, eventId);
+    const dto = toEventDtoOrThrow(updated, config.app.baseUrl, "internal_error");
 
     // The NEW etag (post-write `updatedAt`) overrides the stage's pre-write tag.
     return {
@@ -459,37 +440,18 @@ export const DELETE = defineRoute({
   auth: (ctx, request) => userAuth()(ctx, request),
   etag: dbBackedEtagStage(false),
   handler: async (ctx) => {
-    const principal = ctx.principal;
-    if (principal === undefined) {
-      throw appError("authentication_required");
-    }
+    const principal = requirePrincipal(ctx);
     const db = getDb();
     const now = systemClock.now();
     const eventId = eventIdFromRequest(ctx.request);
     const id = eventId.toHexString();
-
-    const row = (await platformRepo(db)
-      .collection(COLLECTIONS.events)
-      .findOne({ _id: eventId })) as EventDetailRow | null;
-    if (row === null) {
-      throw appError("not_found");
-    }
+    const row = await loadEventRow<EventDetailRow>(db, eventId);
 
     // Delete is organizer-only; a related caller without the role is refused
     // with `403`, a caller with no relationship with `404` (never an oracle).
-    const role = await resolveEventActorRole(db, eventId, row.tenantId, principal);
-    if (role === null) {
-      throw appError("not_found");
-    }
-    if (role !== "organizer") {
-      throw appError("forbidden");
-    }
+    await requireEventRole(db, eventId, row.tenantId, principal, ["organizer"]);
 
-    if (row.status === "deleting") {
-      throw appError("event_deleting", {
-        details: { purgeScheduledAt: row.deletedAt?.toISOString() ?? now.toISOString() },
-      });
-    }
+    assertEventNotDeleting(row, now);
 
     // The confirmation must be the exact event name — nothing is written or
     // announced on a mismatch.

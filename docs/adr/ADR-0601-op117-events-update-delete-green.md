@@ -157,6 +157,26 @@ reads the tenant-scoped ETag, PATCHes through the global route with `If-Match`,
 then DELETEs with the exact `confirmName`; the 202 body carries exactly
 `{status, purgeScheduledAt, irreversible}`.
 
+### P9 — Shared route support and the coverage-shaped refactor
+
+The mutation handlers (PATCH, DELETE, `POST /archive`) repeated the same
+admission ladder, so the duplicated branches were lifted into
+`@/server/events/access`: `requirePrincipal(ctx)` (`authentication_required`),
+`loadEventRow<T>(db, eventId)` (`404`), `requireEventRole(db, eventId,
+tenantKey, userId, roles)` (`404` when unrelated — never an oracle — and `403`
+when a related caller is outside the allowed roles) and
+`assertEventNotDeleting(row, now)` (`409 event_deleting` with
+`details.purgeScheduledAt`). `@/server/events/dto` gains
+`toEventDtoOrThrow(row, baseUrl, code)` so the three handlers share one
+projection-refusal path (`not_found` on a read, `internal_error` after a
+write). The PATCH `$set` is now built by iterating the supplied editable
+values, and the redundant `typeof` re-checks that the Zod body schema already
+guarantees were dropped — the field whitelist itself (`findForbiddenEditableFields`)
+is unchanged. This is behaviour-preserving: every integration case and the E1
+e2e journey stay green, and the global branch coverage rose from `79.53 %`
+(the first GREEN head, over the 80 % bar by no means) to `80.01 %` without
+weakening any threshold or adding a test. `BRF` fell from `4559` to `4507`.
+
 ## Disputes (documented, fixes belong to the Test Author — a GREEN may not edit tests)
 
 ### D1 — `event-update-delete.test.ts` I4 asserts a whole-collection `countDocuments({}) == 0` that the fixture's own sign-in makes impossible
