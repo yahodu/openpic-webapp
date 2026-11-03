@@ -58,6 +58,7 @@
 - [ ] The relevant API contract section is referenced.
 - [ ] No hard-coded tunables — runtime knobs read from `platformSettings`.
 - [ ] An ADR was added in `docs/adr/` for any new decision.
+- [ ] The ADR number is the `Consumes` value reserved in the card body — never derived from `docs/adr/README.md` — and no same-lane ADR-minting sibling card is in flight.
 
 ## Screenshots (if any)
 

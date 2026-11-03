@@ -33,7 +33,7 @@ the rejected alternatives are recorded in
 
 | Holder (lane)                       | Reserved range                  | Next free |
 | ----------------------------------- | ------------------------------- | --------- |
-| board-wide / process (orchestrator) | `0300`–`0319`                   | `0312`    |
+| board-wide / process (orchestrator) | `0300`–`0319`                   | `0313`    |
 | OP-96 notifications follow-up       | `0146`–`0179`                   | `0149`    |
 | OP-97 in-app feed                   | `0180`–`0199`                   | `0183`    |
 | OP-94 fan-out                       | `0200`–`0219`                   | `0200`    |
@@ -91,6 +91,8 @@ guard's pinned contract — card `t_54545281`), and `0311` (ADR-0311, the
 `0312`.
 
 _The **board-wide** [`0308`](ADR-0308-one-owner-per-branch-landing.md) record gained a **§Recurrence** section (card `t_1deaf426`, orchestrator; branch `OP-111-task-adr-0308-recurrence`) after the OP-111 GREEN landing (`t_71cc5e0c`, PR #352) reproduced the one-owner hazard in a new, **run-level** shape — a live implementer worker mutated the lane worktree after its handoff while the review run owned the same path. No number is consumed: the block cell stays `0311`._
+
+_The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-serialization.md) record takes `0312`, the range slot the allocator reserved at card creation (card `t_851ad543`, decided by the orchestrator card `t_78773f59`, branch `OP-112-task-same-lane-adr-serialization` off `origin/main` `a2de1a2`), and the block cell advances `0312` → `0313`. It records the rule the intra-lane number collision kept outrunning after [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) removed the cross-lane one: §7, §8 and §9 are **read-side** rules, so two cards of one lane claimed in the same dispatcher tick enumerate the same snapshot and mint the same integer — which is what happened at `0584`, where `t_48a8e8ce` (PR [#377](https://github.com/yahodu/openpic-webapp/pull/377), landed first) and `t_c469c799` (renumbered to `0585` by comment) both minted `ADR-0584` off the trunk cut `c055cac`, the fourth recurrence of a class already seen at `0147`, `0382`/`0383`+`0384` and `0482`. The decision is **rule C**: same-lane ADR-minting cards are serialized by the task graph — the successor is a `parents=[…]` child of its predecessor and reads its number off the merged trunk, so there is no concurrent sibling to enumerate — with the allocator, worker and reviewer contracts and the two rejected alternatives (a reserve-first trunk ledger edit; a `reserved:` marker in this file checked by the guard) recorded in the ADR. No number outside `0300`–`0319` is touched._
 
 | ADR                                                                                | Title                                                                                                                   | Status                    |
 | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -256,6 +258,7 @@ _The **board-wide** [`0308`](ADR-0308-one-owner-per-branch-landing.md) record ga
 | [0309](ADR-0309-git-config-read-vs-write-identity-guard.md)                        | The `git config` read-vs-write identity guard: read with `--get`, write identity only in an explicit local scope        | Accepted                  |
 | [0310](ADR-0310-git-identity-guard-pins.md)                                        | Pin the commit-time git identity guard: the validator contract and the worktree hook-firing fact                        | Accepted                  |
 | [0311](ADR-0311-pin-hooks-path-warning.md)                                         | Pin that a failed `core.hooksPath` pin in `prepare` is reported, not swallowed                                          | Accepted                  |
+| [0312](ADR-0312-same-lane-adr-card-serialization.md)                               | Same-lane ADR-minting cards are serialized by the task graph                                                            | Accepted                  |
 | [0320](ADR-0320-op102-public-plans-endpoint-red.md)                                | OP-102 RED: the public plans endpoint — generic `display`, version ETag, ignored `includeInactive`, separate add-ons    | Accepted                  |
 | [0321](ADR-0321-op102-public-plans-endpoint-green.md)                              | OP-102 GREEN: project the catalogue onto the §3.1/§3.6 served shapes and wire both public reads onto the pipeline       | Accepted                  |
 | [0322](ADR-0322-op102-plans-etag-representation-red.md)                            | OP-102 follow-up RED: pin that the `GET /plans` ETag identifies the served representation                               | Accepted                  |

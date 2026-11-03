@@ -165,6 +165,7 @@ A story is complete only when **all** of the following hold:
 - [ ] The relevant API contract section is referenced.
 - [ ] No hard-coded tunables — runtime knobs are read from `platformSettings`.
 - [ ] An ADR was added in `docs/adr/` for any new decision.
+- [ ] The ADR number is the `Consumes` value reserved in the card body — never derived from `docs/adr/README.md` — and no same-lane ADR-minting sibling card is in flight.
 
 This list is mirrored, copy-pasteably, in `.github/pull_request_template.md`.
 
@@ -208,6 +209,19 @@ allocated before the policy (`≤ 0145`) are frozen history and are never moved.
   `apps/web/src/test/unit/adr-numbering.test.ts` and `uniq -d` over the `ADR-NNNN`
   prefixes there): a lone `docs/adr/README.md` conflict resolves cleanly while
   hiding a duplicate **file**.
+- **Same-lane serialization by the task graph (ADR-0300 §9, rule C;
+  `docs/adr/ADR-0312-same-lane-adr-card-serialization.md`).** Two ADR-minting cards of
+  one lane's range are **never siblings**: the allocator chains them
+  (`parents=[<the earlier card>]`), so the successor is not `ready` until the
+  predecessor's ledger row has landed on `main` and reads its number off the merged
+  trunk — not off any shared snapshot, and with no concurrent sibling to enumerate under
+  rule B. Every card body carries `Consumes: NNNN` (or `none`) **and** a
+  `Same-lane ADR gate: serialized behind <card-id> | none` line. A worker that finds
+  `Consumes` missing or `TBD`, or a same-range sibling already minting its number,
+  **comments and blocks** the card back to the allocator — it never invents or renumbers
+  a value. A card body without `Consumes:` is a decomposition defect the reviewer returns
+  rather than works around; the ADR file's number must equal the body's `Consumes` value,
+  and the merged-tree duplicate check above is unchanged.
 - **The ledger.** The live range table is `docs/adr/README.md` § "ADR number
   allocation" (ADR-0300) — the single source of truth. Do not copy or re-derive
   the ranges anywhere else, including here. **The `Next free` column is a
