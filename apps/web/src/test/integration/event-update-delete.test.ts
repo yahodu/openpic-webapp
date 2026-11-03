@@ -634,11 +634,17 @@ describe("DELETE /api/v1/events/{eventId} — delete an event (contract §4.1, �
     expect(parsed.error.code).toBe("confirmation_mismatch");
     expect(parsed.error.details).toMatchObject({ field: "confirmName" });
 
-    // The row is untouched and nothing was announced.
+    // The row is untouched and the delete announced nothing. Sign-in itself
+    // writes account.welcome + auth.signin.new_device to this outbox, so the
+    // count is scoped to the keys this DELETE owns.
     const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
     expect(row?.status).toBe("published");
     expect(row?.deletedAt).toBeUndefined();
-    expect(await app.db.collection(COLLECTIONS.domainEvents).countDocuments({})).toBe(0);
+    expect(
+      await app.db.collection(COLLECTIONS.domainEvents).countDocuments({
+        eventKey: { $in: ["event.deleted", "event.purge.scheduled"] },
+      })
+    ).toBe(0);
   });
 
   it("I5: deleting with the exact confirmName answers 202, stores status deleting and enqueues the purge domain event", async () => {
