@@ -213,6 +213,58 @@ announces anything on the mismatch path. This GREEN makes **no** production
 change for D1 — the implementation was already honest; only the assertion was
 unsatisfiable. No new ADR number is consumed (lane `Next free` stays `0602`).
 
+### D2 — the OP-117 E1 spec spends two `auth.otp` tokens from the single shared e2e IP bucket, and the suite has no headroom left (CI `ci` → E2E red)
+
+At the merged head `1aa30d9` the whole suite is green except the `ci` job's
+**E2E** step: `webhook-inbox.spec.ts:69` (`POST /api/auth/email-otp/send-verification-otp`)
+answers **429**, so that spec's `expect(sent.status()).toBe(200)` fails. The
+failure is **not** in OP-117's own journey — `event-update-delete.spec.ts` E1
+itself passes (verified in the same run, and alone).
+
+Mechanism, measured rather than inferred:
+
+- `RATE_LIMIT_CLASSES["auth.otp"]` is pinned by `classes.test.ts` at
+  **contact 5 / hour and ip 15 / hour** (`@/server/rate-limit/classes.ts`), and
+  `createRateLimitHook` (`@/server/auth/rate-limit-hook.ts`) applies both legs to
+  every path in `OTP_SEND_PATHS`, which contains **both**
+  `/email-otp/send-verification-otp` **and** `/phone-number/send-otp`.
+- Every e2e spec calls Playwright's `request` fixture with no forwarding header,
+  and the Next standalone server stamps the socket address, so **all** specs
+  share the one `ip` bucket `127.0.0.1`. The `contact` leg never collides (each
+  spec uses a fresh email).
+- Probing the real e2e server directly: the shared bucket admits exactly **15**
+  sends and answers `429 too_many_requests` on the **16th** (`15 × 200`, then
+  `429`), while a distinct `x-forwarded-for` gets its own bucket (`2 × 200`) —
+  which is the e2e-trusted path in `resolveClientIp` (ADR-0024).
+- Suite arithmetic at the merged head, from the server's own `auth.otp.sent`
+  log: **baseline (OP-117's spec excluded) = 14 sends, 0 `auth.otp` denials**;
+  **with OP-117's spec = 16 attempts (15 accepted + 1 denied)**. The OP-117 E1
+  journey spends **two** tokens, not one: it signs up by email OTP _and_ binds a
+  phone number by OTP (the account-completion gate). 13 sign-in specs already
+  sat at 14/15, so the lane's own spec is what crosses the ceiling — main is
+  green only because it never had a two-token journey.
+
+This is a **test-suite budget constraint, not a product defect**, and the honest
+fixes are all test-side:
+
+1. **Minimal (one spec):** send the OP-117 E1 spec's two OTP requests with a
+   private `x-forwarded-for` (one shared header object), so its two tokens land
+   in their own bucket and the suite returns to 14/15.
+2. **Durable (every sign-in spec):** give each OTP-sending e2e spec its own
+   private `x-forwarded-for`, exactly as the integration suite already gives each
+   spec "a private email/phone/**IP** identity" — the shared 127.0.0.1 ceiling
+   then stops being a per-lane lottery. With 14 sign-in specs and 15/hour, the
+   margin today is **one token**, so option 1 alone leaves the next lane stranded.
+
+Rejected alternatives (both dishonest and both forbidden to a GREEN lane):
+raising the `auth.otp` ip allowance in `classes.ts` (a contract-pinned security
+control; `classes.test.ts` pins 15/hour) or any `APP_ENV === "e2e"` branch that
+skips the limiter (a test-environment conditional changing real behaviour).
+**This GREEN makes no code change for D2** — every route it owns is correct; the
+429 is produced by the pinned limiter doing its job against an over-subscribed
+harness. Routed as a TEST card to the OP-117 test author; `ci`'s E2E step stays
+red until it lands.
+
 ## Assumptions and open questions
 
 - `purgeScheduledAt` is the instant the delete answers, stored as the row's
