@@ -1,4 +1,4 @@
-# ADR-0580 — OP-117 RED: the event update / archive / delete surface pinned — the recompute, the editable-field whitelist, the start-lock and the confirmName delete
+# ADR-0600 — OP-117 RED: the event update / archive / delete surface pinned — the recompute, the editable-field whitelist, the start-lock and the confirmName delete
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-117 RED (`t_c44493a2`) · **Branch:** `OP-117-task-events-update-delete` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_c44493a2`
@@ -185,16 +185,17 @@ the purge key is new.
   branch**, not bare `origin/main`, and must merge the OP-116 lane (the
   global detail route file it extends) before or as part of its work — this
   card's pins address the mutations the OP-116 route family will carry.
-- **ADR-number allocation.** OP-117 is a dependent ticket, so it draws its own
-  block per ADR-0300 §7 rather than continuing the OP-115 events lane
-  (`0520`–`0539`) or the OP-116 lane (`0560`–`0579`). The in-flight claims on
-  this base: OP-114 holds `0540`–`0559` (ADR-0540/0541 on its unmerged
-  branch) and OP-116 holds `0560`–`0579` (ADR-0560/0561). This record
-  therefore draws **`0580`–`0599`**, `Next free = 0581`, and the pool cell
-  (which reads `0540`+ on this base) is advanced directly to `0600`+ — the
-  gap (`0540`–`0579`, held by the in-flight lanes) is the documented
-  union-at-merge hotspot: resolution keeps the highest cells (`0600`+).
-- No number outside the range `0580`–`0599` is touched.
+- **ADR-number allocation (renumbered 2026-10-26).** OP-117 is a dependent
+  ticket, so it draws its own block per ADR-0300 §7 rather than continuing the
+  OP-115 events lane (`0520`–`0539`) or the OP-116 lane (`0560`–`0579`). The
+  record was first drafted as **`0580`–`0599`** (`Next free = 0581`), but at
+  integration the merged `origin/main` claimed `0580`–`0583` for the Media
+  foundations lanes (OP-112 red/green `0580`/`0581`, OP-113 red/green
+  `0582`/`0583` — renumbered onto the pool's `0580`–`0599` block), so under
+  ADR-0300 §9's land-then-renumber fallback this lane renumbered its records
+  to the next free pool block **`0600`–`0619`** (this record takes `0600`,
+  the GREEN takes `0601`), `Next free = 0602`, and the pool cell advances to
+  `0620`+. No number outside `0600`–`0619` is touched.
 
 ## Alternatives considered
 

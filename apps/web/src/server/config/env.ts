@@ -549,6 +549,83 @@ export interface PaymentsRuntimeConfig {
 }
 
 /**
+ * Runtime wiring for the object-storage provider (OP-114, ADR-0540 §4).
+ *
+ * Kept outside the frozen {@link AppConfig} shape because it is operational
+ * wiring (a vendor endpoint, region, an access-key pair and the deployment's
+ * physical bucket names) rather than a deploy contract. When `s3` is
+ * selected this accessor is the single place the `R2_*` names are read from
+ * the environment; any missing/blank name is refused with a `ConfigError`
+ * listing only those names (mirroring `getPaymentsRuntimeConfig`).
+ */
+export interface StorageRuntimeConfig {
+  /**
+   * The R2/S3-compatible wiring when `s3` is selected, else `null`.
+   *
+   * `buckets` is the logical-location → physical-bucket map the OP-112
+   * adapter resolves through `bucketForLocation` (ADR-0520 §3): the four
+   * contract locations `originals`/`thumbnails`/`exports`/`branding` must
+   * each name a bucket, or the adapter refuses with a `ConfigError`.
+   */
+  readonly r2: {
+    readonly endpoint: string;
+    readonly region: string;
+    readonly credentials: {
+      readonly accessKeyId: string;
+      readonly secretAccessKey: string;
+    };
+    readonly buckets: Readonly<Record<string, string>>;
+  } | null;
+}
+
+/**
+ * Read the object-storage runtime wiring from the environment.
+ *
+ * @returns The R2 wiring when `STORAGE_PROVIDER=s3` (otherwise `null`).
+ * @throws {ConfigError} When `s3` is selected and one of the `R2_*` names is
+ *   unset or blank. Only the key names are reported.
+ */
+export function getStorageRuntimeConfig(): StorageRuntimeConfig {
+  const provider = process.env.STORAGE_PROVIDER ?? DEFAULT_PROVIDER;
+  if (provider !== "s3") {
+    return { r2: null };
+  }
+
+  const required = (key: string): string => process.env[key]?.trim() ?? "";
+  const endpoint = required("R2_ENDPOINT");
+  const region = required("R2_REGION");
+  const accessKeyId = required("R2_ACCESS_KEY_ID");
+  const secretAccessKey = required("R2_SECRET_ACCESS_KEY");
+  const buckets: Record<string, string> = {
+    originals: required("R2_BUCKET_ORIGINALS"),
+    thumbnails: required("R2_BUCKET_THUMBNAILS"),
+    exports: required("R2_BUCKET_EXPORTS"),
+    branding: required("R2_BUCKET_BRANDING"),
+  };
+
+  const missing: string[] = [];
+  for (const [key, value] of [
+    ["R2_ENDPOINT", endpoint],
+    ["R2_REGION", region],
+    ["R2_ACCESS_KEY_ID", accessKeyId],
+    ["R2_SECRET_ACCESS_KEY", secretAccessKey],
+    ["R2_BUCKET_ORIGINALS", buckets.originals],
+    ["R2_BUCKET_THUMBNAILS", buckets.thumbnails],
+    ["R2_BUCKET_EXPORTS", buckets.exports],
+    ["R2_BUCKET_BRANDING", buckets.branding],
+  ] as const) {
+    if (value === "") {
+      missing.push(key);
+    }
+  }
+  if (missing.length > 0) {
+    throw new ConfigError(missing);
+  }
+
+  return { r2: { endpoint, region, credentials: { accessKeyId, secretAccessKey }, buckets } };
+}
+
+/**
  * Read the payment-provider runtime wiring from the environment.
  *
  * @returns The provider selection, and the Cashfree credentials when it is

@@ -1,3 +1,21 @@
+## [1.47.0](https://github.com/yahodu/openpic-webapp/compare/v1.46.0...v1.47.0) (2026-10-26)
+
+### Features
+
+- OP-114 branding asset upload endpoint (the single byte-accepting endpoint) ([#371](https://github.com/yahodu/openpic-webapp/issues/371)) ([87e1170](https://github.com/yahodu/openpic-webapp/commit/87e1170bf8dcd1b8a67e529c31f0924403215c06)), closes [#x73](https://github.com/yahodu/openpic-webapp/issues/x73)
+
+## [1.46.0](https://github.com/yahodu/openpic-webapp/compare/v1.45.0...v1.46.0) (2026-10-26)
+
+### Features
+
+- **media:** OP-113 HMAC media URL signer with secret rotation ([#370](https://github.com/yahodu/openpic-webapp/issues/370)) ([f6782a3](https://github.com/yahodu/openpic-webapp/commit/f6782a336af46833da0fd9ebf68d640782b7dd93))
+
+## [1.45.0](https://github.com/yahodu/openpic-webapp/compare/v1.44.0...v1.45.0) (2026-10-26)
+
+### Features
+
+- **storage:** OP-112 object storage port with logical locations and opaque handles ([#367](https://github.com/yahodu/openpic-webapp/issues/367)) ([8d866d3](https://github.com/yahodu/openpic-webapp/commit/8d866d313b0c428a06b7af9b6f6f011d3b3e0045))
+
 ## [1.44.0](https://github.com/yahodu/openpic-webapp/compare/v1.43.0...v1.44.0) (2026-10-26)
 
 ### Features

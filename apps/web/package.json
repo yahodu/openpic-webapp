@@ -9,6 +9,8 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1156.0",
+    "@aws-sdk/s3-request-presigner": "^3.1156.0",
     "@openpic/contracts": "workspace:*",
     "better-auth": "^1.7.7",
     "mongodb": "^6.12.0",

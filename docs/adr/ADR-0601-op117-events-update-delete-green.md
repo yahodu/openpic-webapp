@@ -1,17 +1,17 @@
-# ADR-0581 — OP-117 GREEN: update / archive / delete event implemented (PATCH + DELETE `/events/{e}`, `POST /events/{e}/archive`)
+# ADR-0601 — OP-117 GREEN: update / archive / delete event implemented (PATCH + DELETE `/events/{e}`, `POST /events/{e}/archive`)
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-117 GREEN (`t_a6a8f636`) · **Branch:** `OP-117-feature-events-update-delete` (based on the pins head `e83d0e6`, itself the pins branch `OP-117-task-events-update-delete` merged with `origin/main` incl. OP-116) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_a6a8f636`
-- **Relates to:** [ADR-0580](ADR-0580-op117-events-update-delete-red.md) (the RED contract this card implements), [ADR-0560](ADR-0560-op116-events-list-get-red.md) / [ADR-0561](ADR-0561-op116-events-list-get-green.md) (the detail route this card's mutations extend), [ADR-0520](ADR-0520-op115-events-create-red.md) / [ADR-0521](ADR-0521-op115-events-create-green.md) (the create lane's windows/DTO/entitlement shapes), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox the emissions ride), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
+- **Relates to:** [ADR-0600](ADR-0600-op117-events-update-delete-red.md) (the RED contract this card implements), [ADR-0560](ADR-0560-op116-events-list-get-red.md) / [ADR-0561](ADR-0561-op116-events-list-get-green.md) (the detail route this card's mutations extend), [ADR-0520](ADR-0520-op115-events-create-red.md) / [ADR-0521](ADR-0521-op115-events-create-green.md) (the create lane's windows/DTO/entitlement shapes), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox the emissions ride), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §4.1 (PATCH / archive / DELETE), §0.10 (ETag / If-Match), §0.4 (never a cross-tenant oracle), §22 (the ordered purge) · **Schema:** §15.1 (`events`), §15.2 (`event_organizers`), §18.3 (outbox) · **Doc:** `docs/API Contract.md` Part 4
 
 ## Context
 
-The pins card (`t_c44493a2`, ADR-0580) delivered a test-only RED across three
+The pins card (`t_c44493a2`, ADR-0600) delivered a test-only RED across three
 files: one unit spec (16 cases, the recompute / whitelist / start-lock units),
 one integration spec (12 cases driving PATCH / archive / DELETE in-process
 against MongoDB-memory-server) and one e2e journey (create → PATCH with ETag →
-delete). This card implements the ADR-0580 contract, ships the pins
+delete). This card implements the ADR-0600 contract, ships the pins
 byte-unchanged, and turns every **server-side** behaviour green. One integration
 assertion (`I4`'s final `countDocuments({}) == 0`) is unsatisfiable as written
 — the harness sign-in the fixture itself performs emits two outbox rows the
@@ -20,7 +20,7 @@ independently proven.
 
 ## Decision
 
-### P1 — Module contract (the three units, ADR-0580 §1)
+### P1 — Module contract (the three units, ADR-0600 §1)
 
 `@/server/events/windows` gains `recomputeWindows({endAt, postUploadDays,
 retentionDays}) → {uploadWindowEndsAt, retentionExpiresAt}` — the two existing
@@ -112,7 +112,7 @@ destroyed by this endpoint — the deleting state persists until OP-132 drains
 the purge event. DELETE also runs the DB-backed ETag stage with
 `required: false` (enforce-if-supplied; only PATCH's 428 is pinned).
 
-### P6 — Registry debts (ADR-0580 §Registry)
+### P6 — Registry debts (ADR-0600 §Registry)
 
 - `event_deleting` (`409`, non-retryable, `details {purgeScheduledAt}`) and
   `event_already_started` (`409`) appended as a new closed set
@@ -185,13 +185,13 @@ test author.
 
 - `purgeScheduledAt` is the instant the delete answers, stored as the row's
   `deletedAt` — the 202 body, the outbox payload and the later 409 details all
-  read the same value (ADR-0580's unpinned three-way agreement, resolved to
+  read the same value (ADR-0600's unpinned three-way agreement, resolved to
   "same instant, no grace offset").
 - The route-level `visibilityDefaults`/`thumbnailPreset` fields are stored
   verbatim; no test pins their shape (whitelisted by U2 at the unit level).
 - `POST /upload-window:extend`, the `draft → published` transition,
   `retention_would_expire_immediately`, access-link rotation (OP-118) and the
-  co-organizer delete denial stay deliberately out of scope (ADR-0580 §Open
+  co-organizer delete denial stay deliberately out of scope (ADR-0600 §Open
   items): no test pins them and the card's test list does not carry them.
 
 ## Consequences
@@ -202,16 +202,19 @@ test author.
 - Delete is the only content-destroying path and is user-initiated; the
   `deleting` state + `event.purge.scheduled` give the OP-132 purge job the
   ordered drain it consumes.
-- **ADR-number allocation.** This record is the OP-117 GREEN; the lane holds
-  `0580`–`0599` (ADR-0580 took `0580`), so this card takes `0581` and the
-  lane's `Next free` cell advances to `0582`. The pool cell stays `0600+` (the
-  documented union-at-merge hotspot keeps the highest cells). No number
-  outside `0580`–`0599` is touched.
+- **ADR-number allocation (renumbered 2026-10-26).** This record is the OP-117
+  GREEN. The lane was first allocated `0580`–`0599` (RED drafted as `0580`),
+  but at integration `origin/main` claimed `0580`–`0583` for the Media
+  foundations lanes (OP-112/113), so under ADR-0300 §9's land-then-renumber
+  fallback the lane renumbered to the next free pool block **`0600`–`0619`**:
+  this card takes `0601` (the RED took `0600`), the lane's `Next free` cell
+  advances to `0602`, and the pool cell advances to `0620`+. No number outside
+  `0600`–`0619` is touched.
 
 ## Alternatives considered
 
 - **A route-local If-Match check in the handler** instead of the ETag stage.
-  Rejected: the ADR-0580 contract names the `defineRoute` etag stage with
+  Rejected: the ADR-0600 contract names the `defineRoute` etag stage with
   `required: true`, and composing `etagStage` over a pre-loaded row reuses the
   exact 428/412 semantics (including `details.currentETag`) instead of
   re-implementing them.
