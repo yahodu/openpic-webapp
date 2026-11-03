@@ -186,6 +186,7 @@ export const EVENT_ERROR_CODES = [
   "event_deleting",
   "event_already_started",
   "retention_would_expire_immediately",
+  "access_link_revoked",
 ] as const;
 
 /** A member of the closed {@link EVENT_ERROR_CODES} set. */
