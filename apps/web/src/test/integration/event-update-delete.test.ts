@@ -950,3 +950,77 @@ describe("OP-117 review round 1 — archive changes state (schema §15.1)", () =
     expect(row?.status).toBe("archived");
   });
 });
+
+describe("OP-117 review round 2 — the archive write must be conditional on the read row's version", () => {
+  /** The driver's own `updateOne`, captured at module load (never the spy). */
+  const driverUpdateOne = ((): typeof Collection.prototype.updateOne => {
+    const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "updateOne");
+    if (descriptor === undefined || typeof descriptor.value !== "function") {
+      throw new Error("expected Collection.prototype.updateOne to be a function");
+    }
+    return descriptor.value as typeof Collection.prototype.updateOne;
+  })();
+
+  it("R7: a DELETE that commits between the archive read and its write wins — 409 event_deleting, the row stays deleting, nothing archived", async () => {
+    const { user, tenantId } = await seedOwner("op117-r7");
+    const tenantKey = tenantId.toHexString();
+    await seedStarterWorkspace(tenantKey);
+    const eventId = await seedOwnedEvent(tenantKey, user.userId);
+    const id = eventId.toHexString();
+    const concurrentDeletedAt = new Date(fixtureInstant("13:00:00.000Z", 30));
+    const concurrentUpdatedAt = new Date(fixtureInstant("13:00:00.000Z", 30));
+
+    // Deterministic archive-vs-delete race: the first `updateOne` the archive
+    // route issues against `events` is preceded by a **different writer's**
+    // committed DELETE — exactly as if that request landed between this
+    // request's read (which still saw `published`) and its write. A predicate
+    // carrying the read row's version matches nothing; a bare `{ _id }`
+    // predicate un-schedules the purge by writing `archived` back.
+    let injected = false;
+    const updateSpy = vi
+      .spyOn(Collection.prototype, "updateOne")
+      .mockImplementation(async function (this: Collection, filter, update, options) {
+        if (!injected && this.collectionName === COLLECTIONS.events) {
+          injected = true;
+          await driverUpdateOne.call(
+            this,
+            { _id: eventId },
+            {
+              $set: {
+                status: "deleting",
+                deletedAt: concurrentDeletedAt,
+                updatedAt: concurrentUpdatedAt,
+              },
+            }
+          );
+        }
+        return driverUpdateOne.call(this, filter, update, options);
+      });
+
+    let response: Response;
+    try {
+      response = await archiveEvent(archiveRequest(user.cookie, id));
+    } finally {
+      updateSpy.mockRestore();
+    }
+    expect(injected).toBe(true);
+
+    expect(response.status).toBe(409);
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: Record<string, unknown> };
+    };
+    expect(parsed.error.code).toBe("event_deleting");
+
+    // The losing archive did NOT overwrite the DELETE: the ordered purge stays
+    // scheduled with its own `deletedAt`.
+    const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect(row?.status).toBe("deleting");
+    expect((row?.deletedAt as Date).toISOString()).toBe(concurrentDeletedAt.toISOString());
+
+    // A refused archive announces nothing.
+    const emitted = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .findOne({ eventKey: "event.archived", tenantId: tenantKey });
+    expect(emitted).toBeNull();
+  });
+});
