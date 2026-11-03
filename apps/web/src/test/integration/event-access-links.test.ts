@@ -1,9 +1,14 @@
+import { createHash } from "node:crypto";
+
 import { ObjectId } from "mongodb";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as rotateRouteModule from "@/app/api/v1/events/[eventId]/access-links:rotate/route";
 import * as qrRouteModule from "@/app/api/v1/events/[eventId]/access-links/[slug]/qr/route";
 import { COLLECTIONS } from "@/server/db/collections";
+import { renderQrCode } from "@/server/events/access-link-qr";
+import * as qrRenderer from "@/server/events/access-link-qr";
+import { buildQrPayloadUrl } from "@/server/events/access-links";
 import { ensureIndexes } from "@/server/db/indexes";
 import { createMediaSigner } from "@/server/media/signer";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
@@ -685,5 +690,77 @@ describe("GET /api/v1/events/{eventId}/access-links/{slug}/qr — generate a QR 
 
     expect(response.status).toBe(401);
     expect((await errorBody(response)).code).toBe("authentication_required");
+  });
+});
+
+/**
+ * F2/F3 — OP-118 review round 1 follow-up.
+ *
+ * `F2`: the QR was rendered **before** the cache was consulted, so the cache
+ * saved storage but no work — every download paid the `qrcode` render (and a
+ * PDF its `pdf-lib` embed + save as well).
+ *
+ * `F3`: the cache read and the upsert matched `{ tenantId, contentHash }`
+ * without `kind: "export"`, so a `mediaAssets` row of another kind holding
+ * byte-identical content was reused as the QR cache and stamped with
+ * `qrUrl`/`qrExpiresAt`.
+ */
+describe("GET …/access-links/{slug}/qr — the cache hides the work, not only the write (OP-118 review round 1)", () => {
+  it("F2: two identical downloads render the QR image once", async () => {
+    // Arrange
+    const { user, tenantId } = await seedOwner("op118-qr-render-once");
+    const seeded = await seedOwnedEvent(tenantId.toHexString(), user.userId);
+    const id = seeded.id.toHexString();
+    const renderSpy = vi.spyOn(qrRenderer, "renderQrCode");
+
+    // Act
+    const first = await getQrCode(qrRequest(user.cookie, id, seeded.slug));
+    const second = await getQrCode(qrRequest(user.cookie, id, seeded.slug));
+
+    // Assert — both answers succeed and the repeat costs no render (`I2`
+    // already pins that the two bodies are byte-identical).
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("F3: a thumbnail row carrying the QR bytes is not reused as the QR cache", async () => {
+    // Arrange
+    const { user, tenantId } = await seedOwner("op118-qr-foreign-kind");
+    const tenantKey = tenantId.toHexString();
+    const seeded = await seedOwnedEvent(tenantKey, user.userId);
+    const id = seeded.id.toHexString();
+
+    // The renderer is pure (schema §16.1: "same input, same bytes"), so the
+    // content hash this request will compute is known up front — that is what
+    // lets the fixture occupy the very row the route would otherwise match.
+    const rendered = await renderQrCode(buildQrPayloadUrl(APP_BASE_URL, seeded.slug), {
+      format: "png",
+      size: 1024,
+    });
+    const contentHash = createHash("sha256").update(rendered.bytes).digest("hex");
+    await app.db.collection(COLLECTIONS.mediaAssets).insertOne({
+      tenantId: tenantKey,
+      contentHash,
+      kind: "thumbnail",
+      createdAt: new Date(),
+    });
+
+    // Act
+    const response = await getQrCode(qrRequest(user.cookie, id, seeded.slug));
+
+    // Assert — the answer names those bytes...
+    expect(response.status).toBe(200);
+    const parsed = (await body(response)) as unknown as { url: string };
+    expect(parsed.url).toContain(`/o/${contentHash}.png`);
+
+    // ...and the thumbnail row keeps no QR state: the cache row is kind-scoped.
+    const foreign = await app.db.collection(COLLECTIONS.mediaAssets).findOne({ contentHash });
+    expect(foreign?.kind).toBe("thumbnail");
+    expect(foreign?.qrUrl).toBeUndefined();
+    expect(foreign?.qrExpiresAt).toBeUndefined();
+    expect(
+      await app.db.collection(COLLECTIONS.mediaAssets).countDocuments({ qrUrl: { $exists: true } })
+    ).toBe(0);
   });
 });
