@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import type { Document } from "mongodb";
 import { z } from "zod";
 
 import { getConfig } from "@/server/config/env";
@@ -7,12 +8,17 @@ import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { loadEventRow, requirePrincipal, resolveEventActorRole } from "@/server/events/access";
 import { renderQrCode } from "@/server/events/access-link-qr";
-import { buildQrPayloadUrl, parseQrQuery, QR_FORMATS } from "@/server/events/access-links";
+import {
+  buildQrPayloadUrl,
+  parseQrQuery,
+  QR_FORMATS,
+  type QrQuery,
+} from "@/server/events/access-links";
 import { eventIdFromRequest } from "@/server/events/event-id";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { createMediaSigner, type SignedMediaUrl } from "@/server/media/signer";
-import { platformRepo } from "@/server/repos";
+import { platformRepo, type RepositoryCollection } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
 import { buildObjectKey } from "@/server/storage/object-key";
@@ -47,6 +53,8 @@ import { userAuth } from "@/server/tenancy/route-scope";
 
 /** The fields of one stored `mediaAssets` row this route reads and writes. */
 interface QrAssetRow {
+  readonly contentHash?: string;
+  readonly qrCacheKey?: string;
   readonly qrUrl?: string;
   readonly qrExpiresAt?: string;
 }
@@ -110,6 +118,73 @@ function cachedSignedUrl(row: QrAssetRow, now: Date): SignedMediaUrl | undefined
     : undefined;
 }
 
+/** MongoDB's duplicate-key server error code (a unique index rejected an insert). */
+const DUPLICATE_KEY = 11000;
+
+/**
+ * True when `error` is MongoDB's duplicate-key error.
+ *
+ * @param error - The thrown value.
+ * @returns Whether the unique index refused the write.
+ */
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === DUPLICATE_KEY
+  );
+}
+
+/**
+ * The render-free identity of one cached QR asset.
+ *
+ * The bytes' identity is their SHA-256, but deriving it would mean rendering
+ * first — the very work the cache exists to avoid. The request identity
+ * `(eventId, slug, format, size)` addresses the cache row instead, and the row
+ * still stores the content hash that names the object (ADR-0623).
+ *
+ * @param eventId - The event the link belongs to.
+ * @param slug - The link's slug.
+ * @param query - The validated format and edge length.
+ * @returns The row's `qrCacheKey`.
+ */
+function qrAssetCacheKey(eventId: string, slug: string, query: QrQuery): string {
+  return `${eventId}:${slug}:${query.format}:${String(query.size)}`;
+}
+
+/**
+ * Upsert the `export` cache row, absorbing the unique-index race.
+ *
+ * A first-time pair of requests can both miss and both insert; one wins and the
+ * loser's upsert surfaces `E11000` from
+ * `media_assets_tenant_content_hash_unique`. Retrying once reconciles against
+ * the winner's row, whose write the filter now matches. If the `(tenantId,
+ * contentHash)` slot is instead held by a row of another `kind`, the retry also
+ * loses it: the bytes are still served with their signed URL, only the QR cache
+ * row cannot be written (ADR-0623).
+ *
+ * @param assets - The `mediaAssets` collection handle.
+ * @param filter - The natural-key filter.
+ * @param update - The `$setOnInsert` / `$set` update document.
+ */
+async function upsertQrExportAsset(
+  assets: RepositoryCollection,
+  filter: Document,
+  update: Document
+): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await assets.findOneAndUpdate(filter, update, { upsert: true });
+      return;
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) {
+        throw error;
+      }
+    }
+  }
+}
+
 export const GET = defineRoute({
   route: "/api/v1/events/:eventId/access-links/:slug/qr",
   response: qrResponseSchema,
@@ -142,14 +217,40 @@ export const GET = defineRoute({
       });
     }
 
-    const rendered = await renderQrCode(buildQrPayloadUrl(config.app.baseUrl, slug), query);
-    const contentHash = createHash("sha256").update(rendered.bytes).digest("hex");
     const assets = platformRepo(db).collection(COLLECTIONS.mediaAssets);
 
-    // The object is written only on a miss: the content hash is the cache key,
-    // so a repeat download of the same `(slug, format, size)` stores nothing.
+    // The render-free cache read comes first: a valid stored URL ends the
+    // request here, so a repeat download pays neither the `qrcode` render (nor
+    // a PDF's `pdf-lib` embed) nor the signing — the cache hides the work, not
+    // only the write (ADR-0623).
+    const cacheKey = qrAssetCacheKey(eventId.toHexString(), slug, query);
+    const cachedRow = (await assets.findOne({
+      tenantId: row.tenantId,
+      kind: "export",
+      qrCacheKey: cacheKey,
+    })) as QrAssetRow | null;
+    const cached = cachedRow === null ? undefined : cachedSignedUrl(cachedRow, now);
+    if (cached !== undefined) {
+      return {
+        body: {
+          url: cached.url,
+          expiresAt: cached.expiresAt,
+          format: query.format,
+          size: query.size,
+        },
+      };
+    }
+
+    const rendered = await renderQrCode(buildQrPayloadUrl(config.app.baseUrl, slug), query);
+    const contentHash = createHash("sha256").update(rendered.bytes).digest("hex");
+
+    // The object is written only on a miss: the content hash is the bytes'
+    // identity, so a repeat download of the same `(eventId, slug, format, size)`
+    // stores nothing. A changed cache key over unchanged bytes (a row that
+    // predates the key) still reuses the stored object and its signed URL.
     const existing = (await assets.findOne({
       tenantId: row.tenantId,
+      kind: "export",
       contentHash,
     })) as QrAssetRow | null;
     if (existing === null) {
@@ -167,21 +268,23 @@ export const GET = defineRoute({
         ? {}
         : { previousSecret: config.media.signingSecretPrevious }),
     });
-    const cached = existing === null ? undefined : cachedSignedUrl(existing, now);
-    const signed = cached ?? signer.sign({ kind: "export", contentHash, ext: rendered.extension });
+    const signed =
+      (existing === null ? undefined : cachedSignedUrl(existing, now)) ??
+      signer.sign({ kind: "export", contentHash, ext: rendered.extension });
 
-    await assets.findOneAndUpdate(
-      { tenantId: row.tenantId, contentHash },
+    await upsertQrExportAsset(
+      assets,
+      { tenantId: row.tenantId, kind: "export", contentHash },
       {
         $setOnInsert: {
           tenantId: row.tenantId,
           contentHash,
           kind: "export",
+          qrCacheKey: cacheKey,
           createdAt: now,
         },
         $set: { qrUrl: signed.url, qrExpiresAt: signed.expiresAt },
-      },
-      { upsert: true }
+      }
     );
 
     return {

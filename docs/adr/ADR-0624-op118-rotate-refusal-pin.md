@@ -1,4 +1,4 @@
-# ADR-0622 — OP-118 review round 1 pin: a refused access-link rotation writes nothing
+# ADR-0624 — OP-118 review round 1 pin: a refused access-link rotation writes nothing
 
 - **Status:** Accepted · **Date:** 2026-11-03
 - **Card:** OP-118 review round 1 follow-up TEST (`t_b0d14648`), follow-up of the GREEN (`t_5a121a37`, PR [#385](https://github.com/yahodu/openpic-webapp/pull/385) squash-merged as `1aeca52`) · **Branch:** `OP-118-task-rotate-refusal-pin` (cut from the trunk `985ceff`, i.e. the `1aeca52` merge plus the `1.49.1` release) · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_b0d14648`
@@ -91,7 +91,7 @@ pass, which confirms the pin is additive and the happy path is unaffected.
   `returnDocument: "before"`, the outbox write and the §4.2 body stay
   byte-identical, so the existing 14 cases (and the pinned `I1` shapes in
   `access-links-qr.test.ts`) stay green without edits.
-- `docs/adr/README.md` is the shared-ledger hotspot: this row's `Next free 0623`
+- `docs/adr/README.md` is the shared-ledger hotspot: this row's `Next free 0625`
   merges as a union keeping the highest cell.
 - No number outside the lane range `0620`–`0639` is touched; the OP-118 lane
-  `Next free` advances from `0622` to `0623`.
+  `Next free` advances from `0624` to `0625`.
