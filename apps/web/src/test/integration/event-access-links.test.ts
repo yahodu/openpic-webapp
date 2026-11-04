@@ -687,3 +687,52 @@ describe("GET /api/v1/events/{eventId}/access-links/{slug}/qr — generate a QR 
     expect((await errorBody(response)).code).toBe("authentication_required");
   });
 });
+
+/**
+ * F1 (OP-118 review round 1) — a refusal must not commit.
+ *
+ * `POST …/access-links:rotate` answers `409 conflict` when the event's stored
+ * `accessLinks` carry no active element. A refusal is a statement about the
+ * request, so nothing the route computed for it may reach the database: the row
+ * keeps its single revoked link and no `event.link.rotated` joins the outbox.
+ */
+describe("POST /api/v1/events/{eventId}/access-links:rotate — a refused rotation (F1)", () => {
+  /** The instant the event's only link was revoked at. */
+  const REVOKED_AT = new Date("2026-10-01T09:00:00.000Z");
+
+  it("F1: a rotation refused with 409 leaves the stored links and the outbox untouched", async () => {
+    const { user, tenantId } = await seedOwner("op118-rotate-noactive");
+    const tenantKey = tenantId.toHexString();
+    const seeded = await seedOwnedEvent(tenantKey, user.userId);
+
+    // Rewrite the seeded link into the "no active link" state: the event's only
+    // link was already revoked, so there is nothing for a rotation to revoke.
+    await app.db
+      .collection(COLLECTIONS.events)
+      .updateOne(
+        { _id: seeded.id },
+        { $set: { accessLinks: [{ slug: seeded.slug, active: false, revokedAt: REVOKED_AT }] } }
+      );
+
+    const response = await rotateAccessLink(
+      rotateRequest(user.cookie, seeded.id.toHexString(), { confirmUnderstood: true })
+    );
+
+    expect(response.status).toBe(409);
+    expect((await errorBody(response)).code).toBe("conflict");
+
+    // The refusal wrote nothing: same single link, still revoked, nothing pushed.
+    const links = storedLinks(await readEventRow(seeded.id));
+    expect(links).toHaveLength(1);
+    expect(links[0]?.slug).toBe(seeded.slug);
+    expect(links[0]?.active).toBe(false);
+    expect(links.filter((link) => link.active === true)).toEqual([]);
+
+    // ...and the refusal announced nothing on the outbox.
+    expect(
+      await app.db
+        .collection(COLLECTIONS.domainEvents)
+        .countDocuments({ eventKey: "event.link.rotated", tenantId: tenantKey })
+    ).toBe(0);
+  });
+});
