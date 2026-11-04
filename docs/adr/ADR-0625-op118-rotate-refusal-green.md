@@ -95,3 +95,55 @@ rather than edited into the frozen ADR-0621.
   merges as a union keeping the highest cell.
 - No number outside the lane range `0620`–`0639` is touched; the OP-118 lane
   `Next free` advances from `0625` to `0626`.
+
+## Review — round 1 (artifact lens)
+
+| Field         | Value                                                                                  |
+| ------------- | -------------------------------------------------------------------------------------- |
+| Reviewer card | `t_673c5b48` (the round-1 artifact-lens review)                                        |
+| Reviewed head | `c948e42` on `OP-118-feature-rotate-refusal`                                           |
+| Merge commit  | `6227241` — the squash of PR [#400](https://github.com/yahodu/openpic-webapp/pull/400) |
+| Verdict       | **APPROVED** — no blocking findings; the delivery ships                                |
+
+### What was verified
+
+The numbers below are the reviewer's own, measured on the reviewed head and on
+the squash. They are not transcribed from the implementer's handoff.
+
+| Check                                              | Result                                  |
+| -------------------------------------------------- | --------------------------------------- |
+| Branch-tip → squash whole-tree diff                | empty                                   |
+| `event-access-links.test.ts` (focused integration) | **17 passed (17)**                      |
+| Full `--project unit`                              | **2286 passed / 3 skipped (142 files)** |
+| Full `--project integration`                       | **811 passed (93 files)**               |
+| ADR guard (`adr-numbering.test.ts`)                | **29/29**, no duplicate `ADR-NNNN`      |
+| `tsc --noEmit`                                     | exit `0`                                |
+| ESLint on the rotate route                         | 0 warnings                              |
+| `prettier --check "docs/adr/**/*.md"`              | clean                                   |
+| PR #400 CI checks                                  | all pass                                |
+
+The review is artifact-lens: the branch tip and its squash are the same tree, no
+test, mock, fixture or factory is edited, and no fixture-specific hardcoding was
+found. The frozen `docs/adr/README.md` is untouched and no `ADR-NNNN` is
+duplicated.
+
+### Findings and routing
+
+| Finding | Severity | What it is                                                                                                                                                                                                                                                                                                         | Routed to | State at `6227241` |
+| ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- | ------------------ |
+| **I1**  | Info     | After the change a `findOneAndUpdate` `null` conflates "no active link" with "the event row vanished between `loadEventRow` and the update", so that race now reads `409 conflict` instead of the former `404 not_found`. This is the card's explicit mandate and the race is not reachable from the pinned paths. | —         | Accepted           |
+
+The one finding is Info and is recorded here with no separate card. It is a
+deliberate consequence of the decision: deciding the refusal before the write
+leaves the missing-active-link case as the only reachable `null`, and the card
+mandated `409` for it.
+
+### Post-review status
+
+- The frozen [ADR-0621](ADR-0621-op118-access-links-qr-green.md) remains
+  **unedited**; this sign-off appends nothing new to the ADR ledger and consumes
+  no ADR number.
+- No pinned criterion regressed: the refusal precedes every write, so a
+  no-active-link rotation leaves the stored `accessLinks` and the outbox
+  unchanged, exactly as [ADR-0624](ADR-0624-op118-rotate-refusal-pin.md) fixes
+  it.
