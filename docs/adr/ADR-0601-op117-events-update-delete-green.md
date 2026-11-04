@@ -682,7 +682,7 @@ the tree.
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **F11** the archive write carried no read-version predicate, so a concurrent `DELETE` was overwritten from `deleting` back to `archived`                              | Medium   | TEST `t_95c68c28` → GREEN `t_473da231`       | Closed: the write is conditional on `{_id, status, updatedAt}`, a zero match is refused (`409 event_deleting` on a deleting re-read, otherwise `412 etag_mismatch`), `event.archived` is emitted only when the write matched; `R7` pins the `409` arm |
 | **F12** two unpinned `upload-window:extend` edge paths — the `null` stored close on an unlimited plan, and the lost-race `412` with no `details.currentETag`          | Low      | TEST `t_95c68c28` (`E7`/`E8`)                | Closed: both characterisation pins are green on the trunk and no production change was needed                                                                                                                                                         |
-| **F13** the archive's `412 etag_mismatch` arm (a concurrent writer that leaves the row not `deleting`) is implemented but unpinned; `R7` exercises only the `409` arm | Low      | TEST `t_77fdac73` (created by this sign-off) | Open                                                                                                                                                                                                                                                  |
+| **F13** the archive's `412 etag_mismatch` arm (a concurrent writer that leaves the row not `deleting`) is implemented but unpinned; `R7` exercises only the `409` arm | Low      | TEST `t_77fdac73` (created by this sign-off) | Closed — ADR-0603 / PR #388                                                                                                                                                                                                                           |
 | Contract §4.1 spells `upload-window:extend` tenant-scoped; it is implemented on the global `/api/v1/events/{eventId}` family                                          | Info     | recorded in “Path deviation” above           | Accepted deviation, unchanged                                                                                                                                                                                                                         |
 
 ### Post-review status
@@ -690,8 +690,26 @@ the tree.
 - F1–F6 are addressed on the merged trunk (`858fe39`), F11 and F12 on `d09b8cc`.
   The §0.10 conditional write is now uniform across `PATCH`, `DELETE`,
   `archive` and `upload-window:extend`.
-- Open: F13 on `t_77fdac73`, plus the `DELETE` predicate noted at round 1 as
-  “implemented anyway”, which still has no pin.
+- Open: the `DELETE` predicate noted at round 1 as
+  “implemented anyway”, which still has no pin. F13 is closed by
+  `t_77fdac73` — see the sign-off below.
 - §D1 and §D2 stay as recorded and are not retracted: D1's assertion was
   corrected by the Test Author (`t_be8b01a5`) and D2's shared `auth.otp` bucket
   by `t_26504ca0`.
+
+## Review sign-off — F13 closure (card `t_77fdac73`)
+
+F13 is **closed** by card `t_77fdac73`. `R8` in
+`apps/web/src/test/integration/event-update-delete.test.ts` pins the archive's
+second refusal arm: a concurrent non-delete writer lands between the read and
+the conditional `{_id, status, updatedAt}` write, so the write matches zero rows
+and the route refuses with `412 etag_mismatch`. In that response
+`details.currentETag` carries the re-read row's tag, the other writer's value
+survives, and nothing is archived. The pin landed as
+[ADR-0603](ADR-0603-op117-archive-412-refusal-pin.md), PR #388, squash
+`f3b70d9`.
+
+**Nothing above is retracted.** §D1, §D2, and the round-1 and round-2 tables
+stand as written.
+
+This section consumes **no new ADR number**.

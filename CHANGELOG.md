@@ -1,3 +1,15 @@
+## [1.49.3](https://github.com/yahodu/openpic-webapp/compare/v1.49.2...v1.49.3) (2026-11-04)
+
+### Bug Fixes
+
+- **events:** OP-118 refuse the access-link rotation before it writes ([#400](https://github.com/yahodu/openpic-webapp/issues/400)) ([6227241](https://github.com/yahodu/openpic-webapp/commit/622724183e40ccedfc16d12aa47cc7baa6d58c4a))
+
+## [1.49.2](https://github.com/yahodu/openpic-webapp/compare/v1.49.1...v1.49.2) (2026-11-04)
+
+### Performance Improvements
+
+- **events:** OP-118 read the QR cache before rendering, kind-scope it and absorb the racing upsert ([#398](https://github.com/yahodu/openpic-webapp/issues/398)) ([1a22493](https://github.com/yahodu/openpic-webapp/commit/1a22493baa9b16e3c0189fd70730b184c68c55e4))
+
 ## [1.49.1](https://github.com/yahodu/openpic-webapp/compare/v1.49.0...v1.49.1) (2026-11-03)
 
 ### Bug Fixes

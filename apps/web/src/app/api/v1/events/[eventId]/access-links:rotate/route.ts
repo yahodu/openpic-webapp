@@ -171,14 +171,22 @@ export const POST = defineRoute({
     };
 
     const before = await withTransaction(async (session) => {
+      // The filter carries the precondition: only an event that still has an
+      // active link is rotated. The event's existence is already proven by
+      // `loadEventRow` above, so a `null` here means "nothing to rotate" and
+      // the refusal precedes every write — no document update, no outbox row.
       const previous = (await platformRepo(db)
         .collection(COLLECTIONS.events)
-        .findOneAndUpdate({ _id: eventId }, rotatePipeline(newLink, now), {
-          session,
-          returnDocument: "before",
-        })) as EventRotateRow | null;
+        .findOneAndUpdate(
+          { _id: eventId, accessLinks: { $elemMatch: { active: true } } },
+          rotatePipeline(newLink, now),
+          {
+            session,
+            returnDocument: "before",
+          }
+        )) as EventRotateRow | null;
       if (previous === null) {
-        throw appError("not_found");
+        throw appError("conflict");
       }
       await emitDomainEvent(
         {
@@ -205,7 +213,11 @@ export const POST = defineRoute({
 
     const revoked = activeLinkOf(before.accessLinks);
     if (revoked === undefined) {
-      throw appError("conflict");
+      // Unreachable: the update filter admits only rows that still carry an
+      // active link, so the committed `before` image always has one. This
+      // guards the response build, it is not the refusal — that is the `409`
+      // raised inside the transaction before any write.
+      throw new Error("access-links:rotate committed a row without an active link");
     }
 
     getLogger().info("event access link rotated", {

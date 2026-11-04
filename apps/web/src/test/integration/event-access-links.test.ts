@@ -1,9 +1,14 @@
+import { createHash } from "node:crypto";
+
 import { ObjectId } from "mongodb";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as rotateRouteModule from "@/app/api/v1/events/[eventId]/access-links:rotate/route";
 import * as qrRouteModule from "@/app/api/v1/events/[eventId]/access-links/[slug]/qr/route";
 import { COLLECTIONS } from "@/server/db/collections";
+import { renderQrCode } from "@/server/events/access-link-qr";
+import * as qrRenderer from "@/server/events/access-link-qr";
+import { buildQrPayloadUrl } from "@/server/events/access-links";
 import { ensureIndexes } from "@/server/db/indexes";
 import { createMediaSigner } from "@/server/media/signer";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
@@ -772,5 +777,125 @@ describe("GET /api/v1/events/{eventId}/access-links/{slug}/qr — generate a QR 
 
     expect(response.status).toBe(401);
     expect((await errorBody(response)).code).toBe("authentication_required");
+  });
+});
+
+/**
+ * F1 (OP-118 review round 1) — a refusal must not commit.
+ *
+ * `POST …/access-links:rotate` answers `409 conflict` when the event's stored
+ * `accessLinks` carry no active element. A refusal is a statement about the
+ * request, so nothing the route computed for it may reach the database: the row
+ * keeps its single revoked link and no `event.link.rotated` joins the outbox.
+ */
+describe("POST /api/v1/events/{eventId}/access-links:rotate — a refused rotation (F1)", () => {
+  /** The instant the event's only link was revoked at. */
+  const REVOKED_AT = new Date("2026-10-01T09:00:00.000Z");
+
+  it("F1: a rotation refused with 409 leaves the stored links and the outbox untouched", async () => {
+    const { user, tenantId } = await seedOwner("op118-rotate-noactive");
+    const tenantKey = tenantId.toHexString();
+    const seeded = await seedOwnedEvent(tenantKey, user.userId);
+
+    // Rewrite the seeded link into the "no active link" state: the event's only
+    // link was already revoked, so there is nothing for a rotation to revoke.
+    await app.db
+      .collection(COLLECTIONS.events)
+      .updateOne(
+        { _id: seeded.id },
+        { $set: { accessLinks: [{ slug: seeded.slug, active: false, revokedAt: REVOKED_AT }] } }
+      );
+
+    const response = await rotateAccessLink(
+      rotateRequest(user.cookie, seeded.id.toHexString(), { confirmUnderstood: true })
+    );
+
+    expect(response.status).toBe(409);
+    expect((await errorBody(response)).code).toBe("conflict");
+
+    // The refusal wrote nothing: same single link, still revoked, nothing pushed.
+    const links = storedLinks(await readEventRow(seeded.id));
+    expect(links).toHaveLength(1);
+    expect(links[0]?.slug).toBe(seeded.slug);
+    expect(links[0]?.active).toBe(false);
+    expect(links.filter((link) => link.active === true)).toEqual([]);
+
+    // ...and the refusal announced nothing on the outbox.
+    expect(
+      await app.db
+        .collection(COLLECTIONS.domainEvents)
+        .countDocuments({ eventKey: "event.link.rotated", tenantId: tenantKey })
+    ).toBe(0);
+  });
+});
+
+/**
+ * F2/F3 — OP-118 review round 1 follow-up.
+ *
+ * `F2`: the QR was rendered **before** the cache was consulted, so the cache
+ * saved storage but no work — every download paid the `qrcode` render (and a
+ * PDF its `pdf-lib` embed + save as well).
+ *
+ * `F3`: the cache read and the upsert matched `{ tenantId, contentHash }`
+ * without `kind: "export"`, so a `mediaAssets` row of another kind holding
+ * byte-identical content was reused as the QR cache and stamped with
+ * `qrUrl`/`qrExpiresAt`.
+ */
+describe("GET …/access-links/{slug}/qr — the cache hides the work, not only the write (OP-118 review round 1)", () => {
+  it("F2: two identical downloads render the QR image once", async () => {
+    // Arrange
+    const { user, tenantId } = await seedOwner("op118-qr-render-once");
+    const seeded = await seedOwnedEvent(tenantId.toHexString(), user.userId);
+    const id = seeded.id.toHexString();
+    const renderSpy = vi.spyOn(qrRenderer, "renderQrCode");
+
+    // Act
+    const first = await getQrCode(qrRequest(user.cookie, id, seeded.slug));
+    const second = await getQrCode(qrRequest(user.cookie, id, seeded.slug));
+
+    // Assert — both answers succeed and the repeat costs no render (`I2`
+    // already pins that the two bodies are byte-identical).
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("F3: a thumbnail row carrying the QR bytes is not reused as the QR cache", async () => {
+    // Arrange
+    const { user, tenantId } = await seedOwner("op118-qr-foreign-kind");
+    const tenantKey = tenantId.toHexString();
+    const seeded = await seedOwnedEvent(tenantKey, user.userId);
+    const id = seeded.id.toHexString();
+
+    // The renderer is pure (schema §16.1: "same input, same bytes"), so the
+    // content hash this request will compute is known up front — that is what
+    // lets the fixture occupy the very row the route would otherwise match.
+    const rendered = await renderQrCode(buildQrPayloadUrl(APP_BASE_URL, seeded.slug), {
+      format: "png",
+      size: 1024,
+    });
+    const contentHash = createHash("sha256").update(rendered.bytes).digest("hex");
+    await app.db.collection(COLLECTIONS.mediaAssets).insertOne({
+      tenantId: tenantKey,
+      contentHash,
+      kind: "thumbnail",
+      createdAt: new Date(),
+    });
+
+    // Act
+    const response = await getQrCode(qrRequest(user.cookie, id, seeded.slug));
+
+    // Assert — the answer names those bytes...
+    expect(response.status).toBe(200);
+    const parsed = (await body(response)) as unknown as { url: string };
+    expect(parsed.url).toContain(`/o/${contentHash}.png`);
+
+    // ...and the thumbnail row keeps no QR state: the cache row is kind-scoped.
+    // Only the two `qrUrl`/`qrExpiresAt` stamps discriminate — `$setOnInsert`
+    // never rewrites `kind` on an existing row.
+    const foreign = await app.db.collection(COLLECTIONS.mediaAssets).findOne({ contentHash });
+    expect(foreign?.kind).toBe("thumbnail");
+    expect(foreign?.qrUrl).toBeUndefined();
+    expect(foreign?.qrExpiresAt).toBeUndefined();
   });
 });
