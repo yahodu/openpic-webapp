@@ -168,3 +168,72 @@ The round-1 review of the paired GREEN (card `t_5a121a37`, sign-off
 `t_f55a6e5f`) found no contradiction in this RED record — the A1–A7 assumptions
 and the pinned answer shapes hold on the merged trunk; the findings and routing
 are in ADR-0621 §Review — round 1.
+
+## Review — round 1 follow-up pins (card `t_451b5476`)
+
+The round-1 review's three coverage gaps were closed with three pins appended to
+the same two specs (test-only: no production file, no existing assertion changed
+or relaxed). These pins add no decision beyond §Decision and §Consequences, so
+**no ADR number is consumed**.
+
+- **R1 — rotation under concurrency.** Eight `POST …/access-links:rotate`
+  requests on one event, in flight together (`Promise.all`), must each answer a
+  settled HTTP status — no throw, no `500` — and leave the stored row with
+  exactly one `active: true` element and a `revokedAt` on every other one. A
+  loser may serialise, retry or answer `409`; only a `500` violates the
+  contract. **RED on the merged trunk** (`1aeca52`), deterministically 3/3
+  isolated runs: three of the eight answer `500`. The write itself is one array
+  pipeline, so the stored invariant survives; the `500` comes from
+  `@/server/db/transaction`, whose three-attempt cap is exhausted by eight
+  writers on one document and surfaces as `TransactionRetryLimitError`. Cannot
+  be weakened — routed to the GREEN sibling card `t_a37c8098`
+  (`openpic-webapp-backend-coder`, gated on this card). Distinct from the
+  `409`-after-commit defect pinned by `t_b0d14648`.
+- **R2 — object-level slug scope (two cases).** A well-formed slug that is not in
+  the event's `accessLinks` answers `404 not_found`, stores nothing and never
+  calls `putObject`; the same holds for a slug that belongs to another tenant's
+  event (the slug is globally unique, so the event scope is what bounds it).
+  Both **GREEN on arrival** — characterisation pins for §A7's event-scoped read,
+  kept so the scope cannot regress.
+- **R3 — builder edge.** `buildAccessLinkShareUrl("https://openpic.in/", …)`
+  collapses the trailing slash directly, so the two builders cannot diverge.
+  **GREEN on arrival** (§A1).
+- Evidence at this card's head: unit `15 passed`, integration `1 failed | 16
+passed` (the R1 arm), ADR guard `29/29`; `prettier --check` clean and
+  `eslint` 0 errors (the one accepted `security/detect-object-injection` warning
+  on the pre-existing shared `requireHandler` helper).
+
+## GREEN — round 1 follow-up (card `t_a37c8098`)
+
+R1 is fixed without weakening it and without a new decision, so **no ADR number
+is consumed** (the lane cell stays `Next free 0622`).
+
+- **Decision — an exhausted write race is a `409`, not a `500`.** The rotation
+  still runs as the single transactional array update of §Consequences, with the
+  unchanged three-attempt budget. `@/server/db/transaction` now exports
+  `isTransactionRetryLimitError(error): boolean` — a predicate over its own
+  `TransactionRetryLimitError` (the class stays module-private, so the public
+  surface is a boolean rather than a private name). The rotate handler attaches
+  a `.catch` to the `withTransaction` call: an exhausted-retry signal is
+  re-thrown as `appError("conflict")` (`409`), and every other error — including
+  the callback's own `not_found` — propagates unchanged, so a genuine failure is
+  still not swallowed.
+- **Why the aborted attempt leaves the stored invariant intact.** The retry cap
+  fires _inside_ the callback, before the driver commits, so the whole attempt —
+  the array pipeline write and the `event.link.rotated` outbox insert, which
+  share the session — is aborted. A losing request therefore stores nothing and
+  emits nothing: exactly one `active: true` element survives, every other one
+  carries a `revokedAt`, and `event.link.rotated` is emitted once per **committed**
+  rotation. The answer is a settled `409`, which R1 permits ("a loser may
+  serialise, retry or answer `409`").
+- **Rejected alternative — raising `maxAttempts` only.** A larger budget shrinks
+  the number of losers but cannot bound it: eight writers on one document can
+  also spend any fixed budget, which would leave R1 flaky. The deterministic
+  guarantee is the mapping, so the budget is left at its default.
+- **Evidence at this head.** R1 green, 3/3 isolated runs:
+  `TMPDIR=/root/tmp-mongo vitest run --project integration
+apps/web/src/test/integration/event-access-links.test.ts` → `17 passed (17)`;
+  the run's rejected-request log shows 3 of the 8 concurrent rotations answered
+  `409` (the catch arm biting) and the rest `200`. Unit `access-links-qr.test.ts`
+  `15 passed`, ADR guard `29/29`; `tsc -p apps/web` exit `0`; `prettier --check`
+  and `eslint` clean on both touched files. R2/R3 assertions untouched.
