@@ -1,3 +1,9 @@
+## [1.49.4](https://github.com/yahodu/openpic-webapp/compare/v1.49.3...v1.49.4) (2026-11-04)
+
+### Bug Fixes
+
+- **events:** OP-118 rotation answers 409 instead of 500 under concurrency ([#391](https://github.com/yahodu/openpic-webapp/issues/391)) ([81e0b78](https://github.com/yahodu/openpic-webapp/commit/81e0b78d2f6c4ae5088902cc6037816d6429f35f))
+
 ## [1.49.3](https://github.com/yahodu/openpic-webapp/compare/v1.49.2...v1.49.3) (2026-11-04)
 
 ### Bug Fixes
