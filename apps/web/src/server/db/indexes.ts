@@ -297,6 +297,19 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     unique: true,
   },
 
+  // media_assets — the QR export cache lookup by its render-free key (OP-118
+  // ADR-0623). Non-unique: the key addresses at most one row per tenant, but
+  // the `(tenantId, contentHash)` unique index remains the only hard invariant.
+  {
+    collection: COLLECTIONS.mediaAssets,
+    name: "media_assets_tenant_kind_qr_cache_key",
+    keys: [
+      ["tenantId", 1],
+      ["kind", 1],
+      ["qrCacheKey", 1],
+    ],
+  },
+
   // face_matches — one match row per (profile, image, face); makes the
   // incremental re-match idempotent (§17.4).
   {
