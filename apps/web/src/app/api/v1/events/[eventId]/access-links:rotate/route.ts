@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
-import { withTransaction } from "@/server/db/transaction";
+import { isTransactionRetryLimitError, withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { buildAccessLinkShareUrl } from "@/server/events/access-links";
 import { loadEventRow, requireEventRole, requirePrincipal } from "@/server/events/access";
@@ -191,6 +191,16 @@ export const POST = defineRoute({
         { db, session }
       );
       return previous;
+    }).catch((error: unknown) => {
+      // Under concurrent rotations the bounded retry budget can be spent, and
+      // the aborted attempt wrote nothing to the document or the outbox. Answer
+      // a settled `409` instead of letting the exhausted-retry signal surface
+      // as a `500`; the stored exactly-one-active-link invariant is intact
+      // (ADR-0620 §Consequences, pin R1).
+      if (isTransactionRetryLimitError(error)) {
+        throw appError("conflict");
+      }
+      throw error;
     });
 
     const revoked = activeLinkOf(before.accessLinks);

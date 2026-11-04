@@ -202,3 +202,38 @@ or relaxed). These pins add no decision beyond §Decision and §Consequences, so
 passed` (the R1 arm), ADR guard `29/29`; `prettier --check` clean and
   `eslint` 0 errors (the one accepted `security/detect-object-injection` warning
   on the pre-existing shared `requireHandler` helper).
+
+## GREEN — round 1 follow-up (card `t_a37c8098`)
+
+R1 is fixed without weakening it and without a new decision, so **no ADR number
+is consumed** (the lane cell stays `Next free 0622`).
+
+- **Decision — an exhausted write race is a `409`, not a `500`.** The rotation
+  still runs as the single transactional array update of §Consequences, with the
+  unchanged three-attempt budget. `@/server/db/transaction` now exports
+  `isTransactionRetryLimitError(error): boolean` — a predicate over its own
+  `TransactionRetryLimitError` (the class stays module-private, so the public
+  surface is a boolean rather than a private name). The rotate handler attaches
+  a `.catch` to the `withTransaction` call: an exhausted-retry signal is
+  re-thrown as `appError("conflict")` (`409`), and every other error — including
+  the callback's own `not_found` — propagates unchanged, so a genuine failure is
+  still not swallowed.
+- **Why the aborted attempt leaves the stored invariant intact.** The retry cap
+  fires _inside_ the callback, before the driver commits, so the whole attempt —
+  the array pipeline write and the `event.link.rotated` outbox insert, which
+  share the session — is aborted. A losing request therefore stores nothing and
+  emits nothing: exactly one `active: true` element survives, every other one
+  carries a `revokedAt`, and `event.link.rotated` is emitted once per **committed**
+  rotation. The answer is a settled `409`, which R1 permits ("a loser may
+  serialise, retry or answer `409`").
+- **Rejected alternative — raising `maxAttempts` only.** A larger budget shrinks
+  the number of losers but cannot bound it: eight writers on one document can
+  also spend any fixed budget, which would leave R1 flaky. The deterministic
+  guarantee is the mapping, so the budget is left at its default.
+- **Evidence at this head.** R1 green, 3/3 isolated runs:
+  `TMPDIR=/root/tmp-mongo vitest run --project integration
+apps/web/src/test/integration/event-access-links.test.ts` → `17 passed (17)`;
+  the run's rejected-request log shows 3 of the 8 concurrent rotations answered
+  `409` (the catch arm biting) and the rest `200`. Unit `access-links-qr.test.ts`
+  `15 passed`, ADR guard `29/29`; `tsc -p apps/web` exit `0`; `prettier --check`
+  and `eslint` clean on both touched files. R2/R3 assertions untouched.
