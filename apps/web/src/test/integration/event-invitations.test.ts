@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { findForbiddenFields, maskEmail, maskPhone } from "@openpic/contracts";
 
@@ -22,6 +22,7 @@ import {
   type MemoryTransport,
 } from "@/server/logging";
 import { runNotificationFanOut } from "@/server/notifications/fan-out";
+import type { MessageTransport } from "@/server/notifications/message-transport";
 import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
 import {
   seedNotificationTemplates,
@@ -1326,6 +1327,49 @@ describe("F2 — the invitation surface never logs a token-bearing value", () =>
 
     // Assert
     expect(response.status).toBe(200);
+    const records = recordTexts(sink);
+    expect(records.filter((record) => record.includes(token))).toEqual([]);
+    expect(records.filter((record) => record.includes(`/invitations/${token}`))).toEqual([]);
+    expect(records.filter((record) => record.includes(sha256Hex(token)))).toEqual([]);
+    expect(records.filter((record) => record.includes(inviteeEmail))).toEqual([]);
+  });
+
+  it("F2: a failed delivery records the failure without the token, its link or the address", async () => {
+    // Arrange — a live capture, and one channel whose transport rejects: the
+    // in-memory outbox never fails, so this is the only case that drives
+    // `deliverInvite`'s catch, the branch that logs `collab.invite.delivery_failed`.
+    const sink = captureLogs();
+    const workspace = await seedWorkspace("op120-f2-delivery-failed");
+    const eventId = await seedEvent(workspace);
+    await addEventMember(workspace, eventId, workspace.organizer, "organizer");
+    const inviteeEmail = "buck@example.com";
+    const failingTransport: MessageTransport = {
+      send: () => Promise.reject(new Error("smtp unavailable")),
+    };
+    const transportModule = await import("@/server/services/notification-transport");
+    const transport = vi
+      .spyOn(transportModule, "getNotificationTransport")
+      .mockReturnValue(failingTransport);
+
+    // Act — one create whose single email leg fails; the spy is restored as soon
+    // as the request settles, so the harness below still sees the real outbox.
+    const response = await createInvitation(
+      createRequest(workspace.organizer.cookie, workspace, eventId, emailInvite(inviteeEmail))
+    ).finally(() => {
+      transport.mockRestore();
+    });
+
+    // Assert — a delivery failure never fails the create …
+    expect(response.status).toBe(201);
+    const stored = await storedInvitation((await body(response)).id as string);
+    const token = await tokenForHash(stored?.tokenHash);
+
+    // … the operator-visible failure record really reached the sink, so the
+    // negatives below cannot pass because nothing was observed …
+    expect(sink.entries.map((entry) => entry.event)).toContain("collab.invite.delivery_failed");
+
+    // … and no record, at any level and under any field, carries the token, the
+    // link the invitee receives, the token's hash or the raw invitee address.
     const records = recordTexts(sink);
     expect(records.filter((record) => record.includes(token))).toEqual([]);
     expect(records.filter((record) => record.includes(`/invitations/${token}`))).toEqual([]);
