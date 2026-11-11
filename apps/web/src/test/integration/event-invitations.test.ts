@@ -871,6 +871,33 @@ describe("POST /api/v1/tenants/{tenantId}/events/{eventId}/invitations", () => {
     expect(await errorCode(response)).toBe("authentication_required");
   });
 
+  it("refuses a create with no Idempotency-Key, so a retry cannot double-mail", async () => {
+    const workspace = await seedWorkspace("op120-idem");
+    const eventId = await seedEvent(workspace);
+    await addEventMember(workspace, eventId, workspace.organizer, "organizer");
+
+    // The create is a required-idempotency route (§2.3): a client that cannot
+    // name its attempt must be refused rather than mailed twice on a retry.
+    const response = await createInvitation(
+      new Request(
+        new URL(
+          `/api/v1/tenants/${workspace.tenantId.toHexString()}/events/${eventId.toHexString()}/invitations`,
+          APP_ORIGIN
+        ),
+        {
+          method: "POST",
+          headers: { cookie: workspace.organizer.cookie, "content-type": "application/json" },
+          body: JSON.stringify(emailInvite("buck@example.com")),
+        }
+      )
+    );
+
+    expect(response.status).toBe(400);
+    expect(await errorCode(response)).toBe("idempotency_key_required");
+    const stored = await app.db.collection(COLLECTIONS.invitations).find({}).toArray();
+    expect(stored).toHaveLength(0);
+  });
+
   it("answers the uniform 404 for a caller who is not in the workspace", async () => {
     const workspace = await seedWorkspace("op120-404");
     const eventId = await seedEvent(workspace);

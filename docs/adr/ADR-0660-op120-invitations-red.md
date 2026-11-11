@@ -60,8 +60,9 @@ This RED delivers **test files only** — one unit spec and one integration spec
     `coorganizers.per_event` usage.
 - **Routes**
   - `…/tenants/[tenantId]/events/[eventId]/invitations/route.ts` → `POST`
-    (`userAuth()` + `tenantStage()` + a **required** idempotency stage) and
-    `GET` (event member).
+    (`userAuth()` + `tenantStage()` + a **required** idempotency stage — a
+    create with no `Idempotency-Key` answers `400 idempotency_key_required` and
+    writes nothing) and `GET` (event member).
   - `…/tenants/[tenantId]/events/[eventId]/invitations/[invitationId]/route.ts`
     → `DELETE` (organizer).
   - `…/invitations/[token]/route.ts` → `GET`, **public** (no auth stage), 20/min
@@ -128,14 +129,20 @@ to no card. They are not pinned here.
 
 - The GREEN inherits a type-correct RED: with throwaway stubs at the exact
   intended paths, `npx tsc -p apps/web/tsconfig.json --noEmit` exits `0` and
-  every case fails at assertion level (unit `26 failed | 3 passed (29)`;
-  integration `25 failed (25)`, all `expected 500 to be …`). The stubs were
-  deleted before handoff; `git status` shows the two spec files only.
-- **The three unit cases that pass against the stub are not vacuous**: they pin
-  the sha256 equality/determinism, the 43-character base64url width and the
-  `unknown_kind` refusal — each fails under a plausible wrong implementation
-  (random salt, hex token, permissive kind) and the stub satisfies them by
-  construction.
+  every case fails at assertion level (unit `24 failed | 5 passed (29)`;
+  integration `26 failed (26)`, each an assertion diff of the shape
+  `expected 500 to be 201`, `expected 500 to be 404` or
+  `expected 500 to be 400`). The stubs were deleted before handoff;
+  `git status` shows the one edited spec file only.
+- **The five unit cases that pass against the stub are not vacuous**: they pin
+  the sha256 equality, the determinism and "the hash never contains the token",
+  the 43-character base64url width, the `unknown_kind` refusal and the
+  by-hash lookup filter — each fails under a plausible wrong implementation
+  (salted or upper-case digest, the token echoed as its own hash, a hex or
+  padded identifier, a permissive kind switch, a filter keyed on the raw
+  token), and the stub satisfies them by construction (it returns
+  `sha256Hex`, a fixed 43-character token, `unknown_kind` for every input and
+  `{ tokenHash: sha256Hex(raw) }`).
 - The lane owes the README pool cell move to `0680`+ and the two catalogue
   error codes; both are flagged above rather than silently assumed.
 - **Hotspot:** `docs/adr/README.md` is the contended file in this repo; this
