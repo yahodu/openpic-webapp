@@ -475,6 +475,20 @@ export const MEDIA_ERROR_TRANSPORT: Readonly<Record<MediaErrorCode, ErrorCatalog
     retryable: false,
     message: "The uploaded object's size does not match the declared size.",
   },
+  // OP-125 (ADR-0741): the acknowledgement is missing part numbers the declared
+  // size slices into (contract §5.4); `details` names them.
+  parts_missing: {
+    status: 409,
+    retryable: false,
+    message: "The multipart completion is missing parts of the declared file.",
+  },
+  // OP-125 (ADR-0741): the provider no longer holds the multipart series, so the
+  // client restarts from the pre-check (contract §5.4); no details.
+  upload_expired: {
+    status: 409,
+    retryable: false,
+    message: "The multipart upload has expired and must be started again.",
+  },
 };
 
 /**

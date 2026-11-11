@@ -262,6 +262,12 @@ export const MEDIA_ERROR_CODES = [
   "file_too_large",
   "upload_window_closed",
   "size_mismatch",
+  // OP-125 (ADR-0741): a multipart completion that acknowledges fewer parts than
+  // the declared size slices into (contract §5.4); the client re-sends the gap.
+  "parts_missing",
+  // OP-125 (ADR-0741): the provider no longer holds the multipart series (the
+  // 7-day lifecycle rule aborted it), so the client restarts from batch-resolve.
+  "upload_expired",
 ] as const;
 
 /** A member of the closed {@link MEDIA_ERROR_CODES} set. */
