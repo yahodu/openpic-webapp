@@ -214,7 +214,7 @@ touched.
 - This RED delivers **test files only** (two unit specs + one integration spec +
   the fixture factory) plus this ADR and the README ledger rows. The temporary
   stubs used to prove type-correctness were deleted; `git status` shows the four
-  test files only. No production file is touched.
+  test files, this ADR and the ledger change, and no production file is touched.
 
 ## Evidence
 
