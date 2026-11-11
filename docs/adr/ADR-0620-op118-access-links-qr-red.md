@@ -237,3 +237,56 @@ apps/web/src/test/integration/event-access-links.test.ts` → `17 passed (17)`;
   `409` (the catch arm biting) and the rest `200`. Unit `access-links-qr.test.ts`
   `15 passed`, ADR guard `29/29`; `tsc -p apps/web` exit `0`; `prettier --check`
   and `eslint` clean on both touched files. R2/R3 assertions untouched.
+
+## Review — round 1 (artifact lens) — R1 GREEN follow-up
+
+This sign-off consumes **no ADR number** (the lane cell is already `Next free
+0626` on the trunk) and appends nothing to the ledger; `docs/adr/README.md` is
+untouched.
+
+| Field         | Value                                                                                                                                                                         |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reviewer card | `t_c32ceaf0` (this docs-only sign-off)                                                                                                                                        |
+| Reviewed head | `33c47a5` on `OP-118-task-rotation-concurrency-pins`, merged with `origin/main` `c6d1fb6` as `92ca3d0`                                                                        |
+| Landed        | PR #391, squash-merged as `81e0b78`                                                                                                                                           |
+| Verdict       | **APPROVED WITH FINDINGS** — the R1 pin holds on the merged trunk; the single finding is Info and outside the pinned criteria, so the delivery ships (see §The finding below) |
+
+### What was verified
+
+The numbers below are the reviewer's own, measured on the merged tree at
+`92ca3d0`; they are not transcribed from the implementer's handoff.
+
+| Check                                                                                                             | Result                                     |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `event-access-links.test.ts` (integration)                                                                        | **20 passed (20)**, 3/3 isolated runs      |
+| R1 (rotation under concurrency), R2/R3 (slug scope, builder edge) and main's F1 refusal pin, all in that same run | green                                      |
+| `access-links-qr.test.ts` (unit pins)                                                                             | **15 passed (15)**                         |
+| ADR guard (`adr-numbering.test.ts`)                                                                               | **29/29**                                  |
+| `prettier --check`, `eslint`, `tsc -p apps/web`                                                                   | clean / 0 errors / exit `0`                |
+| PR checks on `92ca3d0`                                                                                            | all 14 pass                                |
+| `git diff 92ca3d0 81e0b78` (whole tree)                                                                           | **empty** — reviewed bytes == landed bytes |
+
+### The probe that proves R1 is load-bearing
+
+In a throwaway probe worktree at the merged head, removing **only** the
+`.catch(isTransactionRetryLimitError → 409)` arm from the rotate route reddens
+R1 with `expected [ 500, 500 ] to deeply equal []` — an exhausted-retry write
+race answers `500` again. The rest of the spec stays green. The arm was restored
+byte-identically and the probe worktree discarded, so R1 is not green by
+accident.
+
+### The merge note
+
+The lane branch predated main's sibling fix PR **#400** (`6227241`, the F1
+refusal → `409` before any write). The `origin/main` merge kept both changes:
+the `$elemMatch`-scoped `findOneAndUpdate` filter that makes a no-active-link
+rotation refuse without writing, and the new `.catch` that maps an
+exhausted-retry race to `409`. Neither half was weakened or dropped.
+
+### The finding (Info, no card)
+
+§GREEN above says the lane cell "stays `Next free 0622`". That is stale: the
+trunk later advanced the OP-118 cell to `0626`. The historical section is **not
+retracted** — it was accurate when written, and the later lane cards moved the
+cell; the current value is re-read on the trunk and recorded here. No card is
+raised for it.
