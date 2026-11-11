@@ -35,6 +35,23 @@
  *   time) is the upgrade that would honour it; until then this pin freezes the
  *   divergence so it cannot change silently (ADR-0684 §3).
  *
+ * The round-1 follow-up card added **P7–P9** (ADR-0686) after the containment
+ * GREEN (ADR-0685) shipped, to close the coverage gaps that review left: the
+ * ledger exactness was only pinned for a batch's **first** message, the broker
+ * failure that can interrupt the rescue was unpinned, and the "one drift per
+ * claim, first class wins" rule had no case with two poison classes at once.
+ * They are characterization pins on the shipped behaviour and contain no
+ * production change:
+ *
+ * - **P7** the `claimed` ledger maps **each** `messageId` of a claimed batch to
+ *   its **own** payload, so `nack`ing the second of two messages re-`LPUSH`es
+ *   the second's bytes — not a duplicate of the first.
+ * - **P8** a broker failure **mid-rescue** rejects `claim` with a retryable
+ *   `TransportError` and records **no** drift; the call reports no partial
+ *   success, and the payload re-pushed before the failure is claimable again.
+ * - **P9** a batch that holds two invalid payloads of **different** classes
+ *   raises exactly one drift, and its message names the **first** class.
+ *
  * The pins drive the real modules over MSW (`integration/setup.ts` intercepts
  * every outbound request) and the Mongo memory server, never a stubbed
  * collaborator, so a behaviour-preserving refactor keeps them green and a
@@ -167,6 +184,55 @@ function installBroker(): MockBroker {
 
       const [name, , argument] = raw;
       if (name === "LPUSH") {
+        list.unshift(String(argument));
+        return HttpResponse.json({ result: list.length });
+      }
+
+      const popped = list.splice(Math.max(list.length - Number(argument), 0)).reverse();
+      return HttpResponse.json({ result: popped.length === 0 ? null : popped });
+    })
+  );
+
+  return {
+    commands,
+    pop: (payloads) => {
+      list = [...payloads].reverse();
+    },
+  };
+}
+
+/**
+ * Install the Upstash REST mock over a real Redis-list emulation whose
+ * `LPUSH`es start failing with a `503` from the given attempt on.
+ *
+ * This is the mid-rescue transport failure of the claim path: the `RPOP`
+ * succeeds, the first rescue push lands, and every later command answers like a
+ * broker that went away. `RPOP` keeps draining a real list, so a case can still
+ * observe which payloads the rescue managed to put back.
+ *
+ * @param failPushFrom - The 1-based `LPUSH` attempt that starts answering `503`.
+ * @returns The captured commands and the list-seeding function.
+ */
+function installBrokerFailingPushes(failPushFrom: number): MockBroker {
+  const commands: (readonly unknown[])[] = [];
+  /** The list as Redis holds it: index 0 is the head, the last element the tail. */
+  let list: string[] = [];
+  let pushes = 0;
+
+  server.use(
+    http.post(UPSTASH_URL, async ({ request }) => {
+      const raw: unknown = await request.json();
+      if (!Array.isArray(raw)) {
+        throw new Error("expected the Upstash REST body to be a command array");
+      }
+      commands.push(raw);
+
+      const [name, , argument] = raw;
+      if (name === "LPUSH") {
+        pushes += 1;
+        if (pushes >= failPushFrom) {
+          return HttpResponse.json({ error: "upstream unavailable" }, { status: 503 });
+        }
         list.unshift(String(argument));
         return HttpResponse.json({ result: list.length });
       }
@@ -581,5 +647,115 @@ describe("queue follow-up pins (OP-122 round 1, ADR-0682)", () => {
 
     expect(await queue.claim("q:image", 1)).toEqual([]);
     expect(sink.entries.filter((entry) => entry.event === DRIFT_EVENT)).toHaveLength(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // P7 — characterization: the claim ledger maps every id to its own payload
+  // ---------------------------------------------------------------------------
+
+  it("re-pushes the nacked message's own payload when the batch's second message is nacked", async () => {
+    const broker = installBroker();
+    const { logger } = makeLogger();
+    const queue = createUpstashQueue({ url: UPSTASH_URL, token: UPSTASH_TOKEN, logger });
+    const first = makeQueueEnvelope();
+    const second = makeQueueEnvelope({ id: objectIdHex(0xbeef2) });
+    broker.pop([JSON.stringify(first), JSON.stringify(second)]);
+
+    const claimed = await queue.claim("q:image", 2);
+    const [firstClaimed, secondClaimed] = claimed;
+    if (firstClaimed === undefined || secondClaimed === undefined) {
+      throw new Error("expected both enqueued payloads to be claimable");
+    }
+    expect(claimed.map((message) => message.envelope)).toEqual([first, second]);
+    expect(firstClaimed.messageId).not.toBe(secondClaimed.messageId);
+
+    await queue.nack(secondClaimed.messageId, 0);
+
+    // The ledger entry the second id was minted with must hold the second
+    // payload's own bytes (ADR-0685 §1): a ledger keyed to one payload would
+    // re-push a duplicate of `first` while `second`'s bytes — already removed
+    // by the `RPOP` — were gone.
+    const pushes = broker.commands.filter((command) => command[0] === "LPUSH");
+    const lastPush = pushes[pushes.length - 1];
+    expect(lastPush).toEqual(["LPUSH", "q:image", JSON.stringify(second)]);
+    expect(lastPush?.[2]).not.toBe(JSON.stringify(first));
+
+    // On the wire that is one message for a worker, and it is the nacked one.
+    const redelivered = await queue.claim("q:image", 2);
+    expect(redelivered.map((message) => message.envelope)).toEqual([second]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // P8 — characterization: a broker failure mid-rescue is a transport error
+  // ---------------------------------------------------------------------------
+
+  it("rejects a broker failure mid-rescue with a retryable TransportError and logs no drift", async () => {
+    // The rescue pushes twice (two valid payloads); the second answers 503.
+    const broker = installBrokerFailingPushes(2);
+    const { logger, sink } = makeLogger();
+    const queue = createUpstashQueue({ url: UPSTASH_URL, token: UPSTASH_TOKEN, logger });
+    const first = makeQueueEnvelope();
+    const second = makeQueueEnvelope({ id: objectIdHex(0xbeef2) });
+    broker.pop([JSON.stringify(first), "{not-json", JSON.stringify(second)]);
+
+    const outcome = await queue.claim("q:image", 3).then(
+      () => "resolved" as const,
+      (error: unknown) => error
+    );
+
+    // A 5xx is a transport failure a retry can fix, so it must surface as a
+    // retryable `TransportError` and not as a contract drift: the rescue loop
+    // throws before the drift is built (ADR-0686 §1).
+    expect(outcome).toBeInstanceOf(TransportError);
+    expect(outcome).not.toBeInstanceOf(UpstreamContractError);
+    expect(outcome).toMatchObject({ code: "http", retryable: true, status: 503 });
+    expect(sink.entries.filter((entry) => entry.event === DRIFT_EVENT)).toEqual([]);
+
+    // No partial success: the call rejected rather than handing the worker the
+    // payload it managed to rescue, and that rescued payload is claimable again
+    // on the next claim. `toContainEqual`, not `toEqual`: an at-least-once fix
+    // that also recovers the payload the failed push dropped must not redden
+    // this pin — its durability is F7 (OP-136 I1), deliberately not frozen here.
+    const resumed = await queue.claim("q:image", 3);
+    expect(resumed.map((message) => message.envelope)).toContainEqual(first);
+  });
+
+  // ---------------------------------------------------------------------------
+  // P9 — characterization: one drift per claim, naming the first poison class
+  // ---------------------------------------------------------------------------
+
+  it("raises exactly one drift naming the first invalid class when the batch holds two", async () => {
+    const broker = installBroker();
+    const { logger, sink } = makeLogger();
+    const queue = createUpstashQueue({ url: UPSTASH_URL, token: UPSTASH_TOKEN, logger });
+    const first = makeQueueEnvelope();
+    const second = makeQueueEnvelope({ id: objectIdHex(0xbeef2) });
+    await queue.enqueue(first, "q:image");
+    await queue.enqueue(second, "q:image");
+    broker.pop([
+      JSON.stringify(first),
+      "{not-json",
+      JSON.stringify({ v: 1 }),
+      JSON.stringify(second),
+    ]);
+
+    await expect(queue.claim("q:image", 4)).rejects.toBeInstanceOf(UpstreamContractError);
+
+    // Two poison classes, one record: the first invalid payload of the batch
+    // decides both the count and the message (ADR-0685 §1 decision 3).
+    const drift = sink.entries.filter((entry) => entry.event === DRIFT_EVENT);
+    expect(drift).toHaveLength(1);
+    expect(drift[0]?.level).toBe("error");
+    expect(drift[0]?.provider).toBe("upstash");
+    expect(drift[0]?.operation).toBe("claim");
+    expect(drift[0]?.queueKey).toBe("q:image");
+    expect(drift[0]?.msg).toBe("A queued message was not JSON.");
+    expect(drift[0]?.msg).not.toBe("A queued message did not match the §10.4 envelope.");
+
+    // Both valid payloads were rescued around the two poison ones, in FIFO
+    // order, and nothing is left behind for a third claim.
+    const redelivered = await queue.claim("q:image", 4);
+    expect(redelivered.map((message) => message.envelope)).toEqual([first, second]);
+    expect(await queue.claim("q:image", 4)).toEqual([]);
   });
 });
