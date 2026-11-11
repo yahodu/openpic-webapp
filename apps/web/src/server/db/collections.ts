@@ -92,6 +92,14 @@ export const COLLECTIONS = {
    * delta, never a mutation of the plan (ADR-0341).
    */
   entitlementGrants: "entitlementGrants",
+  /**
+   * Pre-aggregated dashboard rollups (schema §20.1, OP-119). One row per
+   * `{ scope, dateKey }`; the nightly `analytics-rollup` job writes it and
+   * `GET /tenants/{tenantId}/analytics` reads **only** this collection, so the
+   * read never aggregates a transactional collection at request time
+   * (ADR-0642).
+   */
+  analyticsDaily: "analyticsDaily",
 } as const;
 
 /** The name of any registered collection. */
