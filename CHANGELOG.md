@@ -1,3 +1,9 @@
+## [1.52.0](https://github.com/yahodu/openpic-webapp/compare/v1.51.0...v1.52.0) (2026-11-11)
+
+### Features
+
+- **queue:** OP-122 implement the WorkQueue port, envelope and Upstash adapter ([#418](https://github.com/yahodu/openpic-webapp/issues/418)) ([5f28acd](https://github.com/yahodu/openpic-webapp/commit/5f28acd9345213caabbf55a37555f66e699943b5))
+
 ## [1.51.0](https://github.com/yahodu/openpic-webapp/compare/v1.50.1...v1.51.0) (2026-11-11)
 
 ### Features
