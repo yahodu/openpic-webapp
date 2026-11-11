@@ -69,6 +69,18 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   the GREEN may include it or omit it.
  * - A13 — a `removed` member is not pinned: §4.3 carries a `status` field but
  *   does not say whether a removed row is served, so either behaviour passes.
+ *
+ * ## Robustness pins (ADR-0643)
+ *
+ * - A15 — a row with **no join instant at all** (neither `addedAt` nor
+ *   `createdAt`) must not fail the listing, but whether it is skipped or served
+ *   with a documented fallback is left open.
+ * - A16 — a row whose `userId` names no user is the same defect class: the
+ *   listing must survive it; skipping it or serving a documented fallback is
+ *   equally acceptable.
+ * - A17 — the `current` alias (contract §0.4) is the tenant stage's job: the
+ *   route must resolve it from `userProfiles.primaryTenantId` and echo the
+ *   resolved id, never answer `404`.
  */
 
 /** The list route the spec drives. */
@@ -282,6 +294,62 @@ async function seedTwoWorkerEvent(): Promise<MembersFixture> {
   return { tenantId, eventId, organizer, coOrganizer };
 }
 
+/** Make `tenantId` the caller's `current`-alias workspace (schema §13.2). */
+async function setPrimaryTenant(userId: ObjectId, tenantId: ObjectId): Promise<void> {
+  const result = await app.db
+    .collection(COLLECTIONS.userProfiles)
+    .updateOne({ userId }, { $set: { primaryTenantId: tenantId, updatedAt: new Date() } });
+  expect(result.matchedCount).toBe(1);
+}
+
+/**
+ * Insert an `event_organizers` row with **no join instant at all** — neither
+ * `addedAt` nor `createdAt` (schema §15.2 types both, ADR-0643 §A15).
+ *
+ * @param tenantKey - The event's tenant id, as the hex string the rows store.
+ * @param eventId - The event the row belongs to.
+ * @param userId - A real user id the row attributes uploads to.
+ */
+async function addTimestamplessEventMember(
+  tenantKey: string,
+  eventId: ObjectId,
+  userId: ObjectId
+): Promise<void> {
+  await app.db.collection(COLLECTIONS.eventOrganizers).insertOne({
+    tenantId: tenantKey,
+    eventId,
+    userId: userId.toHexString(),
+    role: "co_organizer",
+    status: "active",
+    revokedAt: null,
+    uploadedImageCount: 4,
+    updatedAt: new Date("2026-09-02T00:00:00.000Z"),
+    schemaVersion: 1,
+  });
+}
+
+/**
+ * Insert an `event_organizers` row that carries **no `userId`** at all, so the
+ * stored value cannot name a user (ADR-0643 §A16: the same defect class as a
+ * row with no join instant).
+ *
+ * @param tenantKey - The event's tenant id, as the hex string the rows store.
+ * @param eventId - The event the row belongs to.
+ */
+async function addUserlessEventMember(tenantKey: string, eventId: ObjectId): Promise<void> {
+  await app.db.collection(COLLECTIONS.eventOrganizers).insertOne({
+    tenantId: tenantKey,
+    eventId,
+    role: "co_organizer",
+    status: "active",
+    revokedAt: null,
+    uploadedImageCount: 4,
+    createdAt: new Date("2026-09-02T00:00:00.000Z"),
+    updatedAt: new Date("2026-09-02T00:00:00.000Z"),
+    schemaVersion: 1,
+  });
+}
+
 describe("GET /api/v1/tenants/{tenantId}/events/{eventId}/members — the list (I3)", () => {
   it("I3: lists both workers with masked emails, their role and their upload count", async () => {
     const fixture = await seedTwoWorkerEvent();
@@ -473,5 +541,99 @@ describe("GET /api/v1/tenants/{tenantId}/events/{eventId}/members — admission"
     // A removed worker must not read the roster either: the two active workers'
     // masked contacts never reach them.
     expect(payload).not.toHaveProperty("data");
+  });
+});
+
+describe("GET /api/v1/tenants/{tenantId}/events/{eventId}/members — the `current` alias (ADR-0643 P1)", () => {
+  it("resolves `current` to the organizer's primary tenant and echoes it in X-Tenant-Id", async () => {
+    const fixture = await seedTwoWorkerEvent();
+    await setPrimaryTenant(fixture.organizer.userId, fixture.tenantId);
+
+    const response = await listEventMembers(
+      membersRequest(fixture.organizer.cookie, "current", fixture.eventId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-tenant-id")).toBe(fixture.tenantId.toHexString());
+
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    expect(entries.map((entry) => entry.userId).sort()).toEqual(
+      [fixture.organizer.userId.toHexString(), fixture.coOrganizer.userId.toHexString()].sort()
+    );
+  });
+});
+
+describe("GET /api/v1/tenants/{tenantId}/events/{eventId}/members — malformed member rows (ADR-0643 P2)", () => {
+  it("still serves the two workers when one member row carries no join instant", async () => {
+    const fixture = await seedTwoWorkerEvent();
+    const orphan = new ObjectId();
+    await addTimestamplessEventMember(fixture.tenantId.toHexString(), fixture.eventId, orphan);
+
+    // Arrange guard: the row is really stored and really carries neither field,
+    // so a failure below can only come from the projection (ADR-0643 §A15).
+    const seeded = await app.db
+      .collection(COLLECTIONS.eventOrganizers)
+      .findOne({ eventId: fixture.eventId, userId: orphan.toHexString() });
+    expect(seeded).not.toBeNull();
+    expect(seeded).not.toHaveProperty("addedAt");
+    expect(seeded).not.toHaveProperty("createdAt");
+
+    const response = await listEventMembers(
+      membersRequest(
+        fixture.organizer.cookie,
+        fixture.tenantId.toHexString(),
+        fixture.eventId.toHexString()
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: fixture.organizer.userId.toHexString(),
+          uploadedImageCount: 3200,
+        }),
+        expect.objectContaining({
+          userId: fixture.coOrganizer.userId.toHexString(),
+          uploadedImageCount: 920,
+        }),
+      ])
+    );
+  });
+
+  it("still serves the two workers when one member row names no user", async () => {
+    const fixture = await seedTwoWorkerEvent();
+    await addUserlessEventMember(fixture.tenantId.toHexString(), fixture.eventId);
+
+    // Arrange guard: the row exists with no `userId` key at all (ADR-0643 §A16).
+    const seeded = await app.db
+      .collection(COLLECTIONS.eventOrganizers)
+      .findOne({ eventId: fixture.eventId, role: "co_organizer", uploadedImageCount: 4 });
+    expect(seeded).not.toBeNull();
+    expect(seeded).not.toHaveProperty("userId");
+
+    const response = await listEventMembers(
+      membersRequest(
+        fixture.organizer.cookie,
+        fixture.tenantId.toHexString(),
+        fixture.eventId.toHexString()
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: fixture.organizer.userId.toHexString(),
+          uploadedImageCount: 3200,
+        }),
+        expect.objectContaining({
+          userId: fixture.coOrganizer.userId.toHexString(),
+          uploadedImageCount: 920,
+        }),
+      ])
+    );
   });
 });

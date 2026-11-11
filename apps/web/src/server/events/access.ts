@@ -2,7 +2,10 @@ import { ObjectId, type Db } from "mongodb";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { appError } from "@/server/http/errors";
-import { platformRepo } from "@/server/repos";
+import { platformRepo, tenantRepo } from "@/server/repos";
+import type { TenantAdmissionContext } from "@/server/tenancy/route-stage";
+
+import { eventIdFromRequest } from "./event-id";
 
 /**
  * Event-actor admission for the global `/api/v1/events/{eventId}` mutation
@@ -15,6 +18,10 @@ import { platformRepo } from "@/server/repos";
  * write the shared event. The returned role is what the per-route role gate
  * splits on: PATCH admits every admitted actor, archive/delete admit the
  * `organizer` only.
+ *
+ * The same resolver backs {@link admitEventActor}, the event-scoped admission
+ * seam a nested tenant route hands to `tenantStage` (ADR-0644), so a nested read
+ * admits exactly the callers this family admits.
  */
 
 /** The caller's relationship to an event, once admission passed. */
@@ -60,6 +67,46 @@ export async function resolveEventActorRole(
     return "tenant_member";
   }
   return null;
+}
+
+/**
+ * Admit the caller through their relationship to the event named by the
+ * route's `{eventId}` segment (contract §0.4, §4.3; ADR-0644).
+ *
+ * This is the event-scoped admission seam a nested tenant route hands to
+ * `tenantStage`, so `current` resolution, the `X-Tenant-Id` echo and the single
+ * `tenancy.access_denied` log stay in one place. The stage has already resolved
+ * the workspace; this function answers only "is the caller an actor on this
+ * event of this workspace".
+ *
+ * The tenant-scoped `events` read is both the workspace check and the existence
+ * check — another workspace's event is the uniform `404` — and
+ * {@link resolveEventActorRole} keeps the `revokedAt: null` filter that refuses
+ * a removed worker while admitting a co-organizer who holds no `tenantMembers`
+ * row.
+ *
+ * @param context - The resolved workspace, the caller and the stage's `deny`.
+ */
+export async function admitEventActor({
+  db,
+  request,
+  tenantId,
+  userId,
+  deny,
+}: TenantAdmissionContext): Promise<void> {
+  const eventId = eventIdFromRequest(request, { segmentFromEnd: 2 });
+  const tenantKey = tenantId.toHexString();
+
+  const event = await tenantRepo(tenantKey, db)
+    .collection(COLLECTIONS.events)
+    .findOne({ _id: eventId });
+  if (event === null) {
+    deny("event_not_found");
+  }
+
+  if ((await resolveEventActorRole(db, eventId, tenantKey, userId)) === null) {
+    deny("not_an_event_actor");
+  }
 }
 
 /** The authenticated principal the auth stage established. */

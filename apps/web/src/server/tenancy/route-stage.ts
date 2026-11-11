@@ -31,9 +31,10 @@ import { ensureTenantForUser } from "./provisioning";
  * `warn` as `tenancy.access_denied` (low volume), the successful resolution
  * `debug` as `tenancy.resolved`.
  *
- * Nested routes that grant access through `eventMembers` rather than
- * `tenantMembers` (contract §0.4) are out of this story's scope; they extend
- * this stage rather than reimplementing resolution (ADR-0260).
+ * Nested routes that grant access through event membership rather than
+ * `tenantMembers` (contract §0.4, §4.3) do not reimplement resolution: they
+ * extend this stage with an {@link TenantAdmission} seam, so the alias, the
+ * header and the single denial log stay here (ADR-0260, ADR-0644).
  */
 
 /** The literal alias the tenant stage resolves (contract §0.4). */
@@ -44,6 +45,33 @@ export const TENANT_ID_HEADER = "X-Tenant-Id";
 
 /** A 24-hex ObjectId, the only accepted explicit `{tenantId}` shape. */
 const OBJECT_ID_HEX = /^[0-9a-f]{24}$/i;
+
+/** The facts an {@link TenantAdmission} seam receives from the stage. */
+export interface TenantAdmissionContext {
+  /** The database the stage resolved against. */
+  readonly db: Db;
+  /** The inbound request, so the seam can read the route's own path segments. */
+  readonly request: Request;
+  /** The workspace the stage already resolved (`current` or an explicit id). */
+  readonly tenantId: ObjectId;
+  /** The authenticated principal, as the hex string the stage read. */
+  readonly userId: string;
+  /** Deny with the uniform, logged `404 not_found`. Never returns. */
+  readonly deny: (reason: string) => never;
+}
+
+/**
+ * A route-specific admission seam (contract §0.4, ADR-0644).
+ *
+ * A nested route whose contract grants access through something other than
+ * `tenantMembers` — the event member list admits a co-organizer holding no
+ * workspace row (§4.3) — supplies this seam instead of reimplementing tenancy
+ * resolution. Aliasing inside the stage is unaffected: `current` is resolved,
+ * the resolved id is echoed in `X-Tenant-Id`, and every denial is the one
+ * logged `404`. The seam owns only its own admission predicate; it returns when
+ * the caller is admitted and denies through the supplied `deny` otherwise.
+ */
+export type TenantAdmission = (context: TenantAdmissionContext) => Promise<void>;
 
 /** Options accepted by {@link tenantStage}. */
 export interface TenantStageOptions {
@@ -56,6 +84,14 @@ export interface TenantStageOptions {
   readonly provisionOnMissing?: boolean;
   /** The database to resolve against; defaults to the process database. */
   readonly db?: Db;
+  /**
+   * Replace the `tenantMembers` check with a route-specific admission seam
+   * (ADR-0644). When set, the stage still resolves the workspace and echoes it,
+   * but the caller is admitted by the seam rather than by workspace membership;
+   * `ctx.tenantRole` is left unset because the admission is not a workspace
+   * role.
+   */
+  readonly admission?: TenantAdmission;
 }
 
 /** The `userProfiles` field alias resolution reads (schema §13.2). */
@@ -144,17 +180,25 @@ export function tenantStage(options: TenantStageOptions = {}): RouteStage {
       tenantId = new ObjectId(segment);
     }
 
-    const membership = (await repo.collection(COLLECTIONS.tenantMembers).findOne({
-      tenantId,
-      userId: userObjectId,
-      status: "active",
-    })) as TenantMembershipDocument | null;
-    if (membership === null) {
-      deny("not_a_member");
+    const resolved = tenantId.toHexString();
+
+    if (options.admission !== undefined) {
+      // The route's own relationship decides; no workspace role is published,
+      // because an event actor commonly holds no `tenantMembers` row (§4.3).
+      await options.admission({ db, request, tenantId, userId, deny });
+      Object.assign(ctx, { tenantId: resolved });
+    } else {
+      const membership = (await repo.collection(COLLECTIONS.tenantMembers).findOne({
+        tenantId,
+        userId: userObjectId,
+        status: "active",
+      })) as TenantMembershipDocument | null;
+      if (membership === null) {
+        deny("not_a_member");
+      }
+      Object.assign(ctx, { tenantId: resolved, tenantRole: asTenantRole(membership.role) });
     }
 
-    const resolved = tenantId.toHexString();
-    Object.assign(ctx, { tenantId: resolved, tenantRole: asTenantRole(membership.role) });
     logger.debug("tenant resolved", { event: "tenancy.resolved", tenantId: resolved });
 
     return { [TENANT_ID_HEADER]: resolved };
