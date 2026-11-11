@@ -1,3 +1,9 @@
+## [1.52.1](https://github.com/yahodu/openpic-webapp/compare/v1.52.0...v1.52.1) (2026-11-11)
+
+### Bug Fixes
+
+- **queue:** OP-122 validate the pointer before the wire and bound the Upstash request ([#421](https://github.com/yahodu/openpic-webapp/issues/421)) ([3a60f33](https://github.com/yahodu/openpic-webapp/commit/3a60f332625810872ef6d3d0f1c6fdca340e0f5f))
+
 ## [1.52.0](https://github.com/yahodu/openpic-webapp/compare/v1.51.0...v1.52.0) (2026-11-11)
 
 ### Features
