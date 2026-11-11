@@ -81,6 +81,11 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   only reading that keeps the tenant segment meaningful.
  * - A9 — a day with no rollup row contributes nothing and is **not**
  *   materialised as a zero element: `series` carries stored days only.
+ * - A18 — a malformed (non-24-hex) `eventId` under `scope=event` is a
+ *   request-shape refusal: `422 validation_failed` naming `eventId` with no
+ *   `series` (ADR-0642 §Decision, pinned by ADR-0643 P3). Unlike a malformed
+ *   **path** segment, a bad filter value is safe to name — the caller is
+ *   already an authorised tenant `owner`|`admin`.
  * - `note` is prose, so only its presence and non-emptiness are pinned.
  */
 
@@ -619,5 +624,29 @@ describe("GET /api/v1/tenants/{tenantId}/analytics — authorization", () => {
 
     expect(response.status).toBe(404);
     expect((await errorEnvelope(response)).code).toBe("not_found");
+  });
+});
+
+describe("GET /api/v1/tenants/{tenantId}/analytics — the malformed eventId (ADR-0643 P3)", () => {
+  it("refuses a non-hex eventId with 422 validation_failed naming eventId", async () => {
+    const { user, tenantId } = await seedWorkspace("op119-bad-event-id", "owner");
+
+    const response = await getAnalytics(
+      analyticsRequest(user.cookie, tenantId.toHexString(), {
+        from: "2026-09-01",
+        to: "2026-09-30",
+        scope: "event",
+        eventId: "not-a-24-hex-id",
+      })
+    );
+
+    expect(response.status).toBe(422);
+    const payload = await body(response);
+    expect(payload).not.toHaveProperty("series");
+    const error = payload.error as { code: string; details?: Record<string, unknown> };
+    expect(error.code).toBe("validation_failed");
+    expect(error.details).toMatchObject({
+      fields: expect.arrayContaining([expect.objectContaining({ path: "eventId" })]),
+    });
   });
 });
