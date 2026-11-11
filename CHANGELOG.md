@@ -1,3 +1,9 @@
+## [1.50.1](https://github.com/yahodu/openpic-webapp/compare/v1.50.0...v1.50.1) (2026-11-11)
+
+### Bug Fixes
+
+- **api:** OP-119 resolve the member list current alias and make its projection total ([#408](https://github.com/yahodu/openpic-webapp/issues/408)) ([ea36f33](https://github.com/yahodu/openpic-webapp/commit/ea36f3359c1ad531a71367cd4def2e2fad9811bc))
+
 ## [1.50.0](https://github.com/yahodu/openpic-webapp/compare/v1.49.4...v1.50.0) (2026-11-11)
 
 ### Features
