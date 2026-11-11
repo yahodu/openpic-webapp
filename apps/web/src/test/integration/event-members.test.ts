@@ -47,7 +47,11 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  * - Admission is "`user` + event member" (§4.3): an `event_organizers` row with
  *   role `organizer` **or** `co_organizer` (`revokedAt: null`) is enough, even
  *   for a co-organizer who is **not** a tenant member — the `resolveEventActorRole`
- *   admission OP-117 established (`@/server/events/access`). A caller with no
+ *   admission OP-117 established (`@/server/events/access`). A **revoked** row
+ *   (`revokedAt` set) is not admission: with no `tenantMembers` row the caller
+ *   gets the uniform `404` and never the roster, which is why the route must
+ *   keep the actor resolver's `revokedAt: null` filter instead of a bespoke
+ *   `event_organizers` query (ADR-0641). A caller with no
  *   relationship to the event is `404 not_found` (never `403`, §0.4), a
  *   non-member of the workspace addressed in the path is the same `404`, and a
  *   request without a session is `401 authentication_required`.
@@ -198,6 +202,33 @@ async function addEventMember(
     uploadedImageCount,
     createdAt: new Date("2026-09-02T00:00:00.000Z"),
     updatedAt: new Date("2026-09-02T00:00:00.000Z"),
+    schemaVersion: 1,
+  });
+}
+
+/**
+ * Insert an `event_organizers` row whose organizer has been **revoked**
+ * (schema §15.2): `revokedAt` is a `Date`, never `null`.
+ *
+ * @param tenantKey - The event's tenant id, as the hex string the rows store.
+ * @param eventId - The event the row belongs to.
+ * @param user - The signed-in caller whose access was revoked.
+ */
+async function addRevokedEventMember(
+  tenantKey: string,
+  eventId: ObjectId,
+  user: SignedInUser
+): Promise<void> {
+  await app.db.collection(COLLECTIONS.eventOrganizers).insertOne({
+    tenantId: tenantKey,
+    eventId,
+    userId: user.userId.toHexString(),
+    role: "organizer",
+    status: "removed",
+    revokedAt: new Date("2026-09-10T00:00:00.000Z"),
+    uploadedImageCount: 480,
+    createdAt: new Date("2026-09-02T00:00:00.000Z"),
+    updatedAt: new Date("2026-09-10T00:00:00.000Z"),
     schemaVersion: 1,
   });
 }
@@ -416,5 +447,31 @@ describe("GET /api/v1/tenants/{tenantId}/events/{eventId}/members — admission"
 
     expect(response.status).toBe(401);
     expect((await errorEnvelope(response)).code).toBe("authentication_required");
+  });
+
+  it("answers 404 to a revoked organizer who is not a tenant member", async () => {
+    const fixture = await seedTwoWorkerEvent();
+    const revoked = await app.signIn(makeIdentity("revoked-organizer"));
+    await setDisplayName(revoked.userId, "Revoked Organizer");
+    await addRevokedEventMember(fixture.tenantId.toHexString(), fixture.eventId, revoked);
+
+    // Arrange guard: the row exists and carries a real `revokedAt`, so a `404`
+    // below can only come from the admission filter — not from a missing row.
+    const seeded = await app.db.collection(COLLECTIONS.eventOrganizers).findOne({
+      eventId: fixture.eventId,
+      userId: revoked.userId.toHexString(),
+    });
+    expect(seeded?.revokedAt).toBeInstanceOf(Date);
+
+    const response = await listEventMembers(
+      membersRequest(revoked.cookie, fixture.tenantId.toHexString(), fixture.eventId.toHexString())
+    );
+
+    expect(response.status).toBe(404);
+    const payload = await body(response);
+    expect(payload.error).toMatchObject({ code: "not_found" });
+    // A removed worker must not read the roster either: the two active workers'
+    // masked contacts never reach them.
+    expect(payload).not.toHaveProperty("data");
   });
 });

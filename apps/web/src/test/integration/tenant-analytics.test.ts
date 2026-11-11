@@ -4,7 +4,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { GET as getAnalytics } from "@/app/api/v1/tenants/[tenantId]/analytics/route";
 import { COLLECTIONS } from "@/server/db/collections";
 
-import { ANALYTICS_SERIES_KEYS, makeAnalyticsDailyRow } from "../factories/analytics";
+import {
+  ANALYTICS_METRIC_KEYS,
+  ANALYTICS_SERIES_KEYS,
+  makeAnalyticsDailyRow,
+  makeAnalyticsMetrics,
+} from "../factories/analytics";
 import { body } from "../helpers/auth-requests";
 import {
   APP_ORIGIN,
@@ -27,8 +32,11 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  * disagree with them.
  *
  *   I1  seeded `analyticsDaily` → the `series` (one flat element per day) and
- *       the `totals` (the U2 reducer's output) are exactly right;
- *   I2  a 400-day range → `422 range_too_large` with `details.maxDays = 366`.
+ *       the `totals` (the U2 reducer's output) are exactly right; with **no**
+ *       stored row at all the answer is `series: []` and the twelve totals `0`;
+ *   I2  a 400-day range → `422 range_too_large` with `details.maxDays = 366`,
+ *       and the `scope` vocabulary is closed (`platform` → `422`, `event`
+ *       without `eventId` → `422`).
  *
  * Around those the suite pins what the contract states in the same breath: the
  * `owner`|`admin` role gate, the uniform non-oracle `404` for a non-member, the
@@ -43,8 +51,12 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   `owner`|`admin` role gate (`403 forbidden` for a `member`).
  * - Query: `from` and `to` are **required** `YYYY-MM-DD` day keys, `scope` is
  *   `tenant` (default) or `event`, and `eventId` is required when
- *   `scope=event`. Validation refuses through the U1 validator, so
- *   `range_too_large` is `422` with `details: { maxDays: 366 }`.
+ *   `scope=event`. The `scope` vocabulary is **closed** (ADR-0641): any other
+ *   value — notably `platform`, which schema §20.1 also stores — is
+ *   `422 validation_failed`, never forwarded into the rollup filter, because a
+ *   forwarded `platform` would serve every workspace's rollup to one tenant
+ *   `owner`. Validation refuses through the U1 validator, so `range_too_large`
+ *   is `422` with `details: { maxDays: 366 }`.
  * - Body (§4.5): `{ scope: { kind, id }, from, to, series: [{ dateKey, …the
  *   twelve §20.1 metrics, flat }], totals: { …the twelve metrics… },
  *   computedAt, note }`. `series` is ordered by `dateKey` **ascending**; only
@@ -412,6 +424,29 @@ describe("GET /api/v1/tenants/{tenantId}/analytics — the tenant series (I1)", 
     expect(response.status).toBe(404);
     expect((await errorEnvelope(response)).code).toBe("not_found");
   });
+
+  it("I1: serves an empty window as an empty series with all twelve totals at zero", async () => {
+    const { user, tenantId } = await seedWorkspace("op119-empty-window", "owner");
+    // No `analyticsDaily` row exists for this workspace at all, so the answer
+    // is the §4.5 shape with nothing in it: `series: []` and the twelve §20.1
+    // totals at `0` (never `null`, never a missing `totals`).
+
+    const response = await getAnalytics(
+      analyticsRequest(user.cookie, tenantId.toHexString(), {
+        from: "2026-09-01",
+        to: "2026-09-30",
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(payload.scope).toEqual({ kind: "tenant", id: tenantId.toHexString() });
+    expect(payload.series).toEqual([]);
+
+    const totals = payload.totals as Record<string, unknown>;
+    expect(Object.keys(totals).sort()).toEqual([...ANALYTICS_METRIC_KEYS].sort());
+    expect(totals).toEqual(makeAnalyticsMetrics());
+  });
 });
 
 describe("GET /api/v1/tenants/{tenantId}/analytics — the range guard (I2)", () => {
@@ -471,6 +506,57 @@ describe("GET /api/v1/tenants/{tenantId}/analytics — the range guard (I2)", ()
 
     expect(response.status).toBe(422);
     expect((await errorEnvelope(response)).code).toBe("invalid_date_range");
+  });
+});
+
+describe("GET /api/v1/tenants/{tenantId}/analytics — the scope enum", () => {
+  it("refuses scope=platform with 422 validation_failed and serves no series", async () => {
+    const { user, tenantId } = await seedWorkspace("op119-platform", "owner");
+    // Schema §20.1 stores a `platform` scope, so a route that forwards the raw
+    // query value into the rollup filter would serve every workspace's rollup
+    // to one tenant `owner`. Seeding the row makes that leak observable here.
+    await app.db.collection("analyticsDaily").insertOne(
+      makeAnalyticsDailyRow({
+        scope: { kind: "platform", id: null },
+        dateKey: "2026-09-24",
+        metrics: { imagesUploaded: 987_654 },
+      })
+    );
+
+    const response = await getAnalytics(
+      analyticsRequest(user.cookie, tenantId.toHexString(), {
+        from: "2026-09-01",
+        to: "2026-09-30",
+        scope: "platform",
+      })
+    );
+
+    expect(response.status).toBe(422);
+    const payload = await body(response);
+    expect(payload.error).toMatchObject({ code: "validation_failed" });
+    expect(payload).not.toHaveProperty("series");
+  });
+
+  it("refuses scope=event without an eventId, naming the missing eventId", async () => {
+    const { user, tenantId } = await seedWorkspace("op119-no-event-id", "owner");
+    await seedRollup({ kind: "tenant", id: tenantId }, "2026-09-24", { selfiesUploaded: 87 });
+
+    const response = await getAnalytics(
+      analyticsRequest(user.cookie, tenantId.toHexString(), {
+        from: "2026-09-01",
+        to: "2026-09-30",
+        scope: "event",
+      })
+    );
+
+    expect(response.status).toBe(422);
+    const payload = await body(response);
+    expect(payload).not.toHaveProperty("series");
+    const error = payload.error as { code: string; details?: Record<string, unknown> };
+    expect(error.code).toBe("validation_failed");
+    expect(error.details).toMatchObject({
+      fields: expect.arrayContaining([expect.objectContaining({ path: "eventId" })]),
+    });
   });
 });
 
