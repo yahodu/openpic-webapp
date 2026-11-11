@@ -630,6 +630,30 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["validFrom", 1],
     ],
   },
+
+  // analytics_daily — one rollup row per (scope, day); the unique index is what
+  // makes the nightly job's per-day write idempotent, and it is the index the
+  // tenant analytics read uses (`scope.kind`, `scope.id`, `dateKey` range;
+  // schema §20.1; ADR-0642). It deliberately does not lead with `tenantId`:
+  // the aggregate is identified by `scope`, which is a tenant, an event or the
+  // platform, so the collection is not one of `TENANT_SCOPED_COLLECTIONS` and
+  // the U1 prefix lint does not apply.
+  {
+    collection: COLLECTIONS.analyticsDaily,
+    name: "analytics_daily_scope_date_unique",
+    keys: [
+      ["scope.kind", 1],
+      ["scope.id", 1],
+      ["dateKey", -1],
+    ],
+    unique: true,
+  },
+  // analytics_daily — the retention/audit sweep walks the rollups by day.
+  {
+    collection: COLLECTIONS.analyticsDaily,
+    name: "analytics_daily_date",
+    keys: [["dateKey", -1]],
+  },
 ];
 
 /** The outcome of a bootstrap run: which indexes were built, repaired and found. */

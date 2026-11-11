@@ -204,6 +204,13 @@ export const REQUEST_SHAPE_ERROR_TRANSPORT: Readonly<
     retryable: false,
     message: "The event start cannot be more than 30 days in the past.",
   },
+  // OP-119 (ADR-0642): the tenant analytics window exceeds the 366-day ceiling
+  // (contract §4.5 / Appendix A.2); `details: { maxDays }`.
+  range_too_large: {
+    status: 422,
+    retryable: false,
+    message: "The requested date range is longer than the maximum allowed.",
+  },
 };
 
 /**
