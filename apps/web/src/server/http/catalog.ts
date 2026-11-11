@@ -3,6 +3,7 @@ import type {
   AppErrorCode,
   AuthErrorCode,
   BillingErrorCode,
+  CollaborationErrorCode,
   EntitlementErrorCode,
   ErrorCode,
   EventErrorCode,
@@ -462,6 +463,36 @@ export const MEDIA_ERROR_TRANSPORT: Readonly<Record<MediaErrorCode, ErrorCatalog
 };
 
 /**
+ * Transport for the collaboration codes (contract §2.3, Appendix A.5).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the tenancy and
+ * event tables: that table stays the exact base Appendix A copy. The invitation
+ * story owns these rows and feeds them into the same dispatch table, in the
+ * append-only shape of `cannot_demote_owner` (ADR-0661). `already_member` is a
+ * `409` rather than a `422` because the request is well formed; it conflicts
+ * with the row the event already holds.
+ */
+export const COLLABORATION_ERROR_TRANSPORT: Readonly<
+  Record<CollaborationErrorCode, ErrorCatalogEntry>
+> = {
+  invitation_already_pending: {
+    status: 409,
+    retryable: false,
+    message: "An invitation for this invitee is already pending on this event.",
+  },
+  cannot_invite_self: {
+    status: 422,
+    retryable: false,
+    message: "An organizer cannot invite their own account.",
+  },
+  already_member: {
+    status: 409,
+    retryable: false,
+    message: "This invitee is already a co-organizer of the event.",
+  },
+};
+
+/**
  * Every client-facing code's transport: Appendix A first, then the pipeline,
  * auth, request-shape, internal, account, notification and tenancy tables.
  */
@@ -478,6 +509,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...BILLING_ERROR_TRANSPORT,
   ...MEDIA_ERROR_TRANSPORT,
   ...EVENT_ERROR_TRANSPORT,
+  ...COLLABORATION_ERROR_TRANSPORT,
 };
 
 /**

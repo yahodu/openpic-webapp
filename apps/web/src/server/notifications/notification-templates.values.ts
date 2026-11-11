@@ -27,6 +27,17 @@ import { SEED_NOTIFICATION_TYPES } from "./notification-types.values";
 /** The single locale shipped in v1. */
 const LOCALE = "en-IN";
 
+/**
+ * The invitation type whose SMS copy must carry the one-time link (OP-120).
+ *
+ * The generic mobile copy ("open the app to see the details") is enough for a
+ * notification about an event the recipient is already part of, but an
+ * invitation to someone who has no account yet can only be acted on through the
+ * link, so this type's mobile group interpolates `{{actionUrl}}` — the raw token
+ * lives inside that URL and nowhere else (contract §2.3).
+ */
+const INVITE_LINK_TYPE_KEY = "collab.invite.sent";
+
 /** The downgrade type whose copy must reassure the user (U8). */
 const DOWNGRADED_TYPE_KEY = "billing.subscription.downgraded";
 
@@ -85,6 +96,14 @@ function copyFor(
         ? "Your OpenPic verification code is {{code}}. It expires in a few minutes. View the details at {{actionUrl}}."
         : "Your OpenPic verification code is {{code}}. It expires in a few minutes.";
     return { subjectTemplate: "Your OpenPic verification code", bodyTemplate };
+  }
+
+  if (typeKey === INVITE_LINK_TYPE_KEY && group === "mobile") {
+    return {
+      subjectTemplate: "You are invited to help on OpenPic",
+      bodyTemplate:
+        "You are invited to help on an OpenPic event. Open the invitation at {{actionUrl}}",
+    };
   }
 
   const base =
