@@ -279,3 +279,15 @@ At handoff the unit specs are red as **module-not-found** for the four modules
 - The drift event name `queue.upstream_contract_violation` is new; it follows the
   `payments.upstream_contract_violation` / `ratelimit.limiter_failed` shape so
   log queries stay uniform.
+
+## Carried into the OP-122 squash — unchanged, no separate sign-off
+
+This pins record was carried **byte-identically** into the OP-122 squash `5f28acd`
+(PR #418), because the GREEN branch was stacked on the pins branch:
+`git diff --stat 988e344 5f28acd -- docs/adr/ADR-0680-op122-queue-port-red.md` is empty,
+and it is still empty at the follow-up head `7ead7a7`.
+
+It needs no sign-off of its own. It states the contract the tests pin, and that contract is
+what the GREEN implemented: the round-1 review ran every pin green at the reviewed head and
+recorded the implementation-side findings on the sign-off section appended to
+[ADR-0681](ADR-0681-op122-queue-green.md), which is where the follow-up routing lives.
