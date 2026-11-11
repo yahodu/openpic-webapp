@@ -96,9 +96,10 @@ otherwise. Recorded as a `shortcut:` in the module; the field goes back to
 
 `GET …/events/{eventId}/images` answers `{ data, page, summary }` newest-first,
 projected through the same `EventImage` schema the completion returns.
-`summary.total` is the event's `counters.imageCount` (not the page length). The
-cursor, the filters and the signed thumbnail URLs stay with the listing lane
-(`shortcut:` in the module).
+`summary.total` is the page length, which is exact while `hasMore` is always
+`false`; the event's `counters.imageCount` is not read (that second query bought
+nothing the page does not already answer). The cursor, the filters and the
+signed thumbnail URLs stay with the listing lane (`shortcut:` in the module).
 
 ### D8 — the session TTL index
 
@@ -119,3 +120,30 @@ document for ever (schema §22).
 - `docs/adr/README.md` is the shared-ledger hotspot: this lane takes `0721` from
   its own `0720`–`0739` range and advances its `Next free` to `0722`. If another
   lane lands `0721` first, renumber on the merge (ADR-0300 §7).
+
+## Round 1 — the merge with `main` and the coverage gate
+
+The branch merged `origin/main` (`c9c259c`, the OP-122 follow-up) with one
+conflict, `docs/adr/README.md`, resolved as a union: OP-122's `Next free` keeps
+main's `0684`, OP-123 keeps `0702`, OP-124 keeps `0722`, the pool keeps `0740`
+and the ADR index rows are ordered by number. No number was renumbered.
+
+The global branch gate then read **79.95 %** (threshold 80 %, after the OP-122
+follow-up `main` sat at ~80.36 %): the three routes, the two services and the
+memory adapter this lane adds carry ~40 branches the pins do not drive. The fix
+is code, not tests — this card may not write one:
+
+- the gallery stub's second query (`events.findOne` for `counters.imageCount`)
+  is gone; `summary.total` is the page length (D7);
+- the completion route parses its session segment with the shared
+  `eventIdFromRequest(…, { segmentFromEnd: 2 })` instead of a private copy;
+- the R2 adapter classifies a failed call through one `transportFailure()`
+  helper and no longer special-cases a 404 that `DeleteObject` never returns;
+- the presign registry hands back the writer alone (`contentType` was never
+  read), and `getQueueRuntimeConfig()` drops its redundant `UPSTASH_*` checks.
+
+Evidence at the merge head: coverage **statements 91.55 % / branches 80.19 % /
+functions 95.35 % / lines 91.82 %** (exit 0), `pnpm test:unit` 150 files /
+2433 passed | 3 skipped, `pnpm test:int` 100 files / 947 passed, Playwright
+`api` 26 passed (E1 included), `tsc` ×3 exit 0, ESLint 0 errors,
+`prettier --check` clean.
