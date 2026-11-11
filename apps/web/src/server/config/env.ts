@@ -648,19 +648,15 @@ export function getQueueRuntimeConfig(): QueueRuntimeConfig {
     return { provider };
   }
 
-  const url: string | undefined = process.env.UPSTASH_REDIS_REST_URL?.trim();
-  const token: string | undefined = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
-  const missing: string[] = [];
-  if (url === undefined || url === "") {
-    missing.push("UPSTASH_REDIS_REST_URL");
+  const upstashUrl = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  if (!upstashUrl || !upstashToken) {
+    throw new ConfigError([
+      ...(upstashUrl ? [] : ["UPSTASH_REDIS_REST_URL"]),
+      ...(upstashToken ? [] : ["UPSTASH_REDIS_REST_TOKEN"]),
+    ]);
   }
-  if (token === undefined || token === "") {
-    missing.push("UPSTASH_REDIS_REST_TOKEN");
-  }
-  if (missing.length > 0 || url === undefined || token === undefined) {
-    throw new ConfigError(missing);
-  }
-  return { provider, upstashUrl: url, upstashToken: token };
+  return { provider, upstashUrl, upstashToken };
 }
 
 /**

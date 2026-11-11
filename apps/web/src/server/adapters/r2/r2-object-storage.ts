@@ -100,6 +100,12 @@ function httpStatusOf(error: unknown): number | undefined {
   return metadata?.httpStatusCode;
 }
 
+/** Classify a failed SDK call, keeping its HTTP status when it has one. */
+function transportFailure(error: unknown): Error {
+  const status = httpStatusOf(error);
+  return classifyTransportFailure(status === undefined ? { error } : { status });
+}
+
 /**
  * Build an R2 object-storage adapter.
  *
@@ -219,7 +225,7 @@ export function createR2ObjectStorage(config: R2ObjectStorageConfig): ObjectStor
         }
         // Anything else is a classified transport failure: a 5xx is
         // retryable, a network error is retryable, a stray 4xx is not.
-        throw classifyTransportFailure(status === undefined ? { error } : { status });
+        throw transportFailure(error);
       }
     },
 
@@ -231,12 +237,9 @@ export function createR2ObjectStorage(config: R2ObjectStorageConfig): ObjectStor
       try {
         await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey }));
       } catch (error) {
-        const status = httpStatusOf(error);
-        // S3 `DeleteObject` is idempotent: an absent object is a success.
-        if (status === 404) {
-          return;
-        }
-        throw classifyTransportFailure(status === undefined ? { error } : { status });
+        // S3 `DeleteObject` is idempotent: an absent object is a success, so
+        // only a real transport failure is raised.
+        throw transportFailure(error);
       }
     },
 
@@ -255,11 +258,10 @@ export function createR2ObjectStorage(config: R2ObjectStorageConfig): ObjectStor
         );
         body = output.Body;
       } catch (error) {
-        const status = httpStatusOf(error);
-        if (status === 404) {
+        if (httpStatusOf(error) === 404) {
           throw new AppError("not_found");
         }
-        throw classifyTransportFailure(status === undefined ? { error } : { status });
+        throw transportFailure(error);
       }
       if (body === undefined) {
         throw contractViolation("R2 answered GetObject without a body.");

@@ -61,7 +61,6 @@ export function memoryObjectStorage(
       const token = randomUUID();
       const expiresAtMs = Date.now() + ttlSeconds * 1000;
       registerMemoryPresign(token, {
-        contentType,
         expiresAtMs,
         write: (bytes) => store.set(storeKey(locationKey, objectKey), { bytes, contentType }),
       });

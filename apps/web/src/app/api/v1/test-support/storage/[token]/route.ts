@@ -40,7 +40,7 @@ export async function PUT(request: Request): Promise<Response> {
   }
 
   const bytes = new Uint8Array(await request.arrayBuffer());
-  presign.write(bytes);
+  presign(bytes);
 
   return new Response(null, {
     status: 200,

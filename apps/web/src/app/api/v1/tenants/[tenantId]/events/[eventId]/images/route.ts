@@ -83,10 +83,6 @@ export const GET = defineRoute({
       .limit(DEFAULT_LIMIT)
       .toArray()) as unknown as EventImageRow[];
 
-    const event = (await tenantRepo(tenantId, db)
-      .collection(COLLECTIONS.events)
-      .findOne({ _id: eventId })) as { counters?: { imageCount?: number } } | null;
-
     const assets = (await tenantRepo(tenantId, db)
       .collection(COLLECTIONS.mediaAssets)
       .find({ _id: { $in: rows.map((row) => row.assetId) } })
@@ -104,7 +100,8 @@ export const GET = defineRoute({
         data,
         page: { nextCursor: null, hasMore: false, limit: DEFAULT_LIMIT },
         summary: {
-          total: event?.counters?.imageCount ?? data.length,
+          // The page's own length: `hasMore` is always false, so they agree.
+          total: data.length,
           done: countOf("done"),
           queued: countOf("queued"),
           processing: countOf("processing"),

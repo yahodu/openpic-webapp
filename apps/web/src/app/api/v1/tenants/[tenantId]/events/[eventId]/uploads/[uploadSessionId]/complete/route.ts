@@ -61,12 +61,6 @@ import { uploadWindowClosed } from "@/server/uploads/upload-window";
  * and is refused with that tenant's limit (I10/I11).
  */
 
-/** A 24-hex `ObjectId` — the only shape a session segment may take. */
-const OBJECT_ID_HEX = /^[0-9a-f]{24}$/i;
-
-/** MongoDB's duplicate-key server error code. */
-const DUPLICATE_KEY = 11000;
-
 /** The §5.3 completion body. */
 const completeBodySchema = z.object({
   etag: z.string().min(1),
@@ -102,6 +96,9 @@ interface CompletionOutcome {
   readonly duplicate: boolean;
 }
 
+/** MongoDB's duplicate-key server error code. */
+const DUPLICATE_KEY = 11000;
+
 /** True when an error is MongoDB's duplicate-key (E11000) refusal. */
 function isDuplicateKeyError(error: unknown): boolean {
   return (
@@ -110,16 +107,6 @@ function isDuplicateKeyError(error: unknown): boolean {
     "code" in error &&
     (error as { code?: unknown }).code === DUPLICATE_KEY
   );
-}
-
-/** The session id from the request path (`…/{uploadSessionId}/complete`). */
-function sessionIdFromRequest(request: Request): ObjectId {
-  const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
-  const raw = String(segments.at(-2));
-  if (!OBJECT_ID_HEX.test(raw)) {
-    throw appError("not_found");
-  }
-  return new ObjectId(raw);
 }
 
 export const POST = defineRoute({
@@ -139,7 +126,7 @@ export const POST = defineRoute({
     const tenantKey = tenantId;
     const eventId = eventIdFromRequest(ctx.request, { segmentFromEnd: 4 });
     const eventIdHex = eventId.toHexString();
-    const sessionId = sessionIdFromRequest(ctx.request);
+    const sessionId = eventIdFromRequest(ctx.request, { segmentFromEnd: 2 });
     const { bytes } = ctx.body;
 
     const event = (await tenantRepo(tenantKey, db)
