@@ -13,6 +13,7 @@ import type { Logger } from "../logging";
 import { systemClock, type Clock } from "../runtime/clock";
 import {
   defaultPriorityFor,
+  queueEnvelopeSchema,
   queueKeyFor,
   type QueueEnvelope,
   type QueueKind,
@@ -74,9 +75,15 @@ export async function enqueueWork(options: EnqueueWorkOptions): Promise<{ enqueu
   };
 
   try {
-    const { messageId } = await options.queue.enqueue(envelope, queueKey);
+    // Validate the pointer before the wire: a §10.4-rejected envelope must never
+    // reach the broker as a poison message (ADR-0683 §1).
+    const workId = new ObjectId(work.id);
+    const { messageId } = await options.queue.enqueue(
+      queueEnvelopeSchema.parse(envelope),
+      queueKey
+    );
     await options.db.collection(options.collection).updateOne(
-      { _id: new ObjectId(work.id) },
+      { _id: workId },
       {
         $set: {
           "processing.queueRef": { queueKey, provider: options.queue.provider, messageId },
