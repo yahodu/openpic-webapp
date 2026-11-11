@@ -468,6 +468,13 @@ export const MEDIA_ERROR_TRANSPORT: Readonly<Record<MediaErrorCode, ErrorCatalog
     retryable: false,
     message: "The upload window for this event has closed.",
   },
+  // OP-124 (ADR-0721 D4): the stored object's size is not the declared `bytes`
+  // within 1 % (contract §5.3); `details` carries both figures.
+  size_mismatch: {
+    status: 409,
+    retryable: false,
+    message: "The uploaded object's size does not match the declared size.",
+  },
 };
 
 /**

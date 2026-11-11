@@ -27,6 +27,7 @@ import {
   type UploadPolicy,
   type UploadResolution,
 } from "@/server/uploads/batch-resolve";
+import { extensionForMime } from "@/server/uploads/single-put";
 
 /**
  * `POST /api/v1/tenants/{tenantId}/events/{eventId}/uploads/batch-resolve` —
@@ -143,22 +144,6 @@ interface SessionRow {
 interface EventImageRow {
   readonly _id: ObjectId;
   readonly assetId: ObjectId;
-}
-
-/** The canonical extension for a declared MIME, for the resumed object key (A5). */
-const EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/heic": "heic",
-  "image/heif": "heif",
-  "image/avif": "avif",
-  "image/tiff": "tiff",
-};
-
-/** The extension of a declared MIME; an unknown type cannot be resumed (A5). */
-function extensionForMime(mimeType: string): string {
-  return EXTENSION_BY_MIME[mimeType] ?? "jpg";
 }
 
 /** The provider's multipart id from a session row, or `null` when it holds none (A4). */

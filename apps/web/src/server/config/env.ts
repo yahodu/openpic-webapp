@@ -626,6 +626,44 @@ export function getStorageRuntimeConfig(): StorageRuntimeConfig {
 }
 
 /**
+ * Read the queue runtime wiring from the environment (OP-124, ADR-0721 D5).
+ *
+ * The `WorkQueue` composition root needs the selected provider plus the Upstash
+ * REST credentials for the non-memory selection. Fails closed: a selection
+ * other than `memory` without both names refuses the request instead of
+ * silently degrading to the per-process queue, which no worker drains.
+ *
+ * @returns The provider selection and, for a non-memory provider, the Upstash
+ *   credentials (always present on that arm).
+ * @throws {ConfigError} Naming the missing `UPSTASH_*` variables.
+ */
+export type QueueRuntimeConfig =
+  | { readonly provider: "memory" }
+  | { readonly provider: string; readonly upstashUrl: string; readonly upstashToken: string };
+
+/** @see QueueRuntimeConfig */
+export function getQueueRuntimeConfig(): QueueRuntimeConfig {
+  const provider = process.env.QUEUE_PROVIDER ?? DEFAULT_PROVIDER;
+  if (provider === "memory") {
+    return { provider };
+  }
+
+  const url: string | undefined = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  const token: string | undefined = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  const missing: string[] = [];
+  if (url === undefined || url === "") {
+    missing.push("UPSTASH_REDIS_REST_URL");
+  }
+  if (token === undefined || token === "") {
+    missing.push("UPSTASH_REDIS_REST_TOKEN");
+  }
+  if (missing.length > 0 || url === undefined || token === undefined) {
+    throw new ConfigError(missing);
+  }
+  return { provider, upstashUrl: url, upstashToken: token };
+}
+
+/**
  * Read the payment-provider runtime wiring from the environment.
  *
  * @returns The provider selection, and the Cashfree credentials when it is

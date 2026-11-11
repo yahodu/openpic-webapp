@@ -1,6 +1,8 @@
 import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   ListPartsCommand,
   PutObjectCommand,
@@ -223,8 +225,46 @@ export function createR2ObjectStorage(config: R2ObjectStorageConfig): ObjectStor
 
     getObjectStream: () => Promise.reject(new AppError("not_implemented")),
     putObject: () => Promise.reject(new AppError("not_implemented")),
-    deleteObject: () => Promise.reject(new AppError("not_implemented")),
+
+    async deleteObject(locationKey, objectKey): Promise<void> {
+      const bucket = bucketFor(locationKey);
+      try {
+        await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey }));
+      } catch (error) {
+        const status = httpStatusOf(error);
+        // S3 `DeleteObject` is idempotent: an absent object is a success.
+        if (status === 404) {
+          return;
+        }
+        throw classifyTransportFailure(status === undefined ? { error } : { status });
+      }
+    },
+
     getObject: () => Promise.reject(new AppError("not_implemented")),
-    getObjectRange: () => Promise.reject(new AppError("not_implemented")),
+
+    async getObjectRange(locationKey, objectKey, { start, end }): Promise<Uint8Array> {
+      const bucket = bucketFor(locationKey);
+      let body;
+      try {
+        const output = await client.send(
+          new GetObjectCommand({
+            Bucket: bucket,
+            Key: objectKey,
+            Range: `bytes=${String(start)}-${String(end)}`,
+          })
+        );
+        body = output.Body;
+      } catch (error) {
+        const status = httpStatusOf(error);
+        if (status === 404) {
+          throw new AppError("not_found");
+        }
+        throw classifyTransportFailure(status === undefined ? { error } : { status });
+      }
+      if (body === undefined) {
+        throw contractViolation("R2 answered GetObject without a body.");
+      }
+      return body.transformToByteArray();
+    },
   };
 }

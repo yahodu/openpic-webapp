@@ -102,6 +102,14 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+  // upload_sessions — expire automatically once their window passes (§16.2,
+  // §22). OP-124 is the first lane to write a session row (ADR-0721 D2).
+  {
+    collection: COLLECTIONS.uploadSessions,
+    name: "upload_sessions_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
   // invitations — "my pending invitations": the caller's pending count on the
   // `GET /me` bootstrap and the §1.2 feed read `{ "invitee.userId", status }`
   // newest-first, so the compound index must carry all three keys in this

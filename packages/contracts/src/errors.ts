@@ -253,9 +253,16 @@ export type BillingErrorCode = (typeof BILLING_ERROR_CODES)[number];
  * `upload_window_closed` (`409`, `{ uploadWindowEndsAt, canExtend }`) is the
  * OP-123 pre-check refusal for an event whose upload window has closed
  * (Appendix A row 3562; ADR-0701) and is appended in the same shape.
+ * `size_mismatch` (`409`, `{ declaredBytes, storedBytes }`) is the OP-124
+ * completion refusal for a stored object whose size differs from the declared
+ * `bytes` by more than 1 % (contract §5.3; ADR-0721 D4).
  * Append-only, like every other code (ADR-0540).
  */
-export const MEDIA_ERROR_CODES = ["file_too_large", "upload_window_closed"] as const;
+export const MEDIA_ERROR_CODES = [
+  "file_too_large",
+  "upload_window_closed",
+  "size_mismatch",
+] as const;
 
 /** A member of the closed {@link MEDIA_ERROR_CODES} set. */
 export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];

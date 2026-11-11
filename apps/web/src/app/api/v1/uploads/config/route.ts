@@ -3,6 +3,7 @@ import { z } from "zod";
 import { defineRoute } from "@/server/http/define-route";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
 import { MAX_BATCH_FILES } from "@/server/uploads/batch-resolve";
+import { PRESIGN_TTL_SECONDS } from "@/server/uploads/single-put";
 import { userAuth } from "@/server/tenancy/route-scope";
 
 /**
@@ -34,9 +35,6 @@ const CACHE_CONTROL = "private, max-age=300";
 
 /** The part size Uppy's multipart upload uses (§5.1). */
 const PART_SIZE_BYTES = 8_388_608;
-
-/** The single-PUT and part presign lifetime (§5.1). */
-const PRESIGN_TTL_SECONDS = 900;
 
 /** The concurrent part uploads Uppy should run (§5.1.1). */
 const MAX_CONCURRENT_PARTS = 4;
