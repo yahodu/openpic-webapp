@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { ObjectId } from "mongodb";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { findForbiddenFields, maskEmail } from "@openpic/contracts";
+import { findForbiddenFields, maskEmail, maskPhone } from "@openpic/contracts";
 
 import { GET as previewInvitation } from "@/app/api/v1/invitations/[token]/route";
 import {
@@ -13,6 +13,14 @@ import {
 import { DELETE as revokeInvitation } from "@/app/api/v1/tenants/[tenantId]/events/[eventId]/invitations/[invitationId]/route";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
+import {
+  createLogger,
+  getLogger,
+  memoryTransport,
+  setLogger,
+  type Logger,
+  type MemoryTransport,
+} from "@/server/logging";
 import { runNotificationFanOut } from "@/server/notifications/fan-out";
 import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
 import {
@@ -1161,5 +1169,399 @@ describe("GET /api/v1/invitations/{token}", () => {
     expect(JSON.stringify(payload)).not.toContain(token ?? "");
     expect(JSON.stringify(payload)).not.toContain(invitationId);
     expect(JSON.stringify(payload)).not.toContain(workspace.tenantId.toHexString());
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Round-1 gap pins (ADR-0662)                                                */
+/*                                                                            */
+/* Five behaviours the first RED left unpinned, each of which lets a plausible */
+/* wrong GREEN pass (OP-120 review round 1, card `t_b91b009e`):               */
+/*                                                                            */
+/* - **F2** — nothing observed the *logger*. The four existing scanners watch  */
+/*   the response keys, the response value preimages, the `domainEvents`       */
+/*   payload values and the rendered dispatch copy, so a route that wrote the  */
+/*   raw token (or its link, or the raw invitee address) into a log line would */
+/*   have passed every one of them.                                           */
+/* - **F3** — the story is "by user, email **or phone**", but no case ever sent */
+/*   a `phone` invitee, so a normalizer/projection/delivery path that only     */
+/*   handled `email` and `user` passed.                                       */
+/* - **F4** — every list case had exactly one event, so a list filtered by     */
+/*   tenant alone passed.                                                     */
+/* - **F5** — only the *sequential* duplicate was pinned; the §13.6 unique     */
+/*   partial index is the mechanism that makes the refusal race-safe.         */
+/* - **F6** — the preview promised `status`, but a lookup filtered on          */
+/*   `status: "pending"` answers `404` and passed every case.                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Install a `debug`-floored memory logger as the process logger, so every
+ * record the invitation surface emits lands in one sink (the OP-113
+ * `media-signed-url-never-logged` precedent).
+ *
+ * @returns The memory sink every entry the port emits lands in.
+ */
+function captureLogs(): MemoryTransport {
+  const sink = memoryTransport();
+  setLogger(
+    createLogger({
+      level: "debug",
+      transports: [sink],
+      service: "openpic-web",
+      env: "test",
+      version: "test-sha",
+    })
+  );
+  return sink;
+}
+
+/**
+ * Recover the raw token behind a stored `tokenHash`.
+ *
+ * The token exists only inside the rendered invitee message, so the spec reads
+ * it from the dispatch ledger exactly as the invitee would — never from the
+ * response and never from the row.
+ *
+ * @param tokenHash - The hash the invitation row stores.
+ * @returns The raw token whose sha256 is `tokenHash`.
+ * @throws When the rendered copy carries no such token (the delivery pin, not
+ *   this one, owns that failure — this message names the cause instead).
+ */
+async function tokenForHash(tokenHash: unknown): Promise<string> {
+  await settleInviteDelivery();
+  const rows = await inviteDispatches();
+  const runs = rows
+    .flatMap((row) =>
+      [row.subject, row.body].filter((value): value is string => typeof value === "string")
+    )
+    .flatMap(tokenRuns);
+  const raw = runs.find((run) => sha256Hex(run) === tokenHash);
+  if (raw === undefined) {
+    throw new Error(
+      "the rendered invitation message carried no token hashing to the stored tokenHash"
+    );
+  }
+  return raw;
+}
+
+/** The E.164 number the phone-kind pins invite (schema §13.6 `phoneE164`). */
+const PHONE_E164 = "+919876543210";
+
+/** Everything a captured record says, flattened, so no field can hide a leak. */
+function recordTexts(sink: MemoryTransport): string[] {
+  return sink.entries.map((entry) => JSON.stringify(entry));
+}
+
+/* -------------------------------------------------------------------------- */
+/* F2 — no record carries the token, its link or the raw invitee contact      */
+/* -------------------------------------------------------------------------- */
+
+describe("F2 — the invitation surface never logs a token-bearing value", () => {
+  let previousLogger: Logger;
+
+  beforeAll(() => {
+    previousLogger = getLogger();
+  });
+
+  afterAll(() => {
+    setLogger(previousLogger);
+  });
+
+  it("F2: a create emits its audit line and no record carrying the token, its link or the email", async () => {
+    // Arrange — a live capture, floored at debug so a debug leak cannot hide.
+    const sink = captureLogs();
+    const workspace = await seedWorkspace("op120-f2-create");
+    const eventId = await seedEvent(workspace);
+    await addEventMember(workspace, eventId, workspace.organizer, "organizer");
+    const inviteeEmail = "buck@example.com";
+
+    // Act
+    const response = await createInvitation(
+      createRequest(workspace.organizer.cookie, workspace, eventId, emailInvite(inviteeEmail))
+    );
+
+    // Assert — the invitation really was created and its token really exists …
+    expect(response.status).toBe(201);
+    const payload = await body(response);
+    const stored = await storedInvitation(payload.id as string);
+    const token = await tokenForHash(stored?.tokenHash);
+
+    // … the capture is live for this route (its own audit line reached the
+    // sink, so the negative assertions below are not vacuous) …
+    expect(sink.entries.map((entry) => entry.event)).toContain("collab.invite.created");
+
+    // … and no record, at any level and under any field, carries the token,
+    // the link the invitee receives, the token's hash or the raw address.
+    const records = recordTexts(sink);
+    expect(records.filter((record) => record.includes(token))).toEqual([]);
+    expect(records.filter((record) => record.includes(`/invitations/${token}`))).toEqual([]);
+    expect(records.filter((record) => record.includes(sha256Hex(token)))).toEqual([]);
+    expect(records.filter((record) => record.includes(inviteeEmail))).toEqual([]);
+  });
+
+  it("F2: a preview emits no record carrying the token or its link", async () => {
+    // Arrange
+    const sink = captureLogs();
+    const workspace = await seedWorkspace("op120-f2-preview");
+    const eventId = await seedEvent(workspace);
+    await addEventMember(workspace, eventId, workspace.organizer, "organizer");
+    const inviteeEmail = "buck@example.com";
+
+    const created = await createInvitation(
+      createRequest(workspace.organizer.cookie, workspace, eventId, emailInvite(inviteeEmail))
+    );
+    expect(created.status).toBe(201);
+    const stored = await storedInvitation((await body(created)).id as string);
+    const token = await tokenForHash(stored?.tokenHash);
+
+    // A rejected lookup proves the capture is live for this pipeline (the
+    // 404 path is the one shape that logs), so the live-preview assertions
+    // below cannot pass because nothing was observed.
+    const missing = await previewInvitation(previewRequest("x".repeat(43)));
+    expect(missing.status).toBe(404);
+    expect(sink.entries.map((entry) => entry.event)).toContain("http.request.rejected");
+
+    // Act — the live preview, the request whose path carries the raw token.
+    const response = await previewInvitation(previewRequest(token));
+
+    // Assert
+    expect(response.status).toBe(200);
+    const records = recordTexts(sink);
+    expect(records.filter((record) => record.includes(token))).toEqual([]);
+    expect(records.filter((record) => record.includes(`/invitations/${token}`))).toEqual([]);
+    expect(records.filter((record) => record.includes(sha256Hex(token)))).toEqual([]);
+    expect(records.filter((record) => record.includes(inviteeEmail))).toEqual([]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* F3 — the phone invitee path                                                */
+/* -------------------------------------------------------------------------- */
+
+describe("F3 — a phone invitee", () => {
+  it("F3: creates a phone invitation with the nine-key body and a masked number", async () => {
+    // Arrange
+    const workspace = await seedWorkspace("op120-f3");
+    const eventId = await seedEvent(workspace);
+    await addEventMember(workspace, eventId, workspace.organizer, "organizer");
+
+    // Act — the third invitee kind the user story names, sent exactly as §13.6
+    // stores it.
+    const response = await createInvitation(
+      createRequest(workspace.organizer.cookie, workspace, eventId, {
+        invitee: { kind: "phone", phoneE164: PHONE_E164 },
+        role: "co_organizer",
+      })
+    );
+
+    // Assert
+    expect(response.status).toBe(201);
+    const payload = await body(response);
+    expect(Object.keys(payload).sort()).toEqual(INVITATION_BODY_KEYS);
+    expect(payload.kind).toBe("event_co_organizer");
+    expect(payload.status).toBe("pending");
+    expect(payload.eventId).toBe(eventId.toHexString());
+    // §0.13: the number is masked, never echoed.
+    expect(payload.inviteeMasked).toBe(maskPhone(PHONE_E164));
+    expect(String(payload.inviteeMasked)).not.toContain("9876");
+    expect(JSON.stringify(payload)).not.toContain(PHONE_E164);
+
+    const stored = await storedInvitation(payload.id as string);
+    expect(stored?.invitee).toEqual({ kind: "phone", phoneE164: PHONE_E164 });
+    expect(stored?.status).toBe("pending");
+    expect(stored?.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    // A phone invitee is reachable over SMS (§4.6), so the recorded channel
+    // must be SMS-capable.
+    const channels = payload.channelsNotified as string[];
+    expect(channels).toContain("sms");
+    expect(stored?.channelsNotified).toEqual(channels);
+  });
+
+  it("F3: delivers the phone invitation over SMS to the invitee's own number", async () => {
+    // Arrange
+    const workspace = await seedWorkspace("op120-f3-sms");
+    const eventId = await seedEvent(workspace);
+    await addEventMember(workspace, eventId, workspace.organizer, "organizer");
+
+    // Act
+    const response = await createInvitation(
+      createRequest(workspace.organizer.cookie, workspace, eventId, {
+        invitee: { kind: "phone", phoneE164: PHONE_E164 },
+        role: "co_organizer",
+      })
+    );
+
+    // Assert — the SMS leg addressed the invitee's number, and the rendered
+    // copy carried a token hashing to the stored one (so the channel is a real
+    // delivery, not a label).
+    expect(response.status).toBe(201);
+    const stored = await storedInvitation((await body(response)).id as string);
+    await settleInviteDelivery();
+    const rows = await inviteDispatches();
+    expect(rows.map((row) => row.channel)).toContain("sms");
+    expect(rows.map((row) => row.contactHash)).toContain(sha256Hex(PHONE_E164));
+    const rendered = rows
+      .flatMap((row) =>
+        [row.subject, row.body].filter((value): value is string => typeof value === "string")
+      )
+      .flatMap(tokenRuns);
+    expect(rendered.map((run) => sha256Hex(run))).toContain(stored?.tokenHash);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* F4 — the list is event-scoped                                             */
+/* -------------------------------------------------------------------------- */
+
+describe("F4 — GET …/invitations is scoped to the event in the path", () => {
+  it("F4: returns only the event's own rows when a sibling event has one too", async () => {
+    // Arrange — two events in ONE tenant, an invitation in each, and one
+    // organizer who is a member of both: a list filtered by tenant alone would
+    // answer both rows.
+    const workspace = await seedWorkspace("op120-f4");
+    const eventA = await seedEvent(workspace);
+    const eventB = await seedEvent(workspace);
+    await addEventMember(workspace, eventA, workspace.organizer, "organizer");
+    await addEventMember(workspace, eventB, workspace.organizer, "organizer");
+
+    const createdA = await createInvitation(
+      createRequest(workspace.organizer.cookie, workspace, eventA, emailInvite("buck@example.com"))
+    );
+    const createdB = await createInvitation(
+      createRequest(workspace.organizer.cookie, workspace, eventB, emailInvite("priya@example.com"))
+    );
+    expect(createdA.status).toBe(201);
+    expect(createdB.status).toBe(201);
+    const idA = (await body(createdA)).id as string;
+    const idB = (await body(createdB)).id as string;
+
+    // Act
+    const listA = await listInvitations(listRequest(workspace.organizer.cookie, workspace, eventA));
+
+    // Assert
+    expect(listA.status).toBe(200);
+    const dataA = (await body(listA)).data as { id: string; eventId: string }[];
+    expect(dataA.map((row) => row.id)).toEqual([idA]);
+    expect(dataA.map((row) => row.eventId)).toEqual([eventA.toHexString()]);
+
+    // The converse, so a route that answered whichever event it liked first
+    // cannot pass: event B's list is event B's row.
+    const listB = await listInvitations(listRequest(workspace.organizer.cookie, workspace, eventB));
+    expect(listB.status).toBe(200);
+    const dataB = (await body(listB)).data as { id: string; eventId: string }[];
+    expect(dataB.map((row) => row.id)).toEqual([idB]);
+    expect(dataB.map((row) => row.eventId)).toEqual([eventB.toHexString()]);
+  });
+
+  it("F4: refuses a co-organizer of another event the list (404), so admission is event-scoped too", async () => {
+    // Arrange — a co-organizer of event A only, holding no `tenantMembers` row
+    // (the I9 reader shape), and an invitation on event B.
+    const workspace = await seedWorkspace("op120-f4-member");
+    const eventA = await seedEvent(workspace);
+    const eventB = await seedEvent(workspace);
+    await addEventMember(workspace, eventA, workspace.organizer, "organizer");
+    await addEventMember(workspace, eventB, workspace.organizer, "organizer");
+    const coOrganizer = await signInVerified("op120-f4-co");
+    await addEventMember(workspace, eventA, coOrganizer, "co_organizer");
+    const createdB = await createInvitation(
+      createRequest(workspace.organizer.cookie, workspace, eventB, emailInvite("priya@example.com"))
+    );
+    expect(createdB.status).toBe(201);
+
+    // Act — event A is theirs, event B is not.
+    const allowed = await listInvitations(listRequest(coOrganizer.cookie, workspace, eventA));
+    const refused = await listInvitations(listRequest(coOrganizer.cookie, workspace, eventB));
+
+    // Assert
+    expect(allowed.status).toBe(200);
+    expect(refused.status).toBe(404);
+    expect(await errorCode(refused)).toBe("not_found");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* F5 — the concurrent duplicate create                                      */
+/* -------------------------------------------------------------------------- */
+
+describe("F5 — two simultaneous creates for one invitee", () => {
+  it("F5: answers exactly one 201 and one 409 invitation_already_pending, and stores one row", async () => {
+    // Arrange — two independent attempts (distinct `Idempotency-Key`s, so the
+    // replay stage cannot be the thing that refuses the loser) for the same
+    // (eventId, invitee). The §13.6 unique partial index is the arbiter.
+    const workspace = await seedWorkspace("op120-f5");
+    const eventId = await seedEvent(workspace);
+    await addEventMember(workspace, eventId, workspace.organizer, "organizer");
+    const payload = emailInvite("buck@example.com");
+
+    // Act — both requests are in flight together.
+    const responses = await Promise.all([
+      createInvitation(
+        createRequest(workspace.organizer.cookie, workspace, eventId, payload, randomUUID())
+      ),
+      createInvitation(
+        createRequest(workspace.organizer.cookie, workspace, eventId, payload, randomUUID())
+      ),
+    ]);
+
+    // Assert — one winner, one refusal, whichever order they settle in.
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+    const winner = responses.find((response) => response.status === 201);
+    const loser = responses.find((response) => response.status === 409);
+    if (winner === undefined || loser === undefined) {
+      throw new Error("expected exactly one 201 and one 409 from the concurrent pair");
+    }
+    expect(await errorCode(loser)).toBe("invitation_already_pending");
+
+    // Exactly one redeemable row exists, and it is the winner's.
+    const rows = await app.db
+      .collection(COLLECTIONS.invitations)
+      .find({ "invitee.email": "buck@example.com" })
+      .toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows.map((row) => String(row._id))).toEqual([(await body(winner)).id]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* F6 — the preview of a non-pending invitation                              */
+/* -------------------------------------------------------------------------- */
+
+describe("F6 — the preview of a revoked invitation", () => {
+  it("F6: answers 200 with status revoked, not the 404 a pending-only lookup would give", async () => {
+    // Arrange — a real invitation, its token recovered from the message the
+    // invitee receives, then revoked by the organizer.
+    const workspace = await seedWorkspace("op120-f6");
+    const eventId = await seedEvent(workspace);
+    await addEventMember(workspace, eventId, workspace.organizer, "organizer");
+    const inviteeEmail = "buck@example.com";
+
+    const created = await createInvitation(
+      createRequest(workspace.organizer.cookie, workspace, eventId, emailInvite(inviteeEmail))
+    );
+    expect(created.status).toBe(201);
+    const invitationId = (await body(created)).id as string;
+    const stored = await storedInvitation(invitationId);
+    const token = await tokenForHash(stored?.tokenHash);
+
+    const revoked = await revokeInvitation(
+      revokeRequest(workspace.organizer.cookie, workspace, eventId, invitationId)
+    );
+    expect(revoked.status).toBe(200);
+    expect((await storedInvitation(invitationId))?.status).toBe("revoked");
+
+    // Act — the invitee opens the link after the organizer revoked it.
+    const response = await previewInvitation(previewRequest(token));
+
+    // Assert — §2.3: the preview reports the invitation's `status`; a lookup
+    // filtered on `status: "pending"` would answer the non-oracle 404 and pass
+    // every other case in this file.
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(Object.keys(payload).sort()).toEqual(PREVIEW_BODY_KEYS);
+    expect(payload.status).toBe("revoked");
+    expect(payload.inviteeMasked).toBe(maskEmail(inviteeEmail));
+    expect(payload.eventName).toBe("Rahul & Priya's Wedding");
+    expect(findForbiddenFields(payload, "default")).toEqual([]);
+    expect(JSON.stringify(payload)).not.toContain(token);
   });
 });

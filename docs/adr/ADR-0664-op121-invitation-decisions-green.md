@@ -8,8 +8,8 @@
   `/root/openpic/openpic-webapp/.worktrees/t_108cd476`, based on the pins head
   `5bf8381` of `OP-121-task-invitation-decisions-red`, PR #413)
 - **Range:** `0664` (the `OP-120 invitations lane` block `0660`–`0679`; the cell
-  advances to `0665`. `0662` stays with the in-flight sibling `t_b91b009e` — the
-  union merge of this cell with that branch keeps the **highest** value)
+  advances to `0665`. The sibling `t_b91b009e` landed `0662` on `main` first;
+  the union merge of this cell keeps the **highest** value)
 - **Supersedes nothing.** [ADR-0663](ADR-0663-op121-invitation-decisions-red.md)
   is the pinned contract this record implements.
 
