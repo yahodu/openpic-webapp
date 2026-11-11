@@ -33,6 +33,14 @@ const pushResultSchema = z.object({ result: z.number() });
 /** The documented answer to `RPOP key count`: the popped payloads, or null when empty. */
 const popResultSchema = z.object({ result: z.array(z.string()).nullable() });
 
+/**
+ * Per-request budget used when no `timeoutMs` is passed (ADR-0683 §2).
+ *
+ * A documented constant, the `cashfree-provider.ts` precedent: the Novu
+ * transport timeout is a different upstream, so it is not reused here.
+ */
+const DEFAULT_TIMEOUT_MS = 10_000;
+
 /** Construction options for {@link createUpstashQueue}. */
 export interface UpstashQueueOptions {
   /** The Upstash REST endpoint. */
@@ -43,6 +51,8 @@ export interface UpstashQueueOptions {
   readonly logger?: Logger;
   /** A fetch implementation override (tests / instrumentation). */
   readonly fetch?: typeof fetch;
+  /** Per-request budget in ms; defaults to {@link DEFAULT_TIMEOUT_MS}. */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -53,6 +63,7 @@ export interface UpstashQueueOptions {
  */
 export function createUpstashQueue(options: UpstashQueueOptions): WorkQueue {
   const fetchImpl = options.fetch ?? fetch;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   /** Claimed payloads, so `ack`/`nack` can act on an id the list does not keep. */
   const claimed = new Map<string, { readonly queueKey: QueueKey; readonly payload: string }>();
 
@@ -78,16 +89,29 @@ export function createUpstashQueue(options: UpstashQueueOptions): WorkQueue {
     operation: string,
     queueKey: QueueKey
   ): Promise<unknown> {
-    const response = await fetchImpl(options.url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${options.token}`,
-      },
-      body: JSON.stringify(body),
-    }).catch((error: unknown) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetchImpl(options.url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${options.token}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      // An abort lands here as a DOMException named AbortError, so the shared
+      // classification turns a hung broker into a retryable `timeout` (ADR-0683 §2).
       throw classifyTransportFailure({ error });
-    });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       throw classifyTransportFailure({ status: response.status });
