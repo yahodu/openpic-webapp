@@ -179,7 +179,9 @@ expect(parsed.error.details?.entitlementKey).toBe("coorganizers.per_event");
   `event-invitations.test.ts:740`. After the fix the same command runs
   `Test Files 1 passed (1)` and `Tests 26 passed (26)`;
   `tsc -p apps/web/tsconfig.json --noEmit` exits `0` and `prettier --check` is
-  clean.
+  clean. The whole suite at this head: `--project integration`
+  `96 passed (96)` / `870 passed (870)` (it was `869 passed | 1 failed`), and
+  `--project unit` `145 passed (145)` / `2334 passed | 3 skipped`.
 - **The pin stayed load-bearing** (two mutation probes on the route, each
   restored byte-identically, `git diff` empty afterwards): a wrong emitted
   `entitlementKey` fails with
