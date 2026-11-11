@@ -132,7 +132,7 @@ on it.
 - `INDEX_SPECS`: `{tokenHash: 1}` unique and the three duplicate-live-invite
   partial indexes (§13.6).
 
-## Disputed pin (left red, not edited)
+## Disputed pin (resolved test-side, card `t_f2e56c5c`)
 
 `apps/web/src/test/integration/event-invitations.test.ts` —
 **"I3: refuses an invite over coorganizers.per_event with 403 plan_limit_exceeded"**
@@ -154,6 +154,42 @@ unit cases pass. Proposed fix: derive the code and the details from that single
 parse (`const parsed = await body(response); parsed.error.code …`). No
 implementation change can make a one-shot body re-readable, and simulating one
 in the shared response type would be test accommodation in production code.
+
+### Resolution (TEST-FIX, one parse)
+
+The Test Author fixed the pin **test-side only**; no implementation line and no
+other case in either spec changed. One parse now supplies the code _and_ the
+details:
+
+```ts
+const parsed = (await body(response)) as {
+  error: { code: string; details?: { entitlementKey?: string } };
+};
+expect(parsed.error.code).toBe("plan_limit_exceeded");
+expect(parsed.error.details?.entitlementKey).toBe("coorganizers.per_event");
+```
+
+- **Rejected — `errorCode` reading `response.clone()`.** It would leave an
+  unread clone at each of the nine other `errorCode` call sites in this file,
+  and the OP-115 precedent already uses the single-parse form.
+- **Assertion content unchanged:** `403`, `plan_limit_exceeded`,
+  `details.entitlementKey === "coorganizers.per_event"`.
+- **Evidence.** Before the fix, the focused case threw
+  `TypeError: Body is unusable` (`Body has already been read`) at
+  `event-invitations.test.ts:740`. After the fix the same command runs
+  `Test Files 1 passed (1)` and `Tests 26 passed (26)`;
+  `tsc -p apps/web/tsconfig.json --noEmit` exits `0` and `prettier --check` is
+  clean.
+- **The pin stayed load-bearing** (two mutation probes on the route, each
+  restored byte-identically, `git diff` empty afterwards): a wrong emitted
+  `entitlementKey` fails with
+  `expected 'coorganizers.per_seat' to be 'coorganizers.per_event'`; answering
+  the same `403` with code `forbidden` fails with
+  `expected 'forbidden' to be 'plan_limit_exceeded'` **while the status
+  assertion still passes**, so the code assertion is not a proxy for the
+  status.
+- **Ledger:** no ADR number is consumed (this section amends an existing
+  record) and `docs/adr/README.md` is untouched.
 
 ## Consequences
 

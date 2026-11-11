@@ -736,10 +736,14 @@ describe("POST /api/v1/tenants/{tenantId}/events/{eventId}/invitations", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await errorCode(response)).toBe("plan_limit_exceeded");
-    const parsed = await body(response);
-    const error = parsed.error as { details?: { entitlementKey?: string } };
-    expect(error.details?.entitlementKey).toBe("coorganizers.per_event");
+    // One body read (the Response body is one-shot): derive both the code and
+    // the details from the same parse (OP-115 D2 — `errorCodeOf` + `body` on
+    // the same response threw `Body has already been read`).
+    const parsed = (await body(response)) as {
+      error: { code: string; details?: { entitlementKey?: string } };
+    };
+    expect(parsed.error.code).toBe("plan_limit_exceeded");
+    expect(parsed.error.details?.entitlementKey).toBe("coorganizers.per_event");
   });
 
   it("I3: a pending invite already owns the seat, so the next invite is 403", async () => {
