@@ -6,9 +6,10 @@
 - **Card:** `t_76818e4b` (OP-119 review round 1, artifact lens — GREEN follow-up
   to findings **F1** and **F2** of `t_da9cbf64`, plus the behaviour-preserving
   F3 cleanup)
-- **Branch:** `OP-119-task-members-alias-pins` (worktree
-  `/root/openpic/openpic-webapp/.worktrees/t_da9cbf64`, based on the pin card's
-  tip `fffdc92`, which is itself one commit on `origin/main` `eab1291`)
+- **Branch:** `OP-119-bug-members-alias-total` (PR #408, squash-merged as
+  `ea36f33`; worktree `/root/openpic/openpic-webapp/.worktrees/t_da9cbf64`,
+  based on the pin card's tip `fffdc92`, which is itself one commit on
+  `origin/main` `eab1291`)
 - **Range:** `0640`–`0659` (the OP-119 lane block ADR-0640 drew). `0640`,
   `0641`, `0642` and `0643` are consumed by the lane's RED, pin, GREEN and
   round-1 pin records, so this record takes `0644` and advances the lane's
