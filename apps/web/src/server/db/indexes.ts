@@ -115,6 +115,49 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["createdAt", -1],
     ],
   },
+  // invitations — token redemption: the public preview hashes the raw token and
+  // reads the row by that hash, so the hash must be unique across every tenant
+  // (§13.6).
+  {
+    collection: COLLECTIONS.invitations,
+    name: "invitations_token_hash_unique",
+    keys: [["tokenHash", 1]],
+    unique: true,
+  },
+  // invitations — "one live invitation per invitee per event": the partial
+  // filter keeps only `pending` rows in the index, so a revoked, rejected or
+  // expired invitation frees the slot for a re-invite (§13.6). One index per
+  // invitee kind, because the stored contact lives in a kind-specific field.
+  {
+    collection: COLLECTIONS.invitations,
+    name: "invitations_pending_event_email_unique",
+    keys: [
+      ["eventId", 1],
+      ["invitee.email", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { status: "pending", "invitee.email": { $type: "string" } },
+  },
+  {
+    collection: COLLECTIONS.invitations,
+    name: "invitations_pending_event_user_unique",
+    keys: [
+      ["eventId", 1],
+      ["invitee.userId", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { status: "pending", "invitee.userId": { $type: "string" } },
+  },
+  {
+    collection: COLLECTIONS.invitations,
+    name: "invitations_pending_event_phone_unique",
+    keys: [
+      ["eventId", 1],
+      ["invitee.phoneE164", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { status: "pending", "invitee.phoneE164": { $type: "string" } },
+  },
 
   // audit_logs — 400-day retention, swept by the TTL monitor (§22).
   {

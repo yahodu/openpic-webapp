@@ -93,6 +93,20 @@ export async function inviteeEmail(db: Db, invitee: NormalizedInvitee): Promise<
 }
 
 /**
+ * The caller's own email, for the self-invitation refusal.
+ *
+ * @param db - The database handle.
+ * @param userId - The caller's Better Auth user id (hex string).
+ * @returns The account's lowercase email, or `null` when absent.
+ */
+export async function callerEmail(db: Db, userId: string): Promise<string | null> {
+  const user = (await platformRepo(db)
+    .collection(USER_COLLECTION)
+    .findOne({ _id: new ObjectId(userId) })) as UserDocument | null;
+  return typeof user?.email === "string" ? user.email.toLowerCase() : null;
+}
+
+/**
  * Resolve the account id behind a canonical invitee.
  *
  * An invitation may precede the account, so an `email`/`phone` invitee is

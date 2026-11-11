@@ -204,3 +204,78 @@ export function coOrganizerSeats(input: CoOrganizerSeatInput): number {
   ).length;
   return members + pending;
 }
+
+/** The channels an invitation may be carried over (contract §4.6). */
+export type InvitationChannel = "in_app" | "email" | "sms";
+
+/**
+ * The filter that names one stored invitee inside an event.
+ *
+ * The stored contact lives in the kind-specific field (schema §13.6), so the
+ * filter — and the partial unique index behind it — is per kind.
+ *
+ * @param invitee - The canonical invitee.
+ * @returns The field-equal filter.
+ */
+export function inviteeFilter(invitee: NormalizedInvitee): Record<string, string> {
+  switch (invitee.kind) {
+    case "user":
+      return { "invitee.userId": invitee.userId };
+    case "email":
+      return { "invitee.email": invitee.email };
+    case "phone":
+      return { "invitee.phoneE164": invitee.phoneE164 };
+  }
+}
+
+/**
+ * Project a stored `event_organizers` row onto the seat-count input.
+ *
+ * A row is active unless it says otherwise: the write paths store either
+ * `status: "removed"` or a `revokedAt`, and either one ends the membership.
+ *
+ * @param row - The stored row.
+ * @returns The member shape {@link coOrganizerSeats} counts.
+ */
+export function toSeatMember(row: Record<string, unknown>): SeatMember {
+  const removed = row.status === "removed" || row.revokedAt !== null;
+  return {
+    role: row.role === "co_organizer" ? "co_organizer" : "organizer",
+    status: removed ? "removed" : "active",
+  };
+}
+
+/** Where an invitation is delivered, and the channels it is recorded on. */
+export interface InviteDelivery {
+  readonly email: string | null;
+  readonly sms: string | null;
+  readonly channels: readonly InvitationChannel[];
+}
+
+/**
+ * The channels an invitation is delivered over, and its destinations.
+ *
+ * Which channels a given invitee earns is a contact-availability decision (§4.6
+ * sends all three), so this is derived from the contact that actually exists:
+ * an email invite goes by email, a phone invite by SMS, and an account invite
+ * always earns the in-app notification plus the account's email when it has one.
+ *
+ * @param invitee - The canonical invitee.
+ * @param accountEmail - The invitee account's email, when it could be resolved.
+ * @returns The destinations and the channel vocabulary to record.
+ */
+export function deliveryFor(
+  invitee: NormalizedInvitee,
+  accountEmail: string | null
+): InviteDelivery {
+  switch (invitee.kind) {
+    case "email":
+      return { email: invitee.email, sms: null, channels: ["email"] };
+    case "phone":
+      return { email: null, sms: invitee.phoneE164, channels: ["sms"] };
+    case "user":
+      return accountEmail === null
+        ? { email: null, sms: null, channels: ["in_app"] }
+        : { email: accountEmail, sms: null, channels: ["in_app", "email"] };
+  }
+}
