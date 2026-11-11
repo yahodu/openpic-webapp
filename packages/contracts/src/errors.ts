@@ -76,12 +76,18 @@ export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[number];
  * `{ startAt, endAt }` — `endAt` must come after `startAt`) and
  * `start_too_far_past` (`422`, the `startAt` guard at now − 30 days; details
  * unpinned by the card) (ADR-0520).
+ *
+ * OP-119 appends `range_too_large` (contract §4.5 / Appendix A.2, `422`,
+ * `{ maxDays }`): the tenant analytics read refuses a window longer than the
+ * 366-day ceiling. Appendix A.2 documents it and the document's `ErrorCode`
+ * union carries it, but the executable catalogue did not (ADR-0642).
  */
 export const REQUEST_SHAPE_ERROR_CODES = [
   "unknown_timezone",
   "forbidden_field",
   "invalid_date_range",
   "start_too_far_past",
+  "range_too_large",
 ] as const;
 
 /** A member of the closed {@link REQUEST_SHAPE_ERROR_CODES} set. */
