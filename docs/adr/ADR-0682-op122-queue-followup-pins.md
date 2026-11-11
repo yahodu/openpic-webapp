@@ -136,6 +136,13 @@ lands. A worker spec that depends on retry _order_ must be written per adapter, 
 later delayed-sorted-set implementation is free to change the Upstash position again
 without breaking this port contract.
 
+**The follow-up GREEN may choose the stricter contract** — "a nacked message goes to the
+back" (the position the Upstash adapter already has) — because its card prefers the two
+adapters agree. That is a _stronger_ promise than this record makes, not a contradiction
+of it: adopting it must retarget the P4 memory pin to `[second, first]`, keep the Upstash
+`LPUSH` assertion as is, and record the change here. What this record forbids is the
+silent option: the divergence is pinned so that either choice is visible in a diff.
+
 ### 5. P5 — `nack`'s `delaySeconds` never reaches the Upstash broker (characterization)
 
 `nack(id, 600)` sends one immediate `LPUSH`; no delayed structure is touched and the
