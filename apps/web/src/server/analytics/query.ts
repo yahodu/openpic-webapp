@@ -25,15 +25,31 @@ const SCOPE_KINDS: readonly AnalyticsScopeKind[] = ["tenant", "event"];
 /** A 24-hex `ObjectId`, the only shape an `eventId` query value may take. */
 const OBJECT_ID_HEX = /^[0-9a-f]{24}$/i;
 
-/** A validated analytics request. */
-export interface AnalyticsQuery {
-  /** The validated `from..to` window. */
-  readonly range: AnalyticsRange;
-  /** Which aggregate to read. */
-  readonly kind: AnalyticsScopeKind;
-  /** The `scope=event` target, or `null` for the tenant scope. */
-  readonly eventId: string | null;
-}
+/**
+ * A validated analytics request.
+ *
+ * A discriminated union (ADR-0644): the `scope=event` arm always carries the
+ * 24-hex id it was validated against, so "kind `event` but no id" is
+ * unrepresentable and no caller needs a fallback that would silently widen an
+ * event request into the tenant aggregate.
+ */
+export type AnalyticsQuery =
+  | {
+      /** The validated `from..to` window. */
+      readonly range: AnalyticsRange;
+      /** The whole-workspace aggregate. */
+      readonly kind: "tenant";
+      /** The event scope, absent on the tenant arm. */
+      readonly eventId: null;
+    }
+  | {
+      /** The validated `from..to` window. */
+      readonly range: AnalyticsRange;
+      /** One event's aggregate. */
+      readonly kind: "event";
+      /** The validated 24-hex event id. */
+      readonly eventId: string;
+    };
 
 /** Whether a raw `scope` value is in the closed vocabulary. */
 function isScopeKind(value: string): value is AnalyticsScopeKind {

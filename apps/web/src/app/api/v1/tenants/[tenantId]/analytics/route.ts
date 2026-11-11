@@ -3,7 +3,7 @@ import { ObjectId } from "mongodb";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { readAnalyticsSeries, type AnalyticsScopeTarget } from "@/server/analytics/daily";
-import { parseAnalyticsQuery } from "@/server/analytics/query";
+import { parseAnalyticsQuery, type AnalyticsQuery } from "@/server/analytics/query";
 import { analyticsResponseSchema, type AnalyticsResponse } from "@/server/analytics/schema";
 import { reduceAnalyticsTotals } from "@/server/analytics/totals";
 import { defineRoute } from "@/server/http/define-route";
@@ -38,7 +38,9 @@ const PARTIAL_TODAY_NOTE = "Rolled up nightly. Today's figures are partial.";
  * The tenant scope is the authorised workspace itself. The event scope is
  * checked against the tenant in the path, so another workspace's event is the
  * uniform `404` — the reading that keeps the tenant segment meaningful
- * (ADR-0640 §A8).
+ * (ADR-0640 §A8). {@link AnalyticsQuery} is a discriminated union, so the
+ * `scope=event` arm always carries its id: there is no "event without an id"
+ * state that could fall back to the tenant aggregate (ADR-0644).
  *
  * @param tenantId - The authorised workspace from the tenant stage.
  * @param query - The decoded query.
@@ -48,9 +50,9 @@ const PARTIAL_TODAY_NOTE = "Rolled up nightly. Today's figures are partial.";
  */
 async function resolveScopeTarget(
   tenantId: ObjectId,
-  query: { readonly kind: "tenant" | "event"; readonly eventId: string | null }
+  query: AnalyticsQuery
 ): Promise<AnalyticsScopeTarget> {
-  if (query.kind === "tenant" || query.eventId === null) {
+  if (query.kind === "tenant") {
     return { kind: "tenant", id: tenantId };
   }
 
