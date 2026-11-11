@@ -142,8 +142,20 @@ is code, not tests — this card may not write one:
 - the presign registry hands back the writer alone (`contentType` was never
   read), and `getQueueRuntimeConfig()` drops its redundant `UPSTASH_*` checks.
 
+A second merge (`3f39718`, PR #426, the OP-122 retry-position/containment
+**pins**) hit the same `docs/adr/README.md` conflict and was resolved the same
+way: OP-122's `Next free` keeps main's `0685`, the pool keeps `0740`, the index
+rows are ordered by number. That PR is **test-only and RED on `main`**: four of
+its eighteen cases (`memory` redelivering a nacked message after the one behind
+it; the three poison-payload containment cases) pin behaviour that its own GREEN
+card `t_1d32d0a2` owes. They fail identically here — the spec is byte-identical
+to `main`'s and this branch touches no queue adapter — so they are inherited,
+not caused by this lane; PR #425's `test_coverage` check therefore cannot be
+green until `t_1d32d0a2` lands.
+
 Evidence at the merge head: coverage **statements 91.55 % / branches 80.19 % /
 functions 95.35 % / lines 91.82 %** (exit 0), `pnpm test:unit` 150 files /
-2433 passed | 3 skipped, `pnpm test:int` 100 files / 947 passed, Playwright
-`api` 26 passed (E1 included), `tsc` ×3 exit 0, ESLint 0 errors,
-`prettier --check` clean.
+2433 passed | 3 skipped, `pnpm test:int` 100 files / 947 passed before the
+#426 merge (after it, the only four reds are that PR's inherited pins),
+Playwright 27 passed (both projects, E1 included), `tsc` ×3 exit 0, ESLint 0
+errors, `prettier --check` clean.
