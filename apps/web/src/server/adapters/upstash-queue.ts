@@ -166,28 +166,46 @@ export function createUpstashQueue(options: UpstashQueueOptions): WorkQueue {
         "Upstash queue response did not match the RPOP contract."
       );
 
-      const messages: QueueMessage[] = [];
+      const valid: { readonly payload: string; readonly envelope: QueueEnvelope }[] = [];
+      let violation: { readonly message: string; readonly cause: unknown } | undefined;
+
+      // Parse the whole batch before acting on any payload, so a poison payload
+      // cannot abandon the ones behind it (ADR-0685 §1).
       for (const payload of popped.result ?? []) {
         let raw: unknown;
         try {
           raw = JSON.parse(payload);
         } catch (cause) {
-          throw contractViolation("A queued message was not JSON.", "claim", queueKey, cause);
+          violation ??= { message: "A queued message was not JSON.", cause };
+          continue;
         }
         const envelope = queueEnvelopeSchema.safeParse(raw);
         if (!envelope.success) {
-          throw contractViolation(
-            "A queued message did not match the §10.4 envelope.",
-            "claim",
-            queueKey,
-            envelope.error
-          );
+          violation ??= {
+            message: "A queued message did not match the §10.4 envelope.",
+            cause: envelope.error,
+          };
+          continue;
         }
+        valid.push({ payload, envelope: envelope.data });
+      }
+
+      if (violation !== undefined) {
+        // Rescue every §10.4-valid payload in the order RPOP returned it: LPUSH
+        // prepends and RPOP drains the tail, so re-pushing in this order restores
+        // the list. The poison is dropped — re-pushing it would drift on every
+        // later claim and the key would never drain.
+        for (const rescued of valid) {
+          await command(["LPUSH", queueKey, rescued.payload], "claim", queueKey);
+        }
+        throw contractViolation(violation.message, "claim", queueKey, violation.cause);
+      }
+
+      return valid.map(({ payload, envelope }) => {
         const messageId = randomUUID();
         claimed.set(messageId, { queueKey, payload });
-        messages.push({ messageId, envelope: envelope.data });
-      }
-      return messages;
+        return { messageId, envelope };
+      });
     },
 
     ack(messageId: string): Promise<void> {
