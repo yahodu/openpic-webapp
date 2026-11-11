@@ -490,6 +490,29 @@ export const COLLABORATION_ERROR_TRANSPORT: Readonly<
     retryable: false,
     message: "This invitee is already a co-organizer of the event.",
   },
+  // OP-121 (§2.3 rule 4, Appendix A.5): the two terminal states make the
+  // decision structurally impossible — the affordance disappears, so both are
+  // `410`, not a conflict.
+  invitation_revoked: {
+    status: 410,
+    retryable: false,
+    message: "This invitation has been revoked.",
+  },
+  invitation_expired: {
+    status: 410,
+    retryable: false,
+    message: "This invitation has expired.",
+  },
+  invitation_not_for_you: {
+    status: 403,
+    retryable: false,
+    message: "This invitation is addressed to a different invitee.",
+  },
+  cannot_remove_organizer: {
+    status: 409,
+    retryable: false,
+    message: "The event organizer cannot be removed from the event.",
+  },
 };
 
 /**

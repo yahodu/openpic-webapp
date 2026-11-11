@@ -5,7 +5,7 @@ import { appError } from "@/server/http/errors";
 import { platformRepo, tenantRepo } from "@/server/repos";
 import type { TenantAdmissionContext } from "@/server/tenancy/route-stage";
 
-import { eventIdFromRequest } from "./event-id";
+import { eventIdAfterEventsSegment } from "./event-id";
 
 /**
  * Event-actor admission for the global `/api/v1/events/{eventId}` mutation
@@ -94,7 +94,7 @@ export async function admitEventActor({
   userId,
   deny,
 }: TenantAdmissionContext): Promise<void> {
-  const eventId = eventIdFromRequest(request, { segmentFromEnd: 2 });
+  const eventId = eventIdAfterEventsSegment(request);
   const tenantKey = tenantId.toHexString();
 
   const event = await tenantRepo(tenantKey, db)
