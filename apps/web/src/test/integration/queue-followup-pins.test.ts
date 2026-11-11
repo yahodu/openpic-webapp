@@ -1,35 +1,46 @@
 /**
- * OP-122 round-1 review follow-up pins (ADR-0682), at the OP-122 GREEN head
- * (`5f28acd`).
+ * OP-122 queue follow-up pins (ADR-0682, ADR-0684), at the round-1 sign-off
+ * (`c9c259c`).
  *
- * Six findings the shipped OP-122 specs left blind. Two of them are **RED by
- * design** — they describe the code the review found and must fail until the
- * follow-up GREEN lands:
+ * These pins cover the enqueue path and the two adapters' retry position and
+ * failure containment. Two are **RED by design** — they describe behaviour the
+ * sign-off left open and must fail until the GREEN child lands:
  *
- * - **P1** `enqueueWork` calls `queue.enqueue(...)` *before* it builds the
- *   `ObjectId` and never parses the envelope, so a pointer the strict §10.4
- *   schema rejects reaches the broker while the call reports `{enqueued:false}`
- *   (invalid id) or even reports success (empty `spaceKey`, non-hex `tenantId`).
- * - **P2** the Upstash adapter builds no `AbortController`, so a hung broker
- *   never settles: the user request hangs and `classifyTransportFailure`'s
- *   `timeout` branch is unreachable.
+ * - **P4 (memory)** a nacked message becomes available **after** the messages
+ *   enqueued behind it — the "back" rule ADR-0683 §4 prefers, which the Upstash
+ *   list already has. `memoryWorkQueue.nack` must move the entry to the back of
+ *   its table instead of redelivering it in place (ADR-0684 §2).
+ * - **P6** one poison payload must not cost the claimed batch: `claim`
+ *   re-`LPUSH`es every §10.4-valid payload of the batch before it raises the
+ *   drift, drops only the poison and logs the drift once (ADR-0684 §1).
  *
- * Four are **characterization** pins — they describe what the adapter does
- * today and are expected to be **green on arrival**, so a later reader does not
- * mistake a green run for a red pin that failed to bite:
+ * The rest are **characterization** pins: they describe what the code does today
+ * and are green on arrival, so a later reader does not mistake a green run for a
+ * red pin that failed to bite.
  *
+ * - **P1** the pointer is validated (`queueEnvelopeSchema` and the `ObjectId`)
+ *   *before* `queue.enqueue`, so no request path puts a §10.4-rejected value on
+ *   the broker (green since the follow-up GREEN, PR #421).
+ * - **P2** the Upstash adapter bounds every request with `timeoutMs`, so a hung
+ *   broker is a retryable `TransportError` and never a hung user request (green
+ *   since PR #421).
  * - **P3** `ack`/`nack` on an id this process never minted is a silent no-op
  *   (the process-local `claimed` ledger; the payload is already gone).
- * - **P4** the two adapters disagree on where a retry goes: memory redelivers
- *   in place, Upstash re-`LPUSH`es to the head and therefore serves it last.
- * - **P5** `nack`'s `delaySeconds` never reaches the Upstash broker.
- * - **P6** one malformed payload costs the whole claimed batch — the good
- *   payloads are dropped and never re-`LPUSH`ed.
+ * - **P4 (upstash)** the list re-`LPUSH`es a nacked payload to the head and
+ *   `RPOP`s the tail, so the message is served last — the position both
+ *   adapters now share.
+ * - **P5** `nack`'s `delaySeconds` never reaches the Upstash broker: the payload
+ *   is re-pushed immediately and is claimable at once at any delay. A delayed
+ *   sorted set (`ZADD` with a score, `ZRANGEBYSCORE` + `ZREM` to promote on
+ *   time) is the upgrade that would honour it; until then this pin freezes the
+ *   divergence so it cannot change silently (ADR-0684 §3).
  *
  * The pins drive the real modules over MSW (`integration/setup.ts` intercepts
  * every outbound request) and the Mongo memory server, never a stubbed
  * collaborator, so a behaviour-preserving refactor keeps them green and a
- * regression breaks the named case.
+ * regression breaks the named case. The Upstash mock emulates a real Redis list
+ * (head/tail), so "served last", "re-queued" and "not re-queued" are observed as
+ * the payloads a worker would actually receive next.
  */
 import { ObjectId } from "mongodb";
 import { HttpResponse, http } from "msw";
@@ -127,22 +138,24 @@ function waitMs(ms: number): Promise<"still-pending"> {
 interface MockBroker {
   /** Every command array the adapter POSTed, in call order. */
   readonly commands: readonly (readonly unknown[])[];
-  /** Set the payloads the next `RPOP` answers with. */
+  /** Replace the list with these payloads, in the order `RPOP` must serve them. */
   pop(payloads: readonly string[]): void;
 }
 
 /**
- * Install the Upstash REST mock with the two documented commands.
+ * Install the Upstash REST mock over a real Redis-list emulation.
  *
- * `LPUSH` answers with the new list length, `RPOP` with the payloads a case
- * armed through {@link MockBroker.pop}. No list is emulated: the case asserts
- * on the *commands*, which is the observable wire contract.
+ * `LPUSH` prepends to the head and `RPOP key count` drains from the tail — the
+ * documented Redis semantics the adapter relies on — so a case observes the
+ * payloads a worker would actually receive next, not a canned answer. `pop`
+ * replaces the list with the payloads a case wants served, in FIFO order.
  *
- * @returns The captured commands and the `RPOP` arming function.
+ * @returns The captured commands and the list-seeding function.
  */
 function installBroker(): MockBroker {
   const commands: (readonly unknown[])[] = [];
-  let popped: readonly string[] = [];
+  /** The list as Redis holds it: index 0 is the head, the last element the tail. */
+  let list: string[] = [];
 
   server.use(
     http.post(UPSTASH_URL, async ({ request }) => {
@@ -151,16 +164,22 @@ function installBroker(): MockBroker {
         throw new Error("expected the Upstash REST body to be a command array");
       }
       commands.push(raw);
-      return raw[0] === "RPOP"
-        ? HttpResponse.json({ result: popped })
-        : HttpResponse.json({ result: commands.length });
+
+      const [name, , argument] = raw;
+      if (name === "LPUSH") {
+        list.unshift(String(argument));
+        return HttpResponse.json({ result: list.length });
+      }
+
+      const popped = list.splice(Math.max(list.length - Number(argument), 0)).reverse();
+      return HttpResponse.json({ result: popped.length === 0 ? null : popped });
     })
   );
 
   return {
     commands,
     pop: (payloads) => {
-      popped = [...payloads];
+      list = [...payloads].reverse();
     },
   };
 }
@@ -388,10 +407,11 @@ describe("queue follow-up pins (OP-122 round 1, ADR-0682)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // P4 — characterization: the two adapters disagree on where a retry goes
+  // P4 — one retry position for both adapters: a nacked message goes to the back
+  //      (memory is RED by design; the Upstash list already behaves that way)
   // ---------------------------------------------------------------------------
 
-  it("memory redelivers a nacked message in place, before a message enqueued after it", async () => {
+  it("memory redelivers a nacked message after the message enqueued behind it", async () => {
     const queue = memoryWorkQueue();
     const first = makeQueueEnvelope();
     const second = makeQueueEnvelope({ id: objectIdHex(0xbeef2) });
@@ -406,7 +426,10 @@ describe("queue follow-up pins (OP-122 round 1, ADR-0682)", () => {
 
     const redelivered = await queue.claim("q:image", 10);
 
-    expect(redelivered.map((message) => message.envelope)).toEqual([first, second]);
+    // The "back" rule (ADR-0683 §4, adopted in ADR-0684 §2): the retry lands
+    // behind everything already enqueued, which is the position the Upstash list
+    // produces by re-`LPUSH`ing to the head while `RPOP` drains the tail.
+    expect(redelivered.map((message) => message.envelope)).toEqual([second, first]);
   });
 
   it("upstash re-LPUSHes a nacked payload to the head, so the tail-draining claim serves it last", async () => {
@@ -417,7 +440,6 @@ describe("queue follow-up pins (OP-122 round 1, ADR-0682)", () => {
     const second = makeQueueEnvelope({ id: objectIdHex(0xbeef2) });
     await queue.enqueue(first, "q:image");
     await queue.enqueue(second, "q:image");
-    broker.pop([JSON.stringify(first), JSON.stringify(second)]);
 
     const claimed = await queue.claim("q:image", 2);
     const [firstClaimed] = claimed;
@@ -434,59 +456,130 @@ describe("queue follow-up pins (OP-122 round 1, ADR-0682)", () => {
   // P5 — characterization: nack's delaySeconds never reaches the broker
   // ---------------------------------------------------------------------------
 
-  it("nack(id, 600) sends one immediate LPUSH, so the payload is claimable at once", async () => {
+  /**
+   * The delays a real backoff would ask for, including one far beyond any test
+   * window: after each of them the payload must come back at once.
+   */
+  const NACK_DELAYS_SECONDS: readonly { readonly delaySeconds: number }[] = [
+    { delaySeconds: 0 },
+    { delaySeconds: 600 },
+    { delaySeconds: 3_600 },
+  ];
+
+  it.each(NACK_DELAYS_SECONDS)(
+    "nack(id, $delaySeconds) re-pushes the payload immediately, so the delay is ignored",
+    async ({ delaySeconds }) => {
+      const broker = installBroker();
+      const { logger } = makeLogger();
+      const queue = createUpstashQueue({ url: UPSTASH_URL, token: UPSTASH_TOKEN, logger });
+      const envelope = makeQueueEnvelope();
+      await queue.enqueue(envelope, "q:selfie");
+
+      const [claimed] = await queue.claim("q:selfie", 1);
+      if (claimed === undefined) {
+        throw new Error("expected the enqueued payload to be claimable");
+      }
+      await queue.nack(claimed.messageId, delaySeconds);
+
+      // No delayed structure and no delay argument: the nack emits exactly one
+      // immediate re-push onto the same list key. The sorted-set upgrade that
+      // would honour the delay (`ZADD` a score, promote with `ZRANGEBYSCORE`)
+      // is named in the file docblock; this pin freezes today's shortcut.
+      expect(broker.commands.map((command) => command[0])).toEqual(["LPUSH", "RPOP", "LPUSH"]);
+      expect(broker.commands[2]).toEqual(["LPUSH", "q:selfie", JSON.stringify(envelope)]);
+
+      // The delay is not honoured: the payload is claimable with no wait at all —
+      // at 600 s and at 3 600 s just as at 0 s.
+      const redelivered = await queue.claim("q:selfie", 1);
+      expect(redelivered.map((message) => message.envelope)).toEqual([envelope]);
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // P6 — RED by design: one poison payload must not cost the claimed batch
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The two payload corruptions `claim` has to contain: a payload that is not
+   * JSON at all, and one that parses as JSON but is not a §10.4 envelope.
+   */
+  const POISON_PAYLOADS: readonly { readonly label: string; readonly payload: string }[] = [
+    { label: "not JSON", payload: "{not-json" },
+    { label: "not a §10.4 envelope", payload: JSON.stringify({ v: 1 }) },
+  ];
+
+  it.each(POISON_PAYLOADS)(
+    "re-queues the batch's valid payloads when a middle payload is $label",
+    async ({ payload }) => {
+      const broker = installBroker();
+      const { logger, sink } = makeLogger();
+      const queue = createUpstashQueue({ url: UPSTASH_URL, token: UPSTASH_TOKEN, logger });
+      const first = makeQueueEnvelope();
+      const second = makeQueueEnvelope({ id: objectIdHex(0xbeef2) });
+      broker.pop([JSON.stringify(first), payload, JSON.stringify(second)]);
+
+      await expect(queue.claim("q:image", 3)).rejects.toBeInstanceOf(UpstreamContractError);
+
+      // At-least-once (ADR-0684 §1): every §10.4-valid payload the one `RPOP`
+      // removed is back on the list, in FIFO order, before the drift surfaced.
+      const redelivered = await queue.claim("q:image", 3);
+      expect(redelivered.map((message) => message.envelope)).toEqual([first, second]);
+
+      // Only the poison is gone: nothing was re-pushed behind the valid payloads,
+      // so the key cannot loop on a payload every claim would reject again.
+      expect(await queue.claim("q:image", 3)).toEqual([]);
+
+      // The loss that did happen is loud: exactly one drift record, naming the
+      // claim, the provider and the queue key.
+      const drift = sink.entries.filter((entry) => entry.event === DRIFT_EVENT);
+      expect(drift).toHaveLength(1);
+      expect(drift[0]?.level).toBe("error");
+      expect(drift[0]?.provider).toBe("upstash");
+      expect(drift[0]?.operation).toBe("claim");
+      expect(drift[0]?.queueKey).toBe("q:image");
+    }
+  );
+
+  it("re-queues the payloads that the one RPOP took after the poison", async () => {
     const broker = installBroker();
     const { logger } = makeLogger();
     const queue = createUpstashQueue({ url: UPSTASH_URL, token: UPSTASH_TOKEN, logger });
-    const envelope = makeQueueEnvelope();
-    await queue.enqueue(envelope, "q:selfie");
-    broker.pop([JSON.stringify(envelope)]);
-
-    const [claimed] = await queue.claim("q:selfie", 1);
-    if (claimed === undefined) {
-      throw new Error("expected the enqueued payload to be claimable");
-    }
-    await queue.nack(claimed.messageId, 600);
-
-    // The delayed sorted set a real backoff needs is never touched: the only
-    // command the nack emits is the immediate re-push.
-    expect(broker.commands).toHaveLength(3);
-    expect(broker.commands[2]).toEqual(["LPUSH", "q:selfie", JSON.stringify(envelope)]);
-
-    broker.pop([JSON.stringify(envelope)]);
-    const redelivered = await queue.claim("q:selfie", 1);
-    expect(redelivered.map((message) => message.envelope)).toEqual([envelope]);
-  });
-
-  // ---------------------------------------------------------------------------
-  // P6 — characterization: one malformed payload costs the whole claimed batch
-  // ---------------------------------------------------------------------------
-
-  const MALFORMED_BATCHES: readonly {
-    readonly label: string;
-    readonly payload: (good: string) => readonly string[];
-  }[] = [
-    { label: "the second payload is not JSON", payload: (good) => [good, "{not-json"] },
-    {
-      label: "the second payload is not a §10.4 envelope",
-      payload: (good) => [good, JSON.stringify({ v: 1 })],
-    },
-  ];
-
-  it.each(MALFORMED_BATCHES)("drops the whole claimed batch when $label", async ({ payload }) => {
-    const broker = installBroker();
-    const { logger, sink } = makeLogger();
-    const queue = createUpstashQueue({ url: UPSTASH_URL, token: UPSTASH_TOKEN, logger });
     const good = makeQueueEnvelope();
-    broker.pop(payload(JSON.stringify(good)));
+    broker.pop(["{not-json", JSON.stringify(good)]);
 
     await expect(queue.claim("q:image", 2)).rejects.toBeInstanceOf(UpstreamContractError);
 
-    // One RPOP removed both payloads; nothing is re-LPUSHed, so the good
-    // payload is gone until the (not yet existing, OP-136 I1) sweep re-enqueues it.
-    expect(broker.commands).toHaveLength(1);
-    expect(broker.commands[0]?.[0]).toBe("RPOP");
-    expect(broker.commands.filter((command) => command[0] === "LPUSH")).toEqual([]);
+    // Validation order is not the queue's order: the payload behind the poison
+    // was already popped by the same `RPOP` and must not be lost either.
+    const redelivered = await queue.claim("q:image", 2);
+    expect(redelivered.map((message) => message.envelope)).toEqual([good]);
+  });
+
+  it("keeps claiming a batch that holds no malformed payload", async () => {
+    const broker = installBroker();
+    const { logger, sink } = makeLogger();
+    const queue = createUpstashQueue({ url: UPSTASH_URL, token: UPSTASH_TOKEN, logger });
+    const first = makeQueueEnvelope();
+    const second = makeQueueEnvelope({ id: objectIdHex(0xbeef2) });
+    broker.pop([JSON.stringify(first), JSON.stringify(second)]);
+
+    const claimed = await queue.claim("q:image", 2);
+
+    expect(claimed.map((message) => message.envelope)).toEqual([first, second]);
+    expect(sink.entries.filter((entry) => entry.event === DRIFT_EVENT)).toEqual([]);
+  });
+
+  it("still raises the drift, and re-queues nothing, when every payload is malformed", async () => {
+    const broker = installBroker();
+    const { logger, sink } = makeLogger();
+    const queue = createUpstashQueue({ url: UPSTASH_URL, token: UPSTASH_TOKEN, logger });
+    broker.pop(["{not-json"]);
+
+    // Containment must not become silence: a batch with nothing salvageable is
+    // still a raised drift, and the poison is not re-queued.
+    await expect(queue.claim("q:image", 1)).rejects.toBeInstanceOf(UpstreamContractError);
+
+    expect(await queue.claim("q:image", 1)).toEqual([]);
     expect(sink.entries.filter((entry) => entry.event === DRIFT_EVENT)).toHaveLength(1);
   });
 });
