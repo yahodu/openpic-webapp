@@ -191,3 +191,80 @@ redaction layer doing its job, not a hole in the pin (D1).
   and the card forbids weakening a pin to a shape the product does not have.
 - **Seeding an `expired` row to pin `status: "expired"`** — rejected (D6): the
   TTL deletes such rows, so no production path reaches that state.
+
+## Round-1 review sign-off (2026-11-11)
+
+**Verdict: APPROVED WITH FINDINGS**, round 1, artifact lens, at head `4349d84`.
+The delivery landed on the trunk as the squash `f0f85e9` (PR #412); the review
+record is PR #412 comment
+[`#issuecomment-6803317999`](https://github.com/yahodu/openpic-webapp/pull/412#issuecomment-6803317999).
+`git diff --stat 4349d84 f0f85e9` is **empty**: the tree the review read is
+byte-identical to the merged tree, so every measurement below was taken on the
+merged bytes.
+
+### Independently re-measured by the reviewer
+
+These numbers are the reviewer's own runs, not a transcription of the handoff. In
+a detached worktree at the merged trunk `f0f85e9`: the focused spec `34 passed
+(34)`; the whole integration project `96 files / 878 passed (878)`; the
+`adr-numbering` guard `29 passed (29)`; `prettier --check` clean on the three
+files PR #412 carries. The guard was also run on the branch head, with the same
+`29 passed (29)`. Every PR check was green before the merge, including `ci`,
+`test_coverage` and `secret-scan`.
+
+The spec removal audit finds exactly **one** removed line across the 403 added:
+the `@openpic/contracts` import gaining `maskPhone`. The 26 shipped cases are
+therefore byte-identical — this delivery appends, it does not rewrite.
+
+### The pins are load-bearing (reviewer's own probes)
+
+Four mutations were applied one at a time in a throwaway worktree at the merged
+tree, and every file was restored byte-identically (`sha256` unchanged, `git diff
+--stat` empty). Each turned the pin it was written for red: logging the request
+`path` in the preview handler reddens F2 with `expected [ Array(1) ] to deeply
+equal []`; adding an `inviteUrl` to the `collab.invite.created` record reddens
+**both** F2 cases with that same assertion; dropping `eventId` from the list
+`find(...)` reddens F4 with a deep-equality mismatch between the two events' ids;
+adding `status: "pending"` to the token lookup reddens F6 with `expected 404 to
+be 200`. F5 ran `4/4` consecutive green, so the concurrent pin is not flaky.
+
+D4's two disclosures and D6's boundary also reproduce as this record states them.
+A token-named key such as a one-word `token` field is masked by the logging
+redaction layer, so only a **neutral** field name leaks; the concurrent loser is
+normally refused by the route's duplicate pre-check, not by the §13.6 index,
+which is why F5 pins the observable `201`/`409`/one-row contract rather than the
+mechanism; and `invitations_expire_at_ttl` is `expireAfterSeconds: 0`, so an
+expired row is deleted and `status: "expired"` stays unreachable.
+
+### Findings, and where they went
+
+One **Low**, test-side, and it is the reason a follow-up exists: F2 drove only
+the create and preview success paths, so the `collab.invite.delivery_failed`
+record emitted inside `invitation-delivery.ts` was unpinned. It named no link and
+no destination at the reviewed head, so there was no leak — but a later edit that
+added either one to that record would have passed every pin in the file. It is
+routed to card `t_cd08dc0f` as a characterization pin with no GREEN owed; that
+card's own record documents what followed, and this sign-off cites the card id
+rather than any ADR number the follow-up may have consumed.
+
+Three **Info** items were recorded and closed without cards: F5's row query over
+the invitee's email is not tenant- or event-scoped and is correct today only
+because the file's per-test wipe empties every collection first; F2's preview
+liveness assertion matches any `http.request.rejected` record instead of
+filtering on the route template, which is tight enough today because the case
+issues exactly one rejected request; and the Evidence table above abbreviates two
+assertion strings, which the reviewer's own probes reproduced in full with real
+ids.
+
+### Nothing above is retracted
+
+Every decision in `D1`–`D6`, every row of `## Evidence`, every assumption in
+`A1`–`A5` and every rejected alternative stands exactly as written, including
+D4's two honest disclosures (token-named keys are already redacted; the
+concurrent loser is normally refused by the pre-check) and D6's expiry boundary.
+This section is appended, not rewritten: every historical section of this record
+is byte-identical to the merged one.
+
+`docs/adr/README.md` is **byte-identical** for this change as well — the sign-off
+adds no index row and moves no lane `Next free` cell, so it consumes **no** ADR
+number.
