@@ -1,3 +1,9 @@
+## [1.51.0](https://github.com/yahodu/openpic-webapp/compare/v1.50.1...v1.51.0) (2026-11-11)
+
+### Features
+
+- **api:** OP-120 create, list, preview and revoke co-organizer invitations ([#411](https://github.com/yahodu/openpic-webapp/issues/411)) ([3678c57](https://github.com/yahodu/openpic-webapp/commit/3678c57d6eef17f2c9d64a1469c7e1b1fb1d0a12))
+
 ## [1.50.1](https://github.com/yahodu/openpic-webapp/compare/v1.50.0...v1.50.1) (2026-11-11)
 
 ### Bug Fixes
