@@ -98,41 +98,52 @@ export function createUpstashQueue(options: UpstashQueueOptions): WorkQueue {
     });
   }
 
+  /**
+   * POST one command and validate its answer against the pinned wire schema.
+   *
+   * Folding the parse in here keeps "every answer is Zod-parsed" structural:
+   * a new command cannot be added with an unvalidated response by omission.
+   */
+  async function query<T>(
+    schema: z.ZodType<T>,
+    body: readonly unknown[],
+    operation: string,
+    queueKey: QueueKey,
+    driftMessage: string
+  ): Promise<T> {
+    const answer = await command(body, operation, queueKey);
+    const parsed = schema.safeParse(answer);
+    if (!parsed.success) {
+      throw contractViolation(driftMessage, operation, queueKey, parsed.error);
+    }
+    return parsed.data;
+  }
+
   return {
     provider: PROVIDER,
 
     async enqueue(envelope: QueueEnvelope, queueKey: QueueKey): Promise<EnqueueResult> {
-      const body = await command(
+      await query(
+        pushResultSchema,
         ["LPUSH", queueKey, JSON.stringify(envelope)],
         "enqueue",
-        queueKey
+        queueKey,
+        "Upstash queue response did not match the LPUSH contract."
       );
-      const parsed = pushResultSchema.safeParse(body);
-      if (!parsed.success) {
-        throw contractViolation(
-          "Upstash queue response did not match the LPUSH contract.",
-          "enqueue",
-          queueKey,
-          parsed.error
-        );
-      }
       return { messageId: randomUUID() };
     },
 
     async claim(queueKey: QueueKey, max: number): Promise<QueueMessage[]> {
-      const body = await command(["RPOP", queueKey, String(max)], "claim", queueKey);
-      const parsed = popResultSchema.safeParse(body);
-      if (!parsed.success) {
-        throw contractViolation(
-          "Upstash queue response did not match the RPOP contract.",
-          "claim",
-          queueKey,
-          parsed.error
-        );
-      }
+      const popped = await query(
+        popResultSchema,
+        ["RPOP", queueKey, String(max)],
+        "claim",
+        queueKey,
+        "Upstash queue response did not match the RPOP contract."
+      );
 
       const messages: QueueMessage[] = [];
-      for (const payload of parsed.data.result ?? []) {
+      for (const payload of popped.result ?? []) {
         let raw: unknown;
         try {
           raw = JSON.parse(payload);
@@ -161,17 +172,15 @@ export function createUpstashQueue(options: UpstashQueueOptions): WorkQueue {
       return Promise.resolve();
     },
 
-    nack(messageId: string, _delaySeconds: number): Promise<void> {
+    async nack(messageId: string, _delaySeconds: number): Promise<void> {
       // shortcut: a Redis list has no delay — the payload is requeued at the head
       // immediately; upgrade to a delayed sorted set when in-broker backoff matters.
       const entry = claimed.get(messageId);
       if (entry === undefined) {
-        return Promise.resolve();
+        return;
       }
       claimed.delete(messageId);
-      return command(["LPUSH", entry.queueKey, entry.payload], "nack", entry.queueKey).then(
-        () => undefined
-      );
+      await command(["LPUSH", entry.queueKey, entry.payload], "nack", entry.queueKey);
     },
   };
 }
