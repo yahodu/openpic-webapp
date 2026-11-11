@@ -4,7 +4,9 @@
  * The test/e2e adapter of the queue-swap surface (the `memoryMessageTransport` /
  * `memoryObjectStorage` precedent). It pins the *port* semantics — FIFO per key,
  * no in-flight redelivery, permanent `ack`, delayed `nack` — so a worker spec
- * written against `memory` proves something about every adapter.
+ * written against `memory` proves something about every adapter, except where a
+ * retry *lands*: this adapter redelivers in place, the list adapter serves it
+ * last (ADR-0682 §4).
  */
 import type { QueueEnvelope, QueueKey } from "../queue/envelope";
 import type { EnqueueResult, QueueMessage, WorkQueue } from "../queue/work-queue";

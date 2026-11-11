@@ -28,6 +28,13 @@ export interface WorkQueue {
   claim(queueKey: QueueKey, max: number): Promise<QueueMessage[]>;
   /** Drop a claimed message permanently. */
   ack(messageId: string): Promise<void>;
-  /** Return a claimed message to the queue, claimable again after the delay. */
+  /**
+   * Return a claimed message to the queue, claimable again after the delay.
+   *
+   * Guaranteed: FIFO over *enqueued* messages, and a nacked one becomes
+   * claimable no sooner than the delay. Its position among the remaining
+   * messages is adapter-defined (ADR-0682 §4): `memory` redelivers in place,
+   * the Upstash list re-pushes to the head and serves it last.
+   */
   nack(messageId: string, delaySeconds: number): Promise<void>;
 }
