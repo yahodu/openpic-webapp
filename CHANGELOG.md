@@ -1,3 +1,9 @@
+## [1.52.2](https://github.com/yahodu/openpic-webapp/compare/v1.52.1...v1.52.2) (2026-11-11)
+
+### Bug Fixes
+
+- **queue:** OP-122 move the retry to the back and contain a poison payload ([#427](https://github.com/yahodu/openpic-webapp/issues/427)) ([11103b7](https://github.com/yahodu/openpic-webapp/commit/11103b7739c971ed3e09bad3f68d4cd258d59b40))
+
 ## [1.52.1](https://github.com/yahodu/openpic-webapp/compare/v1.52.0...v1.52.1) (2026-11-11)
 
 ### Bug Fixes
