@@ -460,6 +460,14 @@ export const MEDIA_ERROR_TRANSPORT: Readonly<Record<MediaErrorCode, ErrorCatalog
     retryable: false,
     message: "The uploaded file exceeds the maximum allowed size.",
   },
+  // OP-123 (ADR-0701): the pre-check refusal for an event whose upload window
+  // has closed (contract §5.2, Appendix A row 3562); `details` carries the
+  // stored instant and whether the caller may extend the window.
+  upload_window_closed: {
+    status: 409,
+    retryable: false,
+    message: "The upload window for this event has closed.",
+  },
 };
 
 /**
