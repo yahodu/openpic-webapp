@@ -1,3 +1,9 @@
+## [1.50.0](https://github.com/yahodu/openpic-webapp/compare/v1.49.4...v1.50.0) (2026-11-11)
+
+### Features
+
+- **api:** OP-119 serve tenant analytics and the event member list ([#405](https://github.com/yahodu/openpic-webapp/issues/405)) ([97f00b1](https://github.com/yahodu/openpic-webapp/commit/97f00b1b51b64abb40c3f0a27cc2e55bf707ae3b))
+
 ## [1.49.4](https://github.com/yahodu/openpic-webapp/compare/v1.49.3...v1.49.4) (2026-11-04)
 
 ### Bug Fixes
