@@ -4,9 +4,9 @@
  * The test/e2e adapter of the queue-swap surface (the `memoryMessageTransport` /
  * `memoryObjectStorage` precedent). It pins the *port* semantics — FIFO per key,
  * no in-flight redelivery, permanent `ack`, delayed `nack` — so a worker spec
- * written against `memory` proves something about every adapter, except where a
- * retry *lands*: this adapter redelivers in place, the list adapter serves it
- * last (ADR-0682 §4).
+ * written against `memory` proves something about every adapter, including the
+ * retry position: a nacked entry lands behind everything already enqueued
+ * (ADR-0685 §2).
  */
 import type { QueueEnvelope, QueueKey } from "../queue/envelope";
 import type { EnqueueResult, QueueMessage, WorkQueue } from "../queue/work-queue";
@@ -99,8 +99,12 @@ export function memoryWorkQueue(options: { readonly clock?: Clock } = {}): Memor
     nack(messageId: string, delaySeconds: number): Promise<void> {
       const entry = entries.find((candidate) => candidate.record.messageId === messageId);
       if (entry !== undefined) {
+        // The retry lands behind everything already enqueued: claim() drains this
+        // table in order, so moving the entry to the back is the whole rule.
+        entries.splice(entries.indexOf(entry), 1);
         entry.inFlight = false;
         entry.visibleAtMs = clock.now().getTime() + delaySeconds * 1000;
+        entries.push(entry);
       }
       return Promise.resolve();
     },
