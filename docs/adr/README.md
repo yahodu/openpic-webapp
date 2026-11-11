@@ -56,7 +56,7 @@ the rejected alternatives are recorded in
 | OP-112 media foundations lane       | `0580`–`0599`                   | `0586`    |
 | OP-117 events update lane           | `0600`–`0619`                   | `0605`    |
 | OP-118 access links lane            | `0620`–`0639`                   | `0626`    |
-| OP-119 members & analytics lane     | `0640`–`0659`                   | `0641`    |
+| OP-119 members & analytics lane     | `0640`–`0659`                   | `0642`    |
 | unallocated (future lanes)          | `0660`+ (20 per lane, in order) | `0660`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -340,6 +340,7 @@ _The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-card-serializati
 | [0624](ADR-0624-op118-rotate-refusal-pin.md) | OP-118 review round 1 TEST: a refused access-link rotation (`409 conflict`) writes nothing — the stored `accessLinks` keep their single revoked element and no `event.link.rotated` reaches the outbox (F1) | Accepted |
 | [0625](ADR-0625-op118-rotate-refusal-green.md) | OP-118 GREEN (review round 1): the rotation refuses before it writes — the `findOneAndUpdate` filter carries `accessLinks: { $elemMatch: { active: true } }`, a `null` result is the `409 conflict` raised inside the transaction before any document update or `event.link.rotated`, and the normal path (transaction, pipeline, `returnDocument: "before"`, §4.2 body) is byte-identical | Accepted |
 | [0640](ADR-0640-op119-members-analytics-red.md) | OP-119 RED: the event member list and tenant analytics pinned — the inclusive 366-day range validator (`range_too_large`/`invalid_date_range`/`validation_failed`) and the totals reducer (sums + `max` p95), `GET …/analytics` (flat ascending series from `analyticsDaily` only, reduced totals, owner\|admin, the 400-day 422) and `GET …/events/{e}/members` (masked contacts of the event's workers with their cached upload counts, co-organizer admission, non-oracle 404) | Accepted |
+| [0641](ADR-0641-op119-analytics-scope-pins.md) | OP-119 pins: `scope=platform` refused, `event` needs `eventId`, revoked organizer 404, empty window zeroed | Accepted |
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
