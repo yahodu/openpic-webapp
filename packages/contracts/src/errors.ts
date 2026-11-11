@@ -258,6 +258,29 @@ export const MEDIA_ERROR_CODES = ["file_too_large"] as const;
 export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];
 
 /**
+ * Collaboration codes (contract §2.3, Appendix A.5).
+ *
+ * The co-organizer invitation surface refuses three states that Appendix A.5
+ * documents: `invitation_already_pending` (`409`, one live invitation already
+ * holds the seat and the redeemable link), `cannot_invite_self` (`422`, the
+ * organizer named their own account — by user id, email or phone) and
+ * `already_member` (`409`, the invitee is already an active co-organizer, so an
+ * invitation would be a second row for one membership). None is a member of
+ * {@link ERROR_CODES}, which the server error catalogue pins to exactly the base
+ * Appendix A table, so they are appended to the client-facing enum
+ * ({@link API_ERROR_CODES}) and transported from their own table, in the same
+ * append-only shape as `cannot_demote_owner` (OP-120, ADR-0661).
+ */
+export const COLLABORATION_ERROR_CODES = [
+  "invitation_already_pending",
+  "cannot_invite_self",
+  "already_member",
+] as const;
+
+/** A member of the closed {@link COLLABORATION_ERROR_CODES} set. */
+export type CollaborationErrorCode = (typeof COLLABORATION_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -325,6 +348,7 @@ export const API_ERROR_CODES = [
   ...BILLING_ERROR_CODES,
   ...MEDIA_ERROR_CODES,
   ...EVENT_ERROR_CODES,
+  ...COLLABORATION_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -347,7 +371,8 @@ export type AppErrorCode =
   | EntitlementErrorCode
   | BillingErrorCode
   | MediaErrorCode
-  | EventErrorCode;
+  | EventErrorCode
+  | CollaborationErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
