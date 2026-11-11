@@ -1,4 +1,5 @@
 import {
+  AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
@@ -7,6 +8,7 @@ import {
   ListPartsCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { z } from "zod";
@@ -160,7 +162,33 @@ export function createR2ObjectStorage(config: R2ObjectStorageConfig): ObjectStor
       return parsed.data;
     },
 
-    presignPart: () => Promise.reject(new AppError("not_implemented")),
+    async presignPart(
+      locationKey,
+      objectKey,
+      uploadId,
+      partNumber,
+      ttlSeconds
+    ): Promise<PresignedPut> {
+      const bucket = bucketFor(locationKey);
+      const url = await getSignedUrl(
+        client,
+        new UploadPartCommand({
+          Bucket: bucket,
+          Key: objectKey,
+          UploadId: uploadId,
+          PartNumber: partNumber,
+        }),
+        { expiresIn: ttlSeconds }
+      );
+      // The URL carries `partNumber`/`uploadId` and the signature; nothing else
+      // about the part crosses the boundary.
+      return {
+        method: "PUT",
+        url,
+        headers: {},
+        expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+      };
+    },
 
     async listParts(locationKey, objectKey, uploadId): Promise<ListedParts> {
       const bucket = bucketFor(locationKey);
@@ -168,7 +196,10 @@ export function createR2ObjectStorage(config: R2ObjectStorageConfig): ObjectStor
         new ListPartsCommand({ Bucket: bucket, Key: objectKey, UploadId: uploadId })
       );
       const parsed = listedPartsSchema.safeParse({
-        parts: output.Parts,
+        // A series with no landed part omits `<Part>` entirely, so the SDK
+        // answers `undefined`: that is an empty upload, not drift (OP-125 I1
+        // pins the `parts: []` answer).
+        parts: output.Parts ?? [],
         isTruncated: output.IsTruncated,
         // The SDK parses `NextPartNumberMarker` as a numeric string; the
         // neutral contract hands the caller a number. An absent marker
@@ -183,14 +214,24 @@ export function createR2ObjectStorage(config: R2ObjectStorageConfig): ObjectStor
 
     async completeMultipart(locationKey, objectKey, uploadId, parts): Promise<CompletedMultipart> {
       const bucket = bucketFor(locationKey);
-      const output = await client.send(
-        new CompleteMultipartUploadCommand({
-          Bucket: bucket,
-          Key: objectKey,
-          UploadId: uploadId,
-          MultipartUpload: { Parts: [...parts] },
-        })
-      );
+      const output = await client
+        .send(
+          new CompleteMultipartUploadCommand({
+            Bucket: bucket,
+            Key: objectKey,
+            UploadId: uploadId,
+            MultipartUpload: { Parts: [...parts] },
+          })
+        )
+        .catch((error: unknown) => {
+          // `NoSuchUpload` is the multipart series being gone (the lifecycle rule
+          // aborted it), not a transport failure: the caller's answer is a domain
+          // refusal the client can act on (OP-125, ADR-0741).
+          if (httpStatusOf(error) === 404) {
+            throw new AppError("upload_expired");
+          }
+          throw transportFailure(error);
+        });
       const parsed = completedMultipartSchema.safeParse({ etag: output.ETag });
       if (!parsed.success) {
         throw contractViolation("R2 answered CompleteMultipartUpload without an ETag.");
@@ -198,7 +239,21 @@ export function createR2ObjectStorage(config: R2ObjectStorageConfig): ObjectStor
       return parsed.data;
     },
 
-    abortMultipart: () => Promise.reject(new AppError("not_implemented")),
+    async abortMultipart(locationKey, objectKey, uploadId): Promise<void> {
+      const bucket = bucketFor(locationKey);
+      try {
+        await client.send(
+          new AbortMultipartUploadCommand({ Bucket: bucket, Key: objectKey, UploadId: uploadId })
+        );
+      } catch (error) {
+        // An abort is idempotent in the contract (§5.4): a series the provider
+        // already dropped is as aborted as one this call removed.
+        if (httpStatusOf(error) === 404) {
+          return;
+        }
+        throw transportFailure(error);
+      }
+    },
 
     async headObject(locationKey, objectKey): Promise<ObjectHead> {
       const bucket = bucketFor(locationKey);
