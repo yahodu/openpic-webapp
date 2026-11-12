@@ -1,3 +1,9 @@
+## [1.57.5](https://github.com/yahodu/openpic-webapp/compare/v1.57.4...v1.57.5) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-96 read titled and angle-bracket ADR link targets ([#507](https://github.com/yahodu/openpic-webapp/issues/507)) ([59bcd35](https://github.com/yahodu/openpic-webapp/commit/59bcd35065bb6176ac7eb06bd86f3e0e4be8dd04))
+
 ## [1.57.4](https://github.com/yahodu/openpic-webapp/compare/v1.57.3...v1.57.4) (2026-11-12)
 
 ### Bug Fixes
