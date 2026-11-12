@@ -187,3 +187,58 @@ own transport table (never to the base `ERROR_CATALOG`): `invitation_revoked`
   touched files; `prettier --check` clean; the ADR-numbering guard green.
 - No test, mock, fixture, factory or MSW handler is edited. The diff against the
   pins head is production code, this ADR and the ledger.
+
+## Round-1 land review sign-off (2026-11-12)
+
+**What landed, and at which bytes.** PR #415 squash-merged to `main` as
+`93e43184817c6b771b8ce1822d48862c6b511ee0`; the reviewed head was
+`780a62fc5abc7945f365efa0eda4b4f8cf7bce17`. The squash tree OID and the reviewed
+head tree OID are the same object, `97421365818a9582464cc4b1045ec8aace40b5ad`, so the
+merged bytes are the reviewed bytes: nothing was amended, rebased or repaired between
+the review and the merge.
+
+**The renumber.** This lane's RED record was written under `ADR-0663`, but OP-120's
+delivery-failure log pin landed that number on `main` first (`9fe6ff4`, PR #414). A
+merged record is never renumbered, so the unmerged record moved above this lane's
+highest consumed number (`0664`) and is now
+[ADR-0665](ADR-0665-op121-invitation-decisions-red.md); the lane `Next free` cell reads
+`0666`. The honest history lives in ADR-0665's own `Range:` block and in the two README
+lane paragraphs that record the RED and the GREEN — no row is added here, and
+`docs/adr/README.md` is untouched by this sign-off.
+
+**The `main` fold and its one decision.** The fold base was `741b607`; `main` had moved
+to `9219d03` by the landing pass (the OP-123 uploads land plus the OP-129
+attendee-session fix), so the fold was committed on the lane as the merge commit
+`780a62f`. `docs/adr/README.md` auto-merged as an index-only union: rows `0660`–`0665`
+then `0680`–`0701` ascending, cell `0666`, both sides' prose kept. The one hand-resolved
+surface was `apps/web/src/server/events/access.ts`. Main (ADR-0701) had parameterised the
+seam (`admitEventActor(ctx, segmentFromEnd = 2)` plus `eventActorAdmission(n)` for the
+upload routes) while this lane had switched the lookup to the `events` anchor, because
+`GET …/events/{eventId}` carries no suffix and `2` from the end reads the literal `events`
+segment there. Resolution: main's signature and helper are kept and the offset is made
+**optional** — an explicit offset still reads
+`eventIdFromRequest(request, { segmentFromEnd })`, identical for every upload route, and an
+omitted offset reads `eventIdAfterEventsSegment`, identical for `…/members` and correct for
+the detail read. Both sides' suites stayed green on the merged tree.
+
+**Verification reproduced by the landing pass, on that tree.** Unit `162 files / 2601
+passed | 3 skipped (2604)`; integration `106 files / 1095 passed (1095)`; focused ADR
+guards `54/54`, invitation unit `35/35`, invitation-decisions plus uploads integration
+`111/111`; `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `prettier --check` clean; the
+trunk's own gates `14/14` green, including the aggregate `ci` job (typecheck, lint, unit,
+integration, coverage, build, Playwright E2E). Post-merge on `origin/main`: `287` ADR
+files, no duplicate `ADR-` prefix, `ADR-0663` resolving to the OP-120 record only (three
+references), exactly one `ADR-0665-op121-invitation-decisions-red.md`, cell `0666`, ADR
+guard `54/54`.
+
+**Findings, by card id only.** F1 (member removal performs its organizer revoke,
+invitation revoke and two domain emits without a transaction, unlike the accept path) and
+F2 (the reject branch's status write is not paired with its affordance closure and its
+`collab.invite.rejected` emit) are both **Low**, outside this record's pinned contract, and
+are routed to the characterization-pin card `t_c27c7855`. F3 (`conflict` after three lost
+races while the comment says "never a 409", unreachable in practice) is Info and carries no
+card. No follow-up's ADR number is cited here, because a number can move while its PR is
+open.
+
+**Nothing in the sections above is retracted.** No decision is re-pinned, no code changes
+with this sign-off, and the follow-up cards' own records document what followed.
