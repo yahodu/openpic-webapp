@@ -460,6 +460,42 @@ export const MEDIA_ERROR_TRANSPORT: Readonly<Record<MediaErrorCode, ErrorCatalog
     retryable: false,
     message: "The uploaded file exceeds the maximum allowed size.",
   },
+  // OP-123 (ADR-0701): the pre-check refusal for an event whose upload window
+  // has closed (contract §5.2, Appendix A row 3562); `details` carries the
+  // stored instant and whether the caller may extend the window.
+  upload_window_closed: {
+    status: 409,
+    retryable: false,
+    message: "The upload window for this event has closed.",
+  },
+  // OP-124 (ADR-0721 D4): the stored object's size is not the declared `bytes`
+  // within 1 % (contract §5.3); `details` carries both figures.
+  size_mismatch: {
+    status: 409,
+    retryable: false,
+    message: "The uploaded object's size does not match the declared size.",
+  },
+  // OP-125 (ADR-0741): the acknowledgement is missing part numbers the declared
+  // size slices into (contract §5.4); `details` names them.
+  parts_missing: {
+    status: 409,
+    retryable: false,
+    message: "The multipart completion is missing parts of the declared file.",
+  },
+  // OP-125 (ADR-0741): the provider no longer holds the multipart series, so the
+  // client restarts from the pre-check (contract §5.4); no details.
+  upload_expired: {
+    status: 409,
+    retryable: false,
+    message: "The multipart upload has expired and must be started again.",
+  },
+  // OP-127 (ADR-0762 D8): a reprocess of an image whose pipeline state is not
+  // `failed` (contract §4.4); only a failed image is reprocessable.
+  not_failed: {
+    status: 409,
+    retryable: false,
+    message: "Only an image whose processing failed can be reprocessed.",
+  },
 };
 
 /**

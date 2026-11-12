@@ -30,6 +30,14 @@ export const COLLECTIONS = {
   dispatches: "notification_dispatches",
   accessLinks: "access_links",
   mediaAssets: "media_assets",
+  /**
+   * Upload sessions (schema §16.2; OP-123, ADR-0701): one row per
+   * `{tenantId, createdByUserId, contentHash}` attempt, read by the
+   * `batch-resolve` pre-check to resume an interrupted multipart upload. The
+   * provider's upload id lives in `externalRefs`; parts are never stored here
+   * (the live `ListParts` answer is the only part truth).
+   */
+  uploadSessions: "upload_sessions",
   faceMatches: "face_matches",
   providerWebhookEvents: "provider_webhook_events",
   idempotencyKeys: "idempotency_keys",

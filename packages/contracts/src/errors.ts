@@ -250,9 +250,28 @@ export type BillingErrorCode = (typeof BILLING_ERROR_CODES)[number];
  * the server error catalogue pins to exactly the base Appendix A rows. It is
  * appended to the client-facing enum ({@link API_ERROR_CODES}) and transported
  * from its own table (both `413`, non-retryable) so both stay exact.
+ * `upload_window_closed` (`409`, `{ uploadWindowEndsAt, canExtend }`) is the
+ * OP-123 pre-check refusal for an event whose upload window has closed
+ * (Appendix A row 3562; ADR-0701) and is appended in the same shape.
+ * `size_mismatch` (`409`, `{ declaredBytes, storedBytes }`) is the OP-124
+ * completion refusal for a stored object whose size differs from the declared
+ * `bytes` by more than 1 % (contract §5.3; ADR-0721 D4).
  * Append-only, like every other code (ADR-0540).
  */
-export const MEDIA_ERROR_CODES = ["file_too_large"] as const;
+export const MEDIA_ERROR_CODES = [
+  "file_too_large",
+  "upload_window_closed",
+  "size_mismatch",
+  // OP-125 (ADR-0741): a multipart completion that acknowledges fewer parts than
+  // the declared size slices into (contract §5.4); the client re-sends the gap.
+  "parts_missing",
+  // OP-125 (ADR-0741): the provider no longer holds the multipart series (the
+  // 7-day lifecycle rule aborted it), so the client restarts from batch-resolve.
+  "upload_expired",
+  // OP-127 (ADR-0762 D8): a single-image reprocess of an image that is not
+  // `failed` (contract §4.4); only a failed image is reprocessable.
+  "not_failed",
+] as const;
 
 /** A member of the closed {@link MEDIA_ERROR_CODES} set. */
 export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];

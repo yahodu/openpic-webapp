@@ -102,6 +102,25 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+  // upload_sessions — expire automatically once their window passes (§16.2,
+  // §22). OP-124 is the first lane to write a session row (ADR-0721 D2).
+  {
+    collection: COLLECTIONS.uploadSessions,
+    name: "upload_sessions_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+  // upload_sessions — the §5.5 batch read and its transition check tally one
+  // client-generated batch by status (OP-126; ADR-0760 A5).
+  {
+    collection: COLLECTIONS.uploadSessions,
+    name: "upload_sessions_event_batch_status",
+    keys: [
+      ["eventId", 1],
+      ["batchId", 1],
+      ["status", 1],
+    ],
+  },
   // invitations — "my pending invitations": the caller's pending count on the
   // `GET /me` bootstrap and the §1.2 feed read `{ "invitee.userId", status }`
   // newest-first, so the compound index must carry all three keys in this
@@ -301,6 +320,17 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["assetId", 1],
     ],
     unique: true,
+  },
+  // event_images — the §5.5 batch read tallies one upload batch's rows (§16.3;
+  // OP-126, ADR-0760 A5).
+  {
+    collection: COLLECTIONS.eventImages,
+    name: "event_images_tenant_event_batch",
+    keys: [
+      ["tenantId", 1],
+      ["eventId", 1],
+      ["uploadBatchId", 1],
+    ],
   },
 
   // access_links — one active link per slug (revoked rows excluded).
