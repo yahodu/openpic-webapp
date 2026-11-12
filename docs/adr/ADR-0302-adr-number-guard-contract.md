@@ -4,7 +4,7 @@
 - **Card:** OP-101 follow-up (process/ADR) — record the ADR-number guard's contract and scope boundary (`t_2ae626e9`, orchestrator; raised by the review of `t_8675b675`, OP-96 R-1, PR [#229](https://github.com/yahodu/openpic-webapp/pull/229))
 - **Relates to:** [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (the policy this guard is the mechanical backstop for), [ADR-0128](ADR-0128-op96-green-review-signoff.md) (the OP-96 integration renumber), [ADR-0133](ADR-0133-op96-f1-f4-round2-red.md) (a cross-lane allocation settled by card `t_cf0b1f77`), [ADR-0143](ADR-0143-op96-flush-overlap-single-send-green.md) / [ADR-0145](ADR-0145-op96-f1-unrecorded-flush-bound-green.md) (the collisions the policy ends)
 - **Schema:** n/a · **Contract:** n/a (test-only tooling; no application code)
-- **Implementation:** `apps/web/src/test/helpers/adr-numbering.ts` · **Spec:** `apps/web/src/test/unit/adr-numbering.test.ts`
+- **Implementation:** `apps/web/src/test/helpers/adr-numbering.ts` · **Spec:** `apps/web/src/test/unit/adr-numbering.test.ts`, `apps/web/src/test/unit/adr-lane-ranges.test.ts`
 
 ## Context
 
@@ -96,7 +96,9 @@ reasons are structural, not incidental:
 **Mechanising either of these is a decision that requires a superseding ADR.**
 Absent one, they are reviewer duties: CONVENTIONS.md §11 records them as such,
 and the reviewer confirms a new number is both inside its lane's range and free
-on `main`.
+on `main`. The _disjointness_ half was mechanised on 2026-11-12 under ADR-0300
+§10 (finding F-L1) — see §6 below, which supersedes it; range membership is
+unchanged.
 
 ### 5. Where it runs, and non-vacuity
 
@@ -107,6 +109,45 @@ on `main`.
 - It is **non-vacuous**: injecting a synthetic `ADR-0142` duplicate into
   `docs/adr/` makes the full unit project fail naming `0142`; removing it
   restores a green run. (Reproduced independently in the review of `t_8675b675`.)
+
+### 6. The lane-range disjointness invariant (2026-11-12, finding F-L1)
+
+Ledger finding F-L1 showed two reserved rows can intersect while every file name
+stays unique on its own branch: the OP-126 uploads lane held `0760`–`0779` and
+the OP-129 lane held `0769`–`0788`, so `ADR-0770` came to exist twice in flight.
+That is a _row_ defect, and unlike range membership it is mechanical, so the
+guard now enforces it. This section supersedes the **disjointness half** of §4;
+range membership and `origin/main` freshness stay review-time.
+
+- **Invariant.** Two rows of the reserved-range ledger in `<dir>/README.md`
+  whose **closed** ranges intersect are a failure —
+  `a.start <= b.end && b.start <= a.end`. One issue is reported per intersecting
+  pair, in the existing report shape:
+  `{ code: "lane-range-overlap", number: null, files: [holderA, holderB] }`,
+  where `files` carries the two **holders** (the ledger's row labels, not file
+  names) sorted ascending. Touching neighbours — `0760`–`0779` and `0780`–`0798`
+  — are disjoint and clean.
+- **Scope: rows only, closed ranges only.** A row contributes a range only when
+  its second cell is a closed `` `NNNN`–`NNNN` `` pair (`–` U+2013 or `-`). The
+  open-ended `unallocated (future lanes)` cursor (`` `0700`+ … ``), a
+  single-number cell, a non-four-digit pair, the header and `---` separator rows,
+  the ADR index table and any prose mention are **skipped, never thrown on**. A
+  missing, empty or row-less `README.md` adds no issue.
+- **Parser.** `parseLaneRanges(markdown: string): LaneRange[]` in the same
+  module returns one `{ holder, start, end }` per closed row — holder trimmed
+  verbatim, leading zeros dropped, document order preserved. It is row-shape
+  based and does **not** require the `### Reserved ranges` heading: the row is
+  the reservation, and the heading carries a date that is re-worded more often
+  than the rows are written.
+- **Ordering.** Overlap issues join the numbering issues and pass through the
+  same deterministic sort (§2): `number: null` places them with the malformed
+  issues, then `code`, then `files[0]`. Two overlaps that share a first holder
+  tie on that key and keep insertion order — the report pins the key, not
+  README-row-order independence.
+- **What it still cannot see.** A _file_ numbered inside a foreign range. The
+  guard has no file→lane map, and must not infer one from the `Next free` cell
+  (a consumed count, not a reservation bound — ADR-0300 §10), so that remains a
+  review-time defect.
 
 ## Consequences
 
