@@ -1,0 +1,567 @@
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+import { ObjectId, type Db } from "mongodb";
+
+import * as currentRouteModule from "@/app/api/v1/p/attendee-sessions/current/route";
+import * as sessionsRouteModule from "@/app/api/v1/p/attendee-sessions/route";
+import {
+  invalidatePlatformSettings,
+  seedPlatformSettings,
+} from "@/server/settings/platform-settings";
+import { hashAttendeeSessionToken } from "@/server/attendee/session-token";
+
+import { setCookies } from "../helpers/auth-requests";
+import { APP_ORIGIN, startTestApp, type TestApp } from "../helpers/authed-app";
+import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
+
+/**
+ * Integration / contract — anonymous attendee sessions and the attendee auth
+ * resolver (OP-129 I1–I5, contract §1.5 + §0.2 `attendee` label + §0.15,
+ * schema §13.5, ADR-0768).
+ *
+ * **Why this exists.** An attendee must be able to upload a selfie without an
+ * account (the epic's user story). The session that enables it is a **bearer
+ * credential to someone's face photo**, so the contract is narrow and mostly
+ * negative: the raw token is issued exactly once, the database holds only its
+ * SHA-256, either the `op_att` cookie or the `X-Attendee-Session` header
+ * authenticates `GET .../current`, and an expired session fails as an explicit
+ * `401 attendee_session_expired` (never as a silent anonymous request).
+ *
+ * ## Contract expected of the implementation
+ *
+ * `@/app/api/v1/p/attendee-sessions/route` exports `POST`, declared on
+ * `defineRoute({ route: "/api/v1/p/attendee-sessions" })`, auth `public`:
+ *
+ *   - body `{ eventSlug?: string }` (JSON, so `{}` is a valid request — an
+ *     absent content type is the pipeline's `415`, not this route's rule);
+ *   - `201` with **exactly** `{ sessionToken, expiresAt, issuedAt }`, RFC 3339
+ *     UTC with millisecond precision and a `Z` (contract §0.13);
+ *   - `Set-Cookie: op_att=<raw token>; Path=/; HttpOnly; SameSite=Lax;
+ *     Max-Age=<retention.attendeeSessionDays in seconds>` — `Secure` is added
+ *     only on a TLS deployment (U2, ADR-0768 §Assumptions);
+ *   - the stored `attendeeSessions` row carries `tokenHash = sha256(token)`,
+ *     `claimedByUserId: null`, `claimedAt: null`, `eventIds: []` when no slug is
+ *     given, `deviceFingerprint` hashes and `expireAt = createdAt + TTL`
+ *     (schema §13.5).
+ *
+ * `@/app/api/v1/p/attendee-sessions/current/route` exports `GET`, auth
+ * `attendee` (either credential form):
+ *
+ *   - `200` with **exactly** `{ id, kind, eventSlugs, claimedByUserId,
+ *     expiresAt }` (`kind: "anonymous"`), and never the raw token;
+ *   - an expired session is `401 attendee_session_expired` with
+ *     `details.recreateUrl` (contract §1.5 + Appendix A);
+ *   - a missing/unknown token is `401 authentication_required` — a distinct
+ *     code, so a client can tell "your 30 days are up, re-create" from "you sent
+ *     nothing" (ADR-0768 §Decision 3).
+ *
+ * ## Assumptions (ADR-0768 §Assumptions)
+ *
+ * - The routes are `/api/v1/p/attendee-sessions[/current]` exactly as contract
+ *   §1.5 spells them, and are driven here by invoking the exported handlers
+ *   directly (the pipeline never surfaces Next `params`; these routes have none).
+ * - The TTL is `platformSettings.retention.attendeeSessionDays` (the shipped
+ *   default is 30). This suite seeds it to **7** so a hard-coded 30-day constant
+ *   cannot pass, and it invalidates the settings cache around the seed because
+ *   the read is process-cached for 30 s.
+ * - Expiry is **inclusive**: at `expireAt` the session is already expired
+ *   (`now >= expireAt`), matching MongoDB's TTL semantics.
+ * - The device fingerprint is three salted hashes named `uaHash`, `ipHash` and
+ *   `acceptLangHash` (schema §13.5), derived from the request's `user-agent`,
+ *   `x-forwarded-for` and `accept-language`. Which salt and which hash-of-what
+ *   are **not** pinned — only that all three are 64-hex digests and that no raw
+ *   component survives.
+ * - An unknown `eventSlug` is **out of scope**: contract §1.5 does not say
+ *   whether it 404s or is ignored, so no pin invents it (handoff §Open
+ *   questions).
+ * - A signed-in user calling `current` is out of scope too: the `attendee` label
+ *   admits a user session (`evaluateAuth`, already pinned by
+ *   `guards.test.ts`), and what `current` answers for a user with no attendee
+ *   session is not in the contract.
+ */
+
+let app: TestApp;
+
+/** The seeded `retention.attendeeSessionDays` — deliberately not the 30 default. */
+const TTL_DAYS = 7;
+
+/** The TTL in milliseconds, as the row's `expireAt - createdAt` must show. */
+const TTL_MS = TTL_DAYS * 24 * 60 * 60 * 1000;
+
+/** The TTL in seconds, as the cookie's `Max-Age` must show. */
+const TTL_SECONDS = TTL_DAYS * 24 * 60 * 60;
+
+/** The `platformSettings` singleton collection (schema §20.4; not in `COLLECTIONS`). */
+const PLATFORM_SETTINGS = "platformSettings";
+
+/** The §1.5 create body — exactly three keys. */
+const SESSION_RESPONSE_KEYS = ["expiresAt", "issuedAt", "sessionToken"];
+
+/** The §1.5 current body — exactly five keys. */
+const CURRENT_RESPONSE_KEYS = ["claimedByUserId", "eventSlugs", "expiresAt", "id", "kind"];
+
+/** Schema §13.5's row, by name: the only place a token may be recorded, hashed. */
+const SESSION_DOCUMENT_KEYS = [
+  "_id",
+  "claimedAt",
+  "claimedByUserId",
+  "createdAt",
+  "deviceFingerprint",
+  "eventIds",
+  "expireAt",
+  "lastSeenAt",
+  "tokenHash",
+];
+
+/** Schema §13.5's fingerprint object. */
+const FINGERPRINT_KEYS = ["acceptLangHash", "ipHash", "uaHash"];
+
+/** A stored digest: lowercase hex SHA-256 (contract §0.13 "Content hash"). */
+const HASH_PATTERN = /^[0-9a-f]{64}$/;
+
+/** An RFC 3339 UTC instant with millisecond precision (contract §0.13). */
+const RFC3339_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** The device components this suite announces, so "no raw part" is meaningful. */
+const DEVICE_HEADERS: Readonly<Record<string, string>> = {
+  "user-agent": "OpenPic-Attendee-Contract/1.0",
+  "accept-language": "en-IN,en;q=0.9",
+  "x-forwarded-for": "203.0.113.77",
+};
+
+/** The §1.5 create response. */
+interface CreatedSession {
+  readonly sessionToken: string;
+  readonly expiresAt: string;
+  readonly issuedAt: string;
+}
+
+/** The §1.5 current response. */
+interface CurrentSession {
+  readonly id: string;
+  readonly kind: string;
+  readonly eventSlugs: readonly string[];
+  readonly claimedByUserId: string | null;
+  readonly expiresAt: string;
+}
+
+/** One document and the collection it was found in. */
+interface FoundDocument {
+  readonly collection: string;
+  readonly document: Record<string, unknown>;
+}
+
+/** Options accepted by {@link createSession}. */
+interface CreateOptions {
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly body?: Readonly<Record<string, unknown>>;
+}
+
+beforeAll(async () => {
+  app = await startTestApp({ prefix: "op129-attendee" });
+
+  // Seed the singleton (create-only) and then tune the one value this suite
+  // pins, so a hard-coded 30-day constant cannot satisfy the TTL assertions.
+  await seedPlatformSettings({ db: app.db });
+  await app.db
+    .collection(PLATFORM_SETTINGS)
+    .updateOne({}, { $set: { "retention.attendeeSessionDays": TTL_DAYS } });
+  invalidatePlatformSettings();
+}, MONGO_READY_HOOK_TIMEOUT_MS);
+
+afterAll(async () => {
+  // The settings read is process-cached: never leave this suite's TTL behind
+  // for another file that renders the same worker.
+  invalidatePlatformSettings();
+  await app.cleanup();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/** Read a route export off a namespace, failing with a naming message. */
+function requireHandler(
+  module: object,
+  name: "GET" | "POST",
+  path: string
+): (request: Request) => Promise<Response> {
+  const handler = (module as Record<string, unknown>)[name];
+  if (typeof handler !== "function") {
+    throw new Error(`expected ${path} to export a ${name} handler`);
+  }
+  return handler as (request: Request) => Promise<Response>;
+}
+
+const createAttendeeSession = requireHandler(
+  sessionsRouteModule,
+  "POST",
+  "/api/v1/p/attendee-sessions"
+);
+const getCurrentSession = requireHandler(
+  currentRouteModule,
+  "GET",
+  "/api/v1/p/attendee-sessions/current"
+);
+
+/**
+ * `POST /api/v1/p/attendee-sessions` through the exported handler.
+ *
+ * @param options - Extra headers and the JSON body (`{}` by default).
+ * @returns The raw response.
+ */
+function createSession(options: CreateOptions = {}): Promise<Response> {
+  return createAttendeeSession(
+    new Request(new URL("/api/v1/p/attendee-sessions", APP_ORIGIN), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: APP_ORIGIN,
+        ...DEVICE_HEADERS,
+        ...options.headers,
+      },
+      body: JSON.stringify(options.body ?? {}),
+    })
+  );
+}
+
+/**
+ * `GET /api/v1/p/attendee-sessions/current` through the exported handler.
+ *
+ * @param headers - The credential headers to present (cookie or session header).
+ * @returns The raw response.
+ */
+function currentSession(headers: Readonly<Record<string, string>> = {}): Promise<Response> {
+  return getCurrentSession(
+    new Request(new URL("/api/v1/p/attendee-sessions/current", APP_ORIGIN), {
+      method: "GET",
+      headers,
+    })
+  );
+}
+
+/** Create a session and return its body. */
+async function createdSession(options: CreateOptions = {}): Promise<CreatedSession> {
+  const response = await createSession(options);
+  expect(response.status).toBe(201);
+  return jsonOf<CreatedSession>(response);
+}
+
+/**
+ * Parse a response body as `T` (the wire shape the contract spells).
+ *
+ * @param response - The response to read.
+ * @returns The parsed body, typed by the caller's contract interface.
+ */
+async function jsonOf<T>(response: Response): Promise<T> {
+  return (await response.json()) as T;
+}
+
+/** True when `value` is a plain object. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Read a value as a plain object, failing with a naming message. */
+function recordOf(value: unknown, field: string): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error(`expected ${field} to be an object, got ${typeof value}`);
+  }
+  return value;
+}
+
+/** Read a value as a `Date`, failing with a naming message. */
+function dateOf(value: unknown, field: string): Date {
+  if (!(value instanceof Date)) {
+    throw new Error(`expected ${field} to be a Date, got ${typeof value}`);
+  }
+  return value;
+}
+
+/** Read a value as an `ObjectId`, returning its hex id. */
+function objectIdHex(value: unknown, field: string): string {
+  if (!(value instanceof ObjectId)) {
+    throw new Error(`expected ${field} to be an ObjectId, got ${typeof value}`);
+  }
+  return value.toHexString();
+}
+
+/** Every collection name in the suite's private database. */
+async function collectionNames(db: Db): Promise<string[]> {
+  const infos = await db.listCollections({}, { nameOnly: true }).toArray();
+  return infos.map((info) => info.name);
+}
+
+/**
+ * The DB-wide scanner: every document whose JSON carries `needle`.
+ *
+ * The card asks for a **scanner** rather than a read of one known collection,
+ * because the leak being guarded against (a raw bearer token persisted anywhere
+ * — an event payload, a dispatch body, an idempotency snapshot) is exactly the
+ * case where the collection is not the one the implementation meant to write.
+ *
+ * @param needle - The raw token (or any literal) to look for.
+ * @returns One entry per document that contains it.
+ */
+async function documentsContaining(needle: string): Promise<FoundDocument[]> {
+  const hits: FoundDocument[] = [];
+  for (const name of await collectionNames(app.db)) {
+    const rows = await app.db.collection(name).find({}).toArray();
+    for (const row of rows) {
+      if (JSON.stringify(row).includes(needle)) {
+        hits.push({ collection: name, document: row });
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * Every document that carries `tokenHash` with the given digest.
+ *
+ * @param tokenHash - The SHA-256 digest of a raw token.
+ * @returns One entry per matching document.
+ */
+async function documentsKeyedByHash(tokenHash: string): Promise<FoundDocument[]> {
+  const hits: FoundDocument[] = [];
+  for (const name of await collectionNames(app.db)) {
+    const row = await app.db.collection(name).findOne({ tokenHash });
+    if (row !== null) {
+      hits.push({ collection: name, document: row });
+    }
+  }
+  return hits;
+}
+
+/** The single stored session for `token`, read through the scanner. */
+async function storedSession(token: string): Promise<FoundDocument> {
+  const hits = await documentsKeyedByHash(hashAttendeeSessionToken(token));
+  const [found] = hits;
+  if (found === undefined) {
+    throw new Error(`no stored document carries the SHA-256 of the issued token`);
+  }
+  expect(hits).toHaveLength(1);
+  return found;
+}
+
+/**
+ * Move a stored session's `expireAt` into the past, wherever the row lives.
+ *
+ * The collection name is the implementation's choice, so the write goes
+ * through the scanner's hit rather than a hard-coded name.
+ *
+ * @param token - The raw token of the session to age.
+ * @param expireAt - The instant to store.
+ */
+async function ageSession(token: string, expireAt: Date): Promise<void> {
+  const stored = await storedSession(token);
+  await app.db
+    .collection(stored.collection)
+    .updateOne({ tokenHash: hashAttendeeSessionToken(token) }, { $set: { expireAt } });
+}
+
+/** The `op_att` pair of a `Set-Cookie` header value. */
+function cookiePairOf(header: string): string {
+  const [pair = ""] = header.split("; ");
+  return pair;
+}
+
+describe("POST /api/v1/p/attendee-sessions", () => {
+  it("I1: stores only the token's SHA-256 in the database", async () => {
+    const created = await createdSession();
+
+    const stored = await storedSession(created.sessionToken);
+    const document = stored.document;
+
+    expect(Object.keys(document).sort()).toEqual([...SESSION_DOCUMENT_KEYS].sort());
+    expect(document.tokenHash).toBe(hashAttendeeSessionToken(created.sessionToken));
+    expect(String(document.tokenHash)).toMatch(HASH_PATTERN);
+    expect(document.claimedByUserId).toBeNull();
+    expect(document.claimedAt).toBeNull();
+    expect(document.eventIds).toEqual([]);
+    expect(dateOf(document.expireAt, "expireAt").getTime()).toBe(
+      dateOf(document.createdAt, "createdAt").getTime() + TTL_MS
+    );
+    // The raw token must be nowhere in the row — no `token`, no `sessionToken`.
+    expect(JSON.stringify(document)).not.toContain(created.sessionToken);
+  });
+
+  it("I1: stores a hashed device fingerprint and no raw device component", async () => {
+    const created = await createdSession();
+
+    const stored = await storedSession(created.sessionToken);
+    const fingerprint = recordOf(stored.document.deviceFingerprint, "deviceFingerprint");
+
+    expect(Object.keys(fingerprint).sort()).toEqual(FINGERPRINT_KEYS);
+    expect(
+      [
+        String(fingerprint.uaHash),
+        String(fingerprint.ipHash),
+        String(fingerprint.acceptLangHash),
+      ].map((digest) => HASH_PATTERN.test(digest))
+    ).toEqual([true, true, true]);
+
+    const serialized = JSON.stringify(stored.document);
+    expect(serialized).not.toContain("OpenPic-Attendee-Contract/1.0");
+    expect(serialized).not.toContain("203.0.113.77");
+    expect(serialized).not.toContain("en-IN,en;q=0.9");
+  });
+
+  it("I1: answers the three documented keys and issues the raw token with an op_att cookie", async () => {
+    const response = await createSession();
+    expect(response.status).toBe(201);
+
+    const created = await jsonOf<CreatedSession>(response);
+
+    expect(Object.keys(created).sort()).toEqual([...SESSION_RESPONSE_KEYS].sort());
+    expect(created.sessionToken).toMatch(/^opat_[A-Za-z0-9_-]{43}$/);
+    expect(created.issuedAt).toMatch(RFC3339_MS);
+    expect(created.expiresAt).toMatch(RFC3339_MS);
+    expect(created.expiresAt).toBe(new Date(Date.parse(created.issuedAt) + TTL_MS).toISOString());
+
+    const sessionCookie = setCookies(response).find((cookie) => cookie.startsWith("op_att="));
+    if (sessionCookie === undefined) {
+      throw new Error("the create response did not set an op_att cookie");
+    }
+    expect(cookiePairOf(sessionCookie)).toBe(`op_att=${created.sessionToken}`);
+    const attributes = sessionCookie.split("; ").slice(1);
+    expect(new Set(attributes)).toEqual(
+      new Set(["Path=/", "HttpOnly", "SameSite=Lax", `Max-Age=${String(TTL_SECONDS)}`])
+    );
+  });
+
+  it("I1: takes the TTL from retention.attendeeSessionDays, not from a constant", async () => {
+    // The suite seeds 7 days (the shipped default is 30): a hard-coded 30-day
+    // expiry reddens both assertions below.
+    const created = await createdSession();
+    const stored = await storedSession(created.sessionToken);
+
+    expect(Date.parse(created.expiresAt) - Date.parse(created.issuedAt)).toBe(TTL_MS);
+    expect(
+      dateOf(stored.document.expireAt, "expireAt").getTime() -
+        dateOf(stored.document.createdAt, "createdAt").getTime()
+    ).toBe(TTL_MS);
+    expect(Date.parse(created.issuedAt)).toBe(
+      dateOf(stored.document.createdAt, "createdAt").getTime()
+    );
+  });
+});
+
+describe("GET /api/v1/p/attendee-sessions/current", () => {
+  it("I2: the op_att cookie authenticates current", async () => {
+    const createResponse = await createSession();
+    expect(createResponse.status).toBe(201);
+    const created = await jsonOf<CreatedSession>(createResponse);
+    const stored = await storedSession(created.sessionToken);
+
+    const response = await currentSession({ cookie: `op_att=${created.sessionToken}` });
+    expect(response.status).toBe(200);
+
+    const current = await jsonOf<CurrentSession>(response);
+
+    expect(Object.keys(current).sort()).toEqual([...CURRENT_RESPONSE_KEYS].sort());
+    expect(current.kind).toBe("anonymous");
+    expect(current.id).toBe(objectIdHex(stored.document._id, "attendeeSessions._id"));
+    expect(current.eventSlugs).toEqual([]);
+    expect(current.claimedByUserId).toBeNull();
+    expect(current.expiresAt).toBe(created.expiresAt);
+    // §0.15: a raw bearer token is returned by its single issuance response only.
+    expect(JSON.stringify(current)).not.toContain(created.sessionToken);
+  });
+
+  it("I3: the X-Attendee-Session header authenticates current", async () => {
+    const created = await createdSession();
+    const stored = await storedSession(created.sessionToken);
+
+    const response = await currentSession({ "x-attendee-session": created.sessionToken });
+    expect(response.status).toBe(200);
+
+    const current = await jsonOf<CurrentSession>(response);
+
+    expect(Object.keys(current).sort()).toEqual([...CURRENT_RESPONSE_KEYS].sort());
+    expect(current.kind).toBe("anonymous");
+    expect(current.id).toBe(objectIdHex(stored.document._id, "attendeeSessions._id"));
+    expect(current.expiresAt).toBe(created.expiresAt);
+    expect(JSON.stringify(current)).not.toContain(created.sessionToken);
+  });
+
+  it("I4: a session whose expireAt has passed is 401 attendee_session_expired", async () => {
+    const created = await createdSession();
+    await ageSession(created.sessionToken, new Date(Date.now() - 1_000));
+
+    const response = await currentSession({ "x-attendee-session": created.sessionToken });
+    expect(response.status).toBe(401);
+
+    const parsed = await jsonOf<{
+      error: { code: string; details?: { recreateUrl?: unknown } };
+    }>(response);
+    expect(parsed.error.code).toBe("attendee_session_expired");
+
+    const recreateUrl = parsed.error.details?.recreateUrl;
+    if (typeof recreateUrl !== "string") {
+      throw new Error("expected details.recreateUrl to be a string");
+    }
+    expect(recreateUrl.startsWith("/")).toBe(true);
+  });
+
+  it("I4: the clock decides expiry — 1 ms before expireAt is 200, at expireAt is 401", async () => {
+    const created = await createdSession();
+    const expiresAt = Date.parse(created.expiresAt);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+
+    vi.setSystemTime(new Date(expiresAt - 1));
+    const beforeExpiry = await currentSession({ "x-attendee-session": created.sessionToken });
+    expect(beforeExpiry.status).toBe(200);
+
+    vi.setSystemTime(new Date(expiresAt));
+    const atExpiry = await currentSession({ "x-attendee-session": created.sessionToken });
+    expect(atExpiry.status).toBe(401);
+    const parsed = await jsonOf<{ error: { code: string } }>(atExpiry);
+    expect(parsed.error.code).toBe("attendee_session_expired");
+  });
+
+  it("I4: no credential is 401 authentication_required, not the expired code", async () => {
+    const response = await currentSession();
+    expect(response.status).toBe(401);
+
+    const parsed = await jsonOf<{ error: { code: string } }>(response);
+    expect(parsed.error.code).toBe("authentication_required");
+  });
+
+  it("I4: an unknown or malformed token is 401 authentication_required", async () => {
+    const unknown = await currentSession({ "x-attendee-session": "opat_never-issued-000" });
+    expect(unknown.status).toBe(401);
+    expect((await jsonOf<{ error: { code: string } }>(unknown)).error.code).toBe(
+      "authentication_required"
+    );
+
+    const malformed = await currentSession({ cookie: "op_att=not-a-token" });
+    expect(malformed.status).toBe(401);
+    expect((await jsonOf<{ error: { code: string } }>(malformed)).error.code).toBe(
+      "authentication_required"
+    );
+  });
+});
+
+describe("the raw attendee token never reaches storage", () => {
+  it("I5: no collection stores the raw token — not the session, not a snapshot", async () => {
+    const created = await createdSession();
+
+    expect(await documentsContaining(created.sessionToken)).toEqual([]);
+  });
+
+  it("I5: a repeated create with an Idempotency-Key persists neither raw token", async () => {
+    const first = await createdSession({ headers: { "idempotency-key": "op129-attendee-once" } });
+    const second = await createSession({ headers: { "idempotency-key": "op129-attendee-once" } });
+
+    // A create is not idempotency-required (contract §1.5 declares no
+    // `Idempotency-Key`), so a replay may mint a second session or serve the
+    // stored one; either way the raw token must not be persisted.
+    expect([200, 201]).toContain(second.status);
+    const replayed = await jsonOf<CreatedSession>(second);
+
+    expect(await documentsContaining(first.sessionToken)).toEqual([]);
+    expect(await documentsContaining(replayed.sessionToken)).toEqual([]);
+  });
+});

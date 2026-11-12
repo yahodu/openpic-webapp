@@ -582,6 +582,27 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["primaryTenantId", 1]],
   },
 
+  // attendee_sessions — the anonymous attendee credential, hashed at rest
+  // (schema §13.5). The digest is the only lookup key a request presents, and
+  // the TTL index bounds how long an unclaimed selfie key survives.
+  {
+    collection: COLLECTIONS.attendeeSessions,
+    name: "attendee_sessions_token_hash_unique",
+    keys: [["tokenHash", 1]],
+    unique: true,
+  },
+  {
+    collection: COLLECTIONS.attendeeSessions,
+    name: "attendee_sessions_claimed_by_user",
+    keys: [["claimedByUserId", 1]],
+  },
+  {
+    collection: COLLECTIONS.attendeeSessions,
+    name: "attendee_sessions_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
   // session_devices — the new-device decision reads one user's recent sightings
   // newest-first; the compound index makes that a bounded, indexed scan (§13.5;
   // ADR-0041 §2).
