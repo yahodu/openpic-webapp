@@ -8,8 +8,10 @@
  *   `kind`, the caller's relationship to the event and the plan's
  *   `originals.download` feature gate. Denials carry a stable code:
  *   - `not_found` — the image is not a live image of the scope event (missing,
- *     soft-deleted, or another event's). Deliberately checked **first**, so the
- *     response is never an existence oracle (§0.4).
+ *     soft-deleted, another event's, or its asset row is gone). Deliberately
+ *     checked **first**, so every out-of-scope reason collapses into one code
+ *     and the *reason* is never disclosed. It is not an ownership oracle; it
+ *     does separate "in scope" from "not in scope" (see A2).
  *   - `forbidden` — the caller has no relationship that grants this kind
  *     (`thumbnail`: event member **or** a match; `original`: the same **and**
  *     the plan's gate).
@@ -30,16 +32,30 @@
  * live image (or `null`). The route handler keeps the I/O; these functions keep
  * the policy, so the table is readable and the route cannot drift from it.
  *
- * ## Assumptions (ADR-0764)
+ * ## Assumptions (ADR-0766)
  *
  * - **A1 — `authentication_required` never escalates the batch to `403`.** An
  *   anonymous caller has nothing to be authorized *for*, so every item is
  *   denied `authentication_required` and the batch still answers `200` with the
  *   `denied[]` list (OP-128 I6). Without this exemption a single anonymous
  *   `original` request would be a `403`, which the card explicitly rules out.
- * - **A2 — `not_found` outranks every other denial.** An id that is not a live
- *   image of the scope event is refused before identity is considered, so an
- *   anonymous request cannot distinguish "absent" from "not yours".
+ * - **A2 — `not_found` is the first rule, and its code is not an ownership
+ *   oracle.** The precedence is `not_found` → `authentication_required` →
+ *   `feature_not_available` → `forbidden`, so an id that is not a live image of
+ *   the scope event is refused before identity or plan facts are read: a
+ *   missing id, a soft-deleted image, another event's image and an image whose
+ *   asset row is gone all answer the **same** code, so the *reason* — and with
+ *   it any ownership fact — is never disclosed.
+ *
+ *   What this rule does **not** hide is "in scope" versus "not in scope". An
+ *   anonymous caller on a live scope event gets `authentication_required` for
+ *   an existing image but `not_found` for an absent one; both rows are pinned
+ *   below. That distinction is a deliberate consequence of putting `not_found`
+ *   first, and it is the opposite of a claim that an anonymous request cannot
+ *   tell the two apart. Making that stricter claim true would move
+ *   `authentication_required` ahead of `not_found` for anonymous callers — a
+ *   behaviour change that also re-pins the anonymous out-of-scope row, so it
+ *   needs its own card and ADR (ADR-0771 D2 records the correction).
  * - **A3 — a hidden image denies a *matched attendee* but is not a data-scope
  *   fact.** Hiding writes only `event_images.visibility` (ADR-0762 D5/A5), so
  *   the §5.6 gate must treat `visibility: "hidden"` as "not in this attendee's
@@ -55,6 +71,7 @@ import {
   signedUrlBatchStatus,
   type SignedUrlAuthorizationInput,
   type SignedUrlDecision,
+  type SignedUrlDenialCode,
 } from "@/server/media/signed-urls";
 
 /** The plan gate as the route resolves it once per request (§0.14). */
@@ -280,6 +297,23 @@ const OUT_OF_SCOPE_ROWS: readonly DecisionRow[] = [
   },
 ];
 
+/**
+ * The denial code one decision carries, or `undefined` when the item is allowed.
+ *
+ * Nothing here reads `.code` on an allowed decision: the `decision.allowed`
+ * check narrows a discriminated union to `{ allowed: false; code }`, so
+ * `SignedUrlDecision` may tighten from `code?: …` to
+ * `{ allowed: true } | { allowed: false; code }` without this pin failing to
+ * compile (ADR-0771 D3). A denied decision that carries no code still fails,
+ * because the expected side is read through the same helper.
+ *
+ * @param decision - One decision from the table.
+ * @returns The denial code, or `undefined` for an allowed item.
+ */
+function codeOf(decision: SignedUrlDecision): SignedUrlDenialCode | undefined {
+  return decision.allowed ? undefined : decision.code;
+}
+
 describe("U1: the per-item authorization decision", () => {
   describe("when the caller is an event member", () => {
     it.each(MEMBER_ROWS)("$name", ({ input, expected }) => {
@@ -328,12 +362,13 @@ describe("U1: the per-item authorization decision", () => {
     // Act
     const shapes = rows.map((row) => {
       const decision = authorizeSignedUrlItem(row.input);
-      return { allowed: decision.allowed, hasCode: decision.code !== undefined };
+      return { allowed: decision.allowed, code: codeOf(decision) };
     });
 
-    // Assert — an allowed decision carries no code; a denied one always does.
+    // Assert — an allowed decision carries no code; a denied one always does,
+    // and it is the code the row expects.
     expect(shapes).toEqual(
-      rows.map((row) => ({ allowed: row.expected.allowed, hasCode: !row.expected.allowed }))
+      rows.map((row) => ({ allowed: row.expected.allowed, code: codeOf(row.expected) }))
     );
   });
 });

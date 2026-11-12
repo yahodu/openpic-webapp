@@ -44,7 +44,7 @@
  * - Batched reads only: one `$in` per collection, so a 200-item request costs
  *   the same number of queries as a 2-item one (I5).
  *
- * ## Assumptions (ADR-0764)
+ * ## Assumptions (ADR-0766)
  *
  * - **A1 — "an attendee" is a caller identified by a `face_matches` row.**
  *   OP-129 owns the anonymous `op_att` session resolver and does not exist yet,
@@ -60,7 +60,7 @@
  * - **A4 — a hidden image is still signable for an event member.** The §4.4
  *   grid lists hidden images and signs their thumbnails (hide is not delete),
  *   so the `visibility` predicate is pinned on the attendee branch only; the
- *   member branch is left unpinned (ADR-0764 open item O1).
+ *   member branch is left unpinned (ADR-0766 open item O1).
  * - **A5 — `denied[]` and `urls[]` order is not part of the contract**, so
  *   every assertion compares sets keyed by `(imageId, kind)`.
  */
@@ -1504,12 +1504,357 @@ async function seedProfileStatus(userId: ObjectId, status: string): Promise<void
  * user, not off `userProfiles`, so the ban is the `user` row's business.
  *
  * @param userId - The user to ban.
+ * @param banExpires - The ban's expiry; `null` is a permanent ban, and a past
+ *   instant is an expired (therefore over) ban. Defaults to the far future.
  */
-async function seedBan(userId: ObjectId): Promise<void> {
+async function seedBan(
+  userId: ObjectId,
+  banExpires: Date | null = BAN_EXPIRES_NEVER
+): Promise<void> {
   await app.db
     .collection("user")
-    .updateOne(
-      { _id: userId },
-      { $set: { banned: true, banReason: "spam", banExpires: BAN_EXPIRES_NEVER } }
-    );
+    .updateOne({ _id: userId }, { $set: { banned: true, banReason: "spam", banExpires } });
 }
+
+/**
+ * Insert a stored `media_assets` row that records **no** thumbnail derivative
+ * (§16.1) — the legacy row `extensionOf` papers over, and the same state the
+ * §4.4 grid projection answers `thumbnailUrl: null` for.
+ *
+ * @param tenantKey - The owning tenant.
+ * @param contentHash - The asset's content hash, which addresses the object.
+ * @returns The asset's `_id`.
+ */
+async function seedAssetWithoutThumbnailDerivative(
+  tenantKey: string,
+  contentHash: string
+): Promise<ObjectId> {
+  const _id = new ObjectId();
+  await app.db.collection(COLLECTIONS.mediaAssets).insertOne({
+    _id,
+    tenantId: tenantKey,
+    contentHash,
+    kind: "event_image",
+    storage: {
+      locationKey: "originals",
+      objectKey: `images/${contentHash}.jpg`,
+      bytes: ORIGINAL_BYTES,
+      contentType: "image/jpeg",
+      checksum: contentHash,
+      storedAt: new Date("2026-09-25T08:00:00.000Z"),
+    },
+    derivatives: {},
+    imageMeta: { width: 4000, height: 6000, orientation: 6 },
+    status: "uploaded",
+    refCount: 1,
+    createdAt: new Date("2026-09-25T08:00:00.000Z"),
+  });
+  return _id;
+}
+
+/** The content hash of the asset whose thumbnail derivative was never recorded. */
+const HASH_NO_DERIVATIVE = hashFor("image-no-derivative");
+
+/** The ban expiry these breadth pins use when the ban must already be over. */
+const BAN_EXPIRED = new Date("2020-01-01T00:00:00.000Z");
+
+/**
+ * The §5.6 fallbacks the GREEN implemented and left unpinned (OP-128 review F2;
+ * ADR-0771 D1).
+ *
+ * Three states are reachable through the endpoint and none of them was pinned:
+ *
+ * - an asset row that records **no** `derivatives.thumbnail.format`. The route's
+ *   `extensionOf` answers the legacy `webp` default, so the item is signed as
+ *   `/t/<contentHash>.webp`. The sibling §4.4 projection
+ *   (`toEventImageListItem`, `@/server/images/dto`) answers `thumbnailUrl: null`
+ *   for the same row, and that `null` is pinned by
+ *   `event-images-management.test.ts` ("I1: an image whose thumbnail has not
+ *   been generated yet is listed with null thumbnail fields"). Both surfaces are
+ *   therefore pinned, and ADR-0771 D1 records why they stay different: the
+ *   refresh answers `urls[]`/`denied[]` and its four denial codes have no
+ *   "derivative not ready yet" member, so refusing would report a
+ *   still-processing image as absent. Whoever changes either surface must
+ *   change this pin and that ADR with it — that is what stops the drift.
+ * - an **image row whose `media_assets` row is gone**: nothing can be signed, so
+ *   the item is `not_found` (and alone in a batch it collapses to `403`).
+ * - a **scope id that resolves no event** (malformed, or well formed and
+ *   unknown): `tenantKey` is `null`, so every item is `not_found` with no read.
+ */
+describe("I8: the fallbacks — a derivative that does not exist, an image whose asset row is gone, a scope that does not resolve", () => {
+  it("signs a thumbnail for an asset that records no thumbnail format under the documented .webp fallback", async () => {
+    // Arrange — a stored asset with no `derivatives.thumbnail.format`.
+    const workspace = await seedWorkspace("i8-no-derivative");
+    const assetId = await seedAssetWithoutThumbnailDerivative(
+      workspace.tenantKey,
+      HASH_NO_DERIVATIVE
+    );
+    const imageId = await seedImage(workspace.tenantKey, workspace.eventId, assetId, {
+      sequence: 1,
+    });
+
+    // Act
+    const before = Date.now();
+    const response = await requestSignedUrls(
+      [{ kind: "thumbnail", imageId: imageId.toHexString() }],
+      workspace.organizer.cookie,
+      workspace.eventId.toHexString()
+    );
+    const after = Date.now();
+    const answer = await successfulAnswer(response);
+
+    // Assert — the item is signed, never denied, and the path is the fallback
+    // `webp` rather than a recorded format (the asset records none).
+    expect(answer.denied).toEqual([]);
+    const entry = signedEntry(answer, imageId, "thumbnail");
+    expectSignedThumbnail(entry, HASH_NO_DERIVATIVE, THUMBNAIL_TTL_SECONDS, before, after);
+    expect(new URL(entry.url).pathname).toBe(`/t/${HASH_NO_DERIVATIVE}.webp`);
+  });
+
+  it("denies an image whose asset row is gone as not_found while the live image in the same batch is signed", async () => {
+    // Arrange — a join row that points at an id no `media_assets` row carries.
+    const workspace = await seedWorkspace("i8-asset-gone-pair");
+    const live = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+    const orphan = await seedImage(workspace.tenantKey, workspace.eventId, new ObjectId(), {
+      sequence: 2,
+    });
+
+    // Act
+    const response = await requestSignedUrls(
+      [
+        { kind: "thumbnail", imageId: live.imageId.toHexString() },
+        { kind: "thumbnail", imageId: orphan.toHexString() },
+      ],
+      workspace.organizer.cookie,
+      workspace.eventId.toHexString()
+    );
+    const answer = await successfulAnswer(response);
+
+    // Assert — one URL for the live image, one coded refusal for the orphan,
+    // and no entry of any kind for the orphan in `urls[]`.
+    expect(signedPairs(answer)).toEqual([`${live.imageId.toHexString()}:thumbnail`]);
+    expect(deniedTriples(answer)).toEqual([`${orphan.toHexString()}:thumbnail:not_found`]);
+    expect(answer.urls.some((entry) => entry.imageId === orphan.toHexString())).toBe(false);
+  });
+
+  it("answers 403 when the only requested image has no asset row", async () => {
+    // Arrange — the all-denied credentialed batch, reached through a missing
+    // asset rather than a missing image.
+    const workspace = await seedWorkspace("i8-asset-gone-alone");
+    const orphan = await seedImage(workspace.tenantKey, workspace.eventId, new ObjectId(), {
+      sequence: 1,
+    });
+
+    // Act
+    const response = await requestSignedUrls(
+      [{ kind: "thumbnail", imageId: orphan.toHexString() }],
+      workspace.organizer.cookie,
+      workspace.eventId.toHexString()
+    );
+
+    // Assert
+    expect(response.status).toBe(403);
+    expect((await errorOf(response)).code).toBe("forbidden");
+  });
+
+  it("denies every item as not_found and answers 403 when the scope id is malformed", async () => {
+    // Arrange — a scope id that is not a 24-hex ObjectId.
+    const workspace = await seedWorkspace("i8-scope-malformed");
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+
+    // Act
+    const response = await requestSignedUrls(
+      [{ kind: "thumbnail", imageId: image.imageId.toHexString() }],
+      workspace.organizer.cookie,
+      "not-an-object-id"
+    );
+
+    // Assert — no scope means no tenant, so every item is `not_found` and the
+    // credentialed batch collapses; no URL and no content hash reaches the wire.
+    expect(response.status).toBe(403);
+    const payload = await body(response);
+    expect(payload).toMatchObject({ error: { code: "forbidden" } });
+    expect(JSON.stringify(payload)).not.toContain(HASH_A);
+  });
+
+  it("denies every item as not_found and answers 403 when the scope id names no event", async () => {
+    // Arrange — a well-formed id whose `events` row does not exist.
+    const workspace = await seedWorkspace("i8-scope-unknown");
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+
+    // Act
+    const response = await requestSignedUrls(
+      [{ kind: "thumbnail", imageId: image.imageId.toHexString() }],
+      workspace.organizer.cookie,
+      new ObjectId().toHexString()
+    );
+
+    // Assert
+    expect(response.status).toBe(403);
+    const payload = await body(response);
+    expect(payload).toMatchObject({ error: { code: "forbidden" } });
+    expect(JSON.stringify(payload)).not.toContain(HASH_A);
+  });
+
+  it("answers 403 not_found for an anonymous caller when the scope event does not exist", async () => {
+    // Arrange — the F4 consequence pinned where it is observable: on a live
+    // scope the same caller and image are `authentication_required` and `200`
+    // (I6); an unresolvable scope is `not_found`, which outranks identity.
+    const workspace = await seedWorkspace("i8-scope-anonymous");
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+
+    // Act
+    const response = await requestSignedUrls(
+      [{ kind: "thumbnail", imageId: image.imageId.toHexString() }],
+      undefined,
+      new ObjectId().toHexString()
+    );
+
+    // Assert
+    expect(response.status).toBe(403);
+    const payload = await body(response);
+    expect(payload).toMatchObject({ error: { code: "forbidden" } });
+    expect(JSON.stringify(payload)).not.toContain(HASH_A);
+  });
+});
+
+/**
+ * The rest of the §0.3 account matrix the gate must not drift through (OP-128
+ * review F-G3 breadth; ADR-0771 D4).
+ *
+ * `I7` pins the three refusal states it was written for. These four rows pin the
+ * edges around them: a ban whose expiry has passed is **over** (`isUnbanned`
+ * compares against the injected clock), a `banExpires: null` ban is
+ * **permanent**, the `deleted` status shares the deletion branch, and the
+ * 201-item cap runs **before** the account gate, so a suspended caller's
+ * oversized batch is a `413` and never a `423`.
+ *
+ * The refusal wire format is the orchestrator's F-G1 decision (2026-11-12):
+ * the `user` label's own codes reach the wire — `423 account_banned` with the
+ * ban details — instead of the flattened `403 forbidden` that `I7` currently
+ * pins. Those three `I7` rows are stale and are re-pinned by the follow-up
+ * (`ADR-0772`); this card adds rows and edits none.
+ */
+describe("I7b: the gate's breadth — ban expiry, the deletion states and the item cap", () => {
+  it("still signs both kinds for a caller whose ban has already expired", async () => {
+    // Arrange — `banExpires` in the past: the ban is over, not a life sentence.
+    const workspace = await seedWorkspace("i7b-expired-ban");
+    await seedOriginalsPlan(workspace.tenantKey, true);
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+    await seedBan(workspace.organizer.userId, BAN_EXPIRED);
+
+    // Act
+    const before = Date.now();
+    const response = await requestSignedUrls(
+      [
+        { kind: "thumbnail", imageId: image.imageId.toHexString() },
+        { kind: "original", imageId: image.imageId.toHexString() },
+      ],
+      workspace.organizer.cookie,
+      workspace.eventId.toHexString()
+    );
+    const after = Date.now();
+    const answer = await successfulAnswer(response);
+
+    // Assert — the expired ban does not refuse the caller.
+    expect(answer.denied).toEqual([]);
+    expect(signedPairs(answer)).toEqual([
+      `${image.imageId.toHexString()}:original`,
+      `${image.imageId.toHexString()}:thumbnail`,
+    ]);
+    expectSignedThumbnail(
+      signedEntry(answer, image.imageId, "thumbnail"),
+      HASH_A,
+      THUMBNAIL_TTL_SECONDS,
+      before,
+      after
+    );
+  });
+
+  it("answers 423 account_banned with the ban details for a permanent ban", async () => {
+    // Arrange — `banExpires: null` is a permanent ban (`isUnbanned`).
+    const workspace = await seedWorkspace("i7b-permanent-ban");
+    await seedOriginalsPlan(workspace.tenantKey, true);
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+    await seedBan(workspace.organizer.userId, null);
+
+    // Act
+    const response = await requestSignedUrls(
+      [{ kind: "thumbnail", imageId: image.imageId.toHexString() }],
+      workspace.organizer.cookie,
+      workspace.eventId.toHexString()
+    );
+
+    // Assert — the `user` label's own transport and code, with the details a
+    // client needs to explain the ban; no URL reaches the wire.
+    expect(response.status).toBe(423);
+    const payload = await body(response);
+    expect(payload).toMatchObject({
+      error: {
+        code: "account_banned",
+        details: { banReason: "spam", banExpires: null },
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain(HASH_A);
+  });
+
+  it("answers 403 forbidden for a deleted profile", async () => {
+    // Arrange — `deleted` shares the deletion branch with `deletion_pending`.
+    const workspace = await seedWorkspace("i7b-deleted");
+    await seedOriginalsPlan(workspace.tenantKey, true);
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+    await seedProfileStatus(workspace.organizer.userId, "deleted");
+
+    // Act
+    const response = await requestSignedUrls(
+      [{ kind: "thumbnail", imageId: image.imageId.toHexString() }],
+      workspace.organizer.cookie,
+      workspace.eventId.toHexString()
+    );
+
+    // Assert — the deletion states stay `403 forbidden`, never `423`.
+    expect(response.status).toBe(403);
+    const payload = await body(response);
+    expect(payload).toMatchObject({ error: { code: "forbidden" } });
+    expect(JSON.stringify(payload)).not.toContain(HASH_A);
+  });
+
+  it("answers 413 payload_too_large for a suspended caller's 201-item batch", async () => {
+    // Arrange — the item cap precedes the account gate, so the size wins and
+    // no URL is minted either way.
+    const workspace = await seedWorkspace("i7b-suspended-over-max");
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+    await seedProfileStatus(workspace.organizer.userId, "suspended");
+    const items = Array.from({ length: OVER_MAX_ITEMS }, (_unused, index) => ({
+      kind: index % 2 === 0 ? ("thumbnail" as const) : ("original" as const),
+      imageId: image.imageId.toHexString(),
+    }));
+
+    // Act
+    const response = await requestSignedUrls(
+      items,
+      workspace.organizer.cookie,
+      workspace.eventId.toHexString()
+    );
+
+    // Assert
+    expect(response.status).toBe(413);
+    expect((await errorOf(response)).code).toBe("payload_too_large");
+  });
+});
