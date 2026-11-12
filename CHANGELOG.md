@@ -1,3 +1,9 @@
+## [1.57.4](https://github.com/yahodu/openpic-webapp/compare/v1.57.3...v1.57.4) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 recognize a Consumers heading after the blockquote peel ([#505](https://github.com/yahodu/openpic-webapp/issues/505)) ([25a5c52](https://github.com/yahodu/openpic-webapp/commit/25a5c524b48839c56435b524e2db8eeafacd0d94))
+
 ## [1.57.3](https://github.com/yahodu/openpic-webapp/compare/v1.57.2...v1.57.3) (2026-11-12)
 
 ### Bug Fixes
