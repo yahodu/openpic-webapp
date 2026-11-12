@@ -1283,3 +1283,233 @@ async function seedMassImages(workspace: Workspace, count: number): Promise<Obje
   await app.db.collection(COLLECTIONS.eventImages).insertMany(images);
   return images.map((image) => image._id);
 }
+
+/** One account state the `user` label refuses, and the row that expresses it. */
+interface RefusedAccountState {
+  readonly name: string;
+  readonly seed: (organizer: SignedInUser) => Promise<void>;
+}
+
+/**
+ * The three refusals `evaluateAuth("user", …)` applies before any label rule
+ * (§0.3, ADR-0025): two lifecycle statuses carried by `userProfiles`, and the
+ * ban carried by the Better Auth `user` row.
+ */
+const REFUSED_ACCOUNT_STATES: readonly RefusedAccountState[] = [
+  {
+    name: "suspended",
+    seed: (organizer) => seedProfileStatus(organizer.userId, "suspended"),
+  },
+  {
+    name: "deletion_pending",
+    seed: (organizer) => seedProfileStatus(organizer.userId, "deletion_pending"),
+  },
+  {
+    name: "banned",
+    seed: (organizer) => seedBan(organizer.userId),
+  },
+];
+
+/**
+ * The account-status half of the §0.3 gate (OP-128 follow-up pin, finding F1 of
+ * the OP-128 review).
+ *
+ * §5.6 names `user` or `attendee` for this endpoint, and the `user` label
+ * refuses a principal whose account is suspended, banned or pending deletion
+ * (`evaluateAuth`, `@/server/auth/guards`). The route resolves the principal
+ * itself, so that table runs only when the route asks for it — the reviewer
+ * measured a suspended organizer receiving `200` with a signed thumbnail
+ * **and** a signed original. These pins close that.
+ *
+ * The contract: the refusal is the §5.6 code `forbidden` (the caller holds a
+ * credential, so `authentication_required` would misdescribe the refusal, and
+ * the four-code denial vocabulary has no account-state member), and it refuses
+ * the request as a whole — which is the batch rule's own outcome, because an
+ * account-level refusal denies every item and an all-denied credentialed batch
+ * is a `403` (`signedUrlBatchStatus`). Whether the implementation mirrors the
+ * `user` label's table per item or stops at the route boundary, the wire answer
+ * is the same `403 { error: { code: "forbidden" } }` with no `urls[]`; ADR-0768
+ * records why that is the observable these pins hold.
+ *
+ * Every case seeds the same fixture and changes only the account state, so the
+ * `active` control proves the refusal comes from the status and not from a
+ * broken fixture.
+ */
+describe("I7: the account-status gate refuses a suspended, banned or deletion-pending caller", () => {
+  it.each(REFUSED_ACCOUNT_STATES)(
+    "answers 403 forbidden and mints no URL for a $name event member",
+    async ({ name, seed }) => {
+      // Arrange — the control's fixture, plus the account state.
+      const workspace = await seedWorkspace(`i7-${name}`);
+      await seedOriginalsPlan(workspace.tenantKey, true);
+      const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+        sequence: 1,
+      });
+      await seed(workspace.organizer);
+
+      // Act — both kinds, on an image of the event this caller organizes.
+      const response = await requestSignedUrls(
+        [
+          { kind: "thumbnail", imageId: image.imageId.toHexString() },
+          { kind: "original", imageId: image.imageId.toHexString() },
+        ],
+        workspace.organizer.cookie,
+        workspace.eventId.toHexString()
+      );
+
+      // Assert — the §5.6 `forbidden` refusal, no `urls[]`, and nothing the
+      // signer could have minted (a signed URL addresses the content hash).
+      expect(response.status).toBe(403);
+      const payload = await body(response);
+      expect(payload).toMatchObject({ error: { code: "forbidden" } });
+      expect(payload.urls).toBeUndefined();
+      expect(JSON.stringify(payload)).not.toContain(HASH_A);
+    }
+  );
+
+  it("refuses a suspended attendee that already holds a match for the image", async () => {
+    // Arrange — a matched attendee would otherwise be signed this image, so the
+    // refusal cannot come from the per-item relationship rules.
+    const workspace = await seedWorkspace("i7-suspended-attendee");
+    await seedOriginalsPlan(workspace.tenantKey, true);
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+    const attendee = await seedAttendee(workspace, "i7-suspended-attendee-user", [image.imageId]);
+    await seedProfileStatus(attendee.user.userId, "suspended");
+
+    // Act
+    const response = await requestSignedUrls(
+      [{ kind: "thumbnail", imageId: image.imageId.toHexString() }],
+      attendee.user.cookie,
+      workspace.eventId.toHexString()
+    );
+
+    // Assert
+    expect(response.status).toBe(403);
+    const payload = await body(response);
+    expect(payload).toMatchObject({ error: { code: "forbidden" } });
+    expect(JSON.stringify(payload)).not.toContain(HASH_A);
+  });
+
+  it("signs both kinds for the identical fixture while the profile is active", async () => {
+    // Arrange — the control: same workspace shape, same plan, same image, and a
+    // profile row written the same way; only the status differs.
+    const workspace = await seedWorkspace("i7-control-active");
+    await seedOriginalsPlan(workspace.tenantKey, true);
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+    await seedProfileStatus(workspace.organizer.userId, "active");
+
+    // Act
+    const before = Date.now();
+    const response = await requestSignedUrls(
+      [
+        { kind: "thumbnail", imageId: image.imageId.toHexString() },
+        { kind: "original", imageId: image.imageId.toHexString() },
+      ],
+      workspace.organizer.cookie,
+      workspace.eventId.toHexString()
+    );
+    const after = Date.now();
+    const answer = await successfulAnswer(response);
+
+    // Assert — an active account is not refused: both kinds are signed.
+    expect(answer.denied).toEqual([]);
+    expect(signedPairs(answer)).toEqual([
+      `${image.imageId.toHexString()}:original`,
+      `${image.imageId.toHexString()}:thumbnail`,
+    ]);
+    expectSignedThumbnail(
+      signedEntry(answer, image.imageId, "thumbnail"),
+      HASH_A,
+      THUMBNAIL_TTL_SECONDS,
+      before,
+      after
+    );
+    expectSignedOriginal(
+      signedEntry(answer, image.imageId, "original"),
+      HASH_A,
+      ORIGINAL_TTL_SECONDS,
+      before,
+      after
+    );
+  });
+
+  it("keeps an active member's mixed batch at 200 with the unknown item denied", async () => {
+    // Arrange — the batch rule must survive the new gate: a partial denial is a
+    // `200`, never a refusal of the whole request.
+    const workspace = await seedWorkspace("i7-mixed-batch");
+    await seedOriginalsPlan(workspace.tenantKey, true);
+    const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+      sequence: 1,
+    });
+    await seedProfileStatus(workspace.organizer.userId, "active");
+    const unknown = new ObjectId();
+
+    // Act
+    const response = await requestSignedUrls(
+      [
+        { kind: "thumbnail", imageId: image.imageId.toHexString() },
+        { kind: "thumbnail", imageId: unknown.toHexString() },
+      ],
+      workspace.organizer.cookie,
+      workspace.eventId.toHexString()
+    );
+    const answer = await successfulAnswer(response);
+
+    // Assert
+    expect(signedPairs(answer)).toEqual([`${image.imageId.toHexString()}:thumbnail`]);
+    expect(deniedTriples(answer)).toEqual([`${unknown.toHexString()}:thumbnail:not_found`]);
+  });
+});
+
+/** The ban expiry these pins use: far in the future, so the ban is active. */
+const BAN_EXPIRES_NEVER = new Date("2099-01-01T00:00:00.000Z");
+
+/**
+ * Upsert the caller's `userProfiles` row at one lifecycle status (§13.2).
+ *
+ * `loadProfile` (`@/server/auth/guards`) reads `userProfiles` by
+ * `{ userId: ObjectId }` and prefers an explicitly managed row over the
+ * `autoProvisioned` default the identity hook writes, so this row says
+ * `autoProvisioned: false` instead of relying on that sort.
+ *
+ * @param userId - The Better Auth user id the profile belongs to.
+ * @param status - The lifecycle status (`active`, `suspended`, `deletion_pending`, …).
+ */
+async function seedProfileStatus(userId: ObjectId, status: string): Promise<void> {
+  await app.db.collection(COLLECTIONS.userProfiles).updateOne(
+    { userId },
+    {
+      $set: {
+        userId,
+        status,
+        platformRole: "client",
+        accountCompletedAt: null,
+        primaryTenantId: null,
+        schemaVersion: 1,
+        autoProvisioned: false,
+      },
+    },
+    { upsert: true }
+  );
+}
+
+/**
+ * Ban the caller's Better Auth user in place (§13.1).
+ *
+ * The `user` label reads `banned`/`banReason`/`banExpires` off the session's
+ * user, not off `userProfiles`, so the ban is the `user` row's business.
+ *
+ * @param userId - The user to ban.
+ */
+async function seedBan(userId: ObjectId): Promise<void> {
+  await app.db
+    .collection("user")
+    .updateOne(
+      { _id: userId },
+      { $set: { banned: true, banReason: "spam", banExpires: BAN_EXPIRES_NEVER } }
+    );
+}
