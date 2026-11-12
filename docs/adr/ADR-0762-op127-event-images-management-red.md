@@ -11,6 +11,17 @@
 - **Consumes:** contract §4.4, §5.6, §0.8, §0.14 C6, §0.15; schema §16.1–§16.3, §17.5,
   §18.2; CONVENTIONS §8.1
 - **Supersedes:** nothing
+- **Consumers:** the OP-127 event-image routes and the specs that pin them —
+  modules `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/images/[imageId]/reprocess/route.ts`,
+  `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/images/[imageId]/route.ts`,
+  `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/images/route.ts`,
+  `apps/web/src/server/http/catalog.ts`, `apps/web/src/server/images/filters.ts`,
+  `apps/web/src/server/media/signed-urls.ts`, `packages/contracts/src/errors.ts`;
+  specs `apps/web/src/test/integration/event-images-management.test.ts`,
+  `apps/web/src/test/integration/media-signed-urls.test.ts`,
+  `apps/web/src/test/unit/event-images-query.test.ts`,
+  `apps/web/src/test/unit/event-images-reprocess.test.ts`,
+  `apps/web/src/test/unit/media-signed-urls-authorization.test.ts`.
 
 ## Context
 

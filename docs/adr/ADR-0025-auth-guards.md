@@ -3,6 +3,10 @@
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** OP-86 `t_e0f66f3f` (phase 1-Identity, epic Authentication, RED) · **Implements:** contract §0.3 · **Depends on:** OP-85 (Better Auth config)
 - **Supersedes / amends:** nothing. Pins the contract the OP-86 GREEN implementer must satisfy.
+- **Consumers:** the auth-guard decision modules and the specs that pin them —
+  modules `apps/web/src/server/auth/guards.ts`, `apps/web/src/server/auth/index.ts`,
+  `apps/web/src/server/auth/two-factor.ts`; spec
+  `apps/web/src/test/integration/media-signed-urls.test.ts`.
 
 ## Context
 
