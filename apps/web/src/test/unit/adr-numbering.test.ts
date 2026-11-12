@@ -2846,16 +2846,27 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
    * unenforced (finding F1 of card t_ba4928fb).
    *
    * These three rows are green since the `#{1,6}` alternative landed (squash
-   * `a96253b`), but that peel still removes **one** marker token: a line carrying
-   * two marker-like axes — a heading plus a bullet or an ordered marker, in
-   * either order — keeps the second marker and never reaches
-   * `^Consumers[*_]{0,3}\s*:`. Measured at `a96253b`, every one of the seven rows
-   * after the triple below returns `issues: []`, `declares: []`, `ok: true`,
-   * `unlisted: 1`, i.e. it silently stops declaring: the exact F2/F-A failure
-   * mode. Those seven rows are **RED by design** — they pin the composition
-   * class the sequence peel leaves open, and the GREEN (card t_6402c405) peels
-   * the marker axes until none remains. Do not weaken them — a second marker is
-   * punctuation, not a licence to stop declaring.
+   * `a96253b`), and the peel now **repeats until the line stops changing**
+   * (squash `4a8fe73`, card t_6402c405), so **any number of marker axes
+   * compose**: a line may carry a bullet, an ordered marker and a heading in any
+   * order and still reach `^Consumers[*_]{0,3}\s*:`. The three-or-more-axis rows
+   * below pin that. Measured at `4a8fe73`, each returns one
+   * `consumers-malformed` entry at line 2 with `declaredRecords: ["0902"]`,
+   * `ok: false`, `unlisted: []` and `verifiedReferences: 1` — the same report
+   * shape as its single- and two-axis siblings. Under the earlier one-pass peel
+   * those four rows were silent (`issues: []`, `declares: []`, `ok: true`,
+   * `unlisted: 1`), which is the composition class the repeat closes.
+   *
+   * **The two hash negatives are deliberate non-headings.** A heading needs
+   * `#{1,6}` *followed by whitespace*, so `##Consumers:` (no space after the
+   * hashes) and `####### Consumers:` (seven hashes) are neither headings nor
+   * fields: both stay silent and their citation is reported `unlisted-consumer`
+   * (control rows after the column-0 heading pin below). A peel that widened
+   * `#{1,6}` to `#+`, or dropped the whitespace requirement, would start
+   * reading prose as a field — these two rows are what notices.
+   *
+   * Do not weaken these rows — a second marker is punctuation, not a licence to
+   * stop declaring.
    */
   it.each<[string, string[]]>([
     [
@@ -2897,6 +2908,22 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
     [
       "a parenthesized ordered marker before a double-underscore bold heading",
       ["1) ## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a bullet before an ordered marker before a double-underscore bold heading",
+      ["- 1. ## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "an ordered marker before a bullet before a double-star bold heading",
+      ["1. - ## **Consumers:** `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a triple blockquote × an ordered marker × a double-underscore bold heading",
+      ["> > > 1. ## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "an asterisk bullet × a parenthesised ordered marker × a triple-underscore bold heading",
+      ["* 1) ## ___Consumers:___ `apps/web/src/server/x.ts`"],
     ],
   ])("reports consumers-malformed, and still declares, for %s", (_shape, fieldLines) => {
     // Arrange — the field is on line 2 of the record, after the status line.
@@ -2963,6 +2990,58 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
     expect(result.unlisted).toEqual([]);
     expect(result.declaredRecords).toEqual(["0902"]);
     expect(result.verifiedReferences).toBe(1);
+  });
+
+  /**
+   * The two hash negatives, pinned as silent controls. A heading needs
+   * `#{1,6}` *followed by whitespace*, so neither `##Consumers:` (no space after
+   * the hashes) nor `####### Consumers:` (seven hashes) is a heading — and with
+   * no marker peeled the label does not open the line, so neither is a field
+   * either. Both rows therefore stay silent: `issues: []`, `declaredRecords: []`,
+   * `ok: true`, and the citation is reported `unlisted-consumer` because the
+   * record declares nothing.
+   *
+   * The direction matters: a peel that widened `#{1,6}` to `#+`, or that dropped
+   * the whitespace requirement after the hashes, would start reading a
+   * non-field line as a field and redden exactly these two rows.
+   */
+  it.each<[string, string]>([
+    ["no space after the hashes", "##Consumers: `apps/web/src/server/x.ts`"],
+    ["seven hashes", "####### Consumers: `apps/web/src/server/x.ts`"],
+  ])("stays silent for the non-heading shape with %s", (_shape, fieldLine) => {
+    // Arrange — the line that is neither a heading nor a field is line 2.
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0902, ["- **Status:** Accepted", fieldLine].join("\n")),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — nothing declared, nothing failed, and the citation is unlisted.
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [
+        {
+          code: unlistedConsumerCode,
+          file: "apps/web/src/server/x.ts",
+          line: 1,
+          number: "0902",
+          record: fixtureRecord0902,
+        },
+      ],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 0,
+      declaredRecords: [],
+    });
   });
 
   it("reports the citation mismatch too when a blockquote field does not name the citing file", () => {
