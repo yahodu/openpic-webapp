@@ -1060,9 +1060,14 @@ describe("I4: the batch limits", () => {
       workspace.eventId.toHexString()
     );
 
-    // Assert
+    // Assert — the cap refuses the whole request, so this row states the same
+    // no-signed-object invariant as every other refusal row: no `urls` key and
+    // no content hash anywhere in the body (ADR-0774 O2, ADR-0772 D3).
     expect(response.status).toBe(413);
-    expect((await errorOf(response)).code).toBe("payload_too_large");
+    const payload = await body(response);
+    expect((payload.error as ErrorBody).code).toBe("payload_too_large");
+    expect(payload.urls).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain(HASH_A);
   });
 
   it("accepts exactly 200 items", async () => {
