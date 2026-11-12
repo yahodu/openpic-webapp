@@ -10,7 +10,9 @@
   `apps/web/src/test/unit/public-event-format.test.ts` (U1, 10 cases),
   `apps/web/src/test/unit/public-event-state.test.ts` (U2, 17 cases),
   `apps/web/src/test/integration/public-event-resolution.test.ts` (I1–I5 + the
-  §0.11 class pin, 36 cases) and `apps/web/e2e/public-event-resolution.spec.ts` (E1)
+  §0.11 class pin, 36 cases) and `apps/web/e2e/public-event-resolution.spec.ts` (E1),
+  plus `apps/web/src/server/settings/platform-settings.ts` — the `selfie`/`legal`
+  sections the GREEN added, which cite this record's §3
 - **Lane:** OP-130 (epic Attendee Surface), a dependent ticket of OP-129. The
   number is taken **above every in-flight reservation** of the shared attendee
   block per CONVENTIONS §11 rule B: `0769`/`0770` are landed on this branch,
