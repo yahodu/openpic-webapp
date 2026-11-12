@@ -1993,7 +1993,7 @@ Client contract:
 
 # Part 6 — Attendee (public) surface
 
-Namespace `/api/v1/p/**`. Auth is `attendee` (anonymous session or logged-in user) unless stated. Every route is scoped by the event's **active** access-link `slug`, resolved through the unique partial index on `accessLinks.slug` where `active: true`.
+Namespace `/api/v1/p/**`. Auth is `attendee` (anonymous session or logged-in user) unless stated. Every route is scoped by the event's **active** access-link `slug`, resolved through the plain non-partial `{"accessLinks.slug":1}` index (`events_active_slug_lookup`): the `$elemMatch` slug + `active: true` predicate cannot use the unique partial index on `accessLinks.slug` where `active: true`, which instead governs slug uniqueness (one active slug globally, and the create-route E11000 collision retry).
 
 ## 6.1 Public event resolution
 
@@ -4097,8 +4097,12 @@ export type ProcessingStatus = "queued" | "processing" | "done" | "failed" | "sk
 export interface EventImage {
   id: Id;
   sequence: number;
-  thumbnailUrl: string;
-  thumbnailUrlExpiresAt: IsoDateTime;
+  /**
+   * Null until the thumbnail derivative exists: a just-completed upload is
+   * listed (and rendered as a reserved grid cell) before the pipeline runs.
+   */
+  thumbnailUrl: string | null;
+  thumbnailUrlExpiresAt: IsoDateTime | null;
   width: number;
   height: number;
   orientation: number;
@@ -4516,7 +4520,7 @@ Every read path must be served by an existing index. If a route here has no matc
 | `GET .../uploads/batches/{b}`             | `uploadSessions`, `eventImages`                                         | `{eventId:1, batchId:1, status:1}`                                                                                |
 | `POST .../uploads/batch-resolve`          | `mediaAssets`, `uploadSessions`                                         | **`{tenantId:1, contentHash:1}` unique** · `{tenantId:1, createdByUserId:1, contentHash:1}`                       |
 | `POST .../uploads/.../complete`           | `mediaAssets`, `eventImages`, `usageCounters`                           | **`{eventId:1, assetId:1}` unique** (dedupe race guard)                                                           |
-| `GET /p/events/{slug}`                    | `events`                                                                | **`{"accessLinks.slug":1}` unique partial** on `active: true`                                                     |
+| `GET /p/events/{slug}`                    | `events`                                                                | **`{"accessLinks.slug":1}` plain** (lookup); uniqueness on the partial unique index                               |
 | `GET /p/events/{slug}/me`                 | `attendeeEventProfiles`, `selfies`                                      | `{eventId:1,"subject.userId":1}` / `{eventId:1,"subject.attendeeSessionId":1}` unique partial                     |
 | `GET /p/events/{slug}/gallery`            | `faceMatches`, `eventImages`, `mediaAssets`                             | **`{profileId:1, createdAt:-1}`**                                                                                 |
 | gallery "New" badge                       | `faceMatches`                                                           | `{profileId:1, seenAt:1, createdAt:-1}` partial on `seenAt: null`                                                 |

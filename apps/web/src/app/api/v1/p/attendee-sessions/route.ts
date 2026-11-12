@@ -53,14 +53,18 @@ const SECONDS_PER_DAY = 24 * 60 * 60;
 /**
  * The events an `eventSlug` names, as the row's `eventIds`.
  *
- * A slug that matches no event is `404 not_found` rather than a silently
- * unbound session: the attendee would otherwise believe their selfie was
- * attached to an event it never reached (ADR-0781).
+ * A slug is resolved through an **active** access link only: the row's
+ * `accessLinks[]` element that carries both the slug and `active: true`
+ * ($elemMatch, so the two predicates cannot be satisfied by two different
+ * elements — the post-rotation row shape). A slug that matches no event, or
+ * only a rotated-away link, is `404 not_found` rather than a silently unbound
+ * session: the attendee would otherwise believe their selfie was attached to
+ * an event it never reached (ADR-0781, F1 amendment).
  *
  * @param db - The database to read `events` from.
  * @param slug - The optional `accessLinks[].slug` from the body.
  * @returns The bound event ids (`[]` when no slug was given).
- * @throws {AppError} `not_found` when the slug matches no event.
+ * @throws {AppError} `not_found` when the slug matches no active access link.
  */
 async function eventIdsFor(db: Db, slug: string | undefined): Promise<ObjectId[]> {
   if (slug === undefined) {
@@ -68,7 +72,10 @@ async function eventIdsFor(db: Db, slug: string | undefined): Promise<ObjectId[]
   }
   const event = (await platformRepo(db)
     .collection(COLLECTIONS.events)
-    .findOne({ "accessLinks.slug": slug }, { projection: { _id: 1 } })) as {
+    .findOne(
+      { accessLinks: { $elemMatch: { slug, active: true } } },
+      { projection: { _id: 1 } }
+    )) as {
     readonly _id: ObjectId;
   } | null;
   if (event === null) {
