@@ -297,6 +297,21 @@ describe("parseLaneRanges — row shape", () => {
     expect(ranges).toEqual([{ holder: "OP-202 beta lane", start: 780, end: 799 }]);
   });
 
+  it("drops an inverted pair instead of returning the inverted span", () => {
+    // Arrange — the parser contract changed with review finding F1: this pair
+    // used to come back as `{ start: 780, end: 760 }`, a span no lane holds and
+    // one the overlap predicate would read as intersecting a real reservation.
+    // The descending pair is now dropped outright, so a later "tidy-up" cannot
+    // quietly restore the inverted range.
+    const markdown = ledgerTable(["| OP-201 alpha lane | `0780`-`0760` | `0781` |"]);
+
+    // Act
+    const ranges = parseLaneRanges(markdown);
+
+    // Assert
+    expect(ranges).toEqual([]);
+  });
+
   it("ignores the rows of the ADR index table", () => {
     // Arrange — the same file carries the ADR index below the ledger; its rows
     // have no reserved-range cell and must not be read as reservations.
