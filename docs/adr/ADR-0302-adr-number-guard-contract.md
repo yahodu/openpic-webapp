@@ -196,11 +196,30 @@ pointed at pre-rename file names while every guard stayed green.
 - **Prose is not a link.** A fenced code block and an inline code span are
   prose: a `](…)` shape inside backticks documents the shape, it does not
   navigate.
-- **Exact leaf matching.** A target is read only from a markdown inline link
-  (`](target)`), any `#fragment` is stripped, and the leaf must carry no path
-  separator, start `ADR-` and end `.md`. It resolves only against a file name
-  **equal** to the leaf — never a prefix and never a number-only match, which is
-  how `0029-domain-event-outbox.md` (the record is the plural
+- **Shapes read (2026-11-12, finding F1 of card `t_e042ab22`).** A markdown
+  inline link's target is read in **three** shapes — bare `](ADR-….md)`,
+  **titled** `](ADR-….md "title")`, and **angle-bracket** `](<ADR-….md>)` — and
+  all three resolve on the leaf, so a dangling target in any of them is reported.
+  A title is peeled before resolution and is **not** part of the reported
+  `target`; the brackets are likewise stripped, so the report quotes
+  `ADR-….md` and never `<ADR-….md> "title"`, while a `#fragment` stays in the
+  report after the bracket is removed. Every shape read is counted in
+  `checkedLinks`, because `ok: true` alone would also pass on a rule that
+  silently skips it. An image link (`![alt](ADR-….md)`) is a target too: it
+  navigates like a text link.
+- **Shapes not read — stated so a later change cannot widen the rule by
+  accident.** A `./ADR-….md` and every other path-bearing target (the leaf
+  predicate rejects a path separator, now and by decision), a reference-style
+  `[label][ref]` with its `[ref]: ADR-….md` definition, a bare autolink
+  `<ADR-….md>`, and a target containing `(` or `)` are **not** targets: they are
+  neither resolved nor counted. The combined `](<ADR-….md> "title")` is read by
+  the same two peels but is deliberately **not pinned** — the trunk carries no
+  such link, and pinning it would widen the shape matrix past the two shapes this
+  section records.
+- **Exact leaf matching.** Any `#fragment` is stripped, and the leaf must carry
+  no path separator, start `ADR-` and end `.md`. It resolves only against a file
+  name **equal** to the leaf — never a prefix and never a number-only match,
+  which is how `0029-domain-event-outbox.md` (the record is the plural
   `…-domain-events-outbox.md`) and `0306-red-branch-pipeline.md` (0306 is now
   `0306-op101-stale-branch-deletion.md`, a different decision) passed as valid.
 - **The ratchet, and its retirement.** The invariant landed as a ratchet: the
