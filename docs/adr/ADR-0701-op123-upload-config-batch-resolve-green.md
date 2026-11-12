@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-11-11
 - **Card:** OP-123 GREEN (`t_08447abd`) · **Branch:** `OP-123-task-upload-config-batch-resolve-green` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_28054285`, based on the RED head `228fdfb` (branches `OP-123-task-upload-config-batch-resolve-red`, draft PR #420)
-- **Relates to:** [ADR-0700](ADR-0700-op123-upload-config-batch-resolve-red.md) (the pins this record turns green), [ADR-0009](ADR-0009-upload-type-guards.md) (the extension/MIME table the claim guard reuses), [ADR-0340](ADR-0340-op103-entitlements-red.md) (the advisory quota), [ADR-0520](ADR-0520-op112-object-storage-port-red.md)/[ADR-0521](ADR-0521-op112-object-storage-port-green.md) (the `ObjectStorage` port and `ListParts`), [ADR-0644](ADR-0644-op119-review-round1-green.md) (the event-scoped admission seam), [ADR-0540](ADR-0540-op114-branding-upload-green.md) (the per-domain error-table append shape)
+- **Relates to:** [ADR-0700](ADR-0700-op123-upload-config-batch-resolve-red.md) (the pins this record turns green), [ADR-0009](ADR-0009-upload-type-guards.md) (the extension/MIME table the claim guard reuses), [ADR-0340](ADR-0340-op103-entitlements-red.md) (the advisory quota), [ADR-0580](ADR-0580-op112-object-storage-port-red.md)/[ADR-0581](ADR-0581-op112-object-storage-port-green.md) (the `ObjectStorage` port and `ListParts`), [ADR-0644](ADR-0644-op119-review-round1-green.md) (the event-scoped admission seam), [ADR-0541](ADR-0541-op114-branding-upload-green.md) (the per-domain error-table append shape)
 
 ## Context
 

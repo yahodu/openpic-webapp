@@ -7,8 +7,8 @@
 - **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_bbd746d9`
 - **Branch:** `OP-125-task-multipart-uploads-red` (based on the **OP-124 GREEN head** `b211632`)
 - **Gated GREEN:** `t_a20d4ae2`
-- **Consumes:** [ADR-0520](ADR-0520-op112-object-storage-port-red.md) /
-  [ADR-0521](ADR-0521-op112-object-storage-port-green.md) (the `ObjectStorage`
+- **Consumes:** [ADR-0580](ADR-0580-op112-object-storage-port-red.md) /
+  [ADR-0581](ADR-0581-op112-object-storage-port-green.md) (the `ObjectStorage`
   port and the handle service), [ADR-0700](ADR-0700-op123-upload-config-batch-resolve-red.md)
   (batch-resolve), [ADR-0720](ADR-0720-op124-single-put-complete-link-only-red.md) /
   [ADR-0721](ADR-0721-op124-single-put-complete-link-only-green.md) (the single

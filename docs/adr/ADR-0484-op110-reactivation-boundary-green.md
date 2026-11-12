@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-10-25
 - **Card:** OP-110 follow-up GREEN (`t_805e17b6`) · **Branch:** `OP-110-task-reactivation-boundary-green` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_805e17b6`
-- **Relates to:** [ADR-0483](ADR-0483-op110-reactivation-boundary-pins.md) (the RED pins this turns green), [ADR-0480](ADR-0480-op110-self-serve-billing-red.md) §5 (the widening this bounds), [ADR-0481](ADR-0481-op110-self-serve-billing-green.md) (the GREEN that shipped it), [ADR-0440](ADR-0440-op108-webhook-inbox-red.md) / [ADR-0443](ADR-0443-op108-concurrent-projection-ordering-green.md) (the projection this extends), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation), [ADR-0306](ADR-0306-red-branch-pipeline.md) (the RED-by-design draft-PR pipeline)
+- **Relates to:** [ADR-0483](ADR-0483-op110-reactivation-boundary-pins.md) (the RED pins this turns green), [ADR-0480](ADR-0480-op110-self-serve-billing-red.md) §5 (the widening this bounds), [ADR-0481](ADR-0481-op110-self-serve-billing-green.md) (the GREEN that shipped it), [ADR-0440](ADR-0440-op108-webhook-inbox-red.md) / [ADR-0443](ADR-0443-op108-concurrent-projection-ordering-green.md) (the projection this extends), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation), [ADR-0304](ADR-0304-stale-draft-pr-reconciliation.md) (the RED-by-design draft-PR pipeline)
 - **Contract:** §3.3 (retry-charge success returns to `active`), §10.1.2 (`SUBSCRIPTION_PAYMENT_SUCCESS` projection row) · **Schema:** §14.3 (`subscriptions`) · **Appendix A.4**
 
 ## Context

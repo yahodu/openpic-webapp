@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-10-26
 - **Card:** OP-111 follow-up GREEN (`t_2f274985`) · **Branch:** `OP-111-feature-admin-alert-green` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_f7717e2c` · **Base:** the pins head `3b0f5e2` (itself off `origin/main` `5ecfc18`)
-- **Relates to:** [ADR-0502](ADR-0502-op111-admin-alert-pins.md) (the RED-by-design pins this card implements unedited), [ADR-0500](ADR-0500-op111-billing-jobs-red.md) (the OP-111 RED contract), [ADR-0501](ADR-0501-op111-billing-jobs-green.md) (the shipped GREEN whose open items routed this lane), [ADR-0029](ADR-0029-domain-event-outbox.md) (the outbox both alerts are written through), [ADR-0306](ADR-0306-op93-red-by-design-ci.md) (the RED-by-design posture), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
+- **Relates to:** [ADR-0502](ADR-0502-op111-admin-alert-pins.md) (the RED-by-design pins this card implements unedited), [ADR-0500](ADR-0500-op111-billing-jobs-red.md) (the OP-111 RED contract), [ADR-0501](ADR-0501-op111-billing-jobs-green.md) (the shipped GREEN whose open items routed this lane), [ADR-0029](ADR-0029-domain-events-outbox.md) (the outbox both alerts are written through), [ADR-0305](ADR-0305-ci-evidence-conflicting-pr-suppression.md) (the RED-by-design posture), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §10.2 (the cron table — the `billing-reconcile` and `webhook-projection-sweep` rows name the two emissions; rules 1–4), §10.1.2 line 3171 ("`admin.provider.failing` … always mobile"), §4.10 (the `platform_ops` catalogue) · **Schema:** §14.3 (`subscriptions`), §18.4 (`providerWebhookEvents`), §18.3 (`domain_events`)
 
 ## Context

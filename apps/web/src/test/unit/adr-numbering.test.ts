@@ -2501,24 +2501,19 @@ describe("checkRepositoryAdrConsumers — the repository sweep", () => {
  * syntax read is a markdown inline `](target)`; the target must carry no path
  * separator, start `ADR-` and end `.md`, after stripping a `#fragment`. It
  * resolves only against a file name **equal** to the leaf — never a prefix,
- * never a number-only match. Measured on this head, number keying would accept
- * two real defects in silence: `0029-domain-event-outbox.md` (the record is the
+ * never a number-only match. Number keying accepted two real defects in silence
+ * until they were repaired: `0029-domain-event-outbox.md` (the record is the
  * plural `…-domain-events-outbox.md`) and `0306-red-branch-pipeline.md` (0306 is
  * now `0306-op101-stale-branch-deletion.md`, a different decision). The pinned
  * fixture is the same shape: `0781-something-else.md` while 0781's real record
  * exists.
  *
- * **Trunk expectation — a ratchet, not `ok: true`.** The OP-129 sites are
- * repaired at this head (the five records this card's parent touched carry no
- * dangling link), but a whole-record sweep still finds **32 dangling occurrences
- * of 16 distinct targets** in other lanes' records — and one of them arrived
- * *after* the repair, in the OP-129 credential-precedence record, which is the
- * mechanism working on its first contact with the trunk. Asserting `ok: true`
- * here would be a lie, and narrowing the sweep until it were true would hide the
- * very class this card exists to catch. So the real-tree case pins the observed
- * debt exactly: it fails when a dangling link is added *and* when one is
- * repaired, so the list moves in the same change that moves the debt and the
- * sweep's sight is proved each time.
+ * **Trunk expectation — `ok: true`.** The sweep landed as a ratchet over the
+ * **32 dangling occurrences of 16 distinct targets** it found in other lanes'
+ * records, and the repair that retargeted every one of them retired the list in
+ * the same change (the F2 coupling: a ratchet fails on a repair as well as on an
+ * add). The real-tree case therefore asserts the empty report, with the
+ * non-vacuity bounds below keeping a silently narrowed sweep from passing.
  *
  * **Ordering.** `issues` is sorted by `file`, then `line`, then `target`, so the
  * same records in any input order produce one report.
@@ -2784,38 +2779,11 @@ describe("checkRepositoryAdrLinks — the repository sweep", () => {
     expect(result.scannedRecords).toBeGreaterThanOrEqual(250);
     expect(result.checkedLinks).toBeGreaterThanOrEqual(800);
 
-    // The debt this head carries, in other lanes' records. Both directions are
-    // deliberate: a new dangling target fails the case, and repairing one fails
-    // it too so the list is updated in the change that moves the debt.
-    expect([...new Set(result.issues.map(({ target }) => target))].sort()).toEqual([
-      "ADR-0007-op82-platform-settings-red.md", // adr-fixture: known dangling target
-      "ADR-0009-op85-test-support-otp-route.md", // adr-fixture: known dangling target
-      "ADR-0029-domain-event-outbox.md", // adr-fixture: known dangling target
-      "ADR-0029-op88-domain-events-red.md", // adr-fixture: known dangling target
-      "ADR-0040-op83-event-members.md", // adr-fixture: known dangling target
-      "ADR-0096-message-transport-factory.md", // adr-fixture: known dangling target
-      "ADR-0105-op94-notification-transport-selection.md", // adr-fixture: known dangling target
-      "ADR-0306-op93-red-by-design-ci.md", // adr-fixture: known dangling target
-      "ADR-0306-red-branch-pipeline.md", // adr-fixture: known dangling target
-      "ADR-0360-op104-entitlements-usage-endpoints-red.md", // adr-fixture: known dangling target
-      "ADR-0361-op104-entitlements-usage-endpoints-green.md", // adr-fixture: known dangling target
-      "ADR-0421-op107-checkout-mandate-creation-green.md", // adr-fixture: known dangling target
-      "ADR-0520-op112-object-storage-port-red.md", // adr-fixture: known dangling target
-      "ADR-0521-op112-object-storage-port-green.md", // adr-fixture: known dangling target
-      "ADR-0540-op114-branding-upload-green.md", // adr-fixture: known dangling target
-      "ADR-0770-op129-anonymous-attendee-sessions-green.md", // adr-fixture: known dangling target
-    ]);
-    expect(result.issues).toHaveLength(32);
-    expect(result.ok).toBe(false);
-
-    // The OP-129 sites this card's parent repaired (0780, 0781, 0782, 0783 and
-    // 0787) must stay repaired: no issue may name one of those as its source.
-    // The credential-precedence record is *not* in that list on purpose — it
-    // landed after the repair carrying a fresh pre-rename link, which is exactly
-    // what the target list above pins as debt.
-    expect(
-      result.issues.filter(({ file }) => /ADR-07(?:80|81|82|83|87)-op129-/.test(file))
-    ).toEqual([]);
+    // The inherited debt — 32 occurrences of 16 distinct targets — was repaired
+    // record by record, so the honest end state is the empty report. The ratchet
+    // is retired, not re-pinned: a new dangling link fails here, and the two
+    // bounds above keep a silently narrowed sweep from passing vacuously.
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 881, scannedRecords: 292 });
   });
 
   it("throws an ENOENT error when the root has no docs/adr directory", () => {
