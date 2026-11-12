@@ -1,3 +1,9 @@
+## [1.54.1](https://github.com/yahodu/openpic-webapp/compare/v1.54.0...v1.54.1) (2026-11-12)
+
+### Bug Fixes
+
+- **attendee:** OP-129 bind attendee sessions only through active access links ([#469](https://github.com/yahodu/openpic-webapp/issues/469)) ([0b1eaa1](https://github.com/yahodu/openpic-webapp/commit/0b1eaa128ae5ebc8e3ba589299a371f28f75b68f))
+
 ## [1.54.0](https://github.com/yahodu/openpic-webapp/compare/v1.53.0...v1.54.0) (2026-11-12)
 
 ### Features
