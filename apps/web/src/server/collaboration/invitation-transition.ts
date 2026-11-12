@@ -1,4 +1,4 @@
-import { ObjectId, type Db } from "mongodb";
+import { ObjectId, type ClientSession, type Db } from "mongodb";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { withTransaction } from "@/server/db/transaction";
@@ -15,13 +15,14 @@ import { hexId, type InvitationDecisionBody, type InvitationRow } from "./invita
  *
  * A decision is **one** conditional write filtered on `status: "pending"` and
  * `expiresAt > now`. When it matches, the invitation is resolved, the in-app
- * affordance closes in every channel and `collab.invite.*` is emitted. When it
- * matches nothing the row is already terminal and
+ * affordance closes in every channel and `collab.invite.*` is emitted — all in
+ * one transaction, so a failed decision is still pending and never half done.
+ * When it matches nothing the row is already terminal and
  * {@link decideTerminalOutcome} answers from the row's current state — a
  * repeated or cross-channel decision is never a `409`.
  *
- * Accept runs inside a transaction with the `event_organizers` insert (§23), so
- * a membership and its invitation can never disagree.
+ * The accept transaction also carries the `event_organizers` insert (§23), so a
+ * membership and its invitation can never disagree.
  */
 
 /** Which decision the caller asked for. */
@@ -62,12 +63,14 @@ function terminalStatus(decision: InvitationDecision): "accepted" | "rejected" {
  * @param invitationId - The invitation's hex id.
  * @param now - The instant of the decision.
  * @param via - The channel that decided it, when a decision caused the closure.
+ * @param session - The caller's transaction; the write joins it when supplied.
  */
 export async function closeInvitationAffordance(
   db: Db,
   invitationId: string,
   now: Date,
-  via?: DecisionChannel
+  via?: DecisionChannel,
+  session?: ClientSession
 ): Promise<void> {
   await platformRepo(db)
     .collection(COLLECTIONS.notifications)
@@ -80,12 +83,17 @@ export async function closeInvitationAffordance(
           ...(via === undefined ? {} : { actionResolvedVia: via, actionResolvedAt: now }),
           updatedAt: now,
         },
-      }
+      },
+      session === undefined ? {} : { session }
     );
 }
 
 /**
  * Attempt the one conditional transition for a decision.
+ *
+ * The status write, the affordance closure and the emit are one transaction on
+ * both arms, so a failed decision leaves the invitation pending and every
+ * in-app action usable — the decision is still to do, never half done.
  *
  * @param ctx - The decision, its channel and the caller.
  * @param invitationId - The invitation's `_id`.
@@ -107,11 +115,6 @@ async function transition(ctx: DecisionContext, invitationId: ObjectId): Promise
     },
   };
 
-  if (decision === "reject") {
-    const written = await invitations.findOneAndUpdate(filter, update);
-    return written !== null;
-  }
-
   return withTransaction(async (session) => {
     const written = await invitations.findOneAndUpdate(filter, update, { session });
     if (written === null) {
@@ -119,6 +122,27 @@ async function transition(ctx: DecisionContext, invitationId: ObjectId): Promise
     }
 
     const row = written as DecisionInvitationRow;
+    const invitationHex = invitationId.toHexString();
+    const tenantHex = hexId(row.tenantId);
+
+    await closeInvitationAffordance(db, invitationHex, now, via, session);
+
+    if (decision === "reject") {
+      await emitDomainEvent(
+        {
+          eventKey: "collab.invite.rejected",
+          tenantId: tenantHex,
+          actorRef: { kind: "user", id: userId },
+          subjectRef: { kind: "invitation", id: invitationHex },
+          dedupeKey: `collab.invite.rejected:${invitationHex}`,
+          payload: { invitationId: invitationHex, eventId: hexId(row.eventId) },
+        },
+        { db, session }
+      );
+
+      return true;
+    }
+
     // `event_organizers.userId` is the Better Auth id as a hex string (§15.2),
     // the same form the admission seam reads.
     await platformRepo(db)
@@ -127,7 +151,7 @@ async function transition(ctx: DecisionContext, invitationId: ObjectId): Promise
         { eventId: row.eventId, userId },
         {
           $set: {
-            tenantId: hexId(row.tenantId),
+            tenantId: tenantHex,
             eventId: row.eventId,
             userId,
             role: "co_organizer",
@@ -143,12 +167,12 @@ async function transition(ctx: DecisionContext, invitationId: ObjectId): Promise
     await emitDomainEvent(
       {
         eventKey: "collab.invite.accepted",
-        tenantId: hexId(row.tenantId),
+        tenantId: tenantHex,
         actorRef: { kind: "user", id: userId },
-        subjectRef: { kind: "invitation", id: invitationId.toHexString() },
-        dedupeKey: `collab.invite.accepted:${invitationId.toHexString()}`,
+        subjectRef: { kind: "invitation", id: invitationHex },
+        dedupeKey: `collab.invite.accepted:${invitationHex}`,
         payload: {
-          invitationId: invitationId.toHexString(),
+          invitationId: invitationHex,
           eventId: hexId(row.eventId),
           role: "co_organizer",
         },
@@ -245,24 +269,6 @@ export async function decideInvitation(
       })) as DecisionInvitationRow | null;
       if (row === null) {
         throw appError("not_found");
-      }
-
-      await closeInvitationAffordance(ctx.db, invitationId.toHexString(), ctx.now, ctx.via);
-      if (ctx.decision === "reject") {
-        await emitDomainEvent(
-          {
-            eventKey: "collab.invite.rejected",
-            tenantId: hexId(row.tenantId),
-            actorRef: { kind: "user", id: ctx.userId },
-            subjectRef: { kind: "invitation", id: invitationId.toHexString() },
-            dedupeKey: `collab.invite.rejected:${invitationId.toHexString()}`,
-            payload: {
-              invitationId: invitationId.toHexString(),
-              eventId: hexId(row.eventId),
-            },
-          },
-          { db: ctx.db }
-        );
       }
 
       getLogger().info("invitation resolved", {
