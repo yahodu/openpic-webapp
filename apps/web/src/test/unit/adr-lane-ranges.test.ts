@@ -577,12 +577,13 @@ describe("checkAdrDirectory — range-shaped rows that do not parse (review find
   });
 
   it("reports an inverted range as one lane-range-malformed issue naming its holder", () => {
-    // Arrange — `0780`-`0760` obviously intends a reservation, but it is
-    // inverted, so today it parses as { start: 780, end: 760 } and the span the
-    // lane meant is invisible: the ledger is reported clean. A row that does not
-    // parse must be named, not dropped, or a typo silently disables the guard.
-    // One issue per row, carrying that row's holder once — not the two holders
-    // an overlap issue carries.
+    // Arrange — **RED** before #481 (`fc4ad00`): `0780`-`0760` obviously
+    // intends a reservation, but it is inverted, so `parseLaneRanges` returned
+    // { start: 780, end: 760 } and the span the lane meant was invisible: the
+    // ledger was reported clean. A row that does not parse must be named, not
+    // dropped, or a typo silently disables the guard. All four cases in this
+    // block pass at this head. One issue per row, carrying that row's holder
+    // once — not the two holders an overlap issue carries.
     const dir = makeTempAdrDirWithReadme(
       ["ADR-0760-a.md"], // adr-fixture
       laneLedger([
