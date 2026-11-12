@@ -249,3 +249,74 @@ ADR guards **54** passed with `checkAdrDirectory("docs/adr")` `{ ok: true,
 issues: [] }`, `tsc --noEmit` exit `0`, ESLint 0 errors, Prettier clean. Of the
 multiple-active-link question left open above, the "all active slugs" reading is
 implemented — the array is filtered, so the order the row carries is kept.
+
+## Amendment note — F1 follow-up: the `eventSlug` lookup must be **index-backed** (`t_067135c7`)
+
+- **Status:** Accepted (test-only pin; no production change on this branch)
+- **Consumers:** `apps/web/src/test/integration/attendee-sessions-slug-lookup-plan.test.ts`
+- **Numbering:** no number is taken. A test-only pin mints none, so
+  `docs/adr/README.md` and the lane's `Next free` cell are untouched.
+
+**Context.** The round-1 review of the F1 GREEN measured the create route's
+`eventSlug` lookup on the trunk tip (`main` @ `9219d03`). The route resolves
+`{ accessLinks: { $elemMatch: { slug, active: true } } }`, and the only `events`
+index that carries a slug is `events_active_slug_unique`
+(`{accessLinks.slug: 1}`, unique, partial on `{"accessLinks.active": true}`).
+The planner's subset check does not accept an `ELEM_MATCH_VALUE` predicate, so
+the partial index cannot serve the shipped filter. `POST
+/api/v1/p/attendee-sessions` is public and unauthenticated, and each call
+full-scanned `events` (500/500 documents examined, 0 keys). Contract §1.5 says
+the slug is "resolved through the unique partial index on `accessLinks.slug`
+where `active: true`", so the docs described a plan that never ran. Nothing in
+the correctness pins can see this: the answer stays right, only the cost is
+wrong.
+
+**Decision.** Pin the plan, not the answer, in a **new** spec file
+(`attendee-sessions.test.ts` is a multi-lane conflict hotspot: PRs #449, #451,
+#453, #464). The pin seeds 300 `events` rows after `ensureIndexes`, then
+explains the route's filter shape **verbatim** against the real index set. It
+asserts three properties: the winning plan contains an `IXSCAN` stage, it carries
+no `COLLSCAN` stage, and `executionStats.totalDocsExamined` is `<= 5`. The pin
+names **no index**: any index, or any equivalent filter, that keeps the
+element-scoped semantics satisfies it. Two controls keep the pin from being
+satisfied by a weaker match — an `events` row shaped
+`[{slug: "…revoked", active: false}, {slug: "…active", active: true}]` returns
+0 documents for the revoked slug and 1 for the active one — and two route-level
+controls keep the _route_ on that semantics while the lookup is optimised: the
+revoked slug is `404 not_found`, the active slug is `201`.
+
+The explain runs **without** `limit(1)`: a limited collection scan stops at the
+first match and would hide the cost this pin exists to catch. The target row is
+seeded last for the same reason.
+
+**Measured RED on this branch** (draft PR, not merged; the GREEN carries the file
+forward unchanged):
+
+- `serves the slug lookup from an IXSCAN and never from a COLLSCAN` →
+  `AssertionError: expected '{"stage":"COLLSCAN","filter":{"access…' to contain
+'"IXSCAN"'`. The winning plan is `{"stage":"COLLSCAN","filter":{"accessLinks":
+{"$elemMatch":{"$and":[{"active":{"$eq":true}},{"slug":{"$eq":
+"op129plan-target-0001"}}]}}},"direction":"forward"}`.
+- `examines at most 5 event documents to resolve one slug` →
+  `AssertionError: expected 300 to be less than or equal to 5`.
+- The four controls pass on the same run: **2 failed | 4 passed (6)**.
+
+**Satisfiability probe.** A throwaway non-partial, non-unique compound index
+`{accessLinks.slug: 1, accessLinks.active: 1}` added to `INDEX_SPECS` (and
+removed again) turned the whole file green — **6 passed (6)** — with the winning
+plan `FETCH` over `IXSCAN` on that index, `docsExamined: 1`, `advanced: 1`. So
+the pin is satisfiable **while the filter stays `$elemMatch`**: the fix is an
+index, not a dotted filter (a dotted `accessLinks.slug` + `accessLinks.active`
+filter would be index-usable but would re-open the cross-element match the F1
+pin kills, and the rotated-row control above fails it). `indexes.ts` was restored
+byte-identically afterwards (sha256
+`5e04a3a7f1e3dadb1689f1b263e533059f60952d9ad47f52aa92fde0b341ce60`, `git
+diff` empty), so this card ships no production change.
+
+**Consequences.** The GREEN owes a decision that this amendment deliberately
+leaves open: a new non-partial compound index on `events.accessLinks` costs one
+more index on a write path, while a unique **partial** replacement must keep the
+`E11000` slot that the create route's slug-collision retry relies on. The pin
+accepts either, because it asserts the plan and the semantics, not the index
+name. `tsc --noEmit` exits `0`, ESLint reports 0 errors and 0 warnings, and
+Prettier is clean on the spec.
