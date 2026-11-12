@@ -70,7 +70,7 @@ the rejected alternatives are recorded in
 | OP-124 uploads lane                 | `0720`–`0739`                   | `0722`    |
 | OP-125 uploads lane                 | `0740`–`0759`                   | `0742`    |
 | OP-126 uploads lane                 | `0760`–`0779`                   | `0777`    |
-| OP-129 attendee identity lane       | `0780`–`0798`                   | `0789`    |
+| OP-129 attendee identity lane       | `0780`–`0798`                   | `0790`    |
 | unallocated (future lanes)          | `0799`+ (20 per lane, in order) | `0799`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -403,6 +403,7 @@ _The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-card-serializati
 | [0786](ADR-0786-op129-attendee-session-rate-limit-green.md) | OP-129 follow-up (F1) GREEN: `attendee.session` implemented exactly as ADR-0787 declared it — the union member, the `{scope:"ip", limit:60, windowSeconds:3600}` table row and the `FAIL_CLOSED_CLASSES` entry in `classes.ts`, plus the `rateLimitStage({classKey, limiter: createRateLimiter(), salt})` option on the create route's `defineRoute` (the memoised accessor, because the fail-closed pin rejects on `createRateLimiter().limit`); the IP comes from the stage's own `resolveClientIp` + `getTrustedClientIpHeader()` derivation (ADR-0024 model unchanged, no route-local resolver added); token, TTL read, `eventSlug` binding and `201` body byte-identical; a `201` now carries `RateLimit-*` (accepted, ADR-0787 §4) | Accepted |
 | [0787](ADR-0787-op129-attendee-session-rate-limit-pin.md) | OP-129 follow-up (F1): contract §0.11's `attendee.session` class for `POST /p/attendee-sessions` — `{scope:"ip", limit:60, windowSeconds:3600}` (the endpoint is public and runs **before** a session exists, so there is no principal, no contact and no attendee identity to key on), declared **fail-closed** (an unauthenticated call writes a 30-day credential-shaped row, so an unavailable limiter must not degrade into an unlimited mint), pinned in `classes.test.ts` (exact table row, exact `FAIL_CLOSED`/`FAIL_OPEN` partition) and in `attendee-sessions.test.ts` (60 `201`s then `429 rate_limited` with `RateLimit-*` + `Retry-After` and no minted row, a second IP unaffected at `RateLimit-Remaining: 59`, and `503 service_unavailable` when the limiter rejects on the memoised accessor); the GREEN declares the stage on the route's `defineRoute` options; takes `0787` because `0782` is held by the edge-pins record (PR #449) and `0783` by the resolver-default record — the number was minted as `0782` and renumbered by card `t_f4da0ad2` (review F1) | Accepted |
 | [0788](ADR-0788-op129-attendee-credential-precedence-pin.md) | OP-129 round-1 review follow-up (test-only): **F3** the credential **order** pinned where it is load-bearing — a valid `op_att` cookie and a valid `X-Attendee-Session` header naming two _different_ sessions on one request answer `200` with the **cookie's** `id`, `kind: "anonymous"`, the cookie's `expiresAt` and neither raw token in the body; the four neighbouring cases (`I2`/`I3` single-credential, the stale-cookie fall-through, the lapsed-cookie `401`) are all blind to the order, so a header-first implementation passed them all — a throwaway-worktree mutation that prefers the header when both rows are live reddens **exactly** this case (`expected '…5b52' to be '…5b51'`, 1 failed \| 18 passed) and the shipped resolver is byte-identical; characterisation, so it passes on first run and needs no GREEN | Accepted |
+| [0789](ADR-0789-op131-biometric-consent-red.md) | OP-131 RED: biometric consent grant and withdrawal — `buildConsentEvidence` (separate salted SHA-256 `ipHash`/`uaHash`, `method: "checkbox"`, a `parseLocale` locale, never a raw IP or user agent) and `formatDeletedCounts` (`selfies=n;embeddings=n;matches=n`, zeros spelled `0`, round-trippable), pinned through `POST`/`DELETE /p/events/:slug/consent` (the six-key `201`, a deterministic `sha256:` `policyDocumentHash` across two attendees, the `consentId`-linked profile, `422 policy_version_stale` and `422 age_confirmation_required` with **no** write, and a `204` + `X-Deleted-Counts` that leaves zero selfie/match rows and a released media `refCount`) plus `requireConsent` (`412 consent_required` with the Appendix A.7 `purpose`/`requiredPolicyVersion`/`policyUrl` details for a missing, a withdrawn and a stale-version grant) | Accepted |
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
@@ -863,3 +864,57 @@ body and appendix `PublicEvent` interface. Evidence: unit **27/27**, integration
 **36/36** on `MongoMemoryReplSet`, full `unit` project **2417 passed | 3 skipped
 (2420)**, full `integration` project **100 files passed**, `tsc` exit `0` for
 `apps/web` and `packages/contracts`._
+
+_The **OP-131** lane (epic Consent, dependent on OP-130) continues the shared
+attendee block rather than drawing a fresh one: the cell read `0789` on
+`302ff4d`, a sweep of every live worktree and every `origin` head found no
+`ADR-0789`–`ADR-0798` file and `0788` as the highest in-flight number, so
+[ADR-0789](ADR-0789-op131-biometric-consent-red.md) takes `0789` and the cell
+advances to `0790`. The record fixes the contract the card left open:
+`@/server/attendee/consent-evidence` (`buildConsentEvidence({salt, ip,
+userAgent, acceptLanguage})` — `ipHash`/`uaHash` as **separate** salted SHA-256
+digests on the shipped `hashFingerprint` scheme, `method: "checkbox"`, and a
+`locale` resolved through the shipped `parseLocale`, so no raw IP or user agent
+is stored or logged), `@/server/attendee/deleted-counts`
+(`DELETED_COUNTS_HEADER = "x-deleted-counts"` and `formatDeletedCounts` →
+`selfies=n;embeddings=n;matches=n`, zeros spelled `0`, round-trippable),
+`@/server/attendee/consent-guard` (`requireConsent({db, tenantKey, eventId,
+subject})` → the granted row's `consentId`, else `412 consent_required` with
+Appendix A.7's `{purpose, requiredPolicyVersion, policyUrl}`) and
+`POST`/`DELETE /api/v1/p/events/:slug/consent` on
+`defineRoute({route: "/api/v1/p/events/:slug/consent"})` with the `attendee`
+label: the grant answers the six-key `201` (`consentId`, `purpose`,
+`policyVersion`, `grantedAt`, `receiptSent`, `receiptNote` — the contract's
+sentence verbatim), writes the §15.4 row with a **deterministic**
+`sha256:`-prefixed `policyDocumentHash` and the hashed evidence, links an
+`attendee_event_profiles` row (`consentId`, status `selfie_pending` — schema
+§15.3's closed union, **not** the card's `no_selfie`, which is not a member of
+it), answers `422 policy_version_stale` and `422 age_confirmation_required`
+with **no** write, and withdraws with `204` + `X-Deleted-Counts` after deleting
+the profile's selfies (counting only those that carried an `embedding`), its
+`faceMatches` and one `refCount` per referenced media asset, stamping
+`withdrawnAt` and the profile `withdrawn`. Deletion is scoped by `profileId`
+(a `{tenantId, eventId}` sweep would delete a stranger's selfie), and the DSR
+`executionLog` append plus the `attendee.consent.receipt` fan-out are
+deliberately unpinned (OP-138 and OP-132 own them). This RED delivers **test
+files only** — two unit specs (U1 13 cases, U2 7 cases) and one integration spec
+(22 cases: I1–I5, the two `401` rows and the four guard states) — plus this ADR
+and the ledger rows; the throwaway stubs used to prove type-correctness and
+satisfiability (three server modules, one route, plus a probe-only append to
+`packages/contracts/src/errors.ts` and `@/server/http/catalog`) were deleted, and
+`git status` shows the three specs, the ADR and this ledger only. Evidence: the
+honest RED is `Cannot find package` for each of the four owed modules, with
+`tsc -p apps/web/tsconfig.json --noEmit` reporting exactly four `TS2307`s and
+nothing else; with a faithful near-fix implementation the unit project ran
+**20 passed (20)** and the integration spec **22 passed (22)** on a real
+`MongoMemoryReplSet`, and six single-anchor mutations each reddened only their
+own pins with every file restored byte-identically — the raw IP stored instead
+of a digest (`4 failed | 9 passed (13)`), the counts field order reversed
+(`4 failed | 3 passed (7)`), every selfie counted as an embedding
+(`expected 'selfies=2;embeddings=2;matches=3' to be '…embeddings=1…'`), the
+`faceMatches` left behind (`expected 3 to be +0`), the guard ignoring
+`withdrawnAt: null` (`expected an AppError, received null`) and the age
+confirmation accepted (`2 failed | 20 skipped`). `docs/adr/README.md` remains
+the shared-ledger hotspot: this row, the `0789`/`0790` cell and the pool cell
+merge as a union keeping the highest values. No number outside `0780`–`0798` is
+touched._
