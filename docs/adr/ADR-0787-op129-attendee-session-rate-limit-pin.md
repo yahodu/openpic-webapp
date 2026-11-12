@@ -1,11 +1,12 @@
-# ADR-0782 — OP-129 follow-up: the `attendee.session` class (60 / hour / IP, fail-closed)
+# ADR-0787 — OP-129 follow-up: the `attendee.session` class (60 / hour / IP, fail-closed)
 
 - **Status:** Accepted (pins only — the implementation is the gated GREEN `t_08f03b5e`)
 - **Consumers:** `apps/web/src/server/rate-limit/classes.test.ts` (contract §0.11 table +
   failure policy), `apps/web/src/test/integration/attendee-sessions.test.ts` (F1 pins),
   `docs/API Contract.md` §0.11 + §1.5
 - **Lane:** OP-129 (epic Attendee Identity). Reserved range `0769`–`0788`; see
-  §Number allocation — this record takes `0782`, not the cell's `0771`.
+  §Number allocation — this record takes `0787` (minted as `0782`, renumbered by
+  card `t_f4da0ad2`), not the cell's `0771`.
 - **Supersedes:** nothing. **Amends:** [ADR-0770](ADR-0770-op129-anonymous-attendee-sessions-green.md)
   §4 (its deferred rate-limit item), by pinning the class and its policy.
 
@@ -183,8 +184,22 @@ The lane's cell read `Next free = 0771` on this base, but `0771` is **held in fl
 OP-128 uploads lane (`ADR-0771-op128-signed-url-fallback-pins.md`, open PR #447) and `0770`
 already collides with `ADR-0770-op128-account-status-gate-green.md` (the ledger repair card
 `t_95e7ed1e` is renumbering this lane's `0769`/`0770` to `0780`/`0781`). Minting `0771` here
-would collide twice at merge, so this record takes **`0782`** — inside the lane's reserved
-`0769`–`0788` range, above the repair boundary — and the cell advances to `0783`. A sweep of
-every remote head (`git ls-tree -r <ref> -- docs/adr`) shows no `ADR-078x` file anywhere in
-flight, so `0782` is free. When the repair lands, both hunks merge as a union and the cell's
-correct final value is `0783`.
+would collide twice at merge, so this record was first minted as **`0782`** and the cell
+advanced to `0783`.
+
+That mint was read against a stale ledger. The OP-129 lane mints `0782` **twice** in flight:
+`0782` is held by the edge-pins record
+(`ADR-0782-op129-attendee-session-edge-pins.md`, PR #449, the earlier mint), `0783` by the
+resolver-default record (`ADR-0783-op129-attendee-resolver-default.md`, card `t_a909e641`) and
+`0784`/`0785` by the OP-130 public-event lane. A second `0782` reddens the repo's own guard —
+`checkAdrDirectory("docs/adr")` returns `{ ok: false, code: "duplicate" }` and
+`adr-numbering.test.ts` fails — the moment the two records share a tree.
+
+This record therefore takes **`0787`** (card `t_f4da0ad2`, review finding **F1**): inside the
+lane's reserved `0769`–`0788` range, above the `0780`/`0781` repair boundary and above every
+number in flight. The lane cell advances to `0788`. A sweep of every open PR head
+(`git ls-tree -r <ref> -- docs/adr`) plus `ls docs/adr` taken immediately before the push shows
+no `ADR-0787` and no `ADR-0788` anywhere in flight, so `0787` is free. The reasoning that got
+here is unchanged: a record takes the next number above the in-flight high-water mark, and a
+number is consumed once and never reissued — `0782` stays the edge-pins record's number and the
+gap `0784`/`0785` stays reserved to the OP-130 lane rather than being back-filled.

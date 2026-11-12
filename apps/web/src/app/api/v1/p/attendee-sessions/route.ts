@@ -107,7 +107,7 @@ export const POST = defineRoute({
   route: "/api/v1/p/attendee-sessions",
   body: createBodySchema,
   response: createdSessionSchema,
-  // §0.11 `attendee.session`: 60/hour/IP, fail-closed (ADR-0782, ADR-0786). The
+  // §0.11 `attendee.session`: 60/hour/IP, fail-closed (ADR-0787, ADR-0786). The
   // stage resolves the IP through the trusted-header knob, so a forged
   // `x-forwarded-for` cannot pick its own bucket.
   rateLimit: rateLimitStage({

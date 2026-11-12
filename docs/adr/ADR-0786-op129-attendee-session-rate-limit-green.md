@@ -1,18 +1,18 @@
 # ADR-0786 — OP-129 follow-up: the `attendee.session` limit is enforced on the create route
 
-- **Status:** Accepted (implementation of [ADR-0782](ADR-0782-op129-attendee-session-rate-limit-pin.md))
+- **Status:** Accepted (implementation of [ADR-0787](ADR-0787-op129-attendee-session-rate-limit-pin.md))
 - **Consumers:** `apps/web/src/app/api/v1/p/attendee-sessions/route.ts`,
   `apps/web/src/server/rate-limit/classes.ts`; pinned by
   `apps/web/src/server/rate-limit/classes.test.ts` and
   `apps/web/src/test/integration/attendee-sessions.test.ts`
 - **Lane:** OP-129 (epic Attendee Identity). Reserved range `0769`–`0788`; see
   §Number allocation — this record takes `0786`, not the cell's `0783`.
-- **Supersedes:** nothing. **Amends:** ADR-0782 §3–§4 (it declared the change; this
+- **Supersedes:** nothing. **Amends:** ADR-0787 §3–§4 (it declared the change; this
   record makes it).
 
 ## Context
 
-ADR-0782 pinned the class and the stage but touched no production file, so
+ADR-0787 pinned the class and the stage but touched no production file, so
 `POST /api/v1/p/attendee-sessions` still answered an unlimited number of `201`s: one
 30-day `attendeeSessions` row per call, each a bearer credential to someone's photos.
 Round-1 review finding **F1 (High)**.
@@ -63,7 +63,7 @@ behavioural change.
 
 The shared stage returns its headers on success, so the create response now carries
 `RateLimit-Limit: 60`, `RateLimit-Remaining: <n>` and `RateLimit-Reset`. Accepted
-(ADR-0782 §4): the headers describe the caller's window, not the response, every
+(ADR-0787 §4): the headers describe the caller's window, not the response, every
 other stage-consuming route behaves the same way, and the integration pin asserts
 them (`RateLimit-Remaining: 59` on a fresh IP's first `201`). A `429` adds
 `Retry-After`, mints no row and sets no cookie; `503` does the same under
@@ -75,6 +75,11 @@ fail-closed.
   `429 rate_limited` with `Retry-After` and no session row.
 - An unavailable limiter answers `503 service_unavailable` for this class instead of
   minting a session — a limiter outage costs availability, never an unbounded mint.
+- An **unattributable** request — a trusted client-IP header configured but absent, so no IP
+  identity can be derived — is answered `503 service_unavailable` under the fail-closed policy
+  and never mints a session: `resolveClientIp` returns `undefined`, `evaluateRateLimit` reports
+  `unavailable`, and the class's `fail-closed` policy denies. Measured on the real stage
+  (review finding **F3**).
 - The class numbers are table config, so `platformSettings` can override them later
   without touching the route (no pin asks for it yet).
 
@@ -83,8 +88,8 @@ fail-closed.
 1. **A route-local `resolveClientIp` + explicit `facts`.** Rejected: the stage's
    default derivation is already the trusted-header one, so this is a second copy of
    the same resolver with a new way to get it wrong.
-2. **Fail-open.** Rejected by ADR-0782 §2 — the write is unauthenticated and durable.
-3. **A `attendee`/`contact` secondary bucket.** Impossible before the session exists,
+2. **Fail-open.** Rejected by ADR-0787 §2 — the write is unauthenticated and durable.
+3. **An `attendee`/`contact` secondary bucket.** Impossible before the session exists,
    and §0.11 documents one scope for the class.
 
 ## Evidence

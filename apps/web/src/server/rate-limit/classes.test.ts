@@ -21,7 +21,7 @@ import {
  * Every class and every rule is pinned exactly (not presence-only) so a class
  * can neither gain, lose nor drift a limit without failing this suite.
  *
- * `attendee.session` is the OP-129 follow-up row (finding F1, ADR-0782). It is
+ * `attendee.session` is the OP-129 follow-up row (finding F1, ADR-0787). It is
  * absent from the production union, so the class list and the two policy arrays
  * are typed `readonly string[]` rather than `readonly RateLimitClass[]`: naming a
  * class the union does not have would force a cast that becomes
@@ -180,7 +180,7 @@ describe("failure policy", () => {
    * `attendee.session` is here for the reason the auth classes are: it is
    * unauthenticated and every allowed call writes a 30-day `attendeeSessions`
    * row, so an unavailable limiter must not degrade into an unbounded mint
-   * (`auth.otp`, `selfie.submit` are the precedent — ADR-0782 §Decision).
+   * (`auth.otp`, `selfie.submit` are the precedent — ADR-0787 §Decision).
    */
   const FAIL_CLOSED: readonly string[] = [
     "auth.otp",
