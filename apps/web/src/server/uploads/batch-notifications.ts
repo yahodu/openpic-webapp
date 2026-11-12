@@ -47,7 +47,7 @@ interface SessionRow {
 /** The `event_images` fields the batch read needs (§16.3). */
 interface ImageRow {
   readonly _id: ObjectId;
-  readonly assetId: ObjectId;
+  readonly assetId: ObjectId | string;
   readonly processing?: {
     readonly status?: string;
     readonly lastError?: { readonly code?: string; readonly message?: string };
@@ -113,8 +113,12 @@ function countPipeline(images: readonly ImageRow[]): BatchPipelineCounts {
   const counts = { queued: 0, processing: 0, done: 0, failed: 0 };
   for (const image of images) {
     const status = image.processing?.status ?? "queued";
-    if (status in counts) {
+    if (Object.prototype.hasOwnProperty.call(counts, status)) {
       counts[status as keyof typeof counts] += 1;
+    } else {
+      // A state the contract does not name is outstanding work, never a done
+      // image: the batch must not read `complete` while a worker still holds it.
+      counts.processing += 1;
     }
   }
   return counts;
@@ -160,13 +164,16 @@ async function readBatchSnapshot(input: UploadBatchInput): Promise<BatchSnapshot
     assets.map((asset) => [asset._id.toHexString(), asset.contentHash])
   );
 
+  const completedSessions = sessions.filter((session) => session.status === "completed").length;
   const files: BatchFileCounts = {
     total: sessions.length,
     uploaded: images.length,
-    // Neither a skipped duplicate nor a `batch-resolve` rejection is persisted
-    // as a batch fact yet (ADR-0760 D3), so both read 0 rather than being
-    // reconstructed from session state that does not record them.
-    duplicatesSkipped: 0,
+    // A completion that found the event already holding the asset writes no
+    // join row for this batch (only the session turns `completed`), so this is
+    // the only place that count can come from — without it such a batch never
+    // settles and its summary is never sent. A `batch-resolve` rejection is
+    // still not persisted as a batch fact (ADR-0760 D3).
+    duplicatesSkipped: Math.max(0, completedSessions - images.length),
     rejected: 0,
     // A session that never completed is one that was aborted or whose five-day
     // window expired; a pending session is still on the wire, so it keeps the
@@ -200,7 +207,7 @@ async function readBatchSnapshot(input: UploadBatchInput): Promise<BatchSnapshot
     const failure = describeUploadFailure({
       code: image.processing?.lastError?.code ?? "",
     });
-    const hash = hashByAssetId.get(image.assetId.toHexString());
+    const hash = hashByAssetId.get(idHex(image.assetId));
     return {
       eventImageId: image._id.toHexString(),
       fileName: (hash === undefined ? undefined : fileNameByHash.get(hash)) ?? "",
@@ -299,7 +306,7 @@ export async function checkUploadBatchTransition(
           durationMs,
           files: status.files,
         },
-        dedupeKey: `${eventKey}:${input.tenantKey}:${input.batchId}:${uploader}`,
+        dedupeKey: `${eventKey}:${input.tenantKey}:${input.eventId.toHexString()}:${input.batchId}:${uploader}`,
       },
       db
     );

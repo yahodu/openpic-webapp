@@ -92,9 +92,33 @@ handler cannot leak an object key, a bucket or an upstream id by accident (§0.1
 - An unseen `batchId` answers `complete` with `createdAt` = the read instant and
   emits nothing. The instant is the only defensible one when no session exists;
   it is not terminal state and no pin reads it.
-- `duplicatesSkipped` and `rejected` stay `0` (ADR-0760 D3); the copy table stays
-  the only source of user-facing failure text, so a worker's internal message can
-  never reach an organizer.
+- `rejected` stays `0` (ADR-0760 D3); `duplicatesSkipped` is derived (D8); the
+  copy table stays the only source of user-facing failure text, so a worker's
+  internal message can never reach an organizer.
+
+### D8 — A deduped completion is derived, because nothing records it
+
+ADR-0760 D3 said `duplicatesSkipped` reads `0` "until a writer records them".
+That is wrong for the phase: a completion whose asset the event already holds
+marks its session `completed` and writes **no** join row for the batch, so
+`total > uploaded + failedUpload` forever — the batch sticks on `uploading`, the
+poll never stops and the summary is never sent. The read therefore derives it as
+`max(0, completedSessions - batchImages)`, which is D3's own definition ("a
+completion that found the event already holding the asset"). `rejected` still
+reads `0`: a `batch-resolve` rejection writes no session at all. D3's sentence is
+superseded on that one field.
+
+### D9 — Three small hardening choices from the independent review
+
+- An `event_images.processing.status` outside the contract's four keys is
+  tallied as `processing`, never dropped: an unknown state is outstanding work,
+  and dropping it would let the batch read `complete` while a worker holds a file.
+- The summary's dedupe key names the **event** as well as the batch and the
+  uploader, because `batchId` is client-generated and may be reused in another
+  event of the same tenant.
+- `event_images.assetId` is read as `ObjectId | string` through the same `idHex`
+  helper as `createdByUserId`, so a row stored in either shape cannot turn the
+  whole status read into a `500`.
 
 ## Alternatives rejected
 
