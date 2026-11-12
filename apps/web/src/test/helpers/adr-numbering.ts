@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, type Dirent } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, posix, relative, sep } from "node:path";
 
 /**
  * Mechanical ADR-number guard for `docs/adr/` (review finding R-1, OP-96).
@@ -28,8 +28,8 @@ import { join, relative, sep } from "node:path";
  *
  * The fourth check answers the question the first three cannot: "does the ADR
  * this comment cites still exist?" It was added because the OP-128 round-1
- * renumber left five shipped comments citing `ADR-0764`/`ADR-0765` [adr-fixture] after those
- * decisions moved to `ADR-0766`/`ADR-0767` [adr-fixture] — and `0764`/`0765` belong to
+ * renumber left five shipped comments citing `0764`/`0765` after those
+ * decisions moved to `0766`/`0767` — and `0764`/`0765` belong to
  * sibling lanes, so the comments pointed at the wrong decisions. Nothing read
  * the references; now the sweep does. See {@link checkSourceAdrReferences} and
  * {@link checkRepositoryAdrReferences}.
@@ -405,7 +405,7 @@ export interface SourceAdrReferenceResult {
   /** References the rule evaluated (exempt ones are counted separately). */
   checkedReferences: number;
 
-  /** References skipped because their line carries the fixture marker. */
+  /** References skipped because a fixture-tree line carries the marker. */
   exemptReferences: number;
 }
 
@@ -447,15 +447,41 @@ const SKIPPED_SOURCE_DIRECTORIES: ReadonlySet<string> = new Set([
 const SOURCE_ADR_REFERENCE_PATTERN = /ADR-(\d{4})(?!\d)/g;
 
 /**
- * The fixture marker. A source line whose text contains this marker is exempt
- * from the reference rule: the guard's own specs are full of synthetic numbers
- * (`ADR-0000`/`ADR-9999` [adr-fixture] shape fixtures, sibling-lane numbers that only exist on
- * an unmerged branch) that must never resolve. The exemption is deliberately
- * per **line text** — not a line number (which goes stale when a fixture moves)
- * and not a number range (which would hide a real defect behind it) — so an
- * unmarked line in a marked file still fails.
+ * The fixture marker. A source line **inside the guard's own test tree** whose
+ * text contains this marker is exempt from the reference rule: those specs are
+ * full of synthetic numbers (`0000`/`9999` shape fixtures, sibling-lane numbers
+ * that only exist on an unmerged branch) that must never resolve. The module's
+ * own prose cites numbers without the `ADR-` prefix for the same reason — a
+ * docblock needs no marker and must never be able to hide a real pointer.
+ *
+ * The exemption is per **line text** *and* per **path**, deliberately: not a
+ * line number (which goes stale when a fixture moves), not a number range
+ * (which would hide a real defect behind it) and not a whole file. An unmarked
+ * line in a marked file still fails, and a real pointer in shipped source fails
+ * even when its line carries the marker (finding F-M1: the marker used to be an
+ * unscoped substring test over every swept file, so appending it to a stale
+ * comment silenced the guard).
  */
 const SOURCE_ADR_REFERENCE_FIXTURE_MARKER = "adr-fixture";
+
+/**
+ * The only tree in which {@link SOURCE_ADR_REFERENCE_FIXTURE_MARKER} exempts a
+ * line: the guard's own fixtures. Helpers, unit and integration specs all live
+ * under `apps/web/src/test`, and nothing else does. Matched as a directory
+ * boundary on the normalized repo-relative POSIX path, so `src/test-tools/x.ts`
+ * and a `..` segment that leaves the tree are both *outside* it.
+ */
+const SOURCE_ADR_REFERENCE_FIXTURE_ROOT = "apps/web/src/test";
+
+/** Is `path` inside {@link SOURCE_ADR_REFERENCE_FIXTURE_ROOT}? */
+function isSourceAdrFixturePath(path: string): boolean {
+  const normalized = posix.normalize(path);
+
+  return (
+    normalized === SOURCE_ADR_REFERENCE_FIXTURE_ROOT ||
+    normalized.startsWith(`${SOURCE_ADR_REFERENCE_FIXTURE_ROOT}/`)
+  );
+}
 
 /**
  * The numbers that {@link checkSourceAdrReferences} treats as resolvable: the
@@ -498,9 +524,10 @@ function compareSourceIssues(
  *
  * One `dangling-reference` issue per **occurrence**: two comments citing the
  * same missing number are two issues, and two files citing it are two issues,
- * because each one is a separate wrong pointer to fix. References on a line
- * that carries the fixture marker are skipped and counted in
- * `exemptReferences`; every other reference is counted in `checkedReferences`.
+ * because each one is a separate wrong pointer to fix. References inside the
+ * guard's own test tree (`apps/web/src/test`) on a line that carries the fixture
+ * marker are skipped and counted in `exemptReferences`; every other reference is
+ * counted in `checkedReferences`, including a marked line in shipped source.
  *
  * @param sources - The source files to scan, in any order.
  * @param adrFileNames - Bare file names from the ADR directory.
@@ -530,7 +557,10 @@ export function checkSourceAdrReferences(
         continue;
       }
 
-      if (line.includes(SOURCE_ADR_REFERENCE_FIXTURE_MARKER)) {
+      if (
+        isSourceAdrFixturePath(source.path) &&
+        line.includes(SOURCE_ADR_REFERENCE_FIXTURE_MARKER)
+      ) {
         exemptReferences += references.length;
         continue;
       }

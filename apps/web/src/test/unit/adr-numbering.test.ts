@@ -44,8 +44,8 @@ import {
  * ledger's closed `` `NNNN`–`NNNN` `` rows (see `adr-lane-ranges.test.ts`).
  * Reference resolution was out of scope until F6-b: the guards pinned the ADR
  * *directory* and the ledger, never the references pointing into it, so five
- * shipped production comments kept citing `ADR-0764`/`ADR-0765` [adr-fixture] after the
- * OP-128 round-1 renumber moved those decisions to `ADR-0766`/`ADR-0767` [adr-fixture] — they
+ * shipped production comments kept citing `0764`/`0765` after the
+ * OP-128 round-1 renumber moved those decisions to `0766`/`0767` — they
  * sent readers to a sibling lane's unrelated records and nothing failed. The
  * `checkSourceAdrReferences` / `checkRepositoryAdrReferences` contract is
  * documented in the block comment below.
@@ -101,7 +101,7 @@ import {
  * asking for a change):
  *   - the same file name passed twice is two group members, so the lone
  *     `duplicate` issue repeats the name (`["ADR-0146-a.md", "ADR-0146-a.md"]`);
- *   - `ADR-0000-x.md` and `ADR-9999-x.md` [adr-fixture] are well-formed: `parseAdrNumber`
+ *   - `ADR-000x.md` and `ADR-999x.md`-shaped names are well-formed: `parseAdrNumber`
  *     yields `0` / `9999`, and both are accepted when unique;
  *   - `checkAdrDirectory` on a missing directory throws (the TSDoc `@throws`
  *     branch), propagating the `node:fs` error with `code === "ENOENT"`;
@@ -500,7 +500,7 @@ describe("checkAdrDirectory — lane-range overlaps (ledger finding F-L1)", () =
   it("reports one overlap issue for the live OP-126 / OP-129 intersection", () => {
     // Arrange — the measured in-flight state: the uploads lane reserved
     // 0760-0779 and the attendee-identity lane reserved 0769-0788, which is how
-    // ADR-0770 [adr-fixture] came to exist twice. README order is deliberately reversed, so
+    // 0770 came to exist twice. README order is deliberately reversed, so
     // the issue's holder order pins the ascending sort.
     const dir = makeTempAdrDirWithReadme(
       ["ADR-0760-op126-uploads-green.md"], // adr-fixture
@@ -675,9 +675,9 @@ describe("checkAdrDirectory — lane-range overlaps (ledger finding F-L1)", () =
  * to a `docs/adr/ADR-NNNN-*.md` file (finding F6-b, OP-128 follow-up).
  *
  * **Why this exists.** The OP-128 round-1 renumber moved two lane records from
- * `ADR-0764`/`ADR-0765` to `ADR-0766`/`ADR-0767` [adr-fixture] (fix PR #461), but five shipped
+ * `0764`/`0765` to `0766`/`0767` (fix PR #461), but five shipped
  * production comments and three spec headers kept citing the old numbers. Those
- * numbers are *not free*: `ADR-0764` and `ADR-0765` [adr-fixture] belong to sibling lanes, so
+ * numbers are *not free*: `0764` and `0765` belong to sibling lanes, so
  * the stale comments pointed readers at a different lane's unrelated decisions.
  * `checkAdrNumbers` could not see it — it reads file *names* in `docs/adr/` and
  * never the references pointing into it. This block pins the check that closes
