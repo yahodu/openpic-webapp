@@ -151,3 +151,35 @@ change set holds no production byte.
   site produces all three, so a second row would duplicate the same assertion.
 - **Skip the allowed control** — rejected: "logs nothing when allowed" is the half that keeps the event
   denial-only, and an always-warn refactor would otherwise pass this pin.
+
+## Round-1 review of the auth.denied log pin (artifact lens)
+
+Reviewed by the `openpic-webapp-reviewer` profile on PR #455 (head `9e83eae`), squash-merged into
+`OP-128-task-account-status-gate-pins` as `c62471d`. `git diff 9e83eae c62471d` is empty, so the merged tree is
+byte-identical to the reviewed head. Verdict: **approved** — no finding needs a code or test change; two Info items
+are recorded below.
+
+**Gates the reviewer measured at `9e83eae`.** Focused integration `media-signed-urls.test.ts` **32 passed (32)**;
+focused unit `media-signed-urls-authorization.test.ts` + `adr-numbering` **53 passed (53)**; full unit **157 files /
+2526 passed | 3 skipped (2529)**; full integration **104 files / 1039 passed**; `tsc -p apps/web/tsconfig.json
+--noEmit` exit **0**; `prettier --check` clean on the spec, this record and the ledger; ESLint **0 errors** (the one
+`security/detect-object-injection` warning is pre-existing: base blob `:169`, head `:176`); PR checks **11/11**.
+Merged-tree re-check at `c62471d`: **32 passed (32)** integration and **53 passed (53)** unit + `adr-numbering`.
+
+**The pin bites — measured by the reviewer in a throwaway worktree, two directions, each reverted.** Deleting the
+`warn` from `enforceAuth` → **1 failed | 31 passed (32)**, `expected [] to have a length of 1 but got +0` at
+`media-signed-urls.test.ts:1574`. Making `enforceAuth` emit `auth.denied` on the **allowed** branch too → **1 failed
+| 31 passed (32)**, `expected [ …(2) ] to have a length of 1 but got 2` at `:1603`. Both halves — the emission and
+its denial-only scoping — are load-bearing, and the helper's log is now pinned through this route, which closes
+ADR-0773 O3.
+
+**F1 — Info.** The card's "printed once / zero for the control" is satisfied at sink level: the case installs the
+memory transport, so a filtered run prints no `auth.denied` text. The count is asserted on the sink, which is the
+stronger seam.
+
+**F2 — Info.** The implementer's mutation probe ran in place on `route.ts` with a byte-identical restore rather than
+in a throwaway worktree. The reviewer re-ran both directions in a throwaway worktree, so the claim is independently
+verified and the reviewed tree holds no production byte (`route.ts` `sha256 2db3d986…`).
+
+**Landing.** PR #455 was squash-merged into `OP-128-task-account-status-gate-pins` (`c62471d`). The uploads lane is
+still unmerged on `main`, so the lane branch tips are no longer the SHAs named in older cards.
