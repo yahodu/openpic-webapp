@@ -6,6 +6,7 @@ import {
   isRateLimitBypassed,
   rateLimitFailurePolicy,
   type RateLimitClass,
+  type RateLimitFailurePolicy,
   type RateLimitRule,
 } from "@/server/rate-limit";
 
@@ -19,9 +20,17 @@ import {
  *
  * Every class and every rule is pinned exactly (not presence-only) so a class
  * can neither gain, lose nor drift a limit without failing this suite.
+ *
+ * `attendee.session` is the OP-129 follow-up row (finding F1, ADR-0782). It is
+ * absent from the production union, so the class list and the two policy arrays
+ * are typed `readonly string[]` rather than `readonly RateLimitClass[]`: naming a
+ * class the union does not have would force a cast that becomes
+ * `@typescript-eslint/no-unnecessary-type-assertion` the moment the GREEN widens
+ * the union. Once the member exists the arrays may be retyped without changing a
+ * single assertion.
  */
 
-const CONTRACT_CLASSES: readonly RateLimitClass[] = [
+const CONTRACT_CLASSES: readonly string[] = [
   "auth.otp",
   "auth.verify",
   "read.hot",
@@ -30,6 +39,7 @@ const CONTRACT_CLASSES: readonly RateLimitClass[] = [
   "upload.resolve",
   "upload.sign",
   "upload.complete",
+  "attendee.session",
   "selfie.submit",
   "liveness.challenge",
   "public.gallery",
@@ -81,6 +91,48 @@ const CONTRACT_RULES: ReadonlyArray<readonly [RateLimitClass, readonly RateLimit
   ["internal", [{ scope: "user", limit: 600, windowSeconds: 60 }]],
 ];
 
+/**
+ * The §0.11 rows this lane adds to the executable table (OP-129 F1).
+ *
+ * Typed by **name**, not by `RateLimitClass`: the production union has no member
+ * for `attendee.session` yet, and widening that union alone would also break the
+ * `RATE_LIMIT_CLASSES` `Record` over it. Both halves are the GREEN's single
+ * change, so the row is pinned as data here — with the same exact `toEqual`
+ * assertion `CONTRACT_RULES` carries.
+ */
+const LANE_RULES: ReadonlyArray<readonly [string, readonly RateLimitRule[]]> = [
+  ["attendee.session", [{ scope: "ip", limit: 60, windowSeconds: 3600 }]],
+];
+
+/**
+ * The rules configured for a class, by its §0.11 name.
+ *
+ * @param classKey - The class name as the contract spells it.
+ * @returns The configured rules.
+ * @throws {Error} When the class is absent from the executable table.
+ */
+function rulesOf(classKey: string): readonly RateLimitRule[] {
+  const entry = Object.entries(RATE_LIMIT_CLASSES).find(([name]) => name === classKey);
+  if (entry === undefined) {
+    throw new Error(`contract §0.11 class ${classKey} is missing from RATE_LIMIT_CLASSES`);
+  }
+  return entry[1];
+}
+
+/**
+ * The failure policy for a class, by its §0.11 name.
+ *
+ * The names are strings because this suite names a class the `RateLimitClass`
+ * union has yet to gain (the RED); the production signature still takes the
+ * union, so the name is narrowed here.
+ *
+ * @param classKey - The class name as the contract spells it.
+ * @returns `"fail-closed"` or `"fail-open"`.
+ */
+function policyOf(classKey: string): RateLimitFailurePolicy {
+  return rateLimitFailurePolicy(classKey as RateLimitClass);
+}
+
 describe("rate-limit class table (contract §0.11)", () => {
   it("configures every class named in the contract and no others", () => {
     expect(Object.keys(RATE_LIMIT_CLASSES).sort()).toEqual([...CONTRACT_CLASSES].sort());
@@ -115,17 +167,30 @@ describe("rate-limit class table (contract §0.11)", () => {
   it.each(CONTRACT_RULES)("configures %s with exactly its §0.11 rules", (classKey, rules) => {
     expect(RATE_LIMIT_CLASSES).toHaveProperty(classKey, rules);
   });
+
+  it.each(LANE_RULES)("configures %s with exactly its §0.11 rules", (classKey, rules) => {
+    expect(rulesOf(classKey)).toEqual(rules);
+  });
 });
 
 describe("failure policy", () => {
-  const FAIL_CLOSED: readonly RateLimitClass[] = [
+  /**
+   * Classes that must deny when the limiter is unavailable.
+   *
+   * `attendee.session` is here for the reason the auth classes are: it is
+   * unauthenticated and every allowed call writes a 30-day `attendeeSessions`
+   * row, so an unavailable limiter must not degrade into an unbounded mint
+   * (`auth.otp`, `selfie.submit` are the precedent — ADR-0782 §Decision).
+   */
+  const FAIL_CLOSED: readonly string[] = [
     "auth.otp",
     "auth.verify",
     "selfie.submit",
     "liveness.challenge",
+    "attendee.session",
   ];
 
-  const FAIL_OPEN: readonly RateLimitClass[] = [
+  const FAIL_OPEN: readonly string[] = [
     "read.hot",
     "read.normal",
     "write.normal",
@@ -144,11 +209,11 @@ describe("failure policy", () => {
   });
 
   it.each(FAIL_CLOSED)("U4: %s fails closed", (classKey) => {
-    expect(rateLimitFailurePolicy(classKey)).toBe("fail-closed");
+    expect(policyOf(classKey)).toBe("fail-closed");
   });
 
   it.each(FAIL_OPEN)("U4: %s fails open", (classKey) => {
-    expect(rateLimitFailurePolicy(classKey)).toBe("fail-open");
+    expect(policyOf(classKey)).toBe("fail-open");
   });
 });
 

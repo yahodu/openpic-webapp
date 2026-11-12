@@ -301,6 +301,7 @@ Enforced in `middleware.ts` via Upstash Ratelimit (sliding window). Keyed as doc
 | `upload.resolve`     | `POST /uploads/batch-resolve`                                   | 60 / min / user, max 500 hashes per call                                                                                       |
 | `upload.sign`        | `GET .../multipart/{id}/{partNumber}`                           | **900 / min / user** — deliberately high; Uppy signs every part and re-signs on retry                                          |
 | `upload.complete`    | multipart complete, single params                               | 600 / min / user                                                                                                               |
+| `attendee.session`   | `POST /p/attendee-sessions`                                     | **60 / hour / IP** — the endpoint is public, so the bucket is the client IP alone (no principal or contact exists)             |
 | `selfie.submit`      | `POST /p/events/{slug}/selfies`                                 | 6 / hour / attendee-session, 20 / hour / IP. Independent of the `selfies.per_attendee` entitlement (3), which is the hard cap. |
 | `liveness.challenge` | `POST /p/events/{slug}/liveness/challenges`                     | 12 / hour / attendee-session                                                                                                   |
 | `public.gallery`     | `/p/**` reads                                                   | 120 / min / attendee-session, 600 / min / IP                                                                                   |
@@ -598,7 +599,7 @@ The mechanism behind _"attendees must be able to upload a selfie without logging
 
 ### `POST /api/v1/p/attendee-sessions`
 
-Auth `public` · Rate 60 / hour / IP
+Auth `public` · Rate 60 / hour / IP (class `attendee.session`, §0.11)
 
 Body: `{ "eventSlug": "k7m2xq9p" }` (optional; appends to `eventIds`).
 
