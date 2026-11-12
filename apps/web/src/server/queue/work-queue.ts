@@ -32,8 +32,10 @@ export interface WorkQueue {
    * Return a claimed message to the queue, claimable again after the delay.
    *
    * Guaranteed: FIFO over *enqueued* messages, and a nacked one becomes
-   * claimable no sooner than the delay and behind everything already enqueued
-   * on its key (ADR-0685 §2) — the same rule in every adapter.
+   * claimable behind everything already enqueued on its key (ADR-0685 §2) —
+   * the same position in every adapter. The delay is honoured by `memory`; the
+   * Upstash list re-pushes at once and serves the payload immediately at any
+   * delay until the delayed sorted set lands (F5, ADR-0684 §3).
    */
   nack(messageId: string, delaySeconds: number): Promise<void>;
 }
