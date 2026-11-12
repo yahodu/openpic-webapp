@@ -2,7 +2,7 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { getAuth } from "@/server/auth";
-import { evaluateAuth, resolvePrincipal } from "@/server/auth/guards";
+import { enforceAuth, resolvePrincipal } from "@/server/auth/guards";
 import { getConfig, getRateLimitConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
@@ -38,7 +38,7 @@ import { checkEntitlement } from "@/server/services/entitlements";
  * authorization is per item, and an anonymous caller must learn per item that
  * it has to sign in (`denied[] authentication_required`) rather than receive a
  * gateway `401` (ADR-0764 D3/D4). The principal is therefore resolved here —
- * and put through the `user` label's account-status guard (ADR-0770) — and
+ * and put through the `user` label's account-status guard (ADR-0772) — and
  * decides the caller class — an event member (organizer, co-organizer or
  * active tenant member) or an attendee (a caller with a `face_matches` row for
  * the image; OP-129 owns the `op_att` session resolver).
@@ -166,14 +166,13 @@ export const POST = defineRoute({
     const principal = await resolvePrincipal(ctx.request, { auth: getAuth(), database: db });
 
     // This `public` route resolves the principal itself, so the `user` label's
-    // account-state rules never run; apply them here (ADR-0770). A suspended,
+    // account-state rules never run; apply them here through the guards' own
+    // seam (ADR-0772, ADR-0773), so a refusal logs `auth.denied` and answers
+    // the Appendix A.1 envelope instead of a flattened `forbidden`. A suspended,
     // banned or deletion-pending caller is refused the whole request — the
     // account decides every item, so the batch rule would collapse it anyway.
-    if (
-      principal?.kind === "user" &&
-      !evaluateAuth("user", { principal, now: systemClock.now() }).allowed
-    ) {
-      throw appError("forbidden");
+    if (principal?.kind === "user") {
+      enforceAuth("user", { principal, now: systemClock.now() }, ctx.request, ctx.route);
     }
 
     // The scope event names the tenant every read is confined to.
