@@ -1,3 +1,9 @@
+## [1.57.6](https://github.com/yahodu/openpic-webapp/compare/v1.57.5...v1.57.6) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 recognize an underscore-bold Consumers heading ([#509](https://github.com/yahodu/openpic-webapp/issues/509)) ([a96253b](https://github.com/yahodu/openpic-webapp/commit/a96253be782fa7987a4e3b36c8edd3d65a033894))
+
 ## [1.57.5](https://github.com/yahodu/openpic-webapp/compare/v1.57.4...v1.57.5) (2026-11-12)
 
 ### Bug Fixes
