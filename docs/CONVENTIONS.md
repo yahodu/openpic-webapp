@@ -206,7 +206,7 @@ allocated before the policy (`≤ 0145`) are frozen history and are never moved.
   a card**, not the orchestrator alone. No ADR-carrying PR may squash-merge until
   the duplicate check has run **on the merged tree** (merge the incoming head into
   a throwaway worktree off `origin/main`, then run
-  `apps/web/src/test/unit/adr-numbering.test.ts` and `uniq -d` over the `ADR-NNNN`
+  `apps/web/src/test/unit/adr-*.test.ts` and `uniq -d` over the `ADR-NNNN`
   prefixes there): a lone `docs/adr/README.md` conflict resolves cleanly while
   hiding a duplicate **file**.
 - **Same-lane serialization by the task graph (ADR-0300 §9, rule C;
@@ -234,7 +234,8 @@ allocated before the policy (`≤ 0145`) are frozen history and are never moved.
   "next free" (ADR-0300 §7).
 - **The guard.** `pnpm test:unit` fails on a duplicate `ADR-NNNN` prefix or a
   malformed `ADR-*.md` name
-  (`apps/web/src/test/unit/adr-numbering.test.ts`). It is the mechanical backstop
+  (`apps/web/src/test/unit/adr-*.test.ts` — the guard is one spec per invariant,
+  see ADR-0302 §1 and §10). It is the mechanical backstop
   for the rule above and a required pre-merge check; `docs/adr/README.md` and any
   other non-`ADR-*.md` file are ignored.
 - **Out of scope of the guard, by decision.** The guard does not check that a new
