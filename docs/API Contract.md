@@ -2065,8 +2065,15 @@ Error states the frontend must handle:
 Auth `attendee` · Rate `write.normal`
 
 ```json
-{ "purpose": "biometric_processing", "policyVersion": "biometric-2026-03", "granted": true }
+{
+  "purpose": "biometric_processing",
+  "policyVersion": "biometric-2026-03",
+  "granted": true,
+  "ageConfirmed": true
+}
 ```
+
+`ageConfirmed` records that the attendee confirmed they are old enough to give consent; a missing or `false` value is `422 age_confirmation_required` (Appendix A.7), refused before any row is written.
 
 Writes a `consents` row with `policyVersion`, `policyDocumentHash`, `grantedAt`, and `evidence { ipHash, uaHash, method: "checkbox", locale }` — the fields that make consent _demonstrable_ years later (schema §15.4).
 
@@ -3576,6 +3583,7 @@ Every `error.code` in v1. **Clients branch on `code` only.** Codes are append-on
 | ------------------------------- | ------ | --------- | --------------------------------------------------- |
 | `consent_required`              | 412    | no        | `{ purpose, requiredPolicyVersion, policyUrl }`     |
 | `policy_version_stale`          | 422    | no        | `{ currentPolicyVersion, policyUrl }`               |
+| `age_confirmation_required`     | 422    | no        | —                                                   |
 | `liveness_challenge_invalid`    | 409    | no        | `{ reason: "expired"\|"already_used"\|"mismatch" }` |
 | `gallery_closed`                | 409    | no        | `{ closedAt }`                                      |
 | `gallery_expired`               | 410    | no        | `{ expiredAt }`                                     |
@@ -3721,6 +3729,7 @@ export type ErrorCode =
   | "not_failed"
   | "consent_required"
   | "policy_version_stale"
+  | "age_confirmation_required"
   | "liveness_challenge_invalid"
   | "gallery_closed"
   | "gallery_expired"

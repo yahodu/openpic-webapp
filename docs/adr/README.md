@@ -70,7 +70,7 @@ the rejected alternatives are recorded in
 | OP-124 uploads lane                 | `0720`–`0739`                   | `0722`    |
 | OP-125 uploads lane                 | `0740`–`0759`                   | `0742`    |
 | OP-126 uploads lane                 | `0760`–`0779`                   | `0777`    |
-| OP-129 attendee identity lane       | `0780`–`0798`                   | `0790`    |
+| OP-129 attendee identity lane       | `0780`–`0798`                   | `0791`    |
 | unallocated (future lanes)          | `0799`+ (20 per lane, in order) | `0799`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -404,6 +404,7 @@ _The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-card-serializati
 | [0787](ADR-0787-op129-attendee-session-rate-limit-pin.md) | OP-129 follow-up (F1): contract §0.11's `attendee.session` class for `POST /p/attendee-sessions` — `{scope:"ip", limit:60, windowSeconds:3600}` (the endpoint is public and runs **before** a session exists, so there is no principal, no contact and no attendee identity to key on), declared **fail-closed** (an unauthenticated call writes a 30-day credential-shaped row, so an unavailable limiter must not degrade into an unlimited mint), pinned in `classes.test.ts` (exact table row, exact `FAIL_CLOSED`/`FAIL_OPEN` partition) and in `attendee-sessions.test.ts` (60 `201`s then `429 rate_limited` with `RateLimit-*` + `Retry-After` and no minted row, a second IP unaffected at `RateLimit-Remaining: 59`, and `503 service_unavailable` when the limiter rejects on the memoised accessor); the GREEN declares the stage on the route's `defineRoute` options; takes `0787` because `0782` is held by the edge-pins record (PR #449) and `0783` by the resolver-default record — the number was minted as `0782` and renumbered by card `t_f4da0ad2` (review F1) | Accepted |
 | [0788](ADR-0788-op129-attendee-credential-precedence-pin.md) | OP-129 round-1 review follow-up (test-only): **F3** the credential **order** pinned where it is load-bearing — a valid `op_att` cookie and a valid `X-Attendee-Session` header naming two _different_ sessions on one request answer `200` with the **cookie's** `id`, `kind: "anonymous"`, the cookie's `expiresAt` and neither raw token in the body; the four neighbouring cases (`I2`/`I3` single-credential, the stale-cookie fall-through, the lapsed-cookie `401`) are all blind to the order, so a header-first implementation passed them all — a throwaway-worktree mutation that prefers the header when both rows are live reddens **exactly** this case (`expected '…5b52' to be '…5b51'`, 1 failed \| 18 passed) and the shipped resolver is byte-identical; characterisation, so it passes on first run and needs no GREEN | Accepted |
 | [0789](ADR-0789-op131-biometric-consent-red.md) | OP-131 RED: biometric consent grant and withdrawal — `buildConsentEvidence` (separate salted SHA-256 `ipHash`/`uaHash`, `method: "checkbox"`, a `parseLocale` locale, never a raw IP or user agent) and `formatDeletedCounts` (`selfies=n;embeddings=n;matches=n`, zeros spelled `0`, round-trippable), pinned through `POST`/`DELETE /p/events/:slug/consent` (the six-key `201`, a deterministic `sha256:` `policyDocumentHash` across two attendees, the `consentId`-linked profile, `422 policy_version_stale` and `422 age_confirmation_required` with **no** write, and a `204` + `X-Deleted-Counts` that leaves zero selfie/match rows and a released media `refCount`) plus `requireConsent` (`412 consent_required` with the Appendix A.7 `purpose`/`requiredPolicyVersion`/`policyUrl` details for a missing, a withdrawn and a stale-version grant) | Accepted |
+| [0790](ADR-0790-op131-biometric-consent-green.md) | OP-131 GREEN: the consent contract implemented and the six ADR-0789 open questions answered — `buildConsentEvidence` on two independent `hashFingerprint` calls (the session-fingerprint scheme and deployment salt, never a raw IP or user agent) and `formatDeletedCounts` from a template literal; `POST /p/events/:slug/consent` on the `attendee` label + `write.normal`, a literal `purpose`/`granted: true` body with `ageConfirmed` optional, the contract-order refusals (`422 policy_version_stale` then `422 age_confirmation_required`, neither writing), a `sha256:` `policyDocumentHash` over the version+URL pair (the settings document carries no body to hash — the upgrade trigger is recorded), a read-then-write profile link that keeps a `ready` profile's `activeSelfieId`/`matchCount` and restarts only a `withdrawn` one, and a **second grant inserting a second row** (the guard reads the latest); `DELETE` scoped by `profileId`, counting only the selfies that carried an `embedding`, `refCount - 1` under a `> 0` guard with the blob left to the sweep, every live consent stamped `withdrawnAt` and the profile `withdrawn`, answering `204` + the driver's own `deletedCount`s, and **idempotent** (`204` with zeros when nothing is left, so a client can always retry); `requireConsent` reads the current policy then the latest non-withdrawn row at that version, so a withdrawal and a retired version are refused structurally; `CONSENT_ERROR_CODES` + `CONSENT_ERROR_TRANSPORT` appended (`consent_required` 412, `policy_version_stale` 422, `age_confirmation_required` 422 — not `ERROR_CATALOG`), `consents`/`selfies` registered in `COLLECTIONS`, and contract §6.2/A.7 given the `ageConfirmed` field and its row | Accepted |
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
@@ -918,3 +919,40 @@ confirmation accepted (`2 failed | 20 skipped`). `docs/adr/README.md` remains
 the shared-ledger hotspot: this row, the `0789`/`0790` cell and the pool cell
 merge as a union keeping the highest values. No number outside `0780`–`0798` is
 touched._
+
+_The **OP-131** lane's `Next free` cell advanced from `0790` to `0791` (card
+`t_3fde9b73`, OP-131 GREEN — biometric consent grant and withdrawal; branch
+`OP-131-task-biometric-consent-green`, worktree
+`/root/openpic/openpic-webapp/.worktrees/t_54e10bb9`, based on the RED branch
+`OP-131-task-biometric-consent-red` `a5a8fe6` because the pins are not on
+`origin/main` yet). [ADR-0790](ADR-0790-op131-biometric-consent-green.md)
+implements ADR-0789 and answers its six open questions: a second grant inserts a
+second row (the guard reads the latest by `grantedAt`), `DELETE` is **idempotent**
+(`204` with zeros when nothing is left, so a timed-out withdrawal can always be
+retried), the withdrawal is ordered rather than transactional, `refCount: 0`
+leaves the blob to the storage sweep, the attendee session's `eventIds` is not
+required to contain the event (the active slug is the authority, and a
+pre-rotation session must not be refused the consent the page asks for), and
+contract §6.2/A.7 gain the `ageConfirmed` field and the
+`age_confirmation_required` row. The grant reuses the shipped `hashFingerprint`
+(one part per call) and `parseLocale` rather than a second salting scheme, links
+the profile read-then-write so a re-consent keeps a `ready` profile's
+`activeSelfieId`/`matchCount` and only a `withdrawn` one restarts at
+`selfie_pending`, and its `policyDocumentHash` digests the version+URL pair —
+`platformSettings.legal` has no document body, so the pair is the strongest
+identity available today and the upgrade trigger is recorded in the ADR. The
+three codes are a new `CONSENT_ERROR_CODES` set with its own
+`CONSENT_ERROR_TRANSPORT` table (`consent_required` 412, `policy_version_stale`
+422, `age_confirmation_required` 422), never `ERROR_CATALOG`, which its own spec
+pins to exactly Appendix A; `consents` and `selfies` are registered in
+`COLLECTIONS` so no route reads a bare literal. Known gaps handed back to the
+Test Author: the age confirmation is asserted at grant time but **not persisted**
+(schema §15.4's `evidence` is a closed four-key object and U1 pins exactly those
+keys), a re-grant after a withdrawal is unpinned, and `DELETE`'s
+`X-Deleted-Counts` is unpinned for a repeat call. Evidence: the RED pins are green
+unedited — unit **13/13** and **7/7**, integration **22/22** on a real
+`MongoMemoryReplSet` — with `tsc` exit `0` for `apps/web` and
+`packages/contracts`, and `eslint`/`prettier --check` clean. `docs/adr/README.md`
+remains the shared-ledger hotspot: this row, the `0790`/`0791` cell and the pool
+cell merge as a union keeping the highest value. No number outside `0780`–`0798`
+is touched._
