@@ -47,6 +47,12 @@ import {
  *   (v)  every reference that resolves to a record declaring a `Consumers:`
  *        field is made by a file that record names (`consumer-mismatch`,
  *        finding F-N1).
+ *
+ * F-N1's own accuracy gaps are pinned with it: a citation is verified by a bare
+ * file name only when that name is unique across the swept population (finding
+ * F1, 85 `route.ts` files), and a `Consumers`-shaped line that is not the
+ * canonical field is a `consumers-malformed` failure instead of a silent
+ * non-declaration (finding F2, the adoption programme writes the field by hand).
  * Range bookkeeping was out of scope until F-L1: the guard now parses the
  * ledger's closed `` `NNNN`–`NNNN` `` rows (see `adr-lane-ranges.test.ts`).
  * A *range-shaped* row that does not parse was skipped silently until F1: a row
@@ -1454,9 +1460,11 @@ describe("checkRepositoryAdrReferences — the repository sweep", () => {
  * ```
  * interface AdrRecordText { fileName: string; text: string }
  * type SourceAdrConsumerIssue = {
- *   code: "consumer-mismatch" | "unlisted-consumer";
- *   file: string;   // repo-relative POSIX path of the citing file
- *   line: number;   // 1-based line of the reference
+ *   code: "consumer-mismatch" | "unlisted-consumer" | "consumers-malformed";
+ *   file: string;   // repo-relative POSIX path of the citing file; for
+ *                   // consumers-malformed, the record's file name
+ *   line: number;   // 1-based line of the reference; for consumers-malformed,
+ *                   // the offending line inside the record
  *   number: string; // the four digits as written, leading zeros kept ("0768")
  *   record: string; // the cited record's file name, e.g. "ADR-0768-….md" (adr-fixture: shape only)
  * }
@@ -1469,19 +1477,42 @@ describe("checkRepositoryAdrReferences — the repository sweep", () => {
  * checkRepositoryAdrConsumers(root: string): typeof checkSourceAdrConsumers
  * ```
  *
- * **Participation is declared, never inferred.** A record participates exactly
- * when its text carries a `Consumers:` field — `- **Consumers:**` plus its
- * continuation lines (until the next `- **Field:**` line or a blank line),
- * anywhere in the record, header or body. A `Consumes:` field is *not* a
- * consumer declaration (records use it for what the decision consumes, e.g. an
- * upstream record); neither is prose that happens to contain the word. A record
- * with no `Consumers:` field yields `unlisted-consumer` for each of its
- * citations — reported and counted, not failed (see the decision below).
+ * **Participation is declared, never inferred.** A record participates when its
+ * text carries a canonical `Consumers:` field — `- **Consumers:**` at column 0,
+ * anywhere in the record, header or body — **or** a `Consumers`-shaped line that
+ * is not canonical. A `Consumes:` field is *not* a consumer declaration (records
+ * use it for what the decision consumes, e.g. an upstream record); neither is
+ * prose that happens to contain the word. A record with no `Consumers:` field
+ * yields `unlisted-consumer` for each of its citations — reported and counted,
+ * not failed (see the decision below).
+ *
+ * **A non-canonical shape fails the report, and still declares (finding F2).**
+ * Only the canonical field used to declare; every other plausible shape —
+ * indented, colon outside the bold, no list dash, a `## Consumers` heading, a
+ * plain unbolded field — fell into `unlisted-consumer` with `ok: true`, so one
+ * punctuation slip in a hand-written record silently switched enforcement off
+ * for it and nothing said so. Pinned here: such a line is reported as
+ * `consumers-malformed` **in `issues`**, which makes `ok` `false` — it *fails*,
+ * it is not merely counted — with `file` and `record` set to the record's file
+ * name, `line` to the offending line inside that record (1-based) and `number`
+ * to the record's own four digits. The record still declares, so its citations
+ * stay hard-checked: a slip must not disable enforcement as a side effect of
+ * being reported. Reporting is per record, not per citation: a malformed field
+ * in a record nobody cites is still a failure (that is the shape the 175-record
+ * adoption programme will produce). A malformed entry joins the same `issues`
+ * array and the same `file`/`line`/`number` ordering as a citation issue, so the
+ * citation census identity below holds for a malformed-free record set.
  *
  * **The identification rule** — what makes a citation *verified*. A declaring
  * record identifies a citing file when its **whole text** carries one of:
  *   1. the file's repo-relative path (`apps/…`, `packages/…`) as a path token;
- *   2. the file's **bare name** (`attendee-sessions.test.ts`);
+ *   2. the file's **bare name** (`attendee-sessions.test.ts`), but only when that
+ *      bare name is **unique across the swept population** — the `sources`
+ *      argument here, the whole swept tree in `checkRepositoryAdrConsumers`.
+ *      A shared bare name identifies nothing: this head holds 85 `route.ts`
+ *      files, so a record naming one of them by path used to verify all 85, and
+ *      an unrelated route handler citing ADR-0786 (adr-fixture) left the spec green
+ *      (finding F1, the reviewer's probe at `1384ac3`);
  *   3. a `@/…` module specifier that resolves to it — `apps/web/src/` + the
  *      specifier for a module, `apps/web/src/app/` + the specifier for an App
  *      Router route (`@/api/v1/p/attendee-sessions` names the route), optionally
@@ -1527,6 +1558,16 @@ describe("checkRepositoryAdrReferences — the repository sweep", () => {
  *     citation is declared when *any* record with that number declares, and
  *     verified when any of them identifies the citing file. Duplicate reporting
  *     stays `checkAdrNumbers`' job.
+ *   - The bare-name channel is gated on population uniqueness (finding F1).
+ *     Measured at `1384ac3`: of the 32 verified citations, 20 are named by path,
+ *     8 by `@/` specifier and 2 by an exported symbol — **0** by bare name. The
+ *     gate therefore costs nothing on the real tree, whose accuracy case also
+ *     asserts `issues` empty, so it stays green.
+ *   - A non-canonical `Consumers` shape fails the report (finding F2). Measured
+ *     over the 289 records at `1384ac3`: 6 canonical field lines, **0**
+ *     non-canonical ones and 9 prose mentions that are not field shapes, so the
+ *     real-tree case stays green and the rule costs nothing until a hand-written
+ *     slip appears.
  *
  * **Marker and population parity.** The accuracy sweep reads exactly the
  * reference population invariant (iv) reads, with the same per-line
@@ -1556,6 +1597,18 @@ const fixtureRecord0025 = "ADR-0025-auth-guard-table.md"; // adr-fixture: fixtur
  */
 const consumerMismatchCode: SourceAdrConsumerIssue["code"] = "consumer-mismatch";
 const unlistedConsumerCode: SourceAdrConsumerIssue["code"] = "unlisted-consumer";
+
+/**
+ * The third code of that union (finding F2), pinned at runtime only and typed
+ * `string` on purpose: this RED branch must keep `tsc` at exit 0, and naming a
+ * union member that does not exist yet would fail the typecheck before the GREEN
+ * widens `SourceAdrConsumerIssue["code"]`. Widening the union to carry this value
+ * is what lets the implementation type the issue it must report.
+ */
+const consumersMalformedCode = "consumers-malformed";
+
+/** A record no file of this tree carries: the F2 shape fixtures point at it. */
+const fixtureRecord0901 = "ADR-0901-consumers-shape-fixture.md"; // adr-fixture: fixture record name
 
 /** One `docs/adr` record as the accuracy sweep reads it: bare name + whole text. */
 function adrRecord(fileName: string, text: string): AdrRecordText {
@@ -1971,6 +2024,248 @@ describe("checkSourceAdrConsumers — records that declare nothing", () => {
       verifiedReferences: 0,
       declaredRecords: ["0786"],
     });
+  });
+});
+
+/**
+ * Finding F1 (the land review of PR #488): the bare-name channel judged a
+ * citation by the file's bare name alone, so a record naming *any* `…/route.ts`
+ * verified **every** swept file whose bare name is `route.ts` — this head holds
+ * 85 of them. The reviewer's probe added a citation of ADR-0786 to an unrelated
+ * route handler and the whole spec stayed green, although that record names only
+ * `apps/web/src/app/api/v1/p/attendee-sessions/route.ts`. adr-fixture: the
+ * number is a fixture target, not a citation.
+ *
+ * The rule pinned here: a bare-name mention identifies a file only when that bare
+ * name is **unique across the swept population** (the `sources` argument in the
+ * pure function, the whole swept tree in `checkRepositoryAdrConsumers`). A shared
+ * bare name identifies nothing; the path and `@/` specifier channels keep
+ * covering the real citations.
+ */
+describe("checkSourceAdrConsumers — the bare-name channel needs a unique name (finding F1)", () => {
+  it("does not verify a citation from another file that shares the named file's bare name", () => {
+    // Arrange — the record names one of the tree's 85 `route.ts` files by full
+    // path; the second source shares only the bare name.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0786,
+        [
+          "- **Status:** Accepted",
+          "- **Consumers:** `apps/web/src/app/api/v1/p/attendee-sessions/route.ts`",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/app/api/v1/p/attendee-sessions/route.ts",
+        text: "// the session rate-limit gate ADR-0786", // adr-fixture: fixture citation target
+      },
+      {
+        path: "apps/web/src/app/api/v1/addons/route.ts",
+        text: "// a route the record never names ADR-0786", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — only the path the record names is verified; the shared bare name
+    // is not a claim about every file that carries it.
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: "apps/web/src/app/api/v1/addons/route.ts",
+        line: 1,
+        number: "0786",
+        record: fixtureRecord0786,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.checkedReferences).toBe(2);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("keeps the bare-name channel for a name that is unique across the swept population", () => {
+    // Arrange — the gate must not delete the channel: a bare name no other swept
+    // file carries still identifies its file.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0780,
+        [
+          "- **Consumers:** the OP-129 RED specs, starting with",
+          "  `attendee-sessions.test.ts` (I1–I5)",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/integration/attendee-sessions.test.ts",
+        text: "// the I1-I5 pins live here ADR-0780", // adr-fixture: fixture citation target
+      },
+      {
+        path: "apps/web/src/test/integration/media-signed-urls.test.ts",
+        text: "export const nothingToSee = 0;",
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(result.checkedReferences).toBe(1);
+    expect(result.verifiedReferences).toBe(1);
+  });
+});
+
+/**
+ * Finding F2 (the land review of PR #488): only `- **Consumers:**` at column 0
+ * with the colon inside the bold declared. Every other plausible shape fell into
+ * `unlisted-consumer` with `ok: true`, so one punctuation slip in a hand-written
+ * record silently switched enforcement off for it — and the `Consumers:`
+ * adoption programme writes the field into 175 records by hand.
+ *
+ * The contract pinned here:
+ *   - a `Consumers`-shaped line that is not the canonical field is reported as
+ *     `consumers-malformed` **in `issues`**, so `ok` is `false`: it fails, it is
+ *     not merely counted. `file` and `record` carry the record's file name,
+ *     `line` the offending line inside that record, `number` the record's digits;
+ *   - the record still declares, so a slip cannot switch enforcement off as a
+ *     side effect of being reported;
+ *   - reporting is per record: a malformed field in a record nobody cites fails
+ *     too;
+ *   - the canonical shapes keep declaring — the header field and a column-0 field
+ *     in a later section are pinned in the blocks above;
+ *   - `Consumes:` is another field and prose is not a field shape; both stay
+ *     silent (pinned above).
+ */
+describe("checkSourceAdrConsumers — a malformed Consumers field (finding F2)", () => {
+  it.each<[string, string[], number]>([
+    [
+      "an indented field",
+      ["- **Status:** Accepted", "  - **Consumers:** `apps/web/src/server/x.ts`"],
+      2,
+    ],
+    [
+      "the colon outside the bold",
+      ["- **Status:** Accepted", "- **Consumers**: `apps/web/src/server/x.ts`"],
+      2,
+    ],
+    ["no list dash", ["- **Status:** Accepted", "**Consumers:** `apps/web/src/server/x.ts`"], 2],
+    [
+      "a section heading",
+      ["- **Status:** Accepted", "## Consumers", "", "- `apps/web/src/server/x.ts`"],
+      2,
+    ],
+    [
+      "a plain, unbolded field",
+      ["- **Status:** Accepted", "- Consumers: `apps/web/src/server/x.ts`"],
+      2,
+    ],
+  ])(
+    "reports consumers-malformed, and fails the report, for %s",
+    (_shape, recordLines, expectedLine) => {
+      // Arrange
+      const records: AdrRecordText[] = [adrRecord(fixtureRecord0901, recordLines.join("\n"))];
+      const sources: SourceFileText[] = [
+        {
+          path: "apps/web/src/server/x.ts",
+          text: "// the helper the field names ADR-0901", // adr-fixture: fixture citation target
+        },
+      ];
+
+      // Act
+      const result = checkSourceAdrConsumers(sources, records);
+
+      // Assert — the slip fails the report and does not switch enforcement off:
+      // the record still declares, so the citation it does name is verified.
+      expect(result.issues).toEqual([
+        {
+          code: consumersMalformedCode,
+          file: fixtureRecord0901,
+          line: expectedLine,
+          number: "0901",
+          record: fixtureRecord0901,
+        },
+      ]);
+      expect(result.ok).toBe(false);
+      expect(result.unlisted).toEqual([]);
+      expect(result.declaredRecords).toEqual(["0901"]);
+      expect(result.verifiedReferences).toBe(1);
+    }
+  );
+
+  it("still hard-checks a malformed record's citations against a file it does not name", () => {
+    // Arrange — the record's field has the colon outside the bold and names
+    // `x.ts`; the citing file is `y.ts`.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0901,
+        ["- **Status:** Accepted", "- **Consumers**: `apps/web/src/server/x.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/y.ts",
+        text: "// a file that field does not name ADR-0901", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — a malformed entry and a citation entry share one sorted `issues`
+    // array (by `file`, so "ADR-…" sorts before "apps/…" in code-unit order).
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0901,
+        line: 2,
+        number: "0901",
+        record: fixtureRecord0901,
+      },
+      {
+        code: consumerMismatchCode,
+        file: "apps/web/src/server/y.ts",
+        line: 1,
+        number: "0901",
+        record: fixtureRecord0901,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.unlisted).toEqual([]);
+  });
+
+  it("reports a malformed field in a record that no source cites", () => {
+    // Arrange — the adoption programme will write the field into records nobody
+    // cites yet; a slip there must not be silent either.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0901,
+        ["- **Status:** Accepted", "## Consumers", "", "- `apps/web/src/server/x.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      { path: "apps/web/src/server/x.ts", text: "// no record is cited here" },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0901,
+        line: 2,
+        number: "0901",
+        record: fixtureRecord0901,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.checkedReferences).toBe(0);
+    expect(result.unlisted).toEqual([]);
   });
 });
 
