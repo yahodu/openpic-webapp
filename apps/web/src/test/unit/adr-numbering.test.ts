@@ -719,6 +719,51 @@ describe("checkAdrDirectory — range-shaped rows that do not parse (review find
     });
   });
 
+  it("reports only the malformed row when the inverted span would intersect a real lane", () => {
+    // Arrange — the discriminating fixture for the rule "a malformed row never
+    // feeds the overlap predicate": the inverted row is paired with a lane that
+    // its *inverted* span would intersect. `0780`-`0760` read as
+    // { start: 780, end: 760 } against 0760-0799 answers
+    // `780 <= 799 && 760 <= 760` — an overlap no lane reserved. The `0799` end is
+    // load-bearing: against 0760-0779 the predicate answers false for both rows,
+    // so the case would stay green under an implementation that feeds malformed
+    // rows to the predicate. Expected: the malformed row alone, no overlap.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `0780`-`0760` | `0781` |",
+        "| OP-204 delta lane | `0760`-`0799` | `0781` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert — exactly one issue, carrying the malformed row's holder once; a
+    // `lane-range-overlap` here would be a phantom the ledger never reserved.
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: malformedCode, number: null, files: ["OP-201 alpha lane"] }],
+    });
+  });
+
+  it("stays silent for an indented row: the row shape requires a leading pipe", () => {
+    // Arrange — a row pushed in by two spaces is not a pipe-table row, so it is
+    // neither a reservation nor a malformed one: Markdown does not read it as a
+    // table row either. Silence is the contract, and a false positive here would
+    // make every indented snippet in the ledger's notes fail the guard.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger(["  | OP-201 alpha lane | `0780`-`0760` | `0781` |"])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
   it("still parses the valid rows of a ledger that carries one malformed row", () => {
     // Arrange — a malformed row must not poison the rows around it: the two
     // valid rows still overlap, so the report carries both the malformed row and
