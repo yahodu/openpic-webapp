@@ -122,9 +122,14 @@ this card uses it and advances the cell to `0764`. No number outside that range 
 
 ## Evidence
 
-- `tsc -p apps/web/tsconfig.json --noEmit` → `0`.
+- `tsc -p apps/web/tsconfig.json --noEmit` → clean.
 - The three pinned specs: unit **18/18**, integration **20/20**.
-- Full suites after the change: unit **156 files / 2502 passed | 3 skipped**, integration and
-  the ADR-numbering guard re-run below.
-- One honest correction was made in this card (D4's nested `$inc`), found by I3 before the
-  suite went green.
+- Full suites: unit **156 files / 2502 passed | 3 skipped**; integration **103 files / 1001 passed**
+  (the lane's own 20 cases plus no regression across the other 102 files); ADR-numbering guard 29/29.
+- `npm run test:coverage` → exit 0: statements 91.7 %, branches 80.08 %, functions 96.08 %, lines
+  91.91 % (global thresholds 80 %; `services/**`/`domain/**` 90 % untouched).
+- `npm run lint` and `npm run format:check` clean on every touched file.
+- `PR Checks` on PR #436: `ci` (typecheck, lint, unit, integration, coverage, build, Playwright E2E),
+  `audit`, `audit-dev`, `secret-scan`, `env-changes` and the branch/title guards all pass.
+- One honest correction was made in this card (D4's nested `$inc`), found by I3 before the suite went
+  green; a later refactor folded the builder's duplicated sort-direction expression into one value.
