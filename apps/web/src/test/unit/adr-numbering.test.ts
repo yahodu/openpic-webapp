@@ -42,6 +42,14 @@ import {
  *        `docs/adr/ADR-NNNN-*.md` file (`dangling-reference`, finding F6-b).
  * Range bookkeeping was out of scope until F-L1: the guard now parses the
  * ledger's closed `` `NNNN`–`NNNN` `` rows (see `adr-lane-ranges.test.ts`).
+ * A *range-shaped* row that does not parse was skipped silently until F1: a row
+ * whose second cell holds two backticked numbers with one non-alphanumeric
+ * separator between them — inverted, em dash, minus sign, tilde, three digits —
+ * is now reported as `lane-range-malformed` with `number: null` and that row's
+ * holder, because that is the same silent direction that let the F-L1 collision
+ * through. Rows that are not range-shaped (header, `---` separator, the
+ * open-ended pool cell, a single backticked number, prose, the ADR index) stay
+ * silent, and so does an indented row: the row shape requires a leading `|`.
  * Reference resolution was out of scope until F6-b: the guards pinned the ADR
  * *directory* and the ledger, never the references pointing into it, so five
  * shipped production comments kept citing `ADR-0764`/`ADR-0765` [adr-fixture] after the
@@ -178,6 +186,15 @@ function laneLedger(rows: string[]): string {
  * issue without widening the type fails `tsc`, not just a runtime assertion.
  */
 const overlapCode: AdrNumberIssue["code"] = "lane-range-overlap";
+
+/**
+ * Compile-time pin of the F1 follow-up's union widening: a ledger row that
+ * obviously intends a reservation but does not parse is reported as
+ * `lane-range-malformed`, so `AdrNumberIssue["code"]` must admit it. An
+ * implementation that appends the issue without widening the union fails `tsc`
+ * (`TS2322` on this line), not only a runtime assertion.
+ */
+const malformedCode: AdrNumberIssue["code"] = "lane-range-malformed";
 
 describe("checkAdrNumbers — clean input", () => {
   afterEach(() => {
@@ -667,6 +684,240 @@ describe("checkAdrDirectory — lane-range overlaps (ledger finding F-L1)", () =
         },
       ])
     );
+  });
+});
+
+describe("checkAdrDirectory — range-shaped rows that do not parse (review finding F1)", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an inverted range as one lane-range-malformed issue naming its holder", () => {
+    // Arrange — `0780`-`0760` obviously intends a reservation, but it is
+    // inverted, so today it parses as { start: 780, end: 760 } and the span the
+    // lane meant is invisible: the ledger is reported clean. A row that does not
+    // parse must be named, not dropped, or a typo silently disables the guard.
+    // One issue per row, carrying that row's holder once — not the two holders
+    // an overlap issue carries.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `0780`-`0760` | `0781` |",
+        "| OP-202 beta lane  | `0760`–`0779` | `0761` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: malformedCode, number: null, files: ["OP-201 alpha lane"] }],
+    });
+  });
+
+  it("still parses the valid rows of a ledger that carries one malformed row", () => {
+    // Arrange — a malformed row must not poison the rows around it: the two
+    // valid rows still overlap, so the report carries both the malformed row and
+    // the intersection the guard exists to catch.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `0780`-`0760` | `0781` |",
+        "| OP-202 beta lane  | `0760`–`0779` | `0761` |",
+        "| OP-203 gamma lane | `0770`–`0785` | `0776` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert — both issues carry `number: null`, so the shared
+    // (number, code, files[0]) ordering key puts `lane-range-malformed` first.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        { code: malformedCode, number: null, files: ["OP-201 alpha lane"] },
+        { code: overlapCode, number: null, files: ["OP-202 beta lane", "OP-203 gamma lane"] },
+      ],
+    });
+  });
+
+  it.each<[string, string]>([
+    ["the em dash (U+2014)", "\u2014"],
+    ["the minus sign (U+2212)", "\u2212"],
+    ["a tilde", "~"],
+  ])("reports a row whose range separator is %s", (_label, separator) => {
+    // Arrange — "two backticked numbers with one non-alphanumeric separator
+    // between them" is what makes a row range-shaped, whatever the separator
+    // is. Only `–` (U+2013) and `-` are accepted, so every other separator is a
+    // reservation the parser cannot see.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([`| OP-201 alpha lane | \`0760\`${separator}\`0779\` | \`0761\` |`])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: malformedCode, number: null, files: ["OP-201 alpha lane"] }],
+    });
+  });
+
+  it("reports a three-digit pair as lane-range-malformed", () => {
+    // Arrange — the ledger's numbers are zero-padded to four digits, so
+    // `760`-`779` is a typo that reserves nothing today.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `760`-`779` | `761` |",
+        "| OP-202 beta lane  | `0780`-`0799` | `0781` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert — the valid row is untouched, so exactly one issue is reported.
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: malformedCode, number: null, files: ["OP-201 alpha lane"] }],
+    });
+  });
+
+  it("reports one issue per offending row, ordered by holder", () => {
+    // Arrange — README order is deliberately reversed: the two rows tie on
+    // (number, code), so the report must order them by `files[0]`.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-203 gamma lane | `0780`-`0760` | `0781` |",
+        "| OP-201 alpha lane | `760`-`779` | `761` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        { code: malformedCode, number: null, files: ["OP-201 alpha lane"] },
+        { code: malformedCode, number: null, files: ["OP-203 gamma lane"] },
+      ],
+    });
+  });
+
+  it("reports no malformed row for a ledger whose rows all use the accepted form", () => {
+    // Arrange — no false positives: en dash, plain hyphen and a spaced en dash
+    // are all accepted, and none of them is reported.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `0760`–`0779` | `0761` |",
+        "| OP-202 beta lane  | `0780`-`0799` | `0781` |",
+        "| OP-203 gamma lane | `0800` – `0819` | `0801` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no malformed row for the repository's real ledger", () => {
+    // Act — the zero-false-positive proof on the board's most-edited table: any
+    // row of `docs/adr/README.md` misread as range-shaped would show up here.
+    const result = checkAdrDirectory(realAdrDir);
+
+    // Assert (the same report is pinned by the plain `checkAdrDirectory` block
+    // above; this case names the malformed-row code so a false positive is
+    // diagnosable from the failing case alone).
+    expect(result.issues.filter((issue) => issue.code === malformedCode)).toEqual([]);
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports a duplicate number and a malformed range from the same directory", () => {
+    // Arrange — the two invariants are independent: neither may swallow the
+    // other. `duplicate` sorts first (it carries a number; both null-number
+    // issues come last).
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0146-a.md", "ADR-0146-b.md"],
+      laneLedger(["| OP-201 alpha lane | `0780`-`0760` | `0781` |"])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "duplicate",
+          number: "0146",
+          files: ["ADR-0146-a.md", "ADR-0146-b.md"],
+        },
+        { code: malformedCode, number: null, files: ["OP-201 alpha lane"] },
+      ],
+    });
+  });
+
+  it("reports nothing for rows that are not range-shaped", () => {
+    // Arrange — the non-vacuity control for the whole rule: the header row, the
+    // `---` separator row, the open-ended pool cell, a cell holding a single
+    // backticked number, a prose mention and the ADR index rows all stay silent.
+    // Only two backticked numbers with a non-alphanumeric separator between them
+    // make a row range-shaped.
+    const markdown = [
+      laneLedger([
+        "| unallocated (future lanes) | `0700`+ (20 per lane, in order) | `0700` |",
+        "| OP-201 alpha lane          | `0780`                          | `0781` |",
+      ]),
+      "",
+      "The OP-129 lane holds `0769`-`0788`; the uploads lane holds `0760`-`0779`.",
+      "",
+      "| ADR                                                                    | Title                    | Status   |",
+      "| ---------------------------------------------------------------------- | ------------------------ | -------- |",
+      "| [0001](ADR-0001-ports-and-adapters.md)                                 | Ports and adapters       | Accepted |",
+    ].join("\n");
+    const dir = makeTempAdrDirWithReadme(["ADR-0760-a.md"], markdown); // adr-fixture
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("keeps an ADR index row whose title quotes two numbers with a slash silent", () => {
+    // Arrange — measured on the real ledger: the ADR-0341 index row's title cell
+    // reads "the `402`/`403` denial split". Read purely literally ("two
+    // backticked number tokens with a non-alphanumeric separator between them")
+    // that row is range-shaped, so reporting it would make the real ledger fail
+    // the clean-report pin above. A slash is not range notation, and an index
+    // row is not a reservation: it must stay silent.
+    const markdown = [
+      "| ADR                                          | Title                                                                  | Status   |",
+      "| -------------------------------------------- | ---------------------------------------------------------------------- | -------- |",
+      "| [0341](ADR-0341-op103-entitlements-green.md) | OP-103 GREEN: the `402`/`403` denial split and the registry extensions | Accepted |", // adr-fixture
+    ].join("\n");
+    const dir = makeTempAdrDirWithReadme(["ADR-0760-a.md"], markdown); // adr-fixture
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
   });
 });
 
