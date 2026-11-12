@@ -414,3 +414,51 @@ full local suite is green: unit **2618 passed | 3 skipped**, integration **1101
 passed (107 files)**, and the coverage run **3719 passed | 3 skipped (269
 files)** at **91.99% statements / 80.85% branches / 96.24% functions / 92.19%
 lines** — above every configured threshold.
+
+## Review sign-off — round 1 (artifact lens)
+
+The reviewer record for the round-1 review of the F1 GREEN (card `t_297eae5e`, PR #469). Artifact lens: the diff was read cold, before the implementer's handoff narrative. Written by the reviewer profile (`openpic-webapp-reviewer`), which edited no file in the reviewed delivery.
+
+### Verdict
+
+**APPROVED WITH FINDINGS.** Zero reviewer edits: the reviewed diff is the implementer's four files and nothing else. Reviewed head `0702d1a` (PR #469, `OP-129-bug-active-access-link-bind`), squash-merged to `main` as `0b1eaa1`. Two follow-ups were routed (F1 and F2 below); neither of them blocks the delivery.
+
+### Evidence reproduced independently, not taken from the handoff
+
+Measured at review time, and re-measured when this sign-off was written:
+
+- Ancestry: `git merge-base --is-ancestor 0b1eaa1 origin/main` exits `0`, so the reviewed squash is on trunk.
+- Bytes: `git diff --stat 0702d1a 0b1eaa1` prints nothing for the PR's four paths, and each path names one and the same blob at both commits. The bytes the review read are the bytes that landed.
+- Spec file: one blob, `50b5525`, at the pins commit `1c61a67`, at `0b1eaa1` and at `9219d03` (the trunk tip at review). Nothing in the delivery rewrote a pin.
+- `attendee-sessions.test.ts`, integration project, real `MongoMemoryReplSet` with `TMPDIR=/root/tmp-mongo`, at `9219d03`: **18 passed (18)**.
+- Full `--project unit` at `9219d03`: 160 files, **2566 passed | 3 skipped (2569)**.
+- `tsc -p apps/web/tsconfig.json --noEmit` exits `0` at the reviewed head `0702d1a` and at `9219d03`.
+- `prettier --check` is clean on the changed files. PR #469 carries 15 check nodes and none of them is non-pass.
+- Diff scope: four files, two routes, one spec, this record.
+
+One measurement moved after the review and is recorded here rather than hidden: today's `origin/main` carries a different blob for `attendee-sessions.test.ts` (`5cc1c69`). Squash `84952e3` added the F2 rate-limit `describe` block and its two imports, and three docblock references were repaired from ADR-0768 to ADR-0780 in the same window. No assertion in the file changed; the reviewed pins are untouched.
+
+### Finding F1 — the slug lookup is a collection scan (Medium, performance)
+
+The route resolves `{accessLinks: {$elemMatch: {slug, active: true}}}`. The only `events` index that carries a slug at `0b1eaa1` is `events_active_slug_unique` (`{accessLinks.slug: 1}`, unique, partial on `{"accessLinks.active": true}`), and the planner's subset check does not accept an `ELEM_MATCH_VALUE` predicate, so the partial index cannot serve the shipped filter. Measured with 500 seeded `events` rows and the route's filter verbatim, without `limit`: plan `COLLSCAN`, `totalDocsExamined` 500, `totalKeysExamined` 0. A throwaway non-partial compound multikey `{accessLinks.slug: 1, accessLinks.active: 1}`, added to `INDEX_SPECS` and removed again, served the same `$elemMatch` with `totalDocsExamined` 1 and `totalKeysExamined` 1 (`IXSCAN` under `FETCH`), and the index file was restored byte-identically. `POST /api/v1/p/attendee-sessions` is public and unauthenticated, so the scan is amplifiable by any caller. No shipped pin could see it: the answer stays right, only the cost is wrong.
+
+Routed at review time to card `t_067135c7` (TEST) and then `t_02dac037` (GREEN), and recorded in this file's two amendment notes above. Those re-measured the plan on 300 seeded rows with the same outcome and added `events_active_slug_lookup` (`{accessLinks.slug: 1}`, non-unique, non-partial). The landed shape is single-key rather than the compound probe shape: the U1 tenant-scope lint forbids a `tenantId`-less compound index on `events`, and a `tenantId`-led compound stayed a `COLLSCAN` for a filter that carries no `tenantId` predicate.
+
+### Finding F2 — the documented rate limit is not enforced (High, security/abuse)
+
+`docs/API Contract.md:601` documents `Auth public · Rate 60 / hour / IP` for `POST /api/v1/p/attendee-sessions`. At `0b1eaa1` the route's `defineRoute` call declares no `rateLimit` stage, `apps/web/src/server/rate-limit/classes.ts` has no `attendee.session` entry (its three `attendee`-scoped rows belong to other attendee routes), and `middleware.ts` carries no limiter for `/p/**`. The contract and the tree disagree, and the route under it mints a session row and a raw token per unauthenticated call. §Decision §4 and §Consequences recorded the gap knowingly as the lane's own; the finding is that a published limit nobody enforces is a shipping divergence, not a documentation defect.
+
+Routed at review time to card `t_553aaea9` (TEST) and then `t_c119dd3d` (GREEN). The limit itself reached trunk through card `t_c2ec1845`, which landed the class and the stage as squash `84952e3` (PR #451); its records are ADR-0787 for the pins and ADR-0786 for the implementation. At that squash `classes.ts:56` carries `"attendee.session": [{ scope: "ip", limit: 60, windowSeconds: 3600 }]` and the create route declares the stage at `route.ts:120`.
+
+### Info
+
+- `eventSlugsFor`'s `@returns` claims "`eventIds` order then row order", and `find({_id: {$in: [...]}})` guarantees no cross-event order. Documentation only, folded into `t_02dac037`.
+- The multi-active-link reading, an event row that carries two `active: true` links, stays this record's own open question. The F1 pins do not decide it.
+
+### Honesty audit
+
+The diff carries no fixture literal, no test-environment conditional, no suppression comment, no `@ts-ignore`, no `TODO` and no console output. The two route hunks are a docblock correction and one filter expression, and the spec file was carried byte-identically from the pins commit, so the delivery neither weakened nor re-shaped a pin.
+
+### Nothing above is retracted
+
+No statement in §Context, §Decision §1–§7, §Consequences, §Alternatives considered, §Assumptions, §Evidence, the two amendment notes or the delivery note is retracted by this review. Two statements are superseded in place without being rewritten, and both stay true as facts about the reviewed tree: the "Not enforced here" cell of §Decision §4 and the "no rate limit on this branch" bullet of §Consequences describe `0b1eaa1`, and the limit is enforced from `84952e3` onwards. The follow-ups' own records document what happened next — the amendment notes in this file for F1, ADR-0787 and ADR-0786 for F2 — and this sign-off asserts no identifier of that work beyond the card ids.
