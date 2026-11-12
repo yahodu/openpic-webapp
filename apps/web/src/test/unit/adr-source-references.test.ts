@@ -14,6 +14,7 @@ import {
  * `ADR-0302` §1. This file owns one of them: every `ADR-NNNN` reference inside
  * a source file must resolve to a `docs/adr/ADR-NNNN-*.md` file.
  */
+
 /**
  * Unit contract — invariant (iv): an in-source `ADR-NNNN` reference must resolve
  * to a `docs/adr/ADR-NNNN-*.md` file (finding F6-b, OP-128 follow-up).
