@@ -22,7 +22,7 @@ export const COLLECTIONS = {
   /**
    * Anonymous attendee sessions (schema §13.5): the `op_att` token's SHA-256,
    * the device fingerprint and the TTL. App-owned identity, so it follows the
-   * `userProfiles` naming rather than the snake_case domain block (ADR-0770).
+   * `userProfiles` naming rather than the snake_case domain block (ADR-0781).
    */
   attendeeSessions: "attendeeSessions",
   subscriptions: "subscriptions",
