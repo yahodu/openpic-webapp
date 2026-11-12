@@ -1782,6 +1782,57 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} �
       setLogger(previous);
     }
   });
+
+  it("P4: a repeat removal of a re-invited (pending) member answers 204 and leaves the invitation re-acceptable", async () => {
+    // Measured on the merged head `5c6060d` (probe worktree, not a code read):
+    // {"secondStatus":204,"invitationBefore":"pending","invitationAfter":"pending",
+    //  "memberStatus":"removed","revocations":1,"acceptAfterRemoval":200}.
+    // The `204` reports the seat as removed; it says nothing about a pending
+    // invitation, which this route never revokes.
+    //
+    // Arrange — an accepted co-organizer, removed once, then re-invited without
+    // accepting the new invitation.
+    const invitee = await signInVerified(makeIdentity("op121-p4-pending-invitee"));
+    const { fixture } = await acceptedMember("op121-p4-pending", invitee);
+    const firstRemoval = await removeMember(
+      removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+    );
+    expect(firstRemoval.status).toBe(204);
+
+    const pendingInvitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
+
+    // Arrange guard: the fresh invitation really is pending, so the assertions
+    // below measure the repeat `DELETE`'s effect on it rather than on an
+    // already terminal row.
+    expect((await storedInvitation(pendingInvitationId))?.status).toBe("pending");
+
+    // Act — the repeat removal, with the re-invite still unaccepted.
+    const secondRemoval = await removeMember(
+      removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+    );
+
+    // Assert — `204` is the decided idempotent arm, and it leaves the pending
+    // invitation alone: the in-transaction `updateOne({ _id, revokedAt: null })`
+    // matches nothing for an already-removed row, so the route returns before
+    // its invitation write.
+    expect(secondRemoval.status).toBe(204);
+    expect((await storedInvitation(pendingInvitationId))?.status).toBe("pending");
+
+    const removed = (await eventMembers(fixture)).find(
+      (row) => row.userId === invitee.userId.toHexString()
+    );
+    expect(removed?.status).toBe("removed");
+
+    // The first removal's pair, and only that pair: the repeat performed no
+    // removal, so it notifies nobody again.
+    expect(await outboxRows("collab.member.removed")).toHaveLength(1);
+    expect(await outboxRows("collab.member.removed.ack")).toHaveLength(1);
+
+    // Assert — the invitation the `204` did not withdraw is still usable: the
+    // invitee accepts it and regains the seat.
+    const accept = await acceptInApp(inAppDecision(invitee.cookie, pendingInvitationId, "accept"));
+    expect(accept.status).toBe(200);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
