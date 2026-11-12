@@ -1,3 +1,9 @@
+## [1.55.1](https://github.com/yahodu/openpic-webapp/compare/v1.55.0...v1.55.1) (2026-11-12)
+
+### Bug Fixes
+
+- **db:** OP-129 make the attendee session slug lookup index-backed ([#478](https://github.com/yahodu/openpic-webapp/issues/478)) ([627436d](https://github.com/yahodu/openpic-webapp/commit/627436dd54b9ae62c84bb965b4d54ddd7adf4324))
+
 ## [1.55.0](https://github.com/yahodu/openpic-webapp/compare/v1.54.1...v1.55.0) (2026-11-12)
 
 ### Features
