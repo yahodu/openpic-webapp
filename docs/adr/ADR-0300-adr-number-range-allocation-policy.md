@@ -319,9 +319,11 @@ a reservation.
 17. **The mechanical half.** `checkAdrDirectory`'s `lane-range-overlap` check
     ([ADR-0302](ADR-0302-adr-number-guard-contract.md) §6) reports every pair of
     reserved rows whose **closed** ranges intersect, so an intersecting row is a
-    CI failure rather than a review miss. It is the only half a tool can
-    enforce: a _file_ numbered inside a foreign range remains a review-time
-    defect, because the guard has no file→lane map.
+    CI failure rather than a review miss. It also reports a range-shaped ledger
+    row it cannot parse (`lane-range-malformed`), so a ledger typo is a CI
+    failure rather than a silent hole that quietly disables the check. It is the
+    only half a tool can enforce: a _file_ numbered inside a foreign range
+    remains a review-time defect, because the guard has no file→lane map.
 
 **Rejected alternative — a `reserved:` list inside the README.** Already
 rejected in §8/§9 for the same reason: a branch-local marker is a second source

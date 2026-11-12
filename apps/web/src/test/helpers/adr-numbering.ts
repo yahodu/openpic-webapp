@@ -15,7 +15,9 @@ import { join, relative, sep } from "node:path";
  *   1. no two in-scope files share an `ADR-NNNN` number;
  *   2. every in-scope `ADR-*.md` file name is well-formed;
  *   3. no two rows of the reserved-range ledger in `docs/adr/README.md` reserve
- *      intersecting closed ranges (`lane-range-overlap`, ADR-0300 §10);
+ *      intersecting closed ranges (`lane-range-overlap`), and a range-shaped row
+ *      that does not parse is reported rather than skipped
+ *      (`lane-range-malformed`) (ADR-0300 §10);
  *   4. every `ADR-NNNN` reference inside a source file resolves to a
  *      `docs/adr/ADR-NNNN-*.md` file (`dangling-reference`, finding F6-b).
  *
@@ -61,9 +63,12 @@ export interface AdrNumberIssue {
    * `duplicate` — two or more well-formed file names share one number;
    * `malformed` — one in-scope file name does not match the strict pattern;
    * `lane-range-overlap` — two ledger rows reserve intersecting closed ranges
-   * (ADR-0300 §10), reported with `number: null` and the two `holders`.
+   * (ADR-0300 §10), reported with `number: null` and the two `holders`;
+   * `lane-range-malformed` — one ledger row is range-shaped but not an accepted
+   * closed ascending pair (finding F1), reported with `number: null` and that
+   * row's holder once.
    */
-  code: "duplicate" | "malformed" | "lane-range-overlap";
+  code: "duplicate" | "malformed" | "lane-range-overlap" | "lane-range-malformed";
 
   /** The shared four-digit prefix, e.g. `"0146"`; `null` when unparseable. */
   number: string | null;
@@ -234,12 +239,28 @@ export interface LaneRange {
 const LANE_RANGE_CELL_PATTERN = /^`(\d{4})`\s*[–-]\s*`(\d{4})`$/;
 
 /**
+ * The range *shape*: two backticked 3–4 digit tokens with one dash-family
+ * separator (`–`, `-`, `—`, `−`, `~`) between them. A cell that matches this
+ * *intends* a reservation even when {@link LANE_RANGE_CELL_PATTERN} rejects it,
+ * so the row is reported (`lane-range-malformed`) instead of vanishing.
+ *
+ * Deliberately not "any non-alphanumeric separator": a dash is range notation,
+ * while the ADR index row that quotes `` `402`/`403` `` is prose. The fully
+ * anchored cell is the second guard — an annotated range such as
+ * `` `0789`-`0808` (20 per lane) `` is not a reservation cell, so it stays
+ * silent too.
+ */
+const LANE_RANGE_SHAPE_PATTERN = /^`(\d{3,4})`\s*[–—−~-]\s*`(\d{3,4})`$/;
+
+/**
  * Parse the closed ranges out of the reserved-range ledger's markdown.
  *
  * Row-shape based, not heading-scoped: a table row *is* the reservation, and
  * the heading carries a date that is edited more often than the row shape. Only
  * a line starting with `|` whose second cell is a closed `` `NNNN`–`NNNN` ``
- * pair counts; everything else is skipped, never thrown on. Document order is
+ * pair counts; everything else is skipped, never thrown on. A pair whose start
+ * is above its end does not parse either — it is dropped here and reported by
+ * {@link checkAdrDirectory} as `lane-range-malformed`. Document order is
  * preserved (the ledger is not numerically ascending).
  *
  * @param markdown - The text of `docs/adr/README.md`, or any fragment of it.
@@ -251,23 +272,56 @@ const LANE_RANGE_CELL_PATTERN = /^`(\d{4})`\s*[–-]\s*`(\d{4})`$/;
  * ```
  */
 export function parseLaneRanges(markdown: string): LaneRange[] {
-  return markdown.split("\n").flatMap((line) => {
+  return scanLaneLedger(markdown).ranges;
+}
+
+/**
+ * Both halves of the ledger read: the rows that parse into a closed range and
+ * the holders of range-shaped rows that do not. One pass, because a malformed
+ * row must not be fed to the overlap predicate — `0780`-`0760` would otherwise
+ * parse as an inverted span and could invent an overlap that the lane never
+ * reserved.
+ */
+interface LaneLedgerScan {
+  /** One entry per accepted, ascending closed range, in document order. */
+  ranges: LaneRange[];
+
+  /** One entry per range-shaped row that is not an accepted pair, in document order. */
+  malformedHolders: string[];
+}
+
+/**
+ * Classify every pipe row of the ledger (see {@link parseLaneRanges} for the
+ * row shape). Not exported: {@link parseLaneRanges} keeps the parser contract,
+ * and {@link checkAdrDirectory} needs both halves in one pass.
+ */
+function scanLaneLedger(markdown: string): LaneLedgerScan {
+  const ranges: LaneRange[] = [];
+  const malformedHolders: string[] = [];
+
+  for (const line of markdown.split("\n")) {
+    if (!line.startsWith("|")) {
+      continue;
+    }
+
     const cells = line.split("|");
     const holder = cells[1];
     const cell = cells[2]?.trim();
-    const match = cell === undefined ? null : LANE_RANGE_CELL_PATTERN.exec(cell);
-    if (!line.startsWith("|") || holder === undefined || match === null) {
-      return [];
+    if (holder === undefined || cell === undefined) {
+      continue;
     }
-    const [, start, end] = match;
-    return [
-      {
-        holder: holder.trim(),
-        start: Number.parseInt(start ?? "", 10),
-        end: Number.parseInt(end ?? "", 10),
-      },
-    ];
-  });
+
+    const match = LANE_RANGE_CELL_PATTERN.exec(cell);
+    const start = Number.parseInt(match?.[1] ?? "", 10);
+    const end = Number.parseInt(match?.[2] ?? "", 10);
+    if (match !== null && start <= end) {
+      ranges.push({ holder: holder.trim(), start, end });
+    } else if (LANE_RANGE_SHAPE_PATTERN.test(cell)) {
+      malformedHolders.push(holder.trim());
+    }
+  }
+
+  return { ranges, malformedHolders };
 }
 
 /**
@@ -275,9 +329,7 @@ export function parseLaneRanges(markdown: string): LaneRange[] {
  * ranges intersect (touching neighbours are disjoint). Holders are sorted so
  * the report does not depend on ledger row order.
  */
-function findLaneRangeOverlaps(markdown: string): AdrNumberIssue[] {
-  const ranges = parseLaneRanges(markdown);
-
+function findLaneRangeOverlaps(ranges: readonly LaneRange[]): AdrNumberIssue[] {
   return ranges.flatMap((left, index) =>
     ranges
       .slice(index + 1)
@@ -323,9 +375,10 @@ function readTextFile(filePath: string): string {
  * duplicate.
  *
  * When the directory carries a `README.md`, its reserved-range ledger is parsed
- * as well and one `lane-range-overlap` issue is added per intersecting pair
- * (see {@link parseLaneRanges}). A missing README, or one with no parseable
- * row, adds nothing.
+ * as well: one `lane-range-overlap` issue per intersecting pair and one
+ * `lane-range-malformed` issue per range-shaped row that does not parse (see
+ * {@link parseLaneRanges}). A malformed row never feeds the overlap predicate. A
+ * missing README, or one with no parseable row, adds nothing.
  *
  * @param dir - Absolute or relative path to the ADR directory to check.
  * @returns The same report shape as {@link checkAdrNumbers}.
@@ -346,7 +399,16 @@ export function checkAdrDirectory(dir: string): AdrCheckResult {
     return numbering;
   }
 
-  const issues = [...numbering.issues, ...findLaneRangeOverlaps(readTextFile(readmePath))];
+  const scan = scanLaneLedger(readTextFile(readmePath));
+  const issues = [
+    ...numbering.issues,
+    ...findLaneRangeOverlaps(scan.ranges),
+    ...scan.malformedHolders.map((holder) => ({
+      code: "lane-range-malformed" as const,
+      number: null,
+      files: [holder],
+    })),
+  ];
   issues.sort(compareIssues);
 
   return { ok: issues.length === 0, issues };
