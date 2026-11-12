@@ -328,18 +328,19 @@ its own consumers, so participation is **declared per record, never inferred**.
   at least **six** characters, because short generic names would verify
   arbitrary files.
 - **Colon-bearing path tokens (review finding F-C, PR #506).** A Next.js route
-  segment may legally contain `:`, so `RECORD_PATH_TOKEN_PATTERN` and
-  `RECORD_SPECIFIER_TOKEN_PATTERN` both carry `:` in their path-character class
-  (`…/uploads:link/route.ts` is a real swept file). The colon is one **path**
-  character, not a `:.*$` alternative, so a token still ends at the first
-  non-path character and nothing after the path is swallowed. `trimPathToken`
-  then trims trailing punctuation and, **after** that, one trailing `:<digits>`
-  line annotation, so `path.ts:42.` reduces to `path.ts`. **Why the widening
-  matters:** without `:`, a token naming `…/uploads:link` stops at the colon as
-  `…/uploads`, and the directory-prefix arm then verifies the colon-free sibling
-  `…/uploads/…` while the file the record actually named is reported as a
-  mismatch — a wrong file in both directions at once, which is the failure the
-  widening removed.
+  segment may legally contain `:`, so `:` stays a token character in both the
+  repo-relative path and the `@/…` specifier patterns
+  (`RECORD_PATH_TOKEN_PATTERN` / `RECORD_SPECIFIER_TOKEN_PATTERN`;
+  `…/uploads:link/route.ts` is a real swept file); a record that names that file
+  is read exactly as written. The colon is one **path** character, not an instruction to read the
+  rest of the line, so a token still ends at the first non-path character and
+  nothing after the path is swallowed. A trailing `:<digits>` suffix is a line
+  annotation, not part of the file name, so a token written `path.ts:42.` names
+  `path.ts`. **Why the widening matters:** without `:`, a token naming
+  `…/uploads:link` stops at the colon as `…/uploads`, and the directory-prefix
+  arm then verifies the colon-free sibling `…/uploads/…` while the file the
+  record actually named is reported as a mismatch — a wrong file in both
+  directions at once, which is the failure the widening removed.
 - **Duplicate numbers.** A citation is declared when _any_ record with that
   number declares, and verified when any of them identifies the citing file;
   reporting the duplicate stays §1's job.
