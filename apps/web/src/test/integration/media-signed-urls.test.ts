@@ -175,9 +175,15 @@ function requireHandler(module: object, name: "POST"): (request: Request) => Pro
 
 const postSignedUrls = requireHandler(signedUrlsRouteModule, "POST");
 
-/** The error envelope of a failed response. */
+/** The error envelope of a failed response (Appendix A.1). */
 interface ErrorBody {
   readonly code: string;
+  /**
+   * The per-code detail block A.1 assigns the code — `account_suspended` carries
+   * `{ reason, supportUrl }`, `account_banned` carries `{ banReason, banExpires }`
+   * — and is absent for a code that carries none (`forbidden`).
+   */
+  readonly details?: Record<string, unknown>;
 }
 
 /** Parse an error envelope without reading the body twice. */
@@ -1284,35 +1290,61 @@ async function seedMassImages(workspace: Workspace, count: number): Promise<Obje
   return images.map((image) => image._id);
 }
 
-/** One account state the `user` label refuses, and the row that expresses it. */
+/**
+ * The ban expiry these pins use: far in the future, so the ban is active.
+ *
+ * Declared above the refusal table because the `banned` row states the ISO form
+ * the wire must carry (`guards.ts` serializes `banExpires` with `toISOString()`),
+ * which keeps the seeded instant and the expected string one value.
+ */
+const BAN_EXPIRES_NEVER = new Date("2099-01-01T00:00:00.000Z");
+
+/** The reason `seedBan` writes, and therefore the one the wire must echo. */
+const BAN_REASON = "spam";
+
+/**
+ * One account state the `user` label refuses, how to seed it, and the whole
+ * wire answer Appendix A.1 assigns that state.
+ */
 interface RefusedAccountState {
   readonly name: string;
   readonly seed: (organizer: SignedInUser) => Promise<void>;
+  readonly status: number;
+  readonly code: string;
+  readonly details?: Record<string, unknown>;
 }
 
 /**
- * The three refusals `evaluateAuth("user", …)` applies before any label rule
- * (§0.3, ADR-0025): two lifecycle statuses carried by `userProfiles`, and the
- * ban carried by the Better Auth `user` row.
+ * The refusals `evaluateAuth("user", …)` applies before any label rule (§0.3,
+ * ADR-0025): two lifecycle statuses carried by `userProfiles`, and the ban
+ * carried by the Better Auth `user` row — each with the A.1 answer for it.
  */
 const REFUSED_ACCOUNT_STATES: readonly RefusedAccountState[] = [
   {
     name: "suspended",
     seed: (organizer) => seedProfileStatus(organizer.userId, "suspended"),
+    status: 423,
+    code: "account_suspended",
+    details: { reason: "suspended", supportUrl: "/support" },
   },
   {
     name: "deletion_pending",
     seed: (organizer) => seedProfileStatus(organizer.userId, "deletion_pending"),
+    status: 403,
+    code: "forbidden",
   },
   {
     name: "banned",
     seed: (organizer) => seedBan(organizer.userId),
+    status: 423,
+    code: "account_banned",
+    details: { banReason: BAN_REASON, banExpires: BAN_EXPIRES_NEVER.toISOString() },
   },
 ];
 
 /**
  * The account-status half of the §0.3 gate (OP-128 follow-up pin, finding F1 of
- * the OP-128 review).
+ * the OP-128 review; re-pinned to the Appendix A.1 envelope by ADR-0772).
  *
  * §5.6 names `user` or `attendee` for this endpoint, and the `user` label
  * refuses a principal whose account is suspended, banned or pending deletion
@@ -1321,15 +1353,23 @@ const REFUSED_ACCOUNT_STATES: readonly RefusedAccountState[] = [
  * measured a suspended organizer receiving `200` with a signed thumbnail
  * **and** a signed original. These pins close that.
  *
- * The contract: the refusal is the §5.6 code `forbidden` (the caller holds a
- * credential, so `authentication_required` would misdescribe the refusal, and
- * the four-code denial vocabulary has no account-state member), and it refuses
- * the request as a whole — which is the batch rule's own outcome, because an
- * account-level refusal denies every item and an all-denied credentialed batch
- * is a `403` (`signedUrlBatchStatus`). Whether the implementation mirrors the
- * `user` label's table per item or stops at the route boundary, the wire answer
- * is the same `403 { error: { code: "forbidden" } }` with no `urls[]`; ADR-0768
- * records why that is the observable these pins hold.
+ * The wire answer is the **Appendix A.1** envelope, not a §5.6 `denied[]` code:
+ * an account-state refusal denies the whole **request**, not one item, and A.1
+ * already owns that envelope (§0.3's "banned users → `423 account_banned` with
+ * `{ banReason, banExpires }`"; `AUTH_ERROR_TRANSPORT` in
+ * `@/server/http/catalog`). So the guards' own answers reach the wire verbatim —
+ * `423 account_suspended` with `{ reason: "suspended", supportUrl: "/support" }`
+ * and `423 account_banned` with `{ banReason, banExpires }` (`banExpires` an ISO
+ * string, or `null` for a permanent ban) — while the deletion states
+ * (`deletion_pending`, `deleted`) stay `403 forbidden`, A.1's only other member
+ * of this family. §5.6's four per-item codes keep governing `denied[]` for an
+ * **allowed** principal; the 403 all-denied collapse is that rule, not this one.
+ * ADR-0772 records the decision and supersedes ADR-0768 D1, whose `403
+ * forbidden` flattening dropped the `supportUrl` / `banReason` / `banExpires`
+ * detail a client needs to explain the refusal.
+ *
+ * No refusal row may carry a `urls` key or any trace of the image's content
+ * hash: nothing is signed for a refused request.
  *
  * Every case seeds the same fixture and changes only the account state, so the
  * `active` control proves the refusal comes from the status and not from a
@@ -1337,8 +1377,8 @@ const REFUSED_ACCOUNT_STATES: readonly RefusedAccountState[] = [
  */
 describe("I7: the account-status gate refuses a suspended, banned or deletion-pending caller", () => {
   it.each(REFUSED_ACCOUNT_STATES)(
-    "answers 403 forbidden and mints no URL for a $name event member",
-    async ({ name, seed }) => {
+    "answers $status $code and mints no URL for a $name event member",
+    async ({ name, seed, status, code, details }) => {
       // Arrange — the control's fixture, plus the account state.
       const workspace = await seedWorkspace(`i7-${name}`);
       await seedOriginalsPlan(workspace.tenantKey, true);
@@ -1357,17 +1397,19 @@ describe("I7: the account-status gate refuses a suspended, banned or deletion-pe
         workspace.eventId.toHexString()
       );
 
-      // Assert — the §5.6 `forbidden` refusal, no `urls[]`, and nothing the
-      // signer could have minted (a signed URL addresses the content hash).
-      expect(response.status).toBe(403);
+      // Assert — the A.1 answer for this state, its details, no `urls[]`, and
+      // nothing the signer could have minted (a signed URL addresses the hash).
       const payload = await body(response);
-      expect(payload).toMatchObject({ error: { code: "forbidden" } });
+      const error = payload.error as ErrorBody;
+      expect(response.status).toBe(status);
+      expect(error.code).toBe(code);
+      expect(error.details).toEqual(details);
       expect(payload.urls).toBeUndefined();
       expect(JSON.stringify(payload)).not.toContain(HASH_A);
     }
   );
 
-  it("refuses a suspended attendee that already holds a match for the image", async () => {
+  it("answers 423 account_suspended for a suspended attendee that holds a match", async () => {
     // Arrange — a matched attendee would otherwise be signed this image, so the
     // refusal cannot come from the per-item relationship rules.
     const workspace = await seedWorkspace("i7-suspended-attendee");
@@ -1385,10 +1427,14 @@ describe("I7: the account-status gate refuses a suspended, banned or deletion-pe
       workspace.eventId.toHexString()
     );
 
-    // Assert
-    expect(response.status).toBe(403);
+    // Assert — the same A.1 envelope the organizer's suspension produces: the
+    // account decides, not the relationship.
     const payload = await body(response);
-    expect(payload).toMatchObject({ error: { code: "forbidden" } });
+    const error = payload.error as ErrorBody;
+    expect(response.status).toBe(423);
+    expect(error.code).toBe("account_suspended");
+    expect(error.details).toEqual({ reason: "suspended", supportUrl: "/support" });
+    expect(payload.urls).toBeUndefined();
     expect(JSON.stringify(payload)).not.toContain(HASH_A);
   });
 
@@ -1465,9 +1511,6 @@ describe("I7: the account-status gate refuses a suspended, banned or deletion-pe
   });
 });
 
-/** The ban expiry these pins use: far in the future, so the ban is active. */
-const BAN_EXPIRES_NEVER = new Date("2099-01-01T00:00:00.000Z");
-
 /**
  * Upsert the caller's `userProfiles` row at one lifecycle status (§13.2).
  *
@@ -1505,7 +1548,8 @@ async function seedProfileStatus(userId: ObjectId, status: string): Promise<void
  *
  * @param userId - The user to ban.
  * @param banExpires - The ban's expiry; `null` is a permanent ban, and a past
- *   instant is an expired (therefore over) ban. Defaults to the far future.
+ *   instant is an expired (therefore over) ban. Defaults to the far future, so
+ *   the ban is active.
  */
 async function seedBan(
   userId: ObjectId,
@@ -1513,7 +1557,7 @@ async function seedBan(
 ): Promise<void> {
   await app.db
     .collection("user")
-    .updateOne({ _id: userId }, { $set: { banned: true, banReason: "spam", banExpires } });
+    .updateOne({ _id: userId }, { $set: { banned: true, banReason: BAN_REASON, banExpires } });
 }
 
 /**
@@ -1737,11 +1781,12 @@ describe("I8: the fallbacks — a derivative that does not exist, an image whose
  * 201-item cap runs **before** the account gate, so a suspended caller's
  * oversized batch is a `413` and never a `423`.
  *
- * The refusal wire format is the orchestrator's F-G1 decision (2026-11-12):
- * the `user` label's own codes reach the wire — `423 account_banned` with the
- * ban details — instead of the flattened `403 forbidden` that `I7` currently
- * pins. Those three `I7` rows are stale and are re-pinned by the follow-up
- * (`ADR-0772`); this card adds rows and edits none.
+ * The refusal wire format is the Appendix A.1 envelope ADR-0772 pins — `423
+ * account_banned` with `{ banReason, banExpires }` for a live ban, `403
+ * forbidden` for the deletion states — and the `I7` describe holds the three
+ * base states. These rows hold the edges around them and the two answers the
+ * decision does not move: an expired ban is over (`200`), and the item cap
+ * still answers `413` before the account gate can run.
  */
 describe("I7b: the gate's breadth — ban expiry, the deletion states and the item cap", () => {
   it("still signs both kinds for a caller whose ban has already expired", async () => {
@@ -1804,9 +1849,10 @@ describe("I7b: the gate's breadth — ban expiry, the deletion states and the it
     expect(payload).toMatchObject({
       error: {
         code: "account_banned",
-        details: { banReason: "spam", banExpires: null },
+        details: { banReason: BAN_REASON, banExpires: null },
       },
     });
+    expect(payload.urls).toBeUndefined();
     expect(JSON.stringify(payload)).not.toContain(HASH_A);
   });
 
@@ -1830,6 +1876,7 @@ describe("I7b: the gate's breadth — ban expiry, the deletion states and the it
     expect(response.status).toBe(403);
     const payload = await body(response);
     expect(payload).toMatchObject({ error: { code: "forbidden" } });
+    expect(payload.urls).toBeUndefined();
     expect(JSON.stringify(payload)).not.toContain(HASH_A);
   });
 
