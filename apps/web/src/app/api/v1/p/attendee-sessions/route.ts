@@ -1,4 +1,4 @@
-import { ObjectId, type Db } from "mongodb";
+import type { Db, ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { buildAttendeeSessionCookie } from "@/server/attendee/session-cookie";
@@ -44,8 +44,8 @@ const createdSessionSchema = z.object({
   issuedAt: z.string(),
 });
 
-/** Milliseconds in one day. */
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
+/** Milliseconds in one second. */
+const MS_PER_SECOND = 1000;
 
 /** Seconds in one day. */
 const SECONDS_PER_DAY = 24 * 60 * 60;
@@ -112,8 +112,11 @@ export const POST = defineRoute({
     const settings = await getPlatformSettings({ db });
     const now = systemClock.now();
     const ttlDays = settings.retention.attendeeSessionDays;
-    const expiresAt = new Date(now.getTime() + ttlDays * MS_PER_DAY);
+    // One TTL source: the cookie's Max-Age and the row's expireAt cannot drift.
+    const ttlSeconds = ttlDays * SECONDS_PER_DAY;
+    const expiresAt = new Date(now.getTime() + ttlSeconds * MS_PER_SECOND);
     const token = generateAttendeeSessionToken();
+    const eventIds = await eventIdsFor(db, ctx.body.eventSlug);
 
     await platformRepo(db)
       .collection(COLLECTIONS.attendeeSessions)
@@ -121,7 +124,7 @@ export const POST = defineRoute({
         tokenHash: hashAttendeeSessionToken(token),
         claimedByUserId: null,
         claimedAt: null,
-        eventIds: await eventIdsFor(db, ctx.body.eventSlug),
+        eventIds,
         deviceFingerprint: deviceFingerprint(ctx.request),
         createdAt: now,
         lastSeenAt: now,
@@ -138,7 +141,7 @@ export const POST = defineRoute({
       headers: {
         "set-cookie": buildAttendeeSessionCookie({
           token,
-          maxAgeSeconds: ttlDays * SECONDS_PER_DAY,
+          maxAgeSeconds: ttlSeconds,
           secure: buildCookieOptions(getAppEnv()).useSecureCookies,
         }),
       },

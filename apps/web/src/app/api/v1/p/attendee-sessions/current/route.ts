@@ -1,4 +1,4 @@
-import { ObjectId, type Db } from "mongodb";
+import type { Db, ObjectId } from "mongodb";
 import { z } from "zod";
 
 import {

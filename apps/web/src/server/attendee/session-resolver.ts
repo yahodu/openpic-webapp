@@ -1,4 +1,4 @@
-import { ObjectId, type Db } from "mongodb";
+import type { Db, ObjectId } from "mongodb";
 
 import type { AttendeeSessionResolver } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
@@ -6,6 +6,7 @@ import { appError } from "@/server/http/errors";
 import { platformRepo } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
 
+import { ATTENDEE_COOKIE_NAME } from "./session-cookie";
 import { hashAttendeeSessionToken } from "./session-token";
 
 /**
@@ -59,7 +60,7 @@ function cookieToken(request: Request): string | null {
   }
   for (const pair of header.split(";")) {
     const separator = pair.indexOf("=");
-    if (separator > 0 && pair.slice(0, separator).trim() === "op_att") {
+    if (separator > 0 && pair.slice(0, separator).trim() === ATTENDEE_COOKIE_NAME) {
       return pair.slice(separator + 1).trim();
     }
   }
