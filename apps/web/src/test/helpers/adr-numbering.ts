@@ -812,11 +812,16 @@ const CONSUMERS_FIELD_PATTERN = /^-\s+\*\*Consumers:\*\*/;
 
 /**
  * Is `line` a `Consumers` field in a plausible but non-canonical shape — an
- * indented or `*`/`+` bullet, the colon outside the bold, no bullet, a plain
- * unbolded label, or a heading? Reported as `consumers-malformed`, so one
- * punctuation slip cannot silently switch the rule off for its record (finding
- * F2). Prose is not a field shape: once the bullet is gone the label must open
- * the line and, unless the line is a heading, carry its colon.
+ * indented or `*`/`+` bullet, a `>` blockquote level, an ordered-list marker,
+ * `__…__` bold, the colon outside the bold, no bullet, a plain unbolded label,
+ * or a heading? Reported as `consumers-malformed`, so one punctuation slip
+ * cannot silently switch the rule off for its record (finding F2).
+ *
+ * Recognition is deliberately wider than canonicality and the peels run in
+ * sequence, so the shapes compose: the caller has already ruled out the
+ * column-0 canonical form, hence anything recognized here is malformed by
+ * construction. Prose is not a field shape: once the markers are gone the label
+ * must open the line and, unless the line is a heading, carry its colon.
  */
 function isMalformedConsumersField(line: string): boolean {
   const trimmed = line.trim();
@@ -824,8 +829,12 @@ function isMalformedConsumersField(line: string): boolean {
     return true;
   }
 
-  const body = trimmed.replace(/^[-*+][ \t]+/, "").replace(/^\*+/, "");
-  return /^Consumers\*{0,2}\s*:/.test(body);
+  let body = trimmed;
+  while (body.startsWith(">")) {
+    body = body.slice(1).trimStart(); // one blockquote level
+  }
+  body = body.replace(/^(?:\d+[.)]|[-*+])[ \t]+/, "").replace(/^[*_]+/, "");
+  return /^Consumers[*_]{0,3}\s*:/.test(body);
 }
 
 /**

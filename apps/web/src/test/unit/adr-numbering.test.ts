@@ -1617,6 +1617,15 @@ const consumersMalformedCode = "consumers-malformed";
 /** A record no file of this tree carries: the F2 shape fixtures point at it. */
 const fixtureRecord0901 = "ADR-0901-consumers-shape-fixture.md"; // adr-fixture: fixture record name
 
+/**
+ * The shape-matrix fixtures (review finding F-A): a record no file of this tree
+ * carries, plus two records that deliberately share `0903` for the
+ * duplicate-number case — duplicate reporting stays `checkAdrNumbers`' job.
+ */
+const fixtureRecord0902 = "ADR-0902-consumers-shape-matrix.md"; // adr-fixture: fixture record name
+const fixtureRecord0903Alpha = "ADR-0903-consumers-dup-alpha.md"; // adr-fixture: fixture record name
+const fixtureRecord0903Beta = "ADR-0903-consumers-dup-beta.md"; // adr-fixture: fixture record name
+
 /** One `docs/adr` record as the accuracy sweep reads it: bare name + whole text. */
 function adrRecord(fileName: string, text: string): AdrRecordText {
   return { fileName, text };
@@ -2273,6 +2282,438 @@ describe("checkSourceAdrConsumers — a malformed Consumers field (finding F2)",
     expect(result.ok).toBe(false);
     expect(result.checkedReferences).toBe(0);
     expect(result.unlisted).toEqual([]);
+  });
+});
+
+/**
+ * The `Consumers` shape matrix (review finding F-A, the follow-up to F2's
+ * `consumers-malformed`). F2 pins the five slipping shapes the land review
+ * enumerated; every other shape measured at `11ec3d9` was unpinned, so a
+ * refactor of the classifier could change it silently. This block pins them.
+ *
+ * **Canonical-adjacent shapes still declare and stay silent.** The `\s+` after
+ * the bullet in the field pattern is load-bearing: several spaces after the
+ * dash and a tab after the dash are canonical, and trailing whitespace on the
+ * line changes nothing. A tightening to one literal space would only be noticed
+ * by the real tree, which carries 0 such lines, so it is pinned here instead.
+ *
+ * **A space before the colon is a slip, not a silence.** `- **Consumers :**`
+ * declares *and* reports `consumers-malformed` at that line: the record keeps
+ * hard-checking its citations while the slip fails the report.
+ *
+ * **Reporting is positional and per offending line.** A malformed entry carries
+ * the offending line's 1-based number inside the record — not the canonical
+ * field's line, and not a citation's line — one entry per offending line, and
+ * with a duplicate number the entry carries that record's own `file` and
+ * `record`. Duplicate numbering stays `checkAdrNumbers`' job.
+ *
+ * **Fences are not parsed** (review finding F-B). The classifier reads physical
+ * lines, so a column-0 canonical field inside a fenced sample declares, exactly
+ * as it did before F2 existed, while an indented field inside the fence is
+ * reported as `consumers-malformed`. No record in this tree carries either
+ * shape, so neither costs anything today.
+ */
+describe("checkSourceAdrConsumers — the Consumers shape matrix (review finding F-A)", () => {
+  it.each<[string, string[]]>([
+    [
+      "several spaces after the bullet",
+      ["- **Status:** Accepted", "-   **Consumers:** `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a tab after the bullet",
+      ["- **Status:** Accepted", "-\t**Consumers:** `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "trailing spaces on the line",
+      ["- **Status:** Accepted", "- **Consumers:** `apps/web/src/server/x.ts`   "],
+    ],
+  ])("declares, reports nothing and verifies the citation for %s", (_shape, recordLines) => {
+    // Arrange — the `\s+` after the bullet is what these three rows protect.
+    const records: AdrRecordText[] = [adrRecord(fixtureRecord0902, recordLines.join("\n"))];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 1,
+      declaredRecords: ["0902"],
+    });
+  });
+
+  it("reports a space before the colon, and keeps the record declaring", () => {
+    // Arrange — the colon is inside the bold but not glued to the label.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0902,
+        ["- **Status:** Accepted", "- **Consumers :** `apps/web/src/server/x.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — a slip reports, and does not switch enforcement off.
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0902,
+        line: 2,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.unlisted).toEqual([]);
+    expect(result.declaredRecords).toEqual(["0902"]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("reports the offending line, not the canonical field's line, when both are in the record", () => {
+    // Arrange — the canonical field sits on line 4 and the heading on line 256;
+    // the report must name 256 (1-based inside the record), not 4. The filler
+    // keeps that arithmetic visible instead of hidden in a loop.
+    const recordLines = [
+      "- **Status:** Accepted", // 1
+      "", // 2
+      "", // 3
+      "- **Consumers:** `apps/web/src/server/x.ts`", // 4
+      ...Array.from({ length: 251 }, () => ""), // 5-255
+      "## Consumers", // 256
+      "- `apps/web/src/server/x.ts`", // 257
+    ];
+    const records: AdrRecordText[] = [adrRecord(fixtureRecord0902, recordLines.join("\n"))];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — one entry, at the offending line, and the record still declares.
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0902,
+        line: 256,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.unlisted).toEqual([]);
+    expect(result.declaredRecords).toEqual(["0902"]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("reports one entry per offending line when a record carries two", () => {
+    // Arrange — an indented field and a dashless field, on lines 2 and 3.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0902,
+        [
+          "- **Status:** Accepted",
+          "  - **Consumers:** `apps/web/src/server/x.ts`",
+          "**Consumers:** `apps/web/src/server/x.ts`",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — both lines, in line order, and one record's worth of declaration.
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0902,
+        line: 2,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0902,
+        line: 3,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.declaredRecords).toEqual(["0902"]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("reports a malformed record by its own file and record when the number is duplicated", () => {
+    // Arrange — both records carry `0903`; only the first is canonical, and only
+    // the second is malformed. Duplicate numbering is not this guard's report.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0903Alpha,
+        ["- **Status:** Accepted", "- **Consumers:** `apps/web/src/server/x.ts`"].join("\n")
+      ),
+      adrRecord(
+        fixtureRecord0903Beta,
+        ["- **Status:** Accepted", "## Consumers", "", "- `apps/web/src/server/x.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0903", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — the entry points at the offending record, not at its twin.
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0903Beta,
+        line: 2,
+        number: "0903",
+        record: fixtureRecord0903Beta,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.declaredRecords).toEqual(["0903"]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("declares a canonical field inside a fenced code sample and reports nothing", () => {
+    // Arrange — pre-existing behaviour: fences are not parsed, so a column-0
+    // field inside a sample declares like any other.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0902,
+        ["```md", "- **Consumers:** `apps/web/src/server/x.ts`", "```"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 1,
+      declaredRecords: ["0902"],
+    });
+  });
+
+  it("reports an indented field inside a fenced code sample (review finding F-B)", () => {
+    // Arrange — the same sample, indented: a slip is a slip inside a fence too.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0902,
+        ["```md", "  - **Consumers:** `apps/web/src/server/x.ts`", "```"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0902,
+        line: 2,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.declaredRecords).toEqual(["0902"]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+});
+
+/**
+ * Residual `Consumers` shapes of the F2 class (review finding F-A) — measured at
+ * `11ec3d9` and each one silently unenforced (`declares: false`, `issues: []`,
+ * `ok: true`, `unlisted: 1`).
+ *
+ * **The decision: report them, and keep the record declaring.** The
+ * `Consumers:` adoption programme writes the field into 175 records by hand, and
+ * the point of F2 is that a punctuation slip must not switch enforcement off
+ * without a signal. So the GREEN widens *recognition* — never *canonicality*:
+ *
+ *   - a leading `>` blockquote marker is stripped per level, with the spaces
+ *     that follow it, before the rest of the line is classified;
+ *   - `__…__` bold around the label is the same field vocabulary as `**…**`;
+ *   - a `\d+[.)]` ordered-list marker stands where the canonical shape has its
+ *     `-` bullet.
+ *
+ * A widened match is **always** `consumers-malformed`: only `-` + `\s+` +
+ * `**Consumers:**` at column 0 is canonical, so a shape that merely normalizes
+ * to it (a blockquote bullet, an underscore-bold label) still fails the report
+ * and still declares — the F2 rule, applied to the wider vocabulary.
+ *
+ * The widened matcher must not reach prose: the label needs its colon, not just
+ * the word, or the real tree's nine prose mentions of `Consumers` would redden
+ * the citation sweep.
+ */
+describe("checkSourceAdrConsumers — residual Consumers shapes report instead of going silent (review finding F-A)", () => {
+  it.each<[string, string[]]>([
+    ["a blockquote bullet", ["> - **Consumers:** `apps/web/src/server/x.ts`"]],
+    ["a blockquote with an indented bullet", [">   - **Consumers:** `apps/web/src/server/x.ts`"]],
+    ["a nested blockquote bullet", ["> > - **Consumers:** `apps/web/src/server/x.ts`"]],
+    ["an underscore-bold label", ["- __Consumers:__ `apps/web/src/server/x.ts`"]],
+    ["an ordered-list label", ["1. **Consumers:** `apps/web/src/server/x.ts`"]],
+    ["an indented ordered-list label", ["  1. **Consumers:** `apps/web/src/server/x.ts`"]],
+  ])("reports consumers-malformed, and still declares, for %s", (_shape, fieldLines) => {
+    // Arrange — the field is on line 2 of the record, after the status line.
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0902, ["- **Status:** Accepted", ...fieldLines].join("\n")),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — the slip fails the report, and the record keeps hard-checking.
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0902,
+        line: 2,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.unlisted).toEqual([]);
+    expect(result.declaredRecords).toEqual(["0902"]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("reports the citation mismatch too when a blockquote field does not name the citing file", () => {
+    // Arrange — the field names `x.ts`; `y.ts` cites the record.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0902,
+        ["- **Status:** Accepted", "> - **Consumers:** `apps/web/src/server/x.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/y.ts",
+        text: "// a file the field does not name ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — one malformed entry and one mismatch in the same sorted array
+    // (by `file`, so the record name sorts before the citing path).
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0902,
+        line: 2,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+      {
+        code: consumerMismatchCode,
+        file: "apps/web/src/server/y.ts",
+        line: 1,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.unlisted).toEqual([]);
+    expect(result.verifiedReferences).toBe(0);
+  });
+
+  it("keeps prose that starts with the word Consumers silent", () => {
+    // Arrange — a widened classifier must not read an English sentence as a
+    // field: the label needs its colon, not just the word.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0902,
+        [
+          "- **Status:** Accepted",
+          "Consumers of this record are the OP-129 specs listed below.",
+          "- **Consumers:** `apps/web/src/server/x.ts`",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — the canonical field on line 3 declares; line 2 is prose.
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 1,
+      declaredRecords: ["0902"],
+    });
   });
 });
 
