@@ -59,7 +59,10 @@ import { join, posix, relative, sep } from "node:path";
  * stayed green. The accuracy rule is decidable only where a record states its
  * own consumers, so it is opt-in per record: a record carrying a `Consumers:`
  * field is hard-checked against every file that cites it, and a record without
- * one is counted as `unlisted-consumer` so the debt stays visible. See
+ * one is counted as `unlisted-consumer` so the debt stays visible. A token is
+ * read as written when that form names a swept file; only a token naming none is
+ * re-read with one trailing `:<suffix>` annotation stripped, because
+ * `…/uploads:link` is a real directory name (finding F-C3). See
  * {@link checkSourceAdrConsumers} and {@link checkRepositoryAdrConsumers}.
  *
  * @see docs/CONVENTIONS.md §11 (ADR numbering)
@@ -888,10 +891,17 @@ const MIN_EXPORTED_SYMBOL_LENGTH = 6;
 /**
  * Trim the punctuation a prose mention leaves on a path token. A trailing
  * `:<digits>` is a line annotation, trimmed after the punctuation so
- * `path.ts:42.` reduces to `path.ts`.
+ * `path.ts:42.` reduces to `path.ts`. A non-digit annotation (`path.ts:D1`) is
+ * stripped later and only when the literal token names no swept file — see
+ * {@link checkSourceAdrConsumers}.
  */
 function trimPathToken(token: string): string {
   return token.replace(/[.,;:]+$/, "").replace(/:\d+$/, "");
+}
+
+/** Strip one trailing `:<suffix>` annotation, e.g. `x.ts:D1` -> `x.ts`. */
+function stripTrailingAnnotation(token: string): string {
+  return token.replace(/:[A-Za-z0-9_-]+$/, "");
 }
 
 /** The last segment of a path, after POSIX normalization. */
@@ -1159,6 +1169,27 @@ export function checkSourceAdrConsumers(
   const uniqueBareNames = new Set(
     [...bareNameCounts].filter(([, count]) => count === 1).map(([name]) => name)
   );
+
+  // Literal first, annotation second: a token whose written form names a swept
+  // file is read as written, and only a token naming none is re-read with one
+  // trailing `:<suffix>` stripped. The order is load-bearing — `…/uploads:link`
+  // is a real directory, so stripping first would collapse it onto the
+  // colon-free sibling's directory and verify both files.
+  const normalizedSources = sources.map((source) => posix.normalize(source.path));
+  const namesAFile = (token: string): boolean =>
+    normalizedSources.some(
+      (path) => path === token || path.startsWith(`${token.replace(/\/+$/, "")}/`)
+    );
+  for (const entries of factsByNumber.values()) {
+    for (const entry of entries) {
+      entry.paths = entry.paths.map((token) =>
+        namesAFile(token) ? token : stripTrailingAnnotation(token)
+      );
+      entry.specifiers = entry.specifiers.map((candidate) =>
+        namesAFile(candidate) ? candidate : stripTrailingAnnotation(candidate)
+      );
+    }
+  }
 
   // Reported per record, not per citation: a malformed field in a record nobody
   // cites is still a failure (finding F2).
