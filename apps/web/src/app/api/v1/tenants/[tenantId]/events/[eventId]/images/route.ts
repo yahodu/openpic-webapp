@@ -1,71 +1,68 @@
 import { z } from "zod";
 
+import { getConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { eventActorAdmission } from "@/server/events/access";
 import { eventIdFromRequest } from "@/server/events/event-id";
+import { buildCursorPage, parsePageQuery } from "@/server/http/cursor";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
+import { toFieldErrors } from "@/server/http/validation";
+import {
+  eventImageListSchema,
+  toEventImageListItem,
+  type EventImageListAsset,
+  type EventImageListRow,
+} from "@/server/images/dto";
+import { buildEventImageListFilter } from "@/server/images/filters";
+import { createMediaSigner } from "@/server/media/signer";
 import { tenantRepo } from "@/server/repos";
 import { userAuth } from "@/server/tenancy/route-scope";
 import { tenantStage } from "@/server/tenancy/route-stage";
-import {
-  eventImageSchema,
-  toEventImage,
-  type EventImageAsset,
-  type EventImageRow,
-} from "@/server/uploads/event-image-dto";
 
 /**
- * `GET …/events/{eventId}/images` — the event's gallery, newest first (OP-124
- * E1; contract §4.4).
+ * `GET …/events/{eventId}/images` — the organizer's curation grid (OP-127 I1/I5,
+ * contract §4.4; ADR-0762 D1/D3/D4).
  *
- * Deliberately **minimal**: the page, the projected `EventImage` rows and the
- * `summary` totals the upload journey reads back ("GET images lists it"). The
- * full listing lane owns the cursor, the `status`/`visibility`/`batchId`
- * filters, the signed thumbnail URLs and the width/height hints — none of which
- * this route answers yet.
- *
- * shortcut: no cursor, no filters, no signed thumbnail URLs (§4.4); upgrade when
- * the gallery UI lands.
+ * Newest-first by `sequence` (the monotonic key a batch upload cannot tie),
+ * narrowed by the five documented filters and continued by the §0.8 compound
+ * cursor. Each item carries a §5.6-signed 24 h thumbnail minted per item, the
+ * asset's `imageMeta` dimensions so the grid reserves aspect ratio before load,
+ * and the durable `processing` state. A soft-deleted image is never listed; a
+ * hidden one is, unless the caller filters it out — hide is not delete. The
+ * `summary` mixes the event's cached counters with a live tally, marked
+ * `approximate` (§4.4).
  */
 
-/** The page ceiling (§4.4 default). */
+/** The §4.4 page size when the client omits `limit` (ADR-0762 F6). */
 const DEFAULT_LIMIT = 60;
 
-/** The §4.4 page block. */
-const pageSchema = z.object({
-  nextCursor: z.string().nullable(),
-  hasMore: z.boolean(),
-  limit: z.number().int().positive(),
+/** The five documented filters, validated at the wire. */
+const listQuerySchema = z.object({
+  status: z.enum(["queued", "processing", "done", "failed", "skipped"]).optional(),
+  visibility: z.enum(["visible", "hidden"]).optional(),
+  uploadedBy: z.string().optional(),
+  batchId: z.string().optional(),
+  sort: z.enum(["sequence_desc", "sequence_asc"]).optional(),
 });
 
-/** The §4.4 summary block. */
-const summarySchema = z.object({
-  total: z.number().int().nonnegative(),
-  done: z.number().int().nonnegative(),
-  queued: z.number().int().nonnegative(),
-  processing: z.number().int().nonnegative(),
-  failed: z.number().int().nonnegative(),
-  approximate: z.boolean(),
-});
+/** The `events` fields the summary reads. */
+interface EventCountersRow {
+  readonly counters?: {
+    readonly processedImageCount?: number;
+    readonly failedImageCount?: number;
+  };
+}
 
-/** The §4.4 listing body. */
-const imageListSchema = z.object({
-  data: z.array(eventImageSchema),
-  page: pageSchema,
-  summary: summarySchema,
-});
-
-/** The `media_assets` fields the projection reads. */
-interface AssetRow {
+/** The `media_assets` fields the grid projection reads. */
+interface AssetRow extends EventImageListAsset {
   readonly _id: { toHexString(): string };
-  readonly storage: EventImageAsset;
 }
 
 export const GET = defineRoute({
   route: "/api/v1/tenants/:tenantId/events/:eventId/images",
-  response: imageListSchema,
+  response: eventImageListSchema,
   auth: (ctx, request) => userAuth()(ctx, request),
   tenant: tenantStage({ admission: eventActorAdmission(2) }),
   handler: async (ctx) => {
@@ -75,38 +72,80 @@ export const GET = defineRoute({
       throw appError("internal_error");
     }
     const eventId = eventIdFromRequest(ctx.request, { segmentFromEnd: 2 });
+    const params = new URL(ctx.request.url).searchParams;
 
-    const rows = (await tenantRepo(tenantId, db)
-      .collection(COLLECTIONS.eventImages)
-      .find({ eventId })
-      .sort({ sequence: -1 })
-      .limit(DEFAULT_LIMIT)
-      .toArray()) as unknown as EventImageRow[];
+    const parsed = listQuerySchema.safeParse({
+      status: params.get("status") ?? undefined,
+      visibility: params.get("visibility") ?? undefined,
+      uploadedBy: params.get("uploadedBy") ?? undefined,
+      batchId: params.get("batchId") ?? undefined,
+      sort: params.get("sort") ?? undefined,
+    });
+    if (!parsed.success) {
+      throw appError("validation_failed", { details: { fields: toFieldErrors(parsed.error) } });
+    }
+
+    const pageQuery = parsePageQuery(params, { defaultLimit: DEFAULT_LIMIT });
+    const query = buildEventImageListFilter({
+      eventId,
+      ...parsed.data,
+      cursor: pageQuery.cursor,
+    });
+
+    const images = tenantRepo(tenantId, db).collection(COLLECTIONS.eventImages);
+    const rows = (await images
+      .find(query.filter)
+      .sort(query.sort)
+      .limit(pageQuery.limit + 1)
+      .toArray()) as unknown as EventImageListRow[];
 
     const assets = (await tenantRepo(tenantId, db)
       .collection(COLLECTIONS.mediaAssets)
       .find({ _id: { $in: rows.map((row) => row.assetId) } })
       .toArray()) as unknown as AssetRow[];
-    const assetById = new Map(assets.map((asset) => [asset._id.toHexString(), asset.storage]));
+    const assetById = new Map(assets.map((asset) => [asset._id.toHexString(), asset]));
 
-    const data = rows.map((row) =>
-      toEventImage(row, assetById.get(row.assetId.toHexString()) ?? { bytes: 0, contentType: "" })
-    );
-    const countOf = (status: string): number =>
-      data.filter((image) => image.processing.status === status).length;
+    const signer = createMediaSigner({
+      currentSecret: getConfig().media.signingSecretCurrent,
+    });
+    const page = buildCursorPage(rows, pageQuery.limit, (row) => ({
+      c: String(row.sequence),
+      i: row._id.toHexString(),
+    }));
+    const data = page.items.map((row) => {
+      const asset = assetById.get(row.assetId.toHexString());
+      if (asset === undefined) {
+        throw appError("internal_error");
+      }
+      return toEventImageListItem(row, asset, signer);
+    });
+
+    const [event, queued, processing] = await Promise.all([
+      tenantRepo(tenantId, db)
+        .collection(COLLECTIONS.events)
+        .findOne({ _id: eventId }) as Promise<EventCountersRow | null>,
+      images.countDocuments({ eventId, deletedAt: null, "processing.status": "queued" }),
+      images.countDocuments({ eventId, deletedAt: null, "processing.status": "processing" }),
+    ]);
+    if (event === null) {
+      throw appError("internal_error");
+    }
+    const done = event.counters?.processedImageCount ?? 0;
+    const failed = event.counters?.failedImageCount ?? 0;
 
     return {
       body: {
         data,
-        page: { nextCursor: null, hasMore: false, limit: DEFAULT_LIMIT },
+        page: { nextCursor: page.nextCursor, hasMore: page.hasMore, limit: pageQuery.limit },
         summary: {
-          // The page's own length: `hasMore` is always false, so they agree.
-          total: data.length,
-          done: countOf("done"),
-          queued: countOf("queued"),
-          processing: countOf("processing"),
-          failed: countOf("failed"),
-          approximate: false,
+          // The §4.4 invariant is structural: the four buckets are the total, so
+          // counter drift shows as an approximate figure rather than a gap.
+          total: done + failed + queued + processing,
+          done,
+          queued,
+          processing,
+          failed,
+          approximate: true,
         },
       },
     };
