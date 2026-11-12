@@ -1631,6 +1631,36 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} â€
     expect(await outboxRows("collab.member.removed")).toHaveLength(1);
     expect(await outboxRows("collab.member.removed.ack")).toHaveLength(1);
   });
+
+  it("F1: two concurrent removals of the same member notify each party exactly once", async () => {
+    const invitee = await signInVerified(makeIdentity("op121-f1-double-invitee"));
+    const { fixture, invitationId } = await acceptedMember("op121-f1-double", invitee);
+
+    // A double click (or a client retry racing the first request): both calls
+    // pass the pre-transaction lookup, so only one may perform the removal.
+    const [first, second] = await Promise.all([
+      removeMember(
+        removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+      ),
+      removeMember(
+        removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+      ),
+    ]);
+
+    // The loser is told the same thing as the winner: the removal is done.
+    expect(first.status).toBe(204);
+    expect(second.status).toBe(204);
+
+    // One removal, one notification per party â€” the idempotency half.
+    expect(await outboxRows("collab.member.removed")).toHaveLength(1);
+    expect(await outboxRows("collab.member.removed.ack")).toHaveLength(1);
+
+    const removed = (await eventMembers(fixture)).find(
+      (row) => row.userId === invitee.userId.toHexString()
+    );
+    expect(removed?.status).toBe("removed");
+    expect((await storedInvitation(invitationId))?.status).toBe("revoked");
+  });
 });
 
 /* -------------------------------------------------------------------------- */

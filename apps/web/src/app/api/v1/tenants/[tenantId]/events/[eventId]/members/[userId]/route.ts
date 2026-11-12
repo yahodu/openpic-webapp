@@ -91,11 +91,18 @@ export const DELETE = defineRoute({
     }
 
     await withTransaction(async (session) => {
-      await members.updateOne(
-        { _id: member._id },
+      // The predicate decides the winner: two `DELETE`s that both passed the
+      // lookup above race here, and only the one that flips `revokedAt` from
+      // null performs the removal (and therefore notifies). The loser answers
+      // the same `204`, so a double click stays one effect, one notification.
+      const removal = await members.updateOne(
+        { _id: member._id, revokedAt: null },
         { $set: { status: "removed", revokedAt: now, updatedAt: now } },
         { session }
       );
+      if (removal.matchedCount === 0) {
+        return;
+      }
 
       // Revoke the invitation that granted the seat, so it cannot be re-accepted.
       await tenantRepo(tenantKey, db)
