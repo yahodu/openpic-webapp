@@ -839,16 +839,17 @@ function isMalformedConsumersField(line: string): boolean {
 
 /**
  * A repo-relative path token in a record, e.g. `apps/web/src/server/x.ts`.
- * Brackets are part of the path (Next.js route segments), so they stay in.
+ * Brackets and `:` are part of the path (Next.js route segments), so they stay
+ * in.
  */
-const RECORD_PATH_TOKEN_PATTERN = /(?:apps|packages)\/[A-Za-z0-9_./[\]-]+/g;
+const RECORD_PATH_TOKEN_PATTERN = /(?:apps|packages)\/[A-Za-z0-9_./[\]:-]+/g;
 
 /**
  * A module specifier in a record, e.g. `` `@/server/rate-limit/classes` ``. A
  * trailing `[...]` group is an annotation (`@/api/v1/p/attendee-sessions[/current]`
  * names the route and its child), so it is stripped before resolution.
  */
-const RECORD_SPECIFIER_TOKEN_PATTERN = /@\/[A-Za-z0-9_./[\]-]+/g;
+const RECORD_SPECIFIER_TOKEN_PATTERN = /@\/[A-Za-z0-9_./[\]:-]+/g;
 
 /** A backticked identifier in a record, e.g. `` `AUTH_ERROR_CODES` ``. */
 const RECORD_BACKTICKED_NAME_PATTERN = /`([A-Za-z_$][A-Za-z0-9_$]*)`/g;
@@ -873,9 +874,13 @@ const SOURCE_EXPORT_LIST_PATTERN = /\bexport\s*\{([^}]*)\}/g;
  */
 const MIN_EXPORTED_SYMBOL_LENGTH = 6;
 
-/** Trim the punctuation a prose mention leaves on a path token. */
+/**
+ * Trim the punctuation a prose mention leaves on a path token. A trailing
+ * `:<digits>` is a line annotation, trimmed after the punctuation so
+ * `path.ts:42.` reduces to `path.ts`.
+ */
 function trimPathToken(token: string): string {
-  return token.replace(/[.,;:]+$/, "");
+  return token.replace(/[.,;:]+$/, "").replace(/:\d+$/, "");
 }
 
 /** The last segment of a path, after POSIX normalization. */
