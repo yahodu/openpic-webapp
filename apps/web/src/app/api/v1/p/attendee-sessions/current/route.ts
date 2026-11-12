@@ -16,7 +16,7 @@ import { platformRepo } from "@/server/repos";
 
 /**
  * `GET /api/v1/p/attendee-sessions/current` — the attendee's own session
- * (OP-129, contract §1.5; ADR-0769, ADR-0770).
+ * (OP-129, contract §1.5; ADR-0780, ADR-0781).
  *
  * Guarded with the `attendee` label, which admits the `op_att` cookie, the
  * `X-Attendee-Session` header **or** a signed-in user. The body carries the
