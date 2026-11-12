@@ -1345,8 +1345,12 @@ export interface AdrRecordLinkResult {
  * title (`](x.md "title")`, not part of the file name) or angle brackets
  * (`](<x.md>)`, which are markdown's way to quote the target).
  *
- * shortcut: only a double-quoted title is peeled; widen if a record ever uses
- * `'title'` or `(title)`.
+ * The angle brackets are stripped and the first whitespace-separated token is
+ * the target, so all three markdown title styles (`"title"`, `'title'`,
+ * `(title)`) are dropped and a `#fragment` stays part of the target.
+ *
+ * shortcut: a target that itself contains a space is cut at the first one;
+ * widen if a record ever needs such a name.
  */
 const MARKDOWN_LINK_TEXT_PATTERN = /\]\(([^)]*)\)/g;
 
