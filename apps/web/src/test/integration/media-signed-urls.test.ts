@@ -1900,8 +1900,14 @@ describe("I7b: the gate's breadth — ban expiry, the deletion states and the it
       workspace.eventId.toHexString()
     );
 
-    // Assert
+    // Assert — the cap refuses the whole request, so this row states the same
+    // no-signed-object invariant as every other refusal row: no `urls` key and
+    // no content hash anywhere in the body (the cap runs before the account
+    // gate, ADR-0772 D3, so no signed object is minted either way).
     expect(response.status).toBe(413);
-    expect((await errorOf(response)).code).toBe("payload_too_large");
+    const payload = await body(response);
+    expect((payload.error as ErrorBody).code).toBe("payload_too_large");
+    expect(payload.urls).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain(HASH_A);
   });
 });
