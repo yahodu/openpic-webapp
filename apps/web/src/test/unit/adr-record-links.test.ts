@@ -70,16 +70,22 @@ import { checkAdrRecordLinks, checkRepositoryAdrLinks } from "../helpers/adr-rec
  * fixture is the same shape: `0781-something-else.md` while 0781's real record
  * exists.
  *
- * **Trunk expectation — `ok: true`, with the census as a floor.** The sweep
- * landed as a ratchet over the **32 dangling occurrences of 16 distinct
+ * **Trunk expectation — `ok: true`, with the census as a pair of floors.** The
+ * sweep landed as a ratchet over the **32 dangling occurrences of 16 distinct
  * targets** it found in other lanes' records, and the repair that retargeted
  * every one of them retired the list in the same change (the F2 coupling: a
  * ratchet fails on a repair as well as on an add). The real-tree case therefore
- * asserts the empty report, and pins the census as a **floor**, never an
- * equality: a minted record with a `Relates to` line raises `checkedLinks` by
- * design, so an equality pin would couple every ADR to this file — the same
- * friction, one direction over. The floor plus the non-vacuity bounds below are
- * what keep a silently narrowed sweep from passing.
+ * asserts the empty report, and pins the census as floors, never an equality:
+ * a minted record with a `Relates to` line raises `checkedLinks` by design, so an
+ * equality pin would couple every ADR to this file — the same friction, one
+ * direction over. One floor is not enough (`ADR-0302` §7): a prose repair that
+ * replaces a link with its record's name is legitimate and lowers
+ * `checkedLinks` by a few, so the link floor carries headroom (`>= 860`, ~2.4%
+ * below the 881 census at the retirement), and a **population floor**
+ * (`scannedRecords >= 292`) is what catches a sweep that reads fewer records
+ * than the tree holds, which no headroom-bearing link floor can see. The
+ * non-vacuity bounds below remain the contract's own floor — they catch a
+ * near-empty sweep, never a narrowed one.
  *
  * **Ordering.** `issues` is sorted by `file`, then `line`, then `target`, so the
  * same records in any input order produce one report.
@@ -824,24 +830,33 @@ describe("checkRepositoryAdrLinks — the repository sweep", () => {
     // Act
     const result = checkRepositoryAdrLinks(repoRoot);
 
-    // Assert — non-vacuity first: the sweep must see the whole record population,
-    // not a narrow slice of it.
+    // Assert — non-vacuity first: the contract's own bound, so a near-empty
+    // sweep cannot pass. It does not guard against a *narrowed* one; the two
+    // floors at the end do that.
     expect(result.scannedRecords).toBeGreaterThanOrEqual(250);
     expect(result.checkedLinks).toBeGreaterThanOrEqual(800);
 
     // The inherited debt — 32 occurrences of 16 distinct targets — was repaired
     // record by record, so the honest end state is the empty report. The ratchet
-    // is retired, not re-pinned: a new dangling link fails here, and the bounds
-    // above keep a silently narrowed sweep from passing vacuously.
+    // is retired, not re-pinned: a new dangling link fails here.
     expect(result.ok).toBe(true);
     expect(result.issues).toEqual([]);
 
-    // Anti-shrink floor — the drift-free replacement for the retired
-    // `checkedLinks: 881` equality. 881 is the census at the retirement; minting
-    // a record raises it and a record with no link leaves it unchanged, so an
-    // added ADR no longer reddens this case. It fails only if the sweep reads
-    // less than it read then — a narrowed sweep, or records deleted in bulk.
-    expect(result.checkedLinks).toBeGreaterThanOrEqual(881);
+    // Anti-shrink floors — the drift-free replacement for the retired
+    // `checkedLinks: 881` equality, in the two-value form ADR-0302 §7 records.
+    // 881 was the census at the retirement; minting a record with a link raises
+    // the count and a record with no link leaves it unchanged, so an added ADR
+    // no longer reddens this case. The link floor carries ~2.4% headroom because
+    // a prose repair that replaces a link with its record's name is legitimate
+    // and lowers the count by a few — the F2 two-link repair reads 879, and a
+    // floor pinned at the census re-coupled every docs fix to this file.
+    expect(result.checkedLinks).toBeGreaterThanOrEqual(860);
+
+    // The population floor is the guard a headroom-bearing link floor cannot
+    // be. Reading 280 of the 292 records still counts 866 links, above `>= 860`,
+    // while `scannedRecords` falls. A record is never deleted, so this fails
+    // only on a deletion or on a narrowed read — never on a mint.
+    expect(result.scannedRecords).toBeGreaterThanOrEqual(292);
   });
 
   it("throws an ENOENT error when the root has no docs/adr directory", () => {
