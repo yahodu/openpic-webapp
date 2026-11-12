@@ -136,3 +136,88 @@ This record takes the OP-122 lane's `Next free` value read from `docs/adr/README
 every `origin` branch immediately before committing. The ledger cell advances to `0686` in the
 same commit, and the index row and the lane note are appended with it. No number outside the lane
 range is touched.
+
+## Review sign-off — round 1 (card `t_1d32d0a2`, artifact lens)
+
+**Verdict: APPROVED WITH FINDINGS.** The review read the branch head `a04ca8d` and the
+delivery landed as the squash `11103b7`; the review record is the PR #427 verdict comment. No
+inline comment was needed, because every finding is a coverage gap or a documentation
+over-claim rather than a defect on a line. The lens was the **artifact**: the diff was read
+cold before the handoff narrative, then the deliverable was run independently, so every count
+below is the reviewer's own measurement at `a04ca8d` and not a transcription of the handoff.
+
+**No section of this record is retracted** — §Context, §1, §2, §3, §Alternatives,
+§Consequences, §Evidence and §Number allocation all stand as written. Two amendments are
+recorded and neither retracts a decision: §3's quoted docblock wording was refined after this
+review by the F3 follow-up ([ADR-0687](ADR-0687-op122-queue-nack-doc-delay-exception.md),
+§2 stands), and §1's clean-path ledger sentence is correct by reading but was pinned only for
+the first message of a batch — finding F1.
+
+### The reviewed bytes are what shipped
+
+`git diff --stat a04ca8d 11103b7` is **empty**, so every line cited here is a line on the
+trunk. `11103b7` is an ancestor of `origin/main`, and `gh pr view 427 --json state` answers
+`MERGED` (`mergedAt` 2026-11-11T22:57:20Z, `mergeCommit` `11103b7`).
+
+### Acceptance criteria → evidence (measured at `a04ca8d`)
+
+| Card criterion                                                                                                                                                                        | Evidence                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **F4** — `memoryWorkQueue.nack` moves the entry to the back; `inFlight`, `visibleAtMs` and the unknown-id no-op unchanged                                                             | `queue-followup-pins.test.ts` **18 passed (18)**, including the case "memory redelivers a nacked message after the message enqueued behind it", which asserts the served order `[second, first]`; the one-message delay case in `queue-memory-adapter.test.ts` stays green (`queue-memory-adapter` + `queue-envelope` + the ADR guard → **70 passed (70)**) |
+| **F6** — one poison payload no longer costs the batch: whole-batch parse, rescue of every §10.4-valid payload in popped order **before** the raise, poison dropped, exactly one drift | the three F6 pins pass inside the same 18; they assert the wire (what the next `claim` serves), that a third `claim` is `[]`, and exactly one `error` `queue.upstream_contract_violation` with `provider: "upstash"`, `operation: "claim"` and `queueKey: "q:image"`                                                                                        |
+| The two docs that named the divergence are corrected                                                                                                                                  | the `nack` doc in `work-queue.ts` and the `memory-queue.ts` header both read the shared position rule; ADR-0683 §4 is untouched (frozen — the supersession is recorded here instead of an edit)                                                                                                                                                             |
+| Ledger exact on the clean path                                                                                                                                                        | the returned messages map each `messageId` to **its own** payload — correct by reading, but pinned only for the first message of a batch: finding F1                                                                                                                                                                                                        |
+| ADR + ledger                                                                                                                                                                          | ADR-0685 present, lane cell `0685` → `0686`, index row and lane note in the same commit; the ADR-numbering guard **29 passed (29)**                                                                                                                                                                                                                         |
+| Static gates                                                                                                                                                                          | `tsc -p apps/web/tsconfig.json --noEmit` exit **0**; ESLint **0 errors / 0 warnings** on the three touched source files; `prettier --check` clean on the five touched paths                                                                                                                                                                                 |
+| Full suites                                                                                                                                                                           | `pnpm test:unit` → **147 files / 2375 passed \| 3 skipped**; `pnpm test:int` → **98 files / 905 passed**                                                                                                                                                                                                                                                    |
+| Trunk                                                                                                                                                                                 | PR Checks **15/15 pass**; the `main` CI run at `11103b7` (`43115994001`) is `success`                                                                                                                                                                                                                                                                       |
+| No test, fixture or mock touched                                                                                                                                                      | the squash names exactly five paths: three production modules + ADR-0685 + `docs/adr/README.md`                                                                                                                                                                                                                                                             |
+| Honesty audit                                                                                                                                                                         | no fixture-shaped hardcoding, no `APP_ENV` or test-environment conditional, no `@ts-ignore` or lint suppression, no debug logging in the diff                                                                                                                                                                                                               |
+
+**Playwright / e2e was not run**, deliberately: no route, page or UI file is touched, the e2e
+suite needs a full `next build` standalone plus two servers, and no PR CI job runs it. The
+five-path diff reaches no client surface, so the browser suite could not observe anything this
+delivery changes.
+
+### Findings
+
+Each finding was reproduced by a probe at the reviewed head rather than transcribed, and none
+of them contradicts a pinned behaviour — which is why the delivery is approved. The probes:
+F1, the ledger write replaced by `payload: valid[0].payload`, leaves the pins plus
+`queue-upstash.test.ts` at **26 passed (26)**; F2, an `RPOP` returning a poison between two
+valid payloads with the second rescue `LPUSH` answering `503`, yields a retryable
+`TransportError` (code `http`, status `503`), **zero** drift records, and a next `claim` that
+serves only the payload re-pushed first — the other valid payload is lost; F3 and F4 by
+reading the `nack` doc against the adapter's ignored delay, and the rescue loop's unparsed
+`command(...)` call.
+
+| #      | Severity | Finding                                                                                                                                                                                                                                                                                                                                                                              | Route                    |
+| ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
+| **F1** | Medium   | The `claimed` ledger's per-message exactness is unpinned for any message but the first of a multi-message batch. The probe leaves 26 of 26 queue cases green. That regression makes `nack(secondId)` re-push a duplicate of the first job while the second job's bytes were already removed by `RPOP` — a silent duplicate plus a silent loss.                                       | TEST `t_50ddcec8`        |
+| **F2** | Medium   | A broker failure **mid-rescue** is unpinned. Durability is F7 (OP-136 I1 `t_b25b384f`); what had no pin is the classification — the rescue loop throws before the drift is raised, so a partial rescue is a retryable transport error with no drift record at all.                                                                                                                   | TEST `t_50ddcec8`        |
+| **F3** | Low      | The `nack` doc now promises "claimable no sooner than the delay … the same rule in every adapter", while the Upstash adapter ignores `delaySeconds` (F5, frozen by ADR-0684 §3) and re-pushes at once. Only the position rule is universal, so the port contract a worker author reads over-claims. Comment-only correction; §3's wording is refined, §2's position decision stands. | GREEN `t_a8787672`       |
+| **F4** | Info     | The rescue `LPUSH` goes through `command(...)` rather than `query(pushResultSchema, ...)`, so it bypasses the module's "every answer is Zod-parsed" invariant (`nack` already did, pre-existing). The answer is a list length with no consumer, so a pin would freeze behaviour with no value.                                                                                       | recorded here, no card   |
+| —      | Info     | A batch holding two invalid payloads of different classes raises only the first class's message — by design (ADR-0685 §1 decision 3) and previously unpinned.                                                                                                                                                                                                                        | folded into `t_50ddcec8` |
+| —      | Info     | The poison payload's bytes are unrecoverable from the drift record. Already recorded in ADR-0684 and ADR-0685 as the future dead-letter card, so nothing is added here.                                                                                                                                                                                                              | recorded here, no card   |
+
+No Critical or High finding. The delivery adds no route, no authorization surface and no user
+input; the bearer token reaches no log field or error body, and the drift record carries the
+provider, the operation and the queue key only.
+
+### Post-review status
+
+The review is complete and the GREEN is merged (`11103b7`). Every finding was routed before
+this sign-off was written: **F1 and F2** to the TEST card `t_50ddcec8`, **F3** to the GREEN
+card `t_a8787672` (gated on the TEST card), while **F4** and the two Info items are recorded
+here only — no card, because a pin for either would freeze behaviour with no consumer.
+
+Both follow-ups have since landed on the trunk, and their own records are the authority for
+what they did: `t_50ddcec8` shipped [ADR-0686](ADR-0686-op122-queue-claimed-ledger-and-mid-rescue-pins.md)
+as `e774a73`, taking `queue-followup-pins.test.ts` from 18 to 21 cases (the per-message
+ledger, the mid-rescue classification and the two-invalid-classes case), and `t_a8787672`
+shipped [ADR-0687](ADR-0687-op122-queue-nack-doc-delay-exception.md) as `3173ee0`
+(comment-only: the docblock now guarantees the position in every adapter and names the delay
+exception honestly). Re-run on that settled trunk: **21 passed (21)** over the pins and
+**98 files / 908 passed** over the full integration project. This sign-off consumes **no** ADR
+number and leaves `docs/adr/README.md` byte-identical, so the lane's `Next free` cell stays
+where the follow-ups left it.
