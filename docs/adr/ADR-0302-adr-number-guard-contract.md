@@ -397,14 +397,15 @@ its own consumers, so participation is **declared per record, never inferred**.
 ### 10. Module layout (2026-11-12)
 
 This is §10, not §7 as the implementing card calls it: §7–§9 are already the
-invariant sections the §1 table points at, and renumbering an accepted record's
-sections would break every cross-reference that names them.
+invariant sections the `## Decision` table points at, and renumbering an
+accepted record's sections would break every cross-reference that names them.
 
 The guard was one module, `adr-numbering.ts` (1568 lines), and the six invariants
 were appended to it as sections. Three lanes landed inside one hour (#494, #462,
 #497) and the third merge conflicted in the invariant list, which was duplicated
-in the helper docblock, in the spec docblock and in §1. It is now one module per
-invariant, and the list has one home: the §1 table above.
+in the helper docblock, in the spec docblock and in the `## Decision` table. It
+is now one module per invariant, and the list has one home: the `## Decision`
+table above.
 
 - `adr-numbering.ts` is the **frozen barrel**. It still owns invariants (i) and
   (ii), it composes (iii) into `checkAdrDirectory`, and it re-exports the whole
@@ -428,8 +429,36 @@ invariant, and the list has one home: the §1 table above.
   (repository root, temp-directory factories, the lane-ledger factory, and the
   `tempDirs` registry each spec's `afterEach` cleans up).
 
-**The rule: a new invariant is a new module + its spec + one row in the §1
-table.** It is never another section appended to `adr-numbering.ts`.
+**Measured size at this layout.** `wc -l` over the seven helper modules and the five
+specs at `79e132e`, the split's reviewed head:
+
+```sh
+wc -l apps/web/src/test/helpers/adr-numbering.ts apps/web/src/test/helpers/adr-guard-types.ts \
+  apps/web/src/test/helpers/adr-lane-ranges.ts apps/web/src/test/helpers/adr-source-references.ts \
+  apps/web/src/test/helpers/adr-consumers.ts apps/web/src/test/helpers/adr-record-links.ts \
+  apps/web/src/test/helpers/adr-guard-fixtures.ts apps/web/src/test/unit/adr-numbering.test.ts \
+  apps/web/src/test/unit/adr-source-references.test.ts apps/web/src/test/unit/adr-record-links.test.ts \
+  apps/web/src/test/unit/adr-lane-ranges.test.ts apps/web/src/test/unit/adr-consumers.test.ts
+```
+
+```
+helpers: adr-numbering 223, adr-guard-types 284, adr-lane-ranges 148, adr-source-references 266,
+         adr-consumers 547, adr-record-links 217, adr-guard-fixtures 83      → all < 700  ✓
+specs:   adr-numbering 397, adr-source-references 462, adr-record-links 844,
+         adr-lane-ranges 849                                                  → all < 900  ✓
+         adr-consumers.test.ts 2543                                           → 2543 > 900  ✗
+```
+
+Every helper module is under 700 lines and four of the five specs under 900. **A spec is
+capped at ~900 lines, except invariant (v)'s**, which stays one file: the layout rule is one spec
+per module, and (v) carries the largest case set (64 `ADR-NNNN` tokens, 40+ cases), so splitting it
+again would put one invariant across two specs. The measured figures are the delivered layout;
+**this section supersedes the ~900-line spec bound the decomposition carried** — the bound, not the
+delivery, was miscalibrated — in the same superseding form as the pre-merge command below. A spec
+other than (v)'s crossing ~900 lines is still a layout smell.
+
+**The rule: a new invariant is a new module + its spec + one row in the
+`## Decision` table.** It is never another section appended to `adr-numbering.ts`.
 
 **Pre-merge command — supersedes ADR-0300 §12 item 12.** ADR-0300 item 12 pins
 the single-spec run; the guard is now five specs, so the pre-merge run is
@@ -700,3 +729,108 @@ contract and mints no number.
 - The census figures this record carried before the amendment (`1250` / `174` / `149` / `1101` / `16` at `960bb02`)
   were accurate for their head but named no commit; removing them, rather than pinning a head, is the option the
   card sanctioned and the one that cannot go stale.
+
+## Review sign-off (module split, round 1 — artifact lens, landed)
+
+### Scope
+
+The module split delivered on PR [#521](https://github.com/yahodu/openpic-webapp/pull/521) — card
+`t_85523d51` (GREEN: one module per invariant behind a frozen barrel) with the RED spec split
+reviewed alongside it. Reviewed at head `79e132e`, landed as squash `1a492ae`. This section records
+that round only; it amends no contract and mints no number.
+
+### Verdict and landing proof
+
+- **APPROVED (round 1, artifact lens).**
+- The reviewed bytes are the shipped bytes: `79e132e` and `1a492ae` share the tree hash
+  `4793dafa7577a54b69f6c2d57abeeacc7874b65c`.
+- 14/14 PR checks pass at `79e132e`.
+
+### Verification, measured by the reviewer
+
+- **Surface unchanged:** 22 exported names before and after, with identical signatures (probe over
+  the barrel with aliases resolved). The 13 extra `^export` names live in the five modules and are
+  intra-family plumbing.
+- **Specs moved, not rewritten:** the `describe`/`it` multiset is identical (174 distinct lines) and
+  `expect(` counts 299 = 299.
+- **Green on that tree:** `adr-*.test.ts` **218 passed (218)**; full unit **2772 passed | 3 skipped
+  (2775)**; `tsc`, `eslint` and `prettier` clean; exact-head CI 14/14.
+- **Census (measured by the reviewer):** links 881/292; references 1256 checked / 176 exempt;
+  consumers 1256 checked, 0 dangling, 149 verified, 1107 unlisted, 16 declared, 0 issues. That is
+  **+5 checked references and +5 unlisted against the pre-split trunk `3e268a0` (1251/1102)** and
+  **+6 against the branch base `daf054a` (1250/1101)**: the split adds nine source files whose
+  docblocks cite this record, and the guard sweeps its own modules. Direction and cause recorded —
+  this is not a behaviour change.
+- **Merge resolution:** main's `#529` (`3e268a0`) reframe was carried verbatim into the moved block
+  in `adr-consumers.test.ts` (five lines, `diff` against main empty).
+
+### Findings
+
+- **F1** — the census delta above. Recorded, no code change.
+- **F2** — invariant (v)'s spec at 2543 lines against the 900-line bound. Recorded in §10 above: the
+  delivery stands and the bound was miscalibrated.
+- **F3** — the "§1 table" cross-reference pointed one block early. Fixed in §10 and in the six
+  docblocks; the table itself did not move.
+- **F5** — §10's "floor, never an equality" rule versus the spec's still-equality pin. Closed by
+  `t_af27bac3` → `t_0fb1fa25` before this card ran.
+
+### Post-review status
+
+Follow-ups are carried by card, never by an ADR number that is still in flight: `t_af27bac3` →
+`t_0fb1fa25` (the census-floor pair — done, squash `ad17a9a`), `t_bd371d4d` (the two-link repair),
+`t_03cfe3db` (this card: the §10 exception, the cross-reference and both sign-offs), and PR #525.
+
+## Review sign-off (F1b census floors, artifact + execution lens)
+
+### Verdict and landing proof
+
+- **Verdict: APPROVED** (round 1, artifact + execution lens). **Card:** `t_0fb1fa25` · **PR:**
+  [#532](https://github.com/yahodu/openpic-webapp/pull/532) · **Reviewed head:** `d6699b3`
+  **Squash:** `ad17a9a` — trees identical (`5bbd2239…` both), branch cut off the squash parent
+  `103290f`, so the shipped bytes are the reviewed bytes. Two files: `adr-record-links.test.ts`
+  (+32/−17) and this record's §7 (+19/−1). `docs/adr/README.md` and ADR-0300 byte-identical; 292
+  records, 0 duplicate numbers.
+
+### What it decided
+
+§7's single floor at the retirement census (`>= 881`) reddened a _repair_: card `t_bd371d4d` removes
+exactly two links, so the census reads 879 and the floor failed (`expected 879 to be greater than or
+equal to 881`). The replacement is a pair — `checkedLinks >= 860` (2.4 % headroom, tolerates prose
+repairs) plus `scannedRecords >= 292` (exact population; a record is never deleted, so it fails only
+on a deletion or a narrowed read).
+
+### Measured by the reviewer
+
+In a throwaway worktree at `ad17a9a` (probe specs deleted):
+
+- base `881/292` → 28 passed;
+- one temp record with one link `882/293` → 28 passed;
+- the F2 two-link repair `879/292` → 28 passed, and the same tree under the retired `>= 881` →
+  `1 failed`;
+- a narrowed sweep (280 of 292 records) `866/280` → `1 failed` on the population floor while 866
+  stays above 860, which is why the pair and not one number is the form;
+- a link-parser gap with all 292 records counted gives 866 (green) at 12 records unparsed, 863
+  (green) at 20, and 859 (red) at 22 — the residual headroom band, recorded as Info.
+
+### Green on that tree
+
+Focused spec `28 passed (28)`; `adr-*` glob `218 passed (218)`; `adr-numbering.test.ts`
+`29 passed (29)`; full unit `2772 passed | 3 skipped (2775)`; `prettier --check` clean; exact-head CI
+15/15.
+
+### Findings, all Info, no code change
+
+- The handoff's "moves zero reference tokens" is off by two (`checkRepositoryAdrReferences` 1257 →
+  1259, consumers unlisted 1108 → 1110, the two new citations of this record).
+- The residual parser-gap band above.
+- This record takes no new row and no new number, per the lane's ledger convention.
+- Card `t_bd371d4d`'s body still carries its original placeholder worktree path (its board row and
+  a comment carry the right one).
+
+### Follow-ups
+
+By card id, never by an in-flight ADR number: `t_bd371d4d` (the F2 repair, now green under the pair —
+no number to bump), `t_03cfe3db` (this card: §10 exception, the §1 cross-reference, and both
+sign-offs), `t_0fb1fa25` (closed by `ad17a9a`).
+
+Nothing in §7 is retracted by this section: it records the form the floors take from here on.

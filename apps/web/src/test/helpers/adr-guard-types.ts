@@ -2,7 +2,8 @@
  * Shared types and comparators for the ADR-number guard.
  *
  * The guard is one module per invariant behind the frozen barrel
- * `adr-numbering.ts`; the six invariants are tabulated once, in `0302` §1.
+ * `adr-numbering.ts`; the six invariants are tabulated once, in `0302`
+ * (`## Decision`, the six-row invariant table).
  * Everything here is read by two or more of the invariant modules, or by the
  * specs directly: the report and issue shapes (a spec imports six of them from
  * this path), the ADR file-name pattern and its digit extractor (invariants

@@ -11,8 +11,9 @@ import {
 
 /**
  * ADR guard, invariant (iv) — the guard's six invariants are tabulated once, in
- * `ADR-0302` §1. This file owns one of them: every `ADR-NNNN` reference inside
- * a source file must resolve to a `docs/adr/ADR-NNNN-*.md` file.
+ * `ADR-0302` (`## Decision`, the six-row invariant table). This file owns one of
+ * them: every `ADR-NNNN` reference inside a source file must resolve to a
+ * `docs/adr/ADR-NNNN-*.md` file.
  */
 
 /**
