@@ -1,4 +1,5 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * Mechanical ADR-number guard for `docs/adr/` (review finding R-1, OP-96).
@@ -12,16 +13,22 @@ import { readdirSync } from "node:fs";
  * instead of a reviewer:
  *
  *   1. no two in-scope files share an `ADR-NNNN` number;
- *   2. every in-scope `ADR-*.md` file name is well-formed.
+ *   2. every in-scope `ADR-*.md` file name is well-formed;
+ *   3. no two rows of the reserved-range ledger in `docs/adr/README.md` reserve
+ *      intersecting closed ranges (`lane-range-overlap`, ADR-0300 §10).
  *
- * Everything else — whether a number sits inside its lane's reserved range, and
- * whether the number is already used on `origin/main` — stays a review-time
- * obligation: the range ledger is prose in `docs/adr/README.md`, and parsing
- * prose in CI is brittle.
+ * The third check parses exactly one table shape from the ledger: a pipe row
+ * whose second cell is a closed `` `NNNN`–`NNNN` `` pair. It cannot see a
+ * *file* whose number sits inside another lane's range — the guard has no
+ * file→lane map, and a lane's `Next free` cell is not its range end — so range
+ * *membership* and `origin/main` freshness stay review-time obligations
+ * (`docs/CONVENTIONS.md` §11). Range *disjointness* no longer is.
  *
  * @see docs/CONVENTIONS.md §11 (ADR numbering)
  * @see docs/adr/ADR-0300-adr-number-range-allocation-policy.md
+ * @see docs/adr/ADR-0302-adr-number-guard-contract.md
  * @see apps/web/src/test/unit/adr-numbering.test.ts
+ * @see apps/web/src/test/unit/adr-lane-ranges.test.ts
  */
 
 /**
@@ -42,9 +49,11 @@ const IN_SCOPE_ADR_NAME_PATTERN = /^ADR-.*\.md$/;
 export interface AdrNumberIssue {
   /**
    * `duplicate` — two or more well-formed file names share one number;
-   * `malformed` — one in-scope file name does not match the strict pattern.
+   * `malformed` — one in-scope file name does not match the strict pattern;
+   * `lane-range-overlap` — two ledger rows reserve intersecting closed ranges
+   * (ADR-0300 §10), reported with `number: null` and the two `holders`.
    */
-  code: "duplicate" | "malformed";
+  code: "duplicate" | "malformed" | "lane-range-overlap";
 
   /** The shared four-digit prefix, e.g. `"0146"`; `null` when unparseable. */
   number: string | null;
@@ -192,11 +201,96 @@ export function checkAdrNumbers(fileNames: string[]): AdrCheckResult {
 }
 
 /**
+ * One row of the reserved-range ledger in `docs/adr/README.md` (ADR-0300).
+ * `start`/`end` are inclusive and have their leading zeros dropped.
+ */
+export interface LaneRange {
+  /** The first cell, trimmed verbatim, e.g. `"OP-126 uploads lane"`. */
+  holder: string;
+
+  /** The first number of the block, e.g. `760` for `` `0760` ``. */
+  start: number;
+
+  /** The last number of the block, e.g. `779` for `` `0779` ``. */
+  end: number;
+}
+
+/**
+ * The range cell of a reserved-range row: a closed pair of four-digit numbers
+ * in backticks, `–` (U+2013) or `-` as the separator, spaces allowed. Anything
+ * else — a single backticked number, the open-ended `` `0700`+ … `` pool cell, a
+ * non-four-digit pair — is not a reservation.
+ */
+const LANE_RANGE_CELL_PATTERN = /^`(\d{4})`\s*[–-]\s*`(\d{4})`$/;
+
+/**
+ * Parse the closed ranges out of the reserved-range ledger's markdown.
+ *
+ * Row-shape based, not heading-scoped: a table row *is* the reservation, and
+ * the heading carries a date that is edited more often than the row shape. Only
+ * a line starting with `|` whose second cell is a closed `` `NNNN`–`NNNN` ``
+ * pair counts; everything else is skipped, never thrown on. Document order is
+ * preserved (the ledger is not numerically ascending).
+ *
+ * @param markdown - The text of `docs/adr/README.md`, or any fragment of it.
+ * @returns One entry per closed reserved-range row; `[]` for text with none.
+ * @example
+ * ```ts
+ * parseLaneRanges("| OP-126 uploads lane | `0760`–`0779` | `0771` |");
+ * // [{ holder: "OP-126 uploads lane", start: 760, end: 779 }]
+ * ```
+ */
+export function parseLaneRanges(markdown: string): LaneRange[] {
+  return markdown.split("\n").flatMap((line) => {
+    const cells = line.split("|");
+    const holder = cells[1];
+    const cell = cells[2]?.trim();
+    const match = cell === undefined ? null : LANE_RANGE_CELL_PATTERN.exec(cell);
+    if (!line.startsWith("|") || holder === undefined || match === null) {
+      return [];
+    }
+    const [, start, end] = match;
+    return [
+      {
+        holder: holder.trim(),
+        start: Number.parseInt(start ?? "", 10),
+        end: Number.parseInt(end ?? "", 10),
+      },
+    ];
+  });
+}
+
+/**
+ * One `lane-range-overlap` issue per pair of reserved rows whose **closed**
+ * ranges intersect (touching neighbours are disjoint). Holders are sorted so
+ * the report does not depend on ledger row order.
+ */
+function findLaneRangeOverlaps(markdown: string): AdrNumberIssue[] {
+  const ranges = parseLaneRanges(markdown);
+
+  return ranges.flatMap((left, index) =>
+    ranges
+      .slice(index + 1)
+      .filter((right) => left.start <= right.end && right.start <= left.end)
+      .map((right) => ({
+        code: "lane-range-overlap" as const,
+        number: null,
+        files: [left.holder, right.holder].sort(compareStrings),
+      }))
+  );
+}
+
+/**
  * Read exactly one directory and apply {@link checkAdrNumbers} to its entries.
  *
  * The read is synchronous and **never recurses**: subdirectory entries are
  * dropped, so a nested `archive/` copy of an ADR cannot produce a phantom
  * duplicate.
+ *
+ * When the directory carries a `README.md`, its reserved-range ledger is parsed
+ * as well and one `lane-range-overlap` issue is added per intersecting pair
+ * (see {@link parseLaneRanges}). A missing README, or one with no parseable
+ * row, adds nothing.
  *
  * @param dir - Absolute or relative path to the ADR directory to check.
  * @returns The same report shape as {@link checkAdrNumbers}.
@@ -211,5 +305,14 @@ export function checkAdrDirectory(dir: string): AdrCheckResult {
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name);
 
-  return checkAdrNumbers(fileNames);
+  const numbering = checkAdrNumbers(fileNames);
+  const readmePath = join(dir, "README.md");
+  if (!existsSync(readmePath)) {
+    return numbering;
+  }
+
+  const issues = [...numbering.issues, ...findLaneRangeOverlaps(readFileSync(readmePath, "utf8"))];
+  issues.sort(compareIssues);
+
+  return { ok: issues.length === 0, issues };
 }

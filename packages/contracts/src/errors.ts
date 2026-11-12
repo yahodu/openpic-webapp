@@ -48,10 +48,16 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
  * codes are appended to the client-facing enum ({@link API_ERROR_CODES}) and
  * transported from their own table so both remain exact. Append-only, like
  * every other code.
+ *
+ * OP-129 appends `attendee_session_expired` (contract §1.5 / Appendix A.1,
+ * `401`, details `{ recreateUrl }`): an anonymous attendee token whose session
+ * lapsed is a distinct failure from a missing one, so the client can tell "your
+ * 30 days are up, re-create" from "you sent nothing" (ADR-0781).
  */
 export const AUTH_ERROR_CODES = [
   "authentication_required",
   "session_expired",
+  "attendee_session_expired",
   "account_incomplete",
   "admin_2fa_required",
   "account_banned",

@@ -1,3 +1,27 @@
+## [1.53.0](https://github.com/yahodu/openpic-webapp/compare/v1.52.2...v1.53.0) (2026-11-12)
+
+### Features
+
+- **adr:** OP-96 reject intersecting lane ranges and start blocks above the in-flight range end ([#448](https://github.com/yahodu/openpic-webapp/issues/448)) ([d85de6f](https://github.com/yahodu/openpic-webapp/commit/d85de6fac334ef9feb67a3a9c05219ece9718a7f))
+
+## [1.52.2](https://github.com/yahodu/openpic-webapp/compare/v1.52.1...v1.52.2) (2026-11-11)
+
+### Bug Fixes
+
+- **queue:** OP-122 move the retry to the back and contain a poison payload ([#427](https://github.com/yahodu/openpic-webapp/issues/427)) ([11103b7](https://github.com/yahodu/openpic-webapp/commit/11103b7739c971ed3e09bad3f68d4cd258d59b40))
+
+## [1.52.1](https://github.com/yahodu/openpic-webapp/compare/v1.52.0...v1.52.1) (2026-11-11)
+
+### Bug Fixes
+
+- **queue:** OP-122 validate the pointer before the wire and bound the Upstash request ([#421](https://github.com/yahodu/openpic-webapp/issues/421)) ([3a60f33](https://github.com/yahodu/openpic-webapp/commit/3a60f332625810872ef6d3d0f1c6fdca340e0f5f))
+
+## [1.52.0](https://github.com/yahodu/openpic-webapp/compare/v1.51.0...v1.52.0) (2026-11-11)
+
+### Features
+
+- **queue:** OP-122 implement the WorkQueue port, envelope and Upstash adapter ([#418](https://github.com/yahodu/openpic-webapp/issues/418)) ([5f28acd](https://github.com/yahodu/openpic-webapp/commit/5f28acd9345213caabbf55a37555f66e699943b5))
+
 ## [1.51.0](https://github.com/yahodu/openpic-webapp/compare/v1.50.1...v1.51.0) (2026-11-11)
 
 ### Features
