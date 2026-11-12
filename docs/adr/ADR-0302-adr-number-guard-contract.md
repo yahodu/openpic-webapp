@@ -178,3 +178,77 @@ range membership and `origin/main` freshness stay review-time.
   _policy_ and says so ("this record is the policy, not the guard"); keeping the
   guard's contract separate lets the boundary change without rewriting the
   policy, and matches the "one decision per record" rule.
+
+## Review sign-off (RED rounds 1–2, execution lens)
+
+- **Verdicts: round 1 — CHANGES REQUESTED (one High finding); round 2 — APPROVED.** Nothing in
+  §Decision is retracted: the round-1 finding was inside the RED's spec, not in this contract, and
+  the GREEN closed it before the guard landed. Recorded here, inside the delivered ADR, so the
+  sign-off consumes no new ADR number.
+- **Reviewer:** `openpic-webapp-reviewer` (card `t_2aaa8a18`) · **RED card:** `t_e23bb540` ·
+  **GREEN card:** `t_94a437c4` · **PR:** [#448](https://github.com/yahodu/openpic-webapp/pull/448) ·
+  **Branch:** `OP-96-task-adr-lane-range-guard` · **Reviewed heads:** `440b00b` (round 1) →
+  `d327e47` (round 2).
+
+### Scope
+
+The sign-off covers the RED deliverable of card `t_e23bb540`: the pins for `parseLaneRanges` and
+for the `lane-range-overlap` report shape that later became §6. That card delivered them on PR
+#448 as a **draft, RED-by-design**. The draft itself was never merged — the GREEN card `t_94a437c4`
+promoted the same PR, added the implementation, ADR-0300 §10, this §6 and the README bullets, and
+the guard review + land card `t_c8727284` approved and squash-merged it as `d85de6f`. "Never
+merged" therefore describes the pre-GREEN draft only, not PR #448 as a whole.
+
+### Round 1 (artifact lens) — CHANGES REQUESTED, one High finding
+
+- **F1 (High, spec brittleness).** The real-ledger case pinned the ledger's then-last row,
+  `OP-122 queue lane 0680`–`0699`. Any new lane row inserted above the pool row therefore turned
+  the guard's own spec red while the guard still reported the ledger clean — the pin would have
+  blocked an allocation the guard correctly accepted.
+- **Measured.** With a faithful stub: `54 passed (54)`. Inserting `| OP-129 attendee identity lane | 0780–0798 | 0782 |` above the pool row: `1 failed | 53 passed`.
+- The finding was in the pin, not in the contract: §6 as written needed no change.
+
+### Round 2 (execution lens) — APPROVED
+
+- **F1 closed** by deriving the last closed row from the file (`closedRows()`) instead of naming it. The reviewer re-ran the same insert at **both ends** of the table; both stayed `54 passed (54)`, while the pre-fix spec failed the same probe.
+- The `TS2532` follow-on fix in `d327e47` (`noUncheckedIndexedAccess` on the derived-row helper)
+  weakens no assertion.
+- **Red state on the reviewed head** (`d327e47`): `adr-numbering.test.ts 3 failed | 34 passed (37)`, `adr-lane-ranges.test.ts 17 failed (17)`, and the full unit project `20 failed | 2380 passed | 3 skipped` with only those two specs. `lint`, `secret-scan`, `audit`, `audit-dev`, `env-changes`, branch-name, PR-title and CodeQL green; `unit_test` red by design on exactly those 20 cases.
+- **Contract untouched.** The specs' only removed lines were one import and four docblock lines;
+  `checkAdrNumbers` and `parseAdrNumber` bodies were not edited.
+
+### The acceptance proof, measured in a throwaway worktree
+
+- An intersecting row, or the live bug itself (uploads rows `0700`–`0779` with OP-129 still at
+  `0769`–`0788`), turns `finds no intersecting pair among the repository's reserved ranges` **and**
+  the delivered `checkAdrDirectory(realAdrDir)` case red: `2 failed | 52 passed`.
+- The destination state (uploads `0700`–`0779`, OP-129 `0780`–`0798`, pool `0799`+) is
+  `54 passed (54)`, and that is the ledger `main` now carries.
+- That measured bite is why the lane repair card `t_da4088d2` was gated on the guard: the guard
+  cannot be green on a ledger that still carries the live overlap.
+
+### Recorded, no change requested
+
+- The RED spec pins the real ledger **by row shape**, not by the `### Reserved ranges` heading —
+  the heading carries a date that is re-worded more often than the rows are written.
+- `ranges[0]` stays positional by convention in the overlap cases.
+- The derived last-row assertion is near-redundant with the count check, but still catches a wrong
+  `end`, so it was kept deliberately.
+- The helper is **exempt from the coverage gate**: `vitest.config.ts` `include` covers only
+  `packages/contracts/src/**`, `apps/web/src/app/api/**` and `apps/web/src/server/**`, and
+  `exclude` carries `**/*.test.ts`, `**/__tests__/**` and `**/test/**`; so no defensive branch had
+  to be deleted to hold 80 %.
+- **F1 (Low) from the guard's land review `t_c8727284`** — recorded, with no change to §6. A
+  range-shaped ledger row that does not parse is skipped silently: an inverted `0780`–`0760` cell
+  parses as `{ start: 780, end: 760 }` and reports `{"ok":true,"issues":[]}` even with another
+  lane inside the intended span; an em dash and three-digit pairs behave the same way. That is
+  inside §6's documented "skipped, never thrown on" scope, so it is a limitation, not a contract
+  violation. Follow-ups: card `t_4f74644d` (TEST, pins `lane-range-malformed`) → card
+  `t_00321ecb` (GREEN, implements it and amends §6 in place).
+
+### Post-review status
+
+The open items are carried by card, never by an ADR number: `t_c8727284` (guard review + land —
+done, squash `d85de6f`), `t_4f74644d` → `t_00321ecb` (the Low F1 above), `t_da4088d2` (lane repair
+— done, delivered on PR #444), `t_b8c449d4` (OP-129 stack land — done, squash `741b607`). Nothing
+recorded above is retracted; those cards' own records document what followed.
