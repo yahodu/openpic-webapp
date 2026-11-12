@@ -58,8 +58,8 @@ interface EventSlugRow {
  *
  * @param db - The database to read `events` from.
  * @param eventIds - The row's `eventIds`.
- * @returns The active slugs, in `eventIds` order then row order; `[]` when
- * nothing active is bound.
+ * @returns The active slugs, in row order — `find({_id: {$in: […]}})` guarantees
+ * no cross-event order; `[]` when nothing active is bound.
  */
 async function eventSlugsFor(db: Db, eventIds: readonly ObjectId[]): Promise<string[]> {
   if (eventIds.length === 0) {
