@@ -126,6 +126,16 @@ from one call); the bulk route answers the contract's exact `{ requeuedCount }`.
 - One real test bug was found and fixed by the probe: the signer floors `exp` to whole
   seconds, so the 24 h bracket needed a one-second slack (`expected 1794532028000 to be
 greater than or equal to 1794532028611`).
+- **Re-verified at the delivered head (`1b48c44`), independent of the probes above.**
+  `tsc` printed exactly the five `TS2307` lines and no other diagnostic; with a
+  pass-through `resetProcessingForReprocess`, an empty `buildEventImageListFilter` and
+  three `501` route stubs the suites failed at assertion level — unit
+  **17 failed | 1 passed (18)** (the pass is the `maxAttempts`/`priority`/`modelKeys`
+  preservation case, which a pass-through satisfies by construction) and integration
+  **18 failed | 2 passed (20)** (the two passes are the pre-existing OP-124 list route's
+  `401`/`404`). Stub shapes differ from the earlier probe, so the pass counts differ; the
+  discriminating pins behave the same. All stubs were deleted afterwards and
+  `…/images/route.ts` re-hashed to `sha256 94edab90…`.
 
 ## Open items handed to the GREEN / later lanes
 
