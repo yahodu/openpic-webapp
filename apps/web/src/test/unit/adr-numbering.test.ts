@@ -2859,8 +2859,8 @@ function colonRouteSources(): SourceFileText[] {
  *
  * The token class is the whole change: nothing here asks the guard to resolve a
  * dynamic segment, and no fixture of this block exists on disk — `records` and
- * `sources` are in-memory, so the availability of the real `ADR-0721` record
- * (adr-fixture: it declares no `Consumers` field) is irrelevant to these rows.
+ * `sources` are in-memory, so the real `ADR-0721` (adr-fixture: it declares no
+ * `Consumers` field) has no bearing on these rows; nothing here reads a file.
  */
 describe("checkSourceAdrConsumers — a colon-bearing path token (review finding F-C)", () => {
   it("keeps the colon-free sibling verified when the record names it by path (control)", () => {
