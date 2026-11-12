@@ -6,6 +6,7 @@ import {
   type InvitationRow,
 } from "@/server/collaboration/invitation-dto";
 import { projectInvitation } from "@/server/collaboration/invitation-access";
+import { closeInvitationAffordance } from "@/server/collaboration/invitation-transition";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { emitDomainEvent } from "@/server/domain/domain-events";
@@ -121,15 +122,7 @@ export const DELETE = defineRoute({
       // "Mark the in-app actions unavailable" (§2.3): the invitee's feed row for
       // this invitation must stop offering accept/reject now that the link is
       // dead. A replay changes nothing, so it runs only on the transition.
-      await tenantRepo(tenantKey, db)
-        .collection(COLLECTIONS.notifications)
-        .updateMany(
-          {
-            "actionTarget.kind": "invitation",
-            "actionTarget.id": invitationId.toHexString(),
-          },
-          { $set: { "actionTarget.state": "closed", actions: [], updatedAt: now } }
-        );
+      await closeInvitationAffordance(db, invitationId.toHexString(), now);
     }
 
     const row = (await invitations.findOne(scoped)) as InvitationRow | null;

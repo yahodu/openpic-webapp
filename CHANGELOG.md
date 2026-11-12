@@ -1,3 +1,9 @@
+## [1.55.0](https://github.com/yahodu/openpic-webapp/compare/v1.54.1...v1.55.0) (2026-11-12)
+
+### Features
+
+- **collaboration:** OP-121 accept/reject invitations across channels and remove members ([#415](https://github.com/yahodu/openpic-webapp/issues/415)) ([93e4318](https://github.com/yahodu/openpic-webapp/commit/93e43184817c6b771b8ce1822d48862c6b511ee0)), closes [#414](https://github.com/yahodu/openpic-webapp/issues/414)
+
 ## [1.54.1](https://github.com/yahodu/openpic-webapp/compare/v1.54.0...v1.54.1) (2026-11-12)
 
 ### Bug Fixes
