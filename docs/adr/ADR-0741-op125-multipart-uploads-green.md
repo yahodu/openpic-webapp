@@ -8,8 +8,8 @@
 - **Branch:** `OP-125-task-multipart-uploads-green` (based on the pins branch
   `OP-125-task-multipart-uploads-red`, head `7da2b48`)
 - **Pins:** [ADR-0740](ADR-0740-op125-multipart-uploads-red.md)
-- **Consumes:** [ADR-0520](ADR-0520-op112-object-storage-port-red.md) /
-  [ADR-0521](ADR-0521-op112-object-storage-port-green.md) (the storage port and
+- **Consumes:** [ADR-0580](ADR-0580-op112-object-storage-port-red.md) /
+  [ADR-0581](ADR-0581-op112-object-storage-port-green.md) (the storage port and
   the handle service), [ADR-0700](ADR-0700-op123-upload-config-batch-resolve-red.md)
   (batch-resolve), [ADR-0720](ADR-0720-op124-single-put-complete-link-only-red.md)
   / [ADR-0721](ADR-0721-op124-single-put-complete-link-only-green.md) (single

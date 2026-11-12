@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-10-25
 - **Card:** OP-106 GREEN (`t_b08b6d61`) · **Branch:** `OP-106-task-subscription-read-red` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_8f332485`
-- **Relates to:** [ADR-0400](ADR-0400-op106-subscription-read-red.md) (the RED contract this GREEN implements), [ADR-0360](ADR-0360-op104-entitlements-usage-endpoints-red.md) / [ADR-0361](ADR-0361-op104-entitlements-usage-endpoints-green.md) (the sibling read view and the role-gate shape this reuses), [ADR-0340](ADR-0340-op103-entitlements-red.md) / [ADR-0341](ADR-0341-op103-entitlements-green.md) (the string-`tenantId` convention for `subscriptions` rows), [ADR-0260](ADR-0260-op100-tenant-provisioning-red.md) (the reusable tenant stage), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
+- **Relates to:** [ADR-0400](ADR-0400-op106-subscription-read-red.md) (the RED contract this GREEN implements), ADR-0360 / ADR-0361 (unlanded on `main`: they live only on the unmerged `OP-104-task-entitlements-usage-endpoints` branch) (the sibling read view and the role-gate shape this reuses), [ADR-0340](ADR-0340-op103-entitlements-red.md) / [ADR-0341](ADR-0341-op103-entitlements-green.md) (the string-`tenantId` convention for `subscriptions` rows), [ADR-0260](ADR-0260-op100-tenant-provisioning-red.md) (the reusable tenant stage), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §3.2 (subscription), §3.3 (the `owner`-only mutations the `actions` matrix reflects), §0.5 (envelopes), §0.15 (never-return) · **Schema:** §14.3
 
 ## Context

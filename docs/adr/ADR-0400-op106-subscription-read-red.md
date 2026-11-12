@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-10-25
 - **Card:** OP-106 RED (`t_8f332485`) · **Branch:** `wt/t_8f332485` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_8f332485`
-- **Relates to:** [ADR-0360](ADR-0360-op104-entitlements-usage-endpoints-red.md) / [ADR-0361](ADR-0361-op104-entitlements-usage-endpoints-green.md) (the sibling read view this one sits beside), [ADR-0340](ADR-0340-op103-entitlements-red.md) / [ADR-0341](ADR-0341-op103-entitlements-green.md) (the string-`tenantId` convention for `subscriptions` rows), [ADR-0260](ADR-0260-op100-tenant-provisioning-red.md) (the reusable tenant stage), [ADR-0280](ADR-0280-op101-tenant-members-red.md) (the owner-only gate shape), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
+- **Relates to:** ADR-0360 / ADR-0361 (unlanded on `main`: they live only on the unmerged `OP-104-task-entitlements-usage-endpoints` branch) (the sibling read view this one sits beside), [ADR-0340](ADR-0340-op103-entitlements-red.md) / [ADR-0341](ADR-0341-op103-entitlements-green.md) (the string-`tenantId` convention for `subscriptions` rows), [ADR-0260](ADR-0260-op100-tenant-provisioning-red.md) (the reusable tenant stage), [ADR-0280](ADR-0280-op101-tenant-members-red.md) (the owner-only gate shape), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §3.2 (subscription), §3.3 (checkout/upgrade/downgrade/cancel — the `owner`-only mutations the `actions` matrix reflects), §0.5 (envelopes), §0.15 (never-return) · **Schema:** §14.3
 
 ## Context

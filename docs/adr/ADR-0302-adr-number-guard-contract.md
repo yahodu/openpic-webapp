@@ -182,6 +182,39 @@ range membership and `origin/main` freshness stay review-time.
   (a consumed count, not a reservation bound — ADR-0300 §10), so that remains a
   review-time defect.
 
+### 7. The record link-target invariant (vi) (2026-11-12, finding F3)
+
+Every **markdown link target** inside a `docs/adr/ADR-*.md` record must name a
+file that exists in `docs/adr/`. The records were the one tree the source sweep
+never read, so a renamed record's links rot in silence: three OP-129 records
+pointed at pre-rename file names while every guard stayed green.
+
+- **Scope: records, not the ledger.** Only names matching `^ADR-.*\.md$` are
+  swept. `docs/adr/README.md` is deliberately out, because its ledger notes keep
+  pre-rename names on purpose, and flagging them would force the record of a
+  collision to stop describing it.
+- **Prose is not a link.** A fenced code block and an inline code span are
+  prose: a `](…)` shape inside backticks documents the shape, it does not
+  navigate.
+- **Exact leaf matching.** A target is read only from a markdown inline link
+  (`](target)`), any `#fragment` is stripped, and the leaf must carry no path
+  separator, start `ADR-` and end `.md`. It resolves only against a file name
+  **equal** to the leaf — never a prefix and never a number-only match, which is
+  how `0029-domain-event-outbox.md` (the record is the plural
+  `…-domain-events-outbox.md`) and `0306-red-branch-pipeline.md` (0306 is now
+  `0306-op101-stale-branch-deletion.md`, a different decision) passed as valid.
+- **The ratchet, and its retirement.** The invariant landed as a ratchet: the
+  real-tree case pinned the trunk's observed debt exactly — **32 occurrences of
+  16 distinct targets** in other lanes' records — so it failed on a new dangling
+  link _and_ on a repair, which coupled every docs fix to this file. The repair
+  retargeted all 16 and retired the list to `{ ok: true, issues: [] }` over 292
+  records and 881 links; the case keeps its non-vacuity bounds (`>= 250`
+  records, `>= 800` links), so a silently narrowed sweep still cannot pass. Two
+  targets had no live record to point at — `ADR-0360`/`ADR-0361`, the OP-104
+  lane's records, which exist only on the unmerged
+  `OP-104-task-entitlements-usage-endpoints` branch — and are named as prose
+  there.
+
 ## Consequences
 
 - The mechanical half of ADR-0300 is enforceable and gated: a duplicate number or
