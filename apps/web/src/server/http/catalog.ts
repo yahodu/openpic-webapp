@@ -383,6 +383,14 @@ export const EVENT_ERROR_TRANSPORT: Readonly<Record<EventErrorCode, ErrorCatalog
     retryable: false,
     message: "This access link has been rotated and no longer works.",
   },
+  // OP-130 (ADR-0784 §2): the public landing call's refusal for an event whose
+  // ordered purge has started (contract §6.1). `410`, not `409` — to an attendee
+  // the content is gone, and no write is being refused.
+  event_gone: {
+    status: 410,
+    retryable: false,
+    message: "This event is no longer available.",
+  },
 };
 
 /**

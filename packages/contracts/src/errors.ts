@@ -193,12 +193,18 @@ export type EntitlementErrorCode = (typeof ENTITLEMENT_ERROR_CODES)[number];
  * `{ computedRetentionExpiresAt }`) — a date edit whose recomputed gallery
  * retention lands in the past, so the write would purge the gallery at once
  * (§4.1, Appendix A line 3556).
+ *
+ * OP-130 appends `event_gone` (`410`) — the public landing call's refusal for
+ * an event whose ordered purge has started (§6.1). It is distinct from
+ * `event_deleting` (`409`): the attendee's QR must say the content is gone, not
+ * that a write is refused.
  */
 export const EVENT_ERROR_CODES = [
   "event_deleting",
   "event_already_started",
   "retention_would_expire_immediately",
   "access_link_revoked",
+  "event_gone",
 ] as const;
 
 /** A member of the closed {@link EVENT_ERROR_CODES} set. */
