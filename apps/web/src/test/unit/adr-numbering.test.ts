@@ -2639,6 +2639,71 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
     expect(result.verifiedReferences).toBe(1);
   });
 
+  /**
+   * The rows above are six **literal** shapes, and an alternation of exactly
+   * those six literals satisfies them while leaving every *composition* of the
+   * three recognition axes (blockquote level × list marker × bold-marker style)
+   * silently enforced-off — the F-A defect this block exists to close, one level
+   * up. These rows pin the compositions themselves: each one fails if the
+   * classifier peels the axes in any order other than fully, so a widened
+   * matcher has to be the sequential peel, not an enumerated list.
+   */
+  it.each<[string, string[]]>([
+    ["blockquote × ordered marker", ["> 1. **Consumers:** `apps/web/src/server/x.ts`"]],
+    ["blockquote × underscore bold", ["> - __Consumers:__ `apps/web/src/server/x.ts`"]],
+    [
+      "blockquote × asterisk bullet × underscore bold",
+      ["> * __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    ["ordered marker × underscore bold", ["1. __Consumers:__ `apps/web/src/server/x.ts`"]],
+    [
+      "blockquote × ordered marker × underscore bold",
+      ["> 1. __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "nested blockquote × ordered marker × underscore bold",
+      ["> > 1. __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    ["parenthesized marker × underscore bold", ["1) __Consumers:__ `apps/web/src/server/x.ts`"]],
+    [
+      "blockquote × plus bullet × underscore bold",
+      ["> + __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+  ])(
+    "reports consumers-malformed, and still declares, for the shape cross-product %s",
+    (_shape, fieldLines) => {
+      // Arrange — the field is on line 2 of the record, after the status line.
+      const records: AdrRecordText[] = [
+        adrRecord(fixtureRecord0902, ["- **Status:** Accepted", ...fieldLines].join("\n")),
+      ];
+      const sources: SourceFileText[] = [
+        {
+          path: "apps/web/src/server/x.ts",
+          text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+        },
+      ];
+
+      // Act
+      const result = checkSourceAdrConsumers(sources, records);
+
+      // Assert — the composition is reported once, and the record keeps
+      // hard-checking, exactly like its single-axis siblings.
+      expect(result.issues).toEqual([
+        {
+          code: consumersMalformedCode,
+          file: fixtureRecord0902,
+          line: 2,
+          number: "0902",
+          record: fixtureRecord0902,
+        },
+      ]);
+      expect(result.ok).toBe(false);
+      expect(result.unlisted).toEqual([]);
+      expect(result.declaredRecords).toEqual(["0902"]);
+      expect(result.verifiedReferences).toBe(1);
+    }
+  );
+
   it("reports the citation mismatch too when a blockquote field does not name the citing file", () => {
     // Arrange — the field names `x.ts`; `y.ts` cites the record.
     const records: AdrRecordText[] = [
