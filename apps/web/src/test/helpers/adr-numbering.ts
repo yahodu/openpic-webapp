@@ -835,7 +835,7 @@ function isMalformedConsumersField(line: string): boolean {
     return true; // after the peel, so a quoted heading cannot go silent
   }
 
-  body = body.replace(/^(?:\d+[.)]|[-*+])[ \t]+/, "").replace(/^[*_]+/, "");
+  body = body.replace(/^(?:\d+[.)]|[-*+]|#{1,6})[ \t]+/, "").replace(/^[*_]+/, "");
   return /^Consumers[*_]{0,3}\s*:/.test(body);
 }
 
