@@ -3,9 +3,9 @@ import { ObjectId, type Db } from "mongodb";
 import { COLLECTIONS } from "@/server/db/collections";
 import { appError } from "@/server/http/errors";
 import { platformRepo, tenantRepo } from "@/server/repos";
-import type { TenantAdmissionContext } from "@/server/tenancy/route-stage";
+import type { TenantAdmission, TenantAdmissionContext } from "@/server/tenancy/route-stage";
 
-import { eventIdAfterEventsSegment } from "./event-id";
+import { eventIdAfterEventsSegment, eventIdFromRequest } from "./event-id";
 
 /**
  * Event-actor admission for the global `/api/v1/events/{eventId}` mutation
@@ -86,15 +86,21 @@ export async function resolveEventActorRole(
  * row.
  *
  * @param context - The resolved workspace, the caller and the stage's `deny`.
+ * @param segmentFromEnd - How far from the path's end the event id sits: `2`
+ *   for `…/events/{eventId}/members`, `3` for
+ *   `…/events/{eventId}/uploads/batch-resolve` (ADR-0701). Omitted when the
+ *   route has no fixed suffix at all (`…/events/{eventId}`, the OP-121 detail
+ *   read): the id is then located by its `events` anchor, so a route whose
+ *   suffix length varies does not read the wrong segment.
  */
-export async function admitEventActor({
-  db,
-  request,
-  tenantId,
-  userId,
-  deny,
-}: TenantAdmissionContext): Promise<void> {
-  const eventId = eventIdAfterEventsSegment(request);
+export async function admitEventActor(
+  { db, request, tenantId, userId, deny }: TenantAdmissionContext,
+  segmentFromEnd?: number
+): Promise<void> {
+  const eventId =
+    segmentFromEnd === undefined
+      ? eventIdAfterEventsSegment(request)
+      : eventIdFromRequest(request, { segmentFromEnd });
   const tenantKey = tenantId.toHexString();
 
   const event = await tenantRepo(tenantKey, db)
@@ -107,6 +113,17 @@ export async function admitEventActor({
   if ((await resolveEventActorRole(db, eventId, tenantKey, userId)) === null) {
     deny("not_an_event_actor");
   }
+}
+
+/**
+ * The event-actor seam for a route whose `{eventId}` sits at a non-default
+ * offset from the end of the path.
+ *
+ * @param segmentFromEnd - The offset {@link eventIdFromRequest} should read.
+ * @returns A {@link TenantAdmission} for `tenantStage({ admission })`.
+ */
+export function eventActorAdmission(segmentFromEnd: number): TenantAdmission {
+  return (context) => admitEventActor(context, segmentFromEnd);
 }
 
 /** The authenticated principal the auth stage established. */
