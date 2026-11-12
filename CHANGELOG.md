@@ -1,3 +1,9 @@
+## [1.57.2](https://github.com/yahodu/openpic-webapp/compare/v1.57.1...v1.57.2) (2026-11-12)
+
+### Bug Fixes
+
+- **collaboration:** OP-121 make a concurrent double member removal notify once ([#485](https://github.com/yahodu/openpic-webapp/issues/485)) ([eadb35f](https://github.com/yahodu/openpic-webapp/commit/eadb35f16cfd319da1ec9d20f34b73caf71a3659))
+
 ## [1.57.1](https://github.com/yahodu/openpic-webapp/compare/v1.57.0...v1.57.1) (2026-11-12)
 
 ### Bug Fixes
