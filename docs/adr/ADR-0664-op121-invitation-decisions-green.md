@@ -242,3 +242,42 @@ open.
 
 **Nothing in the sections above is retracted.** No decision is re-pinned, no code changes
 with this sign-off, and the follow-up cards' own records document what followed.
+
+## Follow-up GREEN review sign-off (round 1, artifact lens — card `t_1238ed16`, 2026-11-12)
+
+**What landed, and at which bytes.** PR #489 squash-merged to `main` as
+`c125b9f45e8f35ee612c3aa8df33b5aa3eb6468a`; the reviewed head was
+`5c6060d3f0f013dd516799cc2df9a9e726d44a9d` (branch tip `ee31e56` plus one `origin/main` merge,
+`65af89c`). The branch tree OID and the squash tree OID are the same object,
+`b020b26d031645b5f4bedc37f85a5b5367b3f813`, so the merged bytes are the reviewed bytes. The PR carried
+the parent pin branch unchanged — `route.ts` plus `+121` lines of pins in
+`event-invitation-decisions.test.ts` — and no pin case was edited: that spec's blob is the same object
+(`65ae1d414b736a0a0745cbbae9bd417905f8499b`) at the pin head `69af42d`, at the branch tip `ee31e56`, at
+the reviewed head and at the squash.
+
+**What the fix is.** The `event member removed` info line (message, level and the
+`event`/`tenantId`/`eventId`/`userId` fields unchanged) is now gated on the winner flag the transaction
+returns (`false` on `matchedCount === 0`), and the pre-transaction lookup resolves the row by identity only
+(`revokedAt: null` dropped), so a repeat answers `204` per decision card `t_df7d6c3b`. The in-transaction
+`updateOne({ _id, revokedAt: null })` predicate, the emit pair, the invitation revoke, the `409` arm and the
+`204` shape are untouched.
+
+**RED → GREEN, measured.** RED at the pin head `69af42d`: `2 failed | 45 passed (47)` — P2
+`expected 404 to be 204`, P3 `expected [ …(2) ] to have a length of 1 but got 2`. GREEN at the reviewed
+head and on the merged tree: focused `47 passed (47)`, three consecutive runs; ADR guards `92/92` at
+`ee31e56` and `112/112` on the merged tree; `tsc` exit `0`; `prettier --check` and `eslint` clean on the
+touched file; trunk gates `14/14` at `5c6060d`.
+
+**Finding, by card id only.** A repeat `DELETE` on a member who was removed and then re-invited without
+accepting answers `204` and leaves that invitation `pending` and re-acceptable — probe
+`{"secondStatus":204,"invitationBefore":"pending","invitationAfter":"pending","memberStatus":"removed","revocations":1,"acceptAfterRemoval":200}`.
+That is the decided arm — `404` only when no membership row exists — and the in-transaction predicate was
+not to be touched, so it is **Low**, outside this record's pinned contract, and routed to the
+characterization-pin card `t_accf2ac8`, which also carries the product question of whether the repeat
+should revoke a pending invitation. Info only, no card: a committed-then-retried transaction could in
+principle cross the flag boundary and skip the winning log line — unreachable with this wrapper's
+`session.withTransaction`, because a retry implies an abort. The §2.3 contract paragraph is DOCS card
+`t_3a19b2e2`.
+
+**Nothing in the sections above is retracted.** No decision in the lane's earlier sections is re-pinned,
+no code changes come with this sign-off, and no ADR number of a still-unmerged follow-up is cited.
