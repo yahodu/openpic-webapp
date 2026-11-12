@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { Collection, ObjectId } from "mongodb";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { findForbiddenFields, maskEmail } from "@openpic/contracts";
 
@@ -1359,5 +1359,444 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId}", 
 
     expect(response.status).toBe(401);
     expect((await errorOf(response)).code).toBe("authentication_required");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* F1 — the member removal is three independent writes                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The removal (`…/members/{userId}`) performs three writes with **no**
+ * `withTransaction`: the `event_organizers` update, the revoke of the granting
+ * invitation, then the two `collab.member.removed` emits — while the accept
+ * branch of `invitation-transition.ts` puts its invitation write, its
+ * `event_organizers` upsert and its emit in one transaction. A crash between
+ * the first write and the last therefore leaves a half state, and nothing
+ * measured that until this block.
+ *
+ * ## Which half is pinned
+ *
+ * The shipped order is row → invitation → emit, so a failure in either later
+ * write cannot be answered `204`: the throw reaches the pipeline and the
+ * request fails `500 internal_error`. That is the half the implementation
+ * guarantees today, and it is pinned as an invariant:
+ *
+ * - a failed removal is **never** reported as a success (`204`), and
+ * - no `collab.member.removed` / `.ack` row reaches the outbox for it.
+ *
+ * The other half — "the request failed *and* the organizer row is untouched" —
+ * does **not** hold: write 1 has already committed when write 2 or the emit
+ * fails, so the two rows can disagree (removed member, invitation still
+ * `accepted`). So the strict two-option reading of the contract is *neither*;
+ * what is pinned is the weaker, true invariant above. The half-state is
+ * asserted below as a *characterization* of the shipped behaviour, because it
+ * is what makes the gap measurable, and the retry is asserted too: the moved
+ * row no longer matches the handler's `revokedAt: null` lookup, so the replay
+ * is `404` and the API cannot repair itself. Making both rows untouched needs
+ * the three writes and both emits in one `withTransaction` — a production
+ * change, out of scope for this test-only card. This block fails the moment
+ * that change lands (the half-state cases go green-then-red), so whoever makes
+ * it must re-derive them.
+ */
+
+/** The outbox rows of one event key (the emit seam these pins fail). */
+async function outboxRows(eventKey: string): Promise<Record<string, unknown>[]> {
+  return app.db.collection(COLLECTIONS.domainEvents).find({ eventKey }).toArray();
+}
+
+/** The `[key, state]` pairs of a feed row's in-app actions (§7.3). */
+function actionPairs(row: Record<string, unknown> | undefined): [string, string][] {
+  const actions = (row?.actions ?? []) as { readonly key: string; readonly state: string }[];
+  return actions.map((action): [string, string] => [action.key, action.state]);
+}
+
+/**
+ * The driver failures these pins inject.
+ *
+ * `code: 91` is a transient primary-election error: it is deliberately **not**
+ * a duplicate key, so neither `emitDomainEvent`'s E11000 branch nor
+ * `withTransaction`'s error-label retry can absorb it — the failure has to
+ * reach the endpoint.
+ */
+function driverFailure(): Error {
+  return Object.assign(new Error("not primary"), { code: 91 });
+}
+
+/**
+ * Resolve the two driver prototype methods once, at module load, before any
+ * spec installs a spy. Resolving them at call time inside a stub would find the
+ * spy and recurse (the `billing-checkout.test.ts:177` precedent).
+ */
+const driverInsertOne = ((): typeof Collection.prototype.insertOne => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "insertOne");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("the driver's Collection#insertOne is missing from the prototype");
+  }
+  return descriptor.value as typeof Collection.prototype.insertOne;
+})();
+
+const driverUpdateMany = ((): typeof Collection.prototype.updateMany => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "updateMany");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("the driver's Collection#updateMany is missing from the prototype");
+  }
+  return descriptor.value as typeof Collection.prototype.updateMany;
+})();
+
+/** The driver's own argument tuples, so the stubs forward without re-declaring them. */
+type DriverInsertOneArgs = Parameters<typeof driverInsertOne>;
+type DriverUpdateManyArgs = Parameters<typeof driverUpdateMany>;
+
+/**
+ * Make every outbox insert fail — the driver write behind `emitDomainEvent`.
+ *
+ * @returns The spy, so the case can restore it in a `finally`.
+ */
+function failDomainEventWrites(): { mockRestore: () => void } {
+  const failure = driverFailure();
+  return vi.spyOn(Collection.prototype, "insertOne").mockImplementation(function (
+    this: Collection,
+    ...args: DriverInsertOneArgs
+  ) {
+    if (this.collectionName === COLLECTIONS.domainEvents) {
+      return Promise.reject(failure);
+    }
+    return driverInsertOne.call(this, ...args);
+  } as never);
+}
+
+/**
+ * Make the invitation revoke fail — the removal's **second** write, which runs
+ * after the `event_organizers` update has already committed.
+ *
+ * @returns The spy, so the case can restore it in a `finally`.
+ */
+function failInvitationRevoke(): { mockRestore: () => void } {
+  const failure = driverFailure();
+  return vi.spyOn(Collection.prototype, "updateMany").mockImplementation(function (
+    this: Collection,
+    ...args: DriverUpdateManyArgs
+  ) {
+    if (this.collectionName === COLLECTIONS.invitations) {
+      return Promise.reject(failure);
+    }
+    return driverUpdateMany.call(this, ...args);
+  } as never);
+}
+
+/**
+ * Make the affordance closure fail — the `notifications` `updateMany` that
+ * `closeInvitationAffordance` runs after the reject has already been written.
+ *
+ * @returns The spy, so the case can restore it in a `finally`.
+ */
+function failAffordanceClosure(): { mockRestore: () => void } {
+  const failure = driverFailure();
+  return vi.spyOn(Collection.prototype, "updateMany").mockImplementation(function (
+    this: Collection,
+    ...args: DriverUpdateManyArgs
+  ) {
+    if (this.collectionName === COLLECTIONS.notifications) {
+      return Promise.reject(failure);
+    }
+    return driverUpdateMany.call(this, ...args);
+  } as never);
+}
+
+/**
+ * Seed an accepted co-organizer: the organizer's event, an invitation for
+ * `invitee`, and the accept that inserts the membership row.
+ *
+ * @param prefix - A unique suite-local prefix.
+ * @param invitee - The signed-in invitee (not a workspace member).
+ * @returns The event and the invitation id.
+ */
+async function acceptedMember(
+  prefix: string,
+  invitee: SignedInUser
+): Promise<{ readonly fixture: EventFixture; readonly invitationId: string }> {
+  const fixture = await seedEvent(prefix);
+  const invitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
+  expect((await acceptInApp(inAppDecision(invitee.cookie, invitationId, "accept"))).status).toBe(
+    200
+  );
+  return { fixture, invitationId };
+}
+
+describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} — the write pairing (F1)", () => {
+  it("F1-control: answers 204, moves both rows, emits both events and keeps the member un-admitted", async () => {
+    const invitee = await signInVerified(makeIdentity("op121-f1-control-invitee"));
+    const { fixture, invitationId } = await acceptedMember("op121-f1-control", invitee);
+    // Arrange guard: the co-organizer really is admitted before the removal
+    // (the event read runs `tenantStage({ admission: admitEventActor })`,
+    // ADR-0644), so the `404` after it can only come from the removal.
+    expect((await readEvent(readEventRequest(invitee.cookie, fixture))).status).toBe(200);
+
+    const response = await removeMember(
+      removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+    );
+
+    expect(response.status).toBe(204);
+    expect((await response.arrayBuffer()).byteLength).toBe(0);
+
+    const removed = (await eventMembers(fixture)).find(
+      (row) => row.userId === invitee.userId.toHexString()
+    );
+    expect(removed?.status).toBe("removed");
+    expect(removed?.revokedAt).toBeInstanceOf(Date);
+    expect((await storedInvitation(invitationId))?.status).toBe("revoked");
+
+    // The notification half of the removal: one event to the removed member and
+    // one to the organizer, both naming the removed user as the subject.
+    const removalEvents = await outboxRows("collab.member.removed");
+    expect(removalEvents).toHaveLength(1);
+    expect(removalEvents.at(0)?.subjectRef).toEqual({
+      kind: "user",
+      id: invitee.userId.toHexString(),
+    });
+    expect((await outboxRows("collab.member.removed.ack")).at(0)?.subjectRef).toEqual({
+      kind: "user",
+      id: invitee.userId.toHexString(),
+    });
+
+    // The structural promise: access really ended.
+    const afterRemoval = await readEvent(readEventRequest(invitee.cookie, fixture));
+    expect(afterRemoval.status).toBe(404);
+    expect((await errorOf(afterRemoval)).code).toBe("not_found");
+  });
+
+  it("F1: a failing invitation revoke answers 500 internal_error and emits nothing", async () => {
+    const invitee = await signInVerified(makeIdentity("op121-f1-revoke-invitee"));
+    const { fixture, invitationId } = await acceptedMember("op121-f1-revoke", invitee);
+
+    const stub = failInvitationRevoke();
+    let response: Response;
+    try {
+      response = await removeMember(
+        removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+      );
+    } finally {
+      stub.mockRestore();
+    }
+
+    // The pinned invariant: a removal whose second write failed is never
+    // reported as success, and it notifies nobody.
+    expect(response.status).toBe(500);
+    expect((await errorOf(response)).code).toBe("internal_error");
+    expect(await outboxRows("collab.member.removed")).toHaveLength(0);
+    expect(await outboxRows("collab.member.removed.ack")).toHaveLength(0);
+
+    // Characterization of the shipped half state (not a guarantee): write 1
+    // committed before write 2 failed, so the member is gone while the
+    // invitation that granted the seat still reads `accepted`.
+    const removed = (await eventMembers(fixture)).find(
+      (row) => row.userId === invitee.userId.toHexString()
+    );
+    expect(removed?.status).toBe("removed");
+    expect(removed?.revokedAt).toBeInstanceOf(Date);
+    expect((await storedInvitation(invitationId))?.status).toBe("accepted");
+
+    // ...and the half state is permanent through the API: the moved row no
+    // longer matches the handler's `revokedAt: null` lookup.
+    const retry = await removeMember(
+      removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+    );
+    expect(retry.status).toBe(404);
+    expect(await outboxRows("collab.member.removed")).toHaveLength(0);
+  });
+
+  it("F1: a failing removal event answers 500 internal_error and drops both events", async () => {
+    const invitee = await signInVerified(makeIdentity("op121-f1-emit-invitee"));
+    const { fixture, invitationId } = await acceptedMember("op121-f1-emit", invitee);
+
+    const stub = failDomainEventWrites();
+    let response: Response;
+    try {
+      response = await removeMember(
+        removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+      );
+    } finally {
+      stub.mockRestore();
+    }
+
+    expect(response.status).toBe(500);
+    expect((await errorOf(response)).code).toBe("internal_error");
+    // The first emit failed, so the loop never reached `.ack`: a swallowed
+    // failure would leave one of the two rows behind and answer `204`.
+    expect(await outboxRows("collab.member.removed")).toHaveLength(0);
+    expect(await outboxRows("collab.member.removed.ack")).toHaveLength(0);
+
+    // Characterization of the shipped half state (not a guarantee): both row
+    // writes committed, the notification pair did not, and the endpoint said
+    // the removal failed.
+    const removed = (await eventMembers(fixture)).find(
+      (row) => row.userId === invitee.userId.toHexString()
+    );
+    expect(removed?.status).toBe("removed");
+    expect((await storedInvitation(invitationId))?.status).toBe("revoked");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* F2 — the reject path's status write, affordance closure and emit          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `transition()` writes `status: "rejected"` with a plain `findOneAndUpdate`
+ * (no session); `decideInvitation()` then closes the affordance and emits
+ * `collab.invite.rejected` outside any transaction — while the **accept**
+ * branch does all three inside one `withTransaction`. A crash between the
+ * status write and the emit drops the organizer's rejection event, and a crash
+ * before the affordance closure leaves the invitee's in-app actions clickable
+ * on a terminal row.
+ *
+ * These pins inject the same failure class on both branches and measure the
+ * outcome, so the pairing is asserted rather than assumed:
+ *
+ * - the endpoint never reports a decision it could not complete (`500`, never
+ *   `200`) and writes no `collab.invite.rejected` row;
+ * - the reject is nevertheless terminal for the invitee — the row reads
+ *   `rejected`, and the affordance is closed (emit arm) or stays clickable
+ *   (affordance arm) — and the replay answers `200 alreadyResolved: true`
+ *   without repairing either;
+ * - the accept branch's transaction really pairs all three writes: the same
+ *   emit failure leaves the invitation `pending` and inserts no
+ *   `event_organizers` row.
+ *
+ * The row/affordance assertions are the characterization this card asks for
+ * (the shipped halves); the atomic reject they would replace needs the status
+ * write, the closure and the emit in one transaction — a production change,
+ * out of scope for this test-only card, and the cases below are what would
+ * have to be re-derived if it ever lands.
+ */
+describe("POST /api/v1/me/invitations/{invitationId}/reject — the write pairing (F2)", () => {
+  it("F2-contrast: an accept whose event fails rolls back — the transaction pairs all three writes", async () => {
+    const fixture = await seedEvent("op121-f2-accept");
+    const invitee = await signInVerified(makeIdentity("op121-f2-accept-invitee"));
+    const invitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
+
+    const stub = failDomainEventWrites();
+    let response: Response;
+    try {
+      response = await acceptInApp(inAppDecision(invitee.cookie, invitationId, "accept"));
+    } finally {
+      stub.mockRestore();
+    }
+
+    expect(response.status).toBe(500);
+    expect((await errorOf(response)).code).toBe("internal_error");
+    // The transaction aborted: no status write, no membership, no event.
+    expect((await storedInvitation(invitationId))?.status).toBe("pending");
+    expect(
+      (await eventMembers(fixture)).filter((row) => row.userId === invitee.userId.toHexString())
+    ).toHaveLength(0);
+    expect(await outboxRows("collab.invite.accepted")).toHaveLength(0);
+    // ...and the invitation is still acceptable afterwards, which is what a
+    // rollback (not a half state) means.
+    expect((await acceptInApp(inAppDecision(invitee.cookie, invitationId, "accept"))).status).toBe(
+      200
+    );
+  });
+
+  it("F2: a reject whose event fails answers 500 with the row already rejected, and the replay cannot repair it", async () => {
+    const fixture = await seedEvent("op121-f2-reject-emit");
+    const invitee = await signInVerified(makeIdentity("op121-f2-reject-emit-invitee"));
+    const invitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
+    await settleInviteDelivery();
+    expect((await feedInviteRow(invitee.cookie))?.actionTarget).toEqual({
+      kind: "invitation",
+      id: invitationId,
+      state: "open",
+    });
+
+    const stub = failDomainEventWrites();
+    let response: Response;
+    try {
+      response = await rejectInApp(inAppDecision(invitee.cookie, invitationId, "reject"));
+    } finally {
+      stub.mockRestore();
+    }
+
+    // The pinned invariant: a rejection whose event failed is never reported.
+    expect(response.status).toBe(500);
+    expect((await errorOf(response)).code).toBe("internal_error");
+    expect(await outboxRows("collab.invite.rejected")).toHaveLength(0);
+
+    // Characterization: the status write committed before the emit failed, and
+    // the closure that runs between them committed too.
+    const stored = await storedInvitation(invitationId);
+    expect(stored?.status).toBe("rejected");
+    expect(stored?.resolvedAt).toBeInstanceOf(Date);
+    const after = await feedInviteRow(invitee.cookie);
+    expect(after?.actionTarget).toEqual({
+      kind: "invitation",
+      id: invitationId,
+      state: "resolved",
+    });
+    expect(actionPairs(after)).toEqual([
+      ["accept", "unavailable"],
+      ["reject", "unavailable"],
+    ]);
+    expect(
+      (await eventMembers(fixture)).filter((row) => row.userId === invitee.userId.toHexString())
+    ).toHaveLength(0);
+
+    // Replay control, with the emit seam healthy again: the retry is a `200`
+    // `alreadyResolved` and does not re-emit, so the lost rejection event is
+    // lost for good.
+    const replay = await rejectInApp(inAppDecision(invitee.cookie, invitationId, "reject"));
+    expect(replay.status).toBe(200);
+    expect((await body(replay)).alreadyResolved).toBe(true);
+    expect(await outboxRows("collab.invite.rejected")).toHaveLength(0);
+  });
+
+  it("F2: a reject whose affordance write fails answers 500 and leaves the actions clickable on a terminal row", async () => {
+    const fixture = await seedEvent("op121-f2-reject-affordance");
+    const invitee = await signInVerified(makeIdentity("op121-f2-reject-affordance-invitee"));
+    const invitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
+    await settleInviteDelivery();
+    expect(actionPairs(await feedInviteRow(invitee.cookie))).toEqual([
+      ["accept", "available"],
+      ["reject", "available"],
+    ]);
+
+    const stub = failAffordanceClosure();
+    let response: Response;
+    try {
+      response = await rejectInApp(inAppDecision(invitee.cookie, invitationId, "reject"));
+    } finally {
+      stub.mockRestore();
+    }
+
+    expect(response.status).toBe(500);
+    expect((await errorOf(response)).code).toBe("internal_error");
+    expect(await outboxRows("collab.invite.rejected")).toHaveLength(0);
+
+    // Characterization: the row is terminal for the organizer's list…
+    expect((await storedInvitation(invitationId))?.status).toBe("rejected");
+    // …while the invitee's affordance is still open, because the closure was a
+    // separate write that never committed.
+    const after = await feedInviteRow(invitee.cookie);
+    expect(after?.actionTarget).toEqual({
+      kind: "invitation",
+      id: invitationId,
+      state: "open",
+    });
+    expect(actionPairs(after)).toEqual([
+      ["accept", "available"],
+      ["reject", "available"],
+    ]);
+
+    // Replay control: the retry answers `200 alreadyResolved` and closes
+    // nothing, so the clickable affordance survives behind the terminal row.
+    const replay = await rejectInApp(inAppDecision(invitee.cookie, invitationId, "reject"));
+    expect(replay.status).toBe(200);
+    expect((await body(replay)).alreadyResolved).toBe(true);
+    expect(actionPairs(await feedInviteRow(invitee.cookie))).toEqual([
+      ["accept", "available"],
+      ["reject", "available"],
+    ]);
+    expect(await outboxRows("collab.invite.rejected")).toHaveLength(0);
   });
 });
