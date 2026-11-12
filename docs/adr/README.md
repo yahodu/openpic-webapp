@@ -20,6 +20,13 @@ the rejected alternatives are recorded in
 - A lane takes its next ADR number as the **next unused number inside its own
   range** (a lane-local counter). It never consults `origin/main`'s high-water
   mark, the tail of this file, or another lane's refs.
+- A new lane's block starts **above the highest in-flight range end** —
+  `max(range ends in flight) + 1`, never `max(consumed number) + 1`: a lane's
+  `Next free` cell is a consumed count, not its reservation bound
+  ([ADR-0300 §10](ADR-0300-adr-number-range-allocation-policy.md)).
+- A reserved range is **exclusive to its holder**, gaps included. A dependent
+  ticket (one whose story builds on the holder's code) continues its parent
+  lane's range; an independent ticket gets its own block.
 - Ranges are disjoint by construction and are never re-cut, so two lanes cannot
   collide even though neither inspects the other's branches.
 - Gaps inside a range (and ranges that go unused) are expected and cheap: a

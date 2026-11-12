@@ -5,7 +5,12 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/adr-numbering.js";
+import {
+  checkAdrDirectory,
+  checkAdrNumbers,
+  parseAdrNumber,
+  type AdrNumberIssue,
+} from "../helpers/adr-numbering.js";
 
 /**
  * Unit contract — `src/test/helpers/adr-numbering.ts` (review finding R-1, OP-96).
@@ -24,12 +29,17 @@ import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/a
  * fails on import. That is the intended first state — the guard ships with the
  * implementation that satisfies these assertions.
  *
- * **Scope.** Exactly two invariants:
+ * **Scope.** Three invariants:
  *   (i)  no two in-scope files share an `ADR-NNNN` number;
  *   (ii) every in-scope `ADR-*.md` file name matches
- *        `^ADR-(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`.
- * Reserved-range bookkeeping is deliberately **out of scope**: it lives in the
- * prose ledger `docs/adr/README.md`, and parsing that prose is brittle.
+ *        `^ADR-(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`;
+ *   (iii) no two rows of the reserved-range ledger in `<dir>/README.md` reserve
+ *        intersecting **closed** ranges (`lane-range-overlap`).
+ * Range bookkeeping was out of scope until F-L1: the guard now parses the
+ * ledger's closed `` `NNNN`–`NNNN` `` rows (see `adr-lane-ranges.test.ts`).
+ * What it still cannot see: a *file* whose number sits inside another lane's
+ * reserved range — the guard has no file→lane map, so range membership stays a
+ * review-time obligation (ADR-0302 §4).
  *
  * **Contract pinned here** (RED and GREEN must not diverge):
  *
@@ -100,6 +110,39 @@ function makeTempAdrDir(fileNames: string[]): string {
   }
   return dir;
 }
+
+/**
+ * A temp ADR directory that also carries a `README.md` with `readmeMarkdown`
+ * (F-L1: the lane ledger the range check reads). One extra `writeFileSync` call
+ * site, so the security preset's non-literal-`fs` warnings stay countable.
+ */
+function makeTempAdrDirWithReadme(fileNames: string[], readmeMarkdown: string): string {
+  const dir = makeTempAdrDir(fileNames);
+  writeFileSync(join(dir, "README.md"), readmeMarkdown);
+  return dir;
+}
+
+/**
+ * The `### Reserved ranges` table as markdown — header row, `---` separator row,
+ * then `rows` verbatim. Fixture factory only: the case that uses it writes every
+ * lane row it pins.
+ */
+function laneLedger(rows: string[]): string {
+  return [
+    "### Reserved ranges (effective 2026-10-20)",
+    "",
+    "| Holder (lane)                       | Reserved range | Next free |",
+    "| ----------------------------------- | -------------- | --------- |",
+    ...rows,
+  ].join("\n");
+}
+
+/**
+ * Compile-time pin of the widened issue union: `AdrNumberIssue["code"]` must
+ * admit `"lane-range-overlap"`, so an implementation that appends an overlap
+ * issue without widening the type fails `tsc`, not just a runtime assertion.
+ */
+const overlapCode: AdrNumberIssue["code"] = "lane-range-overlap";
 
 describe("checkAdrNumbers — clean input", () => {
   afterEach(() => {
@@ -410,5 +453,185 @@ describe("checkAdrDirectory", () => {
 
     // Assert
     expect(result).toEqual({ ok: true, issues: [] });
+  });
+});
+
+describe("checkAdrDirectory — lane-range overlaps (ledger finding F-L1)", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports one overlap issue for the live OP-126 / OP-129 intersection", () => {
+    // Arrange — the measured in-flight state: the uploads lane reserved
+    // 0760-0779 and the attendee-identity lane reserved 0769-0788, which is how
+    // ADR-0770 came to exist twice. README order is deliberately reversed, so
+    // the issue's holder order pins the ascending sort.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-op126-uploads-green.md"],
+      laneLedger([
+        "| OP-129 attendee identity lane | `0769`–`0788` | `0770` |",
+        "| OP-126 uploads lane           | `0760`–`0779` | `0771` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-126 uploads lane", "OP-129 attendee identity lane"],
+        },
+      ],
+    });
+  });
+
+  it("reports no overlap for ranges that touch without intersecting", () => {
+    // Arrange — 0760-0779 and 0780-0798 are adjacent, so they are disjoint
+    // (this is the boundary the F-L1 repair relies on).
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"],
+      laneLedger([
+        "| OP-126 uploads lane           | `0760`–`0779` | `0771` |",
+        "| OP-129 attendee identity lane | `0780`–`0798` | `0782` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no overlap for a single reserved range", () => {
+    // Arrange
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"],
+      laneLedger(["| OP-126 uploads lane | `0760`–`0779` | `0771` |"])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no overlap when the README table has no parseable row", () => {
+    // Arrange — header and `---` separator only.
+    const dir = makeTempAdrDirWithReadme(["ADR-0760-a.md"], laneLedger([]));
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no overlap when the README only mentions ranges in prose", () => {
+    // Arrange — an empty README and a prose-only one both carry no reservation.
+    const emptyDir = makeTempAdrDirWithReadme(["ADR-0760-a.md"], "");
+    const proseDir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"],
+      "The OP-129 lane holds `0769`-`0788`; the uploads lane holds `0760`-`0779`."
+    );
+
+    // Act
+    const emptyResult = checkAdrDirectory(emptyDir);
+    const proseResult = checkAdrDirectory(proseDir);
+
+    // Assert
+    expect(emptyResult).toEqual({ ok: true, issues: [] });
+    expect(proseResult).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no overlap for a directory that has no README at all", () => {
+    // Arrange — a bare ADR directory must not throw on the missing ledger.
+    const dir = makeTempAdrDir(["ADR-0760-a.md"]);
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports one issue per intersecting pair when three reserved ranges overlap", () => {
+    // Arrange — every pair of these three intersects, so the report carries
+    // three issues, not one per row.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"],
+      laneLedger([
+        "| OP-201 alpha lane | `0760`–`0779` | `0761` |",
+        "| OP-202 beta lane  | `0769`–`0788` | `0770` |",
+        "| OP-203 gamma lane | `0775`–`0795` | `0776` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result.ok).toBe(false);
+    expect(result.issues).toHaveLength(3);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-201 alpha lane", "OP-202 beta lane"],
+        },
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-201 alpha lane", "OP-203 gamma lane"],
+        },
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-202 beta lane", "OP-203 gamma lane"],
+        },
+      ])
+    );
+  });
+
+  it("reports a duplicate number and a lane-range overlap from the same directory", () => {
+    // Arrange — the two invariants are independent: a directory can break both,
+    // and the range check must not swallow the numbering report (or vice versa).
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0146-a.md", "ADR-0146-b.md"],
+      laneLedger([
+        "| OP-126 uploads lane           | `0760`–`0779` | `0771` |",
+        "| OP-129 attendee identity lane | `0769`–`0788` | `0770` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result.ok).toBe(false);
+    expect(result.issues).toHaveLength(2);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        {
+          code: "duplicate",
+          number: "0146",
+          files: ["ADR-0146-a.md", "ADR-0146-b.md"],
+        },
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-126 uploads lane", "OP-129 attendee identity lane"],
+        },
+      ])
+    );
   });
 });
