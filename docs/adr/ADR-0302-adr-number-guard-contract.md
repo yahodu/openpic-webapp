@@ -31,10 +31,14 @@ inherits the _why_, not just the _what_.
 
 ## Decision
 
-The guard `apps/web/src/test/helpers/adr-numbering.ts` enforces **exactly two
-mechanical invariants**, and its boundary is fixed:
+The guard `apps/web/src/test/helpers/adr-numbering.ts` enforces **six mechanical
+invariants**, and its boundary is fixed. This section records the first two —
+(i) no duplicate number and (ii) well-formed names. The other four are (iii)
+lane-range disjointness in the ledger (§6), (iv) source-reference resolution
+(§8), (v) citation accuracy (§9) and (vi) record link targets (§7); the sections
+follow the order the checks were added, not the numeric order.
 
-### 1. The two invariants
+### 1. The first two invariants (i) and (ii)
 
 1. **No duplicate number.** No two in-scope files in `docs/adr/` share an
    `ADR-NNNN` prefix. Two or more well-formed names carrying the same four-digit
@@ -233,6 +237,121 @@ pointed at pre-rename file names while every guard stayed green.
   lane's records, which exist only on the unmerged
   `OP-104-task-entitlements-usage-endpoints` branch — and are named as prose
   there.
+
+### 8. The source-reference resolution invariant (iv) (2026-11-12, finding F6-b)
+
+Every `ADR-NNNN` reference inside a source file must resolve to a record. The
+trigger was the OP-128 round-1 renumber: five shipped comments still cited
+`0764`/`0765` after those decisions moved to `0766`/`0767`, and `0764`/`0765`
+belong to sibling lanes, so the comments pointed at the wrong decisions while
+every other guard stayed green.
+
+- **The token.** A case-sensitive `ADR-` plus exactly four digits not followed by
+  a fifth (`ADR-(\d{4})(?!\d)`), so `ADR-12345` is not a reference to `1234` and
+  a lowercase `adr-…` is not a reference at all.
+- **What resolves.** Only the digits of a **well-formed** record name. A
+  reference against a malformed name (`ADR-96-x.md`) resolves nothing, and that
+  name is already a `malformed` issue under §1, so the two guards agree instead
+  of contradicting each other.
+- **The report.** One `dangling-reference` issue per **occurrence** — two
+  comments citing one missing number are two issues, and two files citing it are
+  two — shaped `{ code: "dangling-reference", file, line, number }`, with the
+  digits **as written** (leading zeros kept, e.g. `"0764"`) and a 1-based `line`.
+  Issues sort by `file`, then `line`, then `number`.
+- **Counters and the reconciliation identity.**
+  `checkSourceAdrReferences(sources, adrFileNames)` counts every evaluated
+  reference in `checkedReferences` and every exempt one in `exemptReferences`.
+  Its accuracy sibling (§9) classifies the same population and reports
+  `checkedReferences + danglingReferences === checkSourceAdrReferences(...).checkedReferences`;
+  that identity is pinned, because it is what proves the two sweeps read one
+  population rather than quietly diverging.
+- **Scope: the same sweep as §9.** `checkRepositoryAdrReferences(root)` reads
+  `<root>/docs/adr/` first — a wrong root throws `ENOENT` instead of sweeping
+  nothing and passing vacuously — then every `.ts`, `.tsx`, `.js`, `.jsx`,
+  `.mjs` and `.cjs` file under `apps/` and `packages/`, never `scripts/` or the
+  docs. The skipped directories are `node_modules`, `.git`, `.next`,
+  `.worktrees`, `coverage`, `dist`, `build`, `.turbo`, `playwright-report` and
+  `test-results`, so a build output copy cannot make the result depend on
+  whether a build ran.
+- **The fixture marker.** A line inside `apps/web/src/test/**` that carries
+  `adr-fixture` is exempt and counted in `exemptReferences`. The exemption is
+  scoped per line **and** per path, so a marked line in shipped source is still
+  checked — finding F-M1, where an unscoped substring test let a real pointer be
+  silenced.
+- **Executable contract:** `apps/web/src/test/unit/adr-numbering.test.ts`.
+
+### 9. The citation-accuracy invariant (v) (2026-11-12, finding F-N1)
+
+Existence is not accuracy (§8). Nine OP-129 spec headers cited the never-minted
+`0768`; when a record with that number was minted for the OP-128 lane, all nine
+silently became "valid" references to a decision about the media signer's
+account-status gate. The accuracy rule is decidable only where a record states
+its own consumers, so participation is **declared per record, never inferred**.
+
+- **The canonical field.** `- **Consumers:**` — a `-` list item at column 0, the
+  label in `**…**` bold, the colon inside the bold — anywhere in the record.
+  `Consumes:` is a different field (what the decision consumes) and is not a
+  declaration; neither is prose that merely contains the word. A record declaring
+  the field is hard-checked; a record that does not is counted in the
+  `unlisted-consumer` channel so the debt stays visible.
+- **Malformed shapes are recognised, and still declare.** An indented or
+  `*`/`+` bullet, a `>` blockquote level, an ordered-list marker, `__…__` bold,
+  the colon outside the bold, no bullet, a plain unbolded label, and a
+  `## Consumers` heading are each `consumers-malformed`: one punctuation slip
+  cannot switch the rule off for its record, and the record's citations stay
+  hard-checked. Recognition is deliberately wider than canonicality —
+  blockquote levels first, then list or heading markers (a line can carry both,
+  in either order), then the bold markers — and prose is not a shape: after the
+  peels the label must open the line and, unless the line is a heading, carry its
+  colon.
+- **The three channels.** `consumer-mismatch` — the cited record declares
+  consumers and does not name the citing file: a failure. `consumers-malformed` —
+  a non-canonical field, reported **per record** (so a field in a record nobody
+  cites still fails), with `file` and `record` set to the record's own name and
+  `line` to the offending line: a failure. `unlisted-consumer` — the cited record
+  declares nothing; each citation is reported in the separate `unlisted` channel
+  and counted, **never failed**, because most records predate the field and a
+  hard failure would demand a whole-docs adoption programme. `ok` is false
+  exactly when `issues` is non-empty, and on a malformed-free record set every
+  evaluated reference is classified once
+  (`verifiedReferences + issues.length + unlisted.length === checkedReferences`).
+- **How a record identifies a citing file.** Over the record's **whole text**,
+  not only its field block — 11 of the 32 citations of declaring records are
+  named only in prose — by any of four channels: (1) the repo-relative path as a
+  token, exact or a directory prefix of the citing path; (2) an `@/…` specifier,
+  resolved against both `apps/web/src/…` and `apps/web/src/app/…`, exact or with
+  a swept extension or as a directory prefix, after a trailing `[...]`
+  annotation group is stripped; (3) the bare file name as a whole token, but only
+  when that name is unique across the swept population — a shared name
+  (`route.ts`) identifies nothing; (4) in backticks, an identifier the citing
+  file exports (`export … <Name>` or an `export { <Name> }` alias) with the name
+  at least **six** characters, because short generic names would verify
+  arbitrary files.
+- **Colon-bearing path tokens (review finding F-C, PR #506).** A Next.js route
+  segment may legally contain `:`, so `RECORD_PATH_TOKEN_PATTERN` and
+  `RECORD_SPECIFIER_TOKEN_PATTERN` both carry `:` in their path-character class
+  (`…/uploads:link/route.ts` is a real swept file). The colon is one **path**
+  character, not a `:.*$` alternative, so a token still ends at the first
+  non-path character and nothing after the path is swallowed. `trimPathToken`
+  then trims trailing punctuation and, **after** that, one trailing `:<digits>`
+  line annotation, so `path.ts:42.` reduces to `path.ts`. **Why the widening
+  matters:** without `:`, a token naming `…/uploads:link` stops at the colon as
+  `…/uploads`, and the directory-prefix arm then verifies the colon-free sibling
+  `…/uploads/…` while the file the record actually named is reported as a
+  mismatch — a wrong file in both directions at once, which is the failure the
+  widening removed.
+- **Duplicate numbers.** A citation is declared when _any_ record with that
+  number declares, and verified when any of them identifies the citing file;
+  reporting the duplicate stays §1's job.
+- **The fixture marker** is §8's population, byte for byte: the same references,
+  the same per-line exemption, a reference whose record is missing counted in
+  `danglingReferences` and left to §8, so
+  `accuracy.checkedReferences + accuracy.danglingReferences === existence.checkedReferences`.
+- **Measured at the head this section is appended to (2026-11-12).** 1250 checked
+  references, 174 exempt, 0 dangling; 16 records declare the field, 149 citations
+  are verified, 1101 are `unlisted-consumer`, and `consumer-mismatch` and
+  `consumers-malformed` are both 0.
+- **Executable contract:** `apps/web/src/test/unit/adr-numbering.test.ts`.
 
 ## Consequences
 
