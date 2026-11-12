@@ -11,6 +11,11 @@ import { SNIFF_BYTES, guardUploadType } from "@/server/settings/upload-guards";
 import { consumeEntitlement } from "@/server/services/entitlements";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
 
+import {
+  checkUploadBatchTransition,
+  emitUploadQuotaBlocked,
+  isQuotaRefusal,
+} from "./batch-notifications";
 import { toEventImage, type EventImageAsset, type EventImageDto } from "./event-image-dto";
 import { attachImage, type AttachedImageRow } from "./registration";
 import { batchIdValue } from "./single-put";
@@ -254,6 +259,18 @@ export async function completeStoredUpload(
       return { row, asset, duplicate: false };
     });
   } catch (error) {
+    // A plan refusal is the one completion failure the humans can act on: the
+    // uploader is stuck and only the organizer can buy storage (§4.7), so the
+    // pair is told once per event per six hours — never per file.
+    if (isQuotaRefusal(error)) {
+      await emitUploadQuotaBlocked({
+        db,
+        tenantKey,
+        eventId,
+        batchId: String(session.batchId),
+        uploaderUserId: principal,
+      });
+    }
     // A write race surfaced as a duplicate row or an exhausted retry budget:
     // the committed winner is the answer, exactly as a retried attempt sees it,
     // so the duplicate is never an error (§16.3).
@@ -293,6 +310,21 @@ export async function completeStoredUpload(
     bytes,
     duplicate: outcome.duplicate,
   });
+
+  // This completion may have settled the batch's last file (a replayed or
+  // duplicate completion can), so the terminal transition is checked here as
+  // well as by the pipeline-indexed cron (ADR-0760 A1). A failed check must not
+  // fail an upload that already committed.
+  try {
+    await checkUploadBatchTransition({ db, tenantKey, eventId, batchId: String(session.batchId) });
+  } catch (error) {
+    getLogger().warn("upload.batch.transition_check_failed", {
+      event: "upload.batch.transition_check_failed",
+      tenantId: tenantKey,
+      eventId: eventIdHex,
+      err: error,
+    });
+  }
 
   return {
     status: outcome.duplicate ? 200 : 201,
