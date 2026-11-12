@@ -83,12 +83,31 @@ the run's stdout; the four lines the full-file run prints belong to the other re
 which use the default logger.
 
 **Focused unit**, `media-signed-urls-authorization.test.ts` → **24 passed (24)**, untouched; `adr-numbering`
-→ **29 passed (29)** (53 together). Full `unit` and full `integration` measured on this branch; `tsc -p
-apps/web/tsconfig.json --noEmit` exit `0`; prettier clean and eslint `0 errors` on the touched file (the one
+→ **29 passed (29)** (53 together). **Full unit** → **157 files / 2526 passed | 3 skipped (2529)** — the
+`unit` project excludes `test/integration/**`, so an integration-only change is unit-neutral. **Full
+integration** (`TMPDIR=/root/tmp-mongo ./node_modules/.bin/vitest run --project integration`) → **104 files /
+1039 passed** (1038 at the base tip; the extra case is this one). `tsc -p apps/web/tsconfig.json --noEmit`
+exit `0`; prettier clean and eslint `0 errors` on the touched file (the one
 `security/detect-object-injection` warning is the pre-existing `requireHandler` namespace read).
 
-**The pin bites.** A mutation probe replaced the route's `enforceAuth(...)` call with the pre-F-G2 inline
-`evaluateAuth(...)` + same-envelope `throw` shown in the review, ran the focused spec, and reverted:
+**The pin bites.** The mutation is reproducible with a throwaway script — copy
+`apps/web/src/app/api/v1/media/signed-urls/route.ts` aside, rewrite `import { enforceAuth, resolvePrincipal }`
+to `import { evaluateAuth, resolvePrincipal }`, replace the two-line `enforceAuth("user", …)` call with the
+pre-F-G2 route-local form (same envelope, no log):
+
+```ts
+if (principal?.kind === "user") {
+  const decision = evaluateAuth("user", { principal, now: systemClock.now() });
+  if (!decision.allowed) {
+    throw appError(
+      decision.code,
+      decision.details === undefined ? {} : { details: decision.details }
+    );
+  }
+}
+```
+
+then run the focused spec, copy the backup back, and compare the hash. Measured:
 
 ```
 route mutated; sha256 before=2db3d986cb0c90c03454228a2ad7e6c458a56fdbe31f9e0abf7f5f8731526566
