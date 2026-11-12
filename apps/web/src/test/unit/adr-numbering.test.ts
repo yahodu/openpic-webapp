@@ -2644,9 +2644,16 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
    * those six literals satisfies them while leaving every *composition* of the
    * three recognition axes (blockquote level × list marker × bold-marker style)
    * silently enforced-off — the F-A defect this block exists to close, one level
-   * up. These rows pin the compositions themselves: each one fails if the
-   * classifier peels the axes in any order other than fully, so a widened
-   * matcher has to be the sequential peel, not an enumerated list.
+   * up. The rows below therefore **sample** the compositions, one per axis
+   * pairing.
+   *
+   * What the sample encodes is the contract: the axis vocabulary is recognized
+   * by peeling the blockquote levels, then the list marker, then the bold
+   * markers — in sequence — because every composition of the three axes is the
+   * same field. What the sample does **not** prove is that the classifier cannot
+   * *enumerate* instead: an alternation of the pinned literals alone was
+   * measured green on this file, so the blocks below widen the sample rather than
+   * treating it as that proof.
    */
   it.each<[string, string[]]>([
     ["blockquote × ordered marker", ["> 1. **Consumers:** `apps/web/src/server/x.ts`"]],
@@ -2688,6 +2695,130 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
 
       // Assert — the composition is reported once, and the record keeps
       // hard-checking, exactly like its single-axis siblings.
+      expect(result.issues).toEqual([
+        {
+          code: consumersMalformedCode,
+          file: fixtureRecord0902,
+          line: 2,
+          number: "0902",
+          record: fixtureRecord0902,
+        },
+      ]);
+      expect(result.ok).toBe(false);
+      expect(result.unlisted).toEqual([]);
+      expect(result.declaredRecords).toEqual(["0902"]);
+      expect(result.verifiedReferences).toBe(1);
+    }
+  );
+
+  /**
+   * Eight further samples of the same three axes, composed the other way round —
+   * the residue the F2 finding recorded (plus the triple-underscore bold style
+   * whose coverage gap card t_53ef51f6 recorded): nested quotes, a column-0 `*`
+   * bullet, a `+` bullet, an indented `1)` marker, and the triple-underscore
+   * label. Every one of them is the same field vocabulary, so every one must
+   * report and keep the record declaring; a classifier that recognizes only the
+   * pairings sampled above goes silent on these, which is the F-A defect one
+   * composition further out.
+   */
+  it.each<[string, string[]]>([
+    [
+      "nested blockquote × ordered marker × double-star bold",
+      ["> > 1. **Consumers:** `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "blockquote × asterisk bullet × double-star bold",
+      ["> * **Consumers:** `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "nested blockquote × bullet × underscore bold",
+      ["> > - __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    ["column-0 asterisk bullet × underscore bold", ["* __Consumers:__ `apps/web/src/server/x.ts`"]],
+    [
+      "blockquote × plus bullet × double-star bold",
+      ["> + **Consumers:** `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "indented parenthesised ordered marker × underscore bold",
+      ["  1) __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    ["triple-underscore bold", ["- ___Consumers:___ `apps/web/src/server/x.ts`"]],
+    [
+      "blockquote × ordered marker × triple-underscore bold",
+      ["> 1. ___Consumers:___ `apps/web/src/server/x.ts`"],
+    ],
+  ])(
+    "reports consumers-malformed, and still declares, for the residual shape %s",
+    (_shape, fieldLines) => {
+      // Arrange — the field is on line 2 of the record, after the status line.
+      const records: AdrRecordText[] = [
+        adrRecord(fixtureRecord0902, ["- **Status:** Accepted", ...fieldLines].join("\n")),
+      ];
+      const sources: SourceFileText[] = [
+        {
+          path: "apps/web/src/server/x.ts",
+          text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+        },
+      ];
+
+      // Act
+      const result = checkSourceAdrConsumers(sources, records);
+
+      // Assert — the residual composition is reported once, and the record keeps
+      // hard-checking, exactly like its single-axis siblings.
+      expect(result.issues).toEqual([
+        {
+          code: consumersMalformedCode,
+          file: fixtureRecord0902,
+          line: 2,
+          number: "0902",
+          record: fixtureRecord0902,
+        },
+      ]);
+      expect(result.ok).toBe(false);
+      expect(result.unlisted).toEqual([]);
+      expect(result.declaredRecords).toEqual(["0902"]);
+      expect(result.verifiedReferences).toBe(1);
+    }
+  );
+
+  /**
+   * A heading is a fourth way to write the field, and it is classified on the
+   * **raw** line — before the blockquote peel — so a heading inside a blockquote
+   * is silently unenforced (measured at `319532d`: `issues: []`, `ok: true`,
+   * `unlisted: 1`). That is the exact F2/F-A failure mode: a punctuation slip
+   * must not switch enforcement off without a signal. The column-0 controls
+   * (`## **Consumers:** …` and `## Consumers: …`) already report and are pinned
+   * elsewhere in this file.
+   *
+   * These two rows are **RED by design**: they pin the intended contract, and the
+   * GREEN (card t_ba4928fb) peels the blockquote levels, *then* runs the heading
+   * test, then the list-marker/bold peel. Do not weaken them — a blockquoted
+   * heading declares exactly like the column-0 one.
+   */
+  it.each<[string, string[]]>([
+    ["a double-star bold heading", ["> ## **Consumers:** `apps/web/src/server/x.ts`"]],
+    ["a plain heading", ["> ## Consumers: `apps/web/src/server/x.ts`"]],
+  ])(
+    "reports consumers-malformed, and still declares, for %s inside a blockquote",
+    (_shape, fieldLines) => {
+      // Arrange — the field is on line 2 of the record, after the status line.
+      const records: AdrRecordText[] = [
+        adrRecord(fixtureRecord0902, ["- **Status:** Accepted", ...fieldLines].join("\n")),
+      ];
+      const sources: SourceFileText[] = [
+        {
+          path: "apps/web/src/server/x.ts",
+          text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+        },
+      ];
+
+      // Act
+      const result = checkSourceAdrConsumers(sources, records);
+
+      // Assert — a blockquoted heading is not a licence to go silent: it reports,
+      // and the record keeps hard-checking.
       expect(result.issues).toEqual([
         {
           code: consumersMalformedCode,
