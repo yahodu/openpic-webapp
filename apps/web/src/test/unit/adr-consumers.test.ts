@@ -2187,31 +2187,31 @@ describe("checkSourceAdrConsumers — a non-digit colon suffix on a path token (
 });
 /**
  * Finding F-C3, dotted half (the OP-128 follow-up, card `t_177466f2`): the
- * delivered annotation trim is correct for every suffix its class can see, and
- * blind to a suffix that carries a dot.
+ * delivered annotation trim now covers every suffix its class can see — the dot
+ * included since #522.
  *
- * `stripTrailingAnnotation` strips one trailing `:<suffix>` where the suffix is
- * `[A-Za-z0-9_-]+`, so `…/route.ts:D1` reduces to `…/route.ts` and the citation
- * verifies (pinned in the block above). A section pointer does not: `:D1.2` and
- * `:4.2` keep the dot, name no swept file, and are reported against **both**
- * citing files — the record names a file and the guard accuses it.
+ * `stripTrailingAnnotation` strips one trailing `:<suffix>`; the class is
+ * `[A-Za-z0-9_.-]` since #522 (`df6a199`), `[A-Za-z0-9_-]+` before that widening.
+ * So `…/route.ts:D1` reduces to `…/route.ts` and verifies (pinned above), and so
+ * do `:D1.2` and `:4.2`. Before the widening the dot survived, the token named no
+ * swept file, and the guard reported **both** citing files as a mismatch.
  *
  * The decided contract (pin card `t_4a7e37a6`) is "**one** trailing `:<suffix>`"
  * with no character restriction. A dotted suffix is one trailing `:<suffix>`, so
- * the regex is the gap, not the decision. `.` is already a token character in
+ * the class was the gap, not the decision. `.` is already a token character in
  * both `RECORD_PATH_TOKEN_PATTERN` and `RECORD_SPECIFIER_TOKEN_PATTERN`, so the
  * suffix sits *inside* the matched token: the trim is the only remedy, and
- * widening the single-suffix class by one dot serves both channels.
+ * widening the single-suffix class by one dot served both channels.
  *
- * **RED.** The two path rows and the `@/` row fail today with both citing files
- * reported as `consumer-mismatch` and `verifiedReferences: 0`. The two controls
- * pass, and must stay passing.
+ * **RED** before the fix: the two path rows and the `@/` row failed with both
+ * citing files reported as `consumer-mismatch` and `verifiedReferences: 0`. They
+ * pass at this head, and the two controls pass and must stay passing.
  *
  * **The literal-first precedence stays.** `…/uploads:link` is a real directory of
  * this population, so a blind suffix trim (`:…` with a dot in the class too)
  * rewrites it to the sibling's directory, verifies both files, and reintroduces
  * the wrong-file failure the F-C block above removed. The directory-token row
- * below restates that pin inside this block: widening the class is the fix,
+ * below restates that pin inside this block: the widened class is the fix,
  * dropping `namesAFile` first is not.
  *
  * In-memory, like the blocks above: no fixture is read, and every row runs the
