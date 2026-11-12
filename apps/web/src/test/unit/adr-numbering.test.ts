@@ -3007,6 +3007,268 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
   });
 });
 
+/**
+ * The colon-bearing App Router handler of OP-124 I5 — `POST …/uploads:link`. The
+ * `:` is literal: it is the contract's URL, not a placeholder.
+ */
+const colonRoutePath =
+  "apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link/route.ts";
+
+/**
+ * Its colon-free sibling, the `params` handler, and the **decoy** of every row:
+ * the truncated colon token is exactly this file's directory, so a channel that
+ * reads the truncation verifies the sibling instead of the route.
+ */
+const uploadsParamsRoutePath =
+  "apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads/params/route.ts";
+
+/** The record every row cites: OP-124 GREEN, which carries the `uploads:link` rule. */
+const fixtureRecord0721 = "ADR-0721-op124-single-put-complete-link-only-green.md"; // adr-fixture: fixture record name
+
+/**
+ * The two-`route.ts` population every row of the two blocks below runs: the colon
+ * route and its colon-free sibling, both citing the OP-124 GREEN record on line 1.
+ */
+function colonRouteSources(): SourceFileText[] {
+  return [
+    {
+      path: colonRoutePath,
+      text: "// the link-only attach ADR-0721", // adr-fixture: fixture citation target
+    },
+    {
+      path: uploadsParamsRoutePath,
+      text: "// the session route ADR-0721", // adr-fixture: fixture citation target
+    },
+  ];
+}
+
+/**
+ * Finding F-C (the OP-128 follow-up, card `t_399927fa`): a **colon-bearing path**
+ * is a live route in this tree and neither token pattern can see it.
+ *
+ * `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link/route.ts`
+ * is a shipped App Router handler (OP-124 I5; `ADR-0721` — adr-fixture: the record
+ * the rows below cite); the `:` is literal,
+ * because the contract's URL is `POST …/uploads:link`, not a placeholder.
+ * `RECORD_PATH_TOKEN_PATTERN` and `RECORD_SPECIFIER_TOKEN_PATTERN` read
+ * `[A-Za-z0-9_./[\]-]`, so the `:` ends the match and a record naming that file
+ * yields the truncated token `…/events/[eventId]/uploads`.
+ *
+ * The truncation is *worse than a miss*: `…/uploads` is the directory of the
+ * colon-free sibling `…/uploads/params/route.ts`, so the channel verifies the
+ * sibling and reports the colon file — the one the record actually names — as a
+ * `consumer-mismatch`. Every row below therefore runs the same two-`route.ts`
+ * population and asserts both halves: exactly one verified reference (the file
+ * the record claims) and exactly one mismatch (the sibling). A channel that
+ * verified both would be worthless, and a row that only counted
+ * `verifiedReferences` would pass on the truncation, because the truncation
+ * verifies something too.
+ *
+ * **RED.** The full-path row, the directory row, the `@/` row and the
+ * colon-bearing `path:line` row fail; the two control rows (the colon-free
+ * sibling named by path, and the colon-free sibling named with a `:42`
+ * annotation) pass. The GREEN widens the class to carry `:` — a legal POSIX file
+ * name character, and the separator Next.js route segments use here.
+ *
+ * **`path:line` is trimmed, not swallowed** (review finding F-C2). No record in
+ * this tree writes `path:42` today (measured: 0 tokens under `docs/adr`), so
+ * widening cannot redden the tree — but the moment `:` is a token character a
+ * `…/route.ts:42` token stops matching its file exactly *and* stops matching the
+ * directory arm, which needs a following `/`: a **false negative**, the one
+ * direction the guard must never drift in. The pinned rule is the one
+ * `trimPathToken` already applies to trailing punctuation — a trailing
+ * `:<digits>` is a line annotation and is trimmed — so both the colon-free and
+ * the colon-bearing shapes keep verifying. Pinning "unsupported" instead was the
+ * alternative the review offered; trimming wins because it keeps a shape that
+ * works today working, and costs one `:\d+$` in the trim.
+ *
+ * The token class is the whole change: nothing here asks the guard to resolve a
+ * dynamic segment, and no fixture of this block exists on disk — `records` and
+ * `sources` are in-memory, so the real `ADR-0721` (adr-fixture: it declares no
+ * `Consumers` field) has no bearing on these rows; nothing here reads a file.
+ */
+describe("checkSourceAdrConsumers — a colon-bearing path token (review finding F-C)", () => {
+  it("keeps the colon-free sibling verified when the record names it by path (control)", () => {
+    // Arrange — the harness itself: on this record text nothing depends on `:`.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads/params/route.ts`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert — the sibling the record names verifies; the colon route does not.
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: colonRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.checkedReferences).toBe(2);
+  });
+
+  it("verifies the colon route when the record names its full repo-relative path", () => {
+    // Arrange — the path as `git ls-files` prints it: `:` included.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link/route.ts`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: uploadsParamsRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.checkedReferences).toBe(2);
+  });
+
+  it("verifies the colon route when the record names the `…/uploads:link` directory", () => {
+    // Arrange — the directory arm needs the `:` too: `…/uploads:link` + `/` is
+    // what the citing path starts with, and `…/uploads` + `/` is the sibling.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: uploadsParamsRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("verifies the colon route when the record names it as an `@/app/api/…` specifier", () => {
+    // Arrange — a real shape, not a hypothetical: the OP-124 RED record
+    // (adr-fixture: `ADR-0720`) cites this feature's routes as
+    // `@/app/api/v1/…/route`, so the specifier channel carries `:` for the same
+    // reason the path channel does.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `@/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link/route.ts`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: uploadsParamsRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+});
+
+/**
+ * Finding F-C2, the second half of the same change: widening the token class to
+ * carry `:` must not cost the `path:line` shape. The two rows here isolate it —
+ * one colon-free, one colon-bearing — so a GREEN that widens the class without
+ * trimming `:<digits>` reddens the first row and a GREEN that trims but does not
+ * widen reddens the second.
+ */
+describe("checkSourceAdrConsumers — a trailing `:line` annotation (review finding F-C2)", () => {
+  it("keeps the colon-free sibling verified when the record annotates its path with `:42`", () => {
+    // Arrange — `docs/adr` carries no such token today, so this row costs
+    // nothing on the current tree and only pins the future.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads/params/route.ts:42`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: colonRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("verifies the colon route when the record annotates its path with `:42`", () => {
+    // Arrange — both characters at once: the `:` of the segment and the `:` of
+    // the line annotation. Only trimming `:<digits>` after a widened match
+    // leaves the file's path behind.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link/route.ts:42`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: uploadsParamsRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+});
+
 describe("checkSourceAdrConsumers — the fixture marker", () => {
   it("exempts a marked fixture line from the accuracy rule", () => {
     // Arrange — the marker's scope is the guard's own test tree, same as (iv).
