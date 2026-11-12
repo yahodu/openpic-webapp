@@ -756,6 +756,47 @@ describe("GET /api/v1/p/attendee-sessions/current — cookie vs header precedenc
     }
     expect(parsed.error.details.recreateUrl.startsWith("/")).toBe(true);
   });
+
+  /**
+   * The one case that makes the **order** in §0.2 load-bearing: when two
+   * *valid* credentials name two *different* sessions, the cookie wins.
+   *
+   * Every neighbouring case is blind to the order. I2/I3 present a single
+   * credential, the stale-cookie case needs the cookie to match no row, and the
+   * lapsed-cookie case is answered `401` before the header is read — so an
+   * implementation that tries the header first while both tokens are valid
+   * passes all of them. This case seeds two distinct sessions and sends both
+   * credentials at once, so only cookie-first precedence answers with session
+   * A's id.
+   */
+  it("F3: a valid op_att cookie wins over a valid X-Attendee-Session header", async () => {
+    const cookieSession = await createdSession();
+    const headerSession = await createdSession();
+    const storedCookie = await storedSession(cookieSession.sessionToken);
+    const storedHeader = await storedSession(headerSession.sessionToken);
+
+    // Guard the fixture itself: two rows, or "the cookie's id" means nothing.
+    expect(objectIdHex(storedCookie.document._id, "attendeeSessions._id")).not.toBe(
+      objectIdHex(storedHeader.document._id, "attendeeSessions._id")
+    );
+
+    const response = await currentSession({
+      cookie: `op_att=${cookieSession.sessionToken}`,
+      "x-attendee-session": headerSession.sessionToken,
+    });
+
+    expect(response.status).toBe(200);
+
+    const current = await jsonOf<CurrentSession>(response);
+
+    expect(current.id).toBe(objectIdHex(storedCookie.document._id, "attendeeSessions._id"));
+    expect(current.id).not.toBe(objectIdHex(storedHeader.document._id, "attendeeSessions._id"));
+    expect(current.kind).toBe("anonymous");
+    expect(current.expiresAt).toBe(cookieSession.expiresAt);
+    // §0.15: neither credential's raw token may be echoed back.
+    expect(JSON.stringify(current)).not.toContain(cookieSession.sessionToken);
+    expect(JSON.stringify(current)).not.toContain(headerSession.sessionToken);
+  });
 });
 
 describe("GET /api/v1/p/attendee-sessions/current — a signed-in user (§1.5)", () => {
