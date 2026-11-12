@@ -733,32 +733,34 @@ export interface AdrRecordText {
 }
 
 /**
- * One accuracy finding for an in-source citation.
+ * One accuracy finding.
  *
  * `consumer-mismatch` — the cited record declares a `Consumers:` field and does
- * not name the citing file; that is a failure. `unlisted-consumer` — the cited
- * record declares no `Consumers:` field, so there is no claim to check; the
- * citation is reported (and counted) in its own channel, never as a failure,
- * because 1206 of this head's 1238 references point at records written before
- * the field existed and a hard failure would demand a 175-record docs
- * programme. Enforcement is therefore **per record**: the moment a record adds
- * `Consumers:`, every citation of it is hard-checked, and nothing is exempt by
- * file or directory.
+ * not name the citing file. `consumers-malformed` — a record carries a
+ * `Consumers`-shaped line that is not the canonical field, so reading it as "no
+ * declaration" would enforce nothing without saying so. Both are failures.
+ * `unlisted-consumer` — the cited record declares no `Consumers:` field at all,
+ * so there is no claim to check; the citation is reported (and counted) in its
+ * own channel, never as a failure, because 1206 of this head's 1238 references
+ * point at records written before the field existed and a hard failure would
+ * demand a 175-record docs programme. Enforcement is therefore **per record**:
+ * the moment a record adds `Consumers:`, every citation of it is hard-checked,
+ * and nothing is exempt by file or directory.
  */
 export interface SourceAdrConsumerIssue {
-  /** `consumer-mismatch` fails the report; `unlisted-consumer` is reported only. */
-  code: "consumer-mismatch" | "unlisted-consumer";
+  /** `consumer-mismatch` and `consumers-malformed` fail; `unlisted-consumer` is reported only. */
+  code: "consumer-mismatch" | "unlisted-consumer" | "consumers-malformed";
 
-  /** Repo-relative POSIX path of the citing file. */
+  /** Repo-relative POSIX path of the citing file; for `consumers-malformed`, the record's file name. */
   file: string;
 
-  /** 1-based line number of the reference, matching an editor's gutter. */
+  /** 1-based line of the reference; for `consumers-malformed`, of the offending line in the record. */
   line: number;
 
   /** The four digits as written, e.g. `"0786"`. */
   number: string;
 
-  /** The cited record's bare file name. */
+  /** The cited record's bare file name; for `consumers-malformed`, the record's own. */
   record: string;
 }
 
@@ -767,7 +769,7 @@ export interface SourceAdrConsumerResult {
   /** `true` exactly when {@link SourceAdrConsumerResult.issues} is empty. */
   ok: boolean;
 
-  /** One `consumer-mismatch` per citation the declaring record does not claim. */
+  /** One `consumer-mismatch` per citation the declaring record does not claim, plus one `consumers-malformed` per non-canonical field. */
   issues: SourceAdrConsumerIssue[];
 
   /** One `unlisted-consumer` per citation of a record that declares nothing. */
@@ -794,11 +796,29 @@ export interface SourceAdrConsumerResult {
 }
 
 /**
- * The consumer declaration: exactly the `Consumers:` field label at the start of
- * a list item. `Consumes:` is a different field (what the decision consumes, not
- * who consumes it) and must never be read as one of these.
+ * The consumer declaration: exactly the `Consumers:` field label opening a list
+ * item at column 0. `Consumes:` is a different field (what the decision consumes,
+ * not who consumes it) and must never be read as one of these.
  */
-const CONSUMERS_FIELD_PATTERN = /^-\s+\*\*Consumers:\*\*/m;
+const CONSUMERS_FIELD_PATTERN = /^-\s+\*\*Consumers:\*\*/;
+
+/**
+ * Is `line` a `Consumers` field in a plausible but non-canonical shape — an
+ * indented or `*`/`+` bullet, the colon outside the bold, no bullet, a plain
+ * unbolded label, or a heading? Reported as `consumers-malformed`, so one
+ * punctuation slip cannot silently switch the rule off for its record (finding
+ * F2). Prose is not a field shape: once the bullet is gone the label must open
+ * the line and, unless the line is a heading, carry its colon.
+ */
+function isMalformedConsumersField(line: string): boolean {
+  const trimmed = line.trim();
+  if (/^#{1,6}[ \t]+\*{0,2}Consumers\b/.test(trimmed)) {
+    return true;
+  }
+
+  const body = trimmed.replace(/^[-*+][ \t]+/, "").replace(/^\*+/, "");
+  return /^Consumers\*{0,2}\s*:/.test(body);
+}
 
 /**
  * A repo-relative path token in a record, e.g. `apps/web/src/server/x.ts`.
@@ -841,6 +861,34 @@ function trimPathToken(token: string): string {
   return token.replace(/[.,;:]+$/, "");
 }
 
+/** The last segment of a path, after POSIX normalization. */
+function bareFileName(path: string): string {
+  const normalized = posix.normalize(path);
+  return normalized.slice(normalized.lastIndexOf("/") + 1);
+}
+
+/**
+ * Read a record's `Consumers` field: does it declare (canonically or in a
+ * malformed shape), and which lines carry a malformed shape? A malformed field
+ * still declares — a slip must not switch enforcement off as a side effect of
+ * being reported (finding F2).
+ */
+function consumersField(text: string): { declares: boolean; malformedLines: number[] } {
+  const malformedLines: number[] = [];
+  let declares = false;
+
+  for (const [index, line] of text.split("\n").entries()) {
+    if (CONSUMERS_FIELD_PATTERN.test(line)) {
+      declares = true;
+    } else if (isMalformedConsumersField(line)) {
+      declares = true;
+      malformedLines.push(index + 1);
+    }
+  }
+
+  return { declares, malformedLines };
+}
+
 /** Strip a trailing `[...]` annotation group from a module specifier. */
 function stripSpecifierAnnotation(specifier: string): string {
   return specifier.replace(/\[[^\]]*\]$/, "");
@@ -851,8 +899,11 @@ interface RecordConsumerFacts {
   /** The record's file name, reported verbatim. */
   fileName: string;
 
-  /** Does the record declare a `Consumers:` field at all? */
+  /** Does the record declare consumers, canonically or in a malformed shape? */
   declaresConsumers: boolean;
+
+  /** 1-based lines of `Consumers`-shaped fields that are not the canonical one. */
+  malformedConsumersLines: number[];
 
   /** Repo-relative path tokens, trimmed. */
   paths: string[];
@@ -887,9 +938,12 @@ function recordConsumerFacts(record: AdrRecordText): RecordConsumerFacts {
   );
   symbols.delete("");
 
+  const consumers = consumersField(record.text);
+
   return {
     fileName: record.fileName,
-    declaresConsumers: CONSUMERS_FIELD_PATTERN.test(record.text),
+    declaresConsumers: consumers.declares,
+    malformedConsumersLines: consumers.malformedLines,
     paths,
     specifiers,
     symbols,
@@ -951,12 +1005,18 @@ function exportedIdentifiers(text: string): string[] {
  * file exports? The four channels are, in the order the module docblock states
  * them: repo-relative path (exact or directory prefix), `@/` module specifier
  * (exact, plus a swept extension, or directory prefix), the bare file name as a
- * whole token, and an exported identifier the record names in backticks.
+ * whole token — only when that name is in `uniqueBareNames` — and an exported
+ * identifier the record names in backticks.
+ *
+ * The bare-name gate is finding F1: a name several swept files share names none
+ * of them, or one record's mention of `route.ts` would verify every route in the
+ * tree.
  */
 function identifiesFile(
   facts: RecordConsumerFacts,
   sourcePath: string,
-  exported: readonly string[]
+  exported: readonly string[],
+  uniqueBareNames: ReadonlySet<string>
 ): boolean {
   const normalized = posix.normalize(sourcePath);
 
@@ -980,8 +1040,8 @@ function identifiesFile(
     return true;
   }
 
-  const bareName = normalized.slice(normalized.lastIndexOf("/") + 1);
-  if (bareName.length > 0 && mentionsToken(facts.text, bareName)) {
+  const bareName = bareFileName(sourcePath);
+  if (bareName.length > 0 && uniqueBareNames.has(bareName) && mentionsToken(facts.text, bareName)) {
     return true;
   }
 
@@ -1000,7 +1060,10 @@ function identifiesFile(
  * `danglingReferences` and left to invariant 4; a citation of a record without a
  * `Consumers:` field is `unlisted-consumer`; a citation of a declaring record
  * that identifies the file is `verifiedReferences`; everything else is a
- * `consumer-mismatch` issue.
+ * `consumer-mismatch` issue. A record whose `Consumers` field is not the
+ * canonical shape still declares and still hard-checks its citations, and its
+ * offending line is an `issues` entry of its own (`consumers-malformed`), so a
+ * hand-written slip fails the report instead of silently disabling the rule.
  *
  * Duplicate numbers do not make this throw or go vacuous: a citation is declared
  * when *any* record with that number declares, and verified when any of them
@@ -1053,6 +1116,33 @@ export function checkSourceAdrConsumers(
   let danglingReferences = 0;
   let verifiedReferences = 0;
 
+  // The bare-name channel only identifies a file whose bare name is unique
+  // across the swept population (finding F1).
+  const bareNameCounts = new Map<string, number>();
+  for (const source of sources) {
+    const name = bareFileName(source.path);
+    bareNameCounts.set(name, (bareNameCounts.get(name) ?? 0) + 1);
+  }
+  const uniqueBareNames = new Set(
+    [...bareNameCounts].filter(([, count]) => count === 1).map(([name]) => name)
+  );
+
+  // Reported per record, not per citation: a malformed field in a record nobody
+  // cites is still a failure (finding F2).
+  for (const [digits, facts] of factsByNumber) {
+    for (const entry of facts) {
+      for (const line of entry.malformedConsumersLines) {
+        issues.push({
+          code: "consumers-malformed",
+          file: entry.fileName,
+          line,
+          number: digits,
+          record: entry.fileName,
+        });
+      }
+    }
+  }
+
   for (const source of sources) {
     const exported = exportedIdentifiers(source.text);
 
@@ -1091,7 +1181,7 @@ export function checkSourceAdrConsumers(
           continue;
         }
 
-        if (facts.some((entry) => identifiesFile(entry, source.path, exported))) {
+        if (facts.some((entry) => identifiesFile(entry, source.path, exported, uniqueBareNames))) {
           verifiedReferences += 1;
           continue;
         }
