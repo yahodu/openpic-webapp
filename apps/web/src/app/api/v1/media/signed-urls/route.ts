@@ -2,7 +2,7 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { getAuth } from "@/server/auth";
-import { resolvePrincipal } from "@/server/auth/guards";
+import { evaluateAuth, resolvePrincipal } from "@/server/auth/guards";
 import { getConfig, getRateLimitConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
@@ -21,6 +21,7 @@ import {
   type SignedUrlKind,
 } from "@/server/media/signed-urls";
 import { createRateLimiter, rateLimitStage } from "@/server/rate-limit";
+import { systemClock } from "@/server/runtime/clock";
 import { platformRepo, tenantRepo } from "@/server/repos";
 import { checkEntitlement } from "@/server/services/entitlements";
 
@@ -36,7 +37,8 @@ import { checkEntitlement } from "@/server/services/entitlements";
  * The route is **`public`**-labelled: §5.6 names `user` or `attendee`, but its
  * authorization is per item, and an anonymous caller must learn per item that
  * it has to sign in (`denied[] authentication_required`) rather than receive a
- * gateway `401` (ADR-0764 D3/D4). The principal is therefore resolved here and
+ * gateway `401` (ADR-0764 D3/D4). The principal is therefore resolved here —
+ * and put through the `user` label's account-status guard (ADR-0770) — and
  * decides the caller class — an event member (organizer, co-organizer or
  * active tenant member) or an attendee (a caller with a `face_matches` row for
  * the image; OP-129 owns the `op_att` session resolver).
@@ -162,6 +164,17 @@ export const POST = defineRoute({
 
     const db = getDb();
     const principal = await resolvePrincipal(ctx.request, { auth: getAuth(), database: db });
+
+    // This `public` route resolves the principal itself, so the `user` label's
+    // account-state rules never run; apply them here (ADR-0770). A suspended,
+    // banned or deletion-pending caller is refused the whole request — the
+    // account decides every item, so the batch rule would collapse it anyway.
+    if (
+      principal?.kind === "user" &&
+      !evaluateAuth("user", { principal, now: systemClock.now() }).allowed
+    ) {
+      throw appError("forbidden");
+    }
 
     // The scope event names the tenant every read is confined to.
     const scopeId = ObjectId.isValid(scope.id) ? new ObjectId(scope.id) : null;

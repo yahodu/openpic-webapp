@@ -1,6 +1,6 @@
 # ADR-0768 — OP-128 follow-up: the account-status gate on the media signer
 
-- **Status:** Proposed — the pins ship red; the gated GREEN (`t_658f8a67`) implements them
+- **Status:** Accepted — implemented by the gated GREEN (`t_658f8a67`, ADR-0770)
 - **Date:** 2026-11-12
 - **Ticket:** OP-128 — _batch signed media URL refresh_, phase 4 (Uploads & Media), epic Media
 - **Card:** `t_91b4e245` (TEST follow-up, round-1 finding **F1**, High), worktree
