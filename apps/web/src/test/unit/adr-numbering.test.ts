@@ -3169,6 +3169,335 @@ describe("checkAdrRecordLinks — a link target must resolve to a record file", 
   });
 });
 
+/* ------------------------------------------------------------------------- *
+ * Invariant (vi) — the link-target shape matrix (review finding F1)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Unit contract — invariant (vi), the link-target **shape matrix**: for every
+ * markdown link-target shape a record can carry, is the target read, and what
+ * does the report say? (Review finding F1 of card `t_e042ab22`.)
+ *
+ * **Why this exists.** The delivered rule read one shape only. Its pattern was
+ * `\]\(([^)\s]+)\)`, which needs `)` immediately after a non-space run, so
+ * `](ADR-0700-missing.md "the record")` matched **nothing** — while the same
+ * pattern's TSDoc claimed a title "stops before the space". The rule was blind
+ * to a whole false-negative class and its documentation said the opposite. The
+ * trunk carried no such shape at review time, so closing the gap is cheap now
+ * and unbounded later.
+ *
+ * **IN scope (RED on this branch).** Two shapes must be read, resolve on the
+ * exact leaf, and report a dangling target:
+ *
+ * - a **titled** target — `](ADR-….md "title")` — reported with `target` as
+ *   written *minus the title*, so the report still quotes a greppable string;
+ * - an **angle-bracket** target — `](<ADR-….md>)` — reported with the brackets
+ *   **stripped**, never as `<ADR-….md>`;
+ * - a titled target that also carries a `#fragment` keeps the fragment and
+ *   loses only the title.
+ *
+ * Both shapes must also *resolve* when the exact leaf exists, and must be
+ * **counted** in `checkedLinks`: `ok: true` alone passes on a rule that
+ * silently skips the shape, which is exactly the defect these pins close.
+ *
+ * **OUT of scope — stated here, and pinned as out of scope, never left
+ * unstated.**
+ *
+ * - `./ADR-….md` and every other path-bearing target: the leaf predicate
+ *   rejects a leaf carrying a path separator, and that stays as delivered. Its
+ *   pin lives in the sibling block
+ *   `describe("checkAdrRecordLinks — a link target must resolve to a record
+ *   file")`, case "does not read a target that is not a same-directory ADR file
+ *   name", so this matrix does not re-pin it.
+ * - reference-style links — `[label][ref]` plus a `[ref]: ADR-….md` definition —
+ *   are not inline `](…)` targets and are not read. Pinned below.
+ * - bare autolinks — `<ADR-….md>` — are not inline `](…)` targets and are not
+ *   read. Pinned below.
+ * - the combined shape `](<ADR-….md> "title")` is legal markdown but
+ *   deliberately **not** pinned: it crosses the two in-scope axes, the trunk
+ *   carries none, and pinning it would widen the GREEN's scope past the two
+ *   shapes the review named.
+ *
+ * **Everything else stays exactly as delivered,** and the remaining rows
+ * characterise it rather than change it: `docs/adr/ADR-*.md` records only (never
+ * `README.md`), fenced blocks and inline code spans are prose, a target without
+ * the `.md` suffix or with a lowercase `adr-` prefix is not a record name, an
+ * image link `![alt](ADR-….md)` *is* a target (it navigates), one issue per
+ * occurrence sorted by file/line/target, and `#fragment` is stripped for
+ * resolution and kept in the report.
+ *
+ * **Posture.** This block is RED-by-design: the titled and angle-bracket cases
+ * fail on the branch that carries them, and the GREEN card `t_b9d8a27f` turns
+ * them green while carrying this file unchanged. Every other row is green in
+ * both states, so a fix that reads the new shapes by loosening the leaf
+ * predicate (case, suffix, path separator) reddens one of them.
+ */
+
+/** A leaf no `docs/adr` file carries: a read target must report as dangling. */
+const fixtureMissingLeaf = "ADR-0700-missing.md"; // adr-fixture: no such docs/adr file
+
+describe("checkAdrRecordLinks — link-target shapes", () => {
+  it("reads the canonical shape and reports the target as written", () => {
+    // Arrange — the row every other row is compared against.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** [the decision](ADR-0700-missing.md)", // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: fixtureMissingLeaf,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads a fragment target, stripping the fragment for resolution and keeping it in the report", () => {
+    // Arrange
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **See:** [the decision](ADR-0700-missing.md#decision)", // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: `${fixtureMissingLeaf}#decision`,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads an image link, because an image target navigates like a text link", () => {
+    // Arrange
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Diagram:** ![the decision](ADR-0700-missing.md)", // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: fixtureMissingLeaf,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads a titled target and reports it with the title removed", () => {
+    // Arrange — F1: the delivered pattern needs `)` right after a non-space run,
+    // so this line matched nothing and the dangling target stayed invisible.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        '- **Amends:** [the decision](ADR-0700-missing.md "the record")', // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert — read, and reported as written minus the title.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: fixtureMissingLeaf,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads an angle-bracket target and reports it with the brackets stripped", () => {
+    // Arrange — F1: the brackets put the leaf off the `ADR-` prefix, so the
+    // delivered rule dropped the line before it could look at the leaf.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** [the decision](<ADR-0700-missing.md>)", // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert — the reported target is the leaf, never `<ADR-0700-missing.md>`.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: fixtureMissingLeaf,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads a titled target that carries a fragment, dropping the title and keeping the fragment", () => {
+    // Arrange — both axes at once, so removing the title cannot eat the fragment.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        '- **See:** [the decision](ADR-0700-missing.md#decision "the record")', // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: `${fixtureMissingLeaf}#decision`,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("accepts and counts a titled target whose exact record file exists", () => {
+    // Arrange — the over-reporter guard: reading the new shape must not turn a
+    // resolving link into an issue, and `checkedLinks` proves it was read.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        `- **Amends:** [ADR-0781](${fixture0781Green} "the green record")`, // adr-fixture: fixture record name
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard, fixture0781Green]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 1, scannedRecords: 1 });
+  });
+
+  it("accepts and counts an angle-bracket target whose exact record file exists", () => {
+    // Arrange — the same over-reporter guard for the bracket shape.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        `- **Amends:** [ADR-0781](<${fixture0781Green}>)`, // adr-fixture: fixture record name
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard, fixture0781Green]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 1, scannedRecords: 1 });
+  });
+
+  it("does not read a reference-style link or its definition", () => {
+    // Arrange — out of scope, stated in this block's docblock: only inline
+    // `](…)` targets are read.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** [the decision][the-record]", // adr-fixture: reference-style, out of scope
+        "",
+        `[the-record]: ${fixtureMissingLeaf}`, // adr-fixture: reference definition, out of scope
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert — nothing was evaluated, so nothing is reported.
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 0, scannedRecords: 1 });
+  });
+
+  it("does not read a bare autolink", () => {
+    // Arrange — out of scope, stated in this block's docblock.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** <ADR-0700-missing.md>", // adr-fixture: bare autolink, out of scope
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 0, scannedRecords: 1 });
+  });
+
+  it("does not read a target whose `ADR-` prefix is lowercase", () => {
+    // Arrange — the leaf predicate is case-sensitive, and that stays as
+    // delivered: a fix that reads the new shapes must not widen it.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** [the decision](adr-0700-missing.md)", // adr-fixture: lowercase prefix, not a record name
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 0, scannedRecords: 1 });
+  });
+
+  it("does not read a target without the `.md` suffix", () => {
+    // Arrange — a `.md`-less target is not a record file name, and that stays
+    // as delivered.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** [the decision](ADR-0700-missing)", // adr-fixture: no .md suffix, not a record name
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 0, scannedRecords: 1 });
+  });
+});
+
 describe("checkRepositoryAdrLinks — the repository sweep", () => {
   afterEach(() => {
     for (const dir of tempDirs.splice(0)) {
