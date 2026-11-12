@@ -1,3 +1,9 @@
+## [1.57.0](https://github.com/yahodu/openpic-webapp/compare/v1.56.0...v1.57.0) (2026-11-12)
+
+### Features
+
+- **adr:** OP-96 report a range-shaped ledger row that does not parse ([#481](https://github.com/yahodu/openpic-webapp/issues/481)) ([fc4ad00](https://github.com/yahodu/openpic-webapp/commit/fc4ad0033d11956b4641fe419aee7161e57e63b0))
+
 ## [1.56.0](https://github.com/yahodu/openpic-webapp/compare/v1.55.1...v1.56.0) (2026-11-12)
 
 ### Features
