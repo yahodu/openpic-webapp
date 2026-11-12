@@ -1,3 +1,9 @@
+## [1.57.3](https://github.com/yahodu/openpic-webapp/compare/v1.57.2...v1.57.3) (2026-11-12)
+
+### Bug Fixes
+
+- **collab:** OP-121 gate the removal log on the winner and answer 204 to a repeat ([#489](https://github.com/yahodu/openpic-webapp/issues/489)) ([c125b9f](https://github.com/yahodu/openpic-webapp/commit/c125b9f45e8f35ee612c3aa8df33b5aa3eb6468a))
+
 ## [1.57.2](https://github.com/yahodu/openpic-webapp/compare/v1.57.1...v1.57.2) (2026-11-12)
 
 ### Bug Fixes
