@@ -285,3 +285,97 @@ The open items are carried by card, never by an ADR number: `t_c8727284` (guard 
 done, squash `d85de6f`), `t_4f74644d` → `t_00321ecb` (the Low F1 above), `t_da4088d2` (lane repair
 — done, delivered on PR #444), `t_b8c449d4` (OP-129 stack land — done, squash `741b607`). Nothing
 recorded above is retracted; those cards' own records document what followed.
+
+## Review sign-off (F1 GREEN, round 1 — artifact lens, landed)
+
+### Scope
+
+The GREEN for the Low F1 recorded under the RED sign-off above: card `t_00321ecb`
+(GREEN, report `lane-range-malformed` for a range-shaped ledger row that does not
+parse), delivered on PR [#481](https://github.com/yahodu/openpic-webapp/pull/481),
+reviewed at head `fb50c7e` and landed as squash `fc4ad00`. This section records that
+round only; it amends no contract and mints no number.
+
+### What shipped
+
+- `lane-range-malformed` joins `AdrNumberIssue["code"]`; `scanLaneLedger` reports
+  `{ code: "lane-range-malformed", number: null, files: [holder] }` for a
+  range-shaped row that is not an accepted ascending four-digit pair.
+- The accepted cell form, the `parseLaneRanges` contract for valid rows and the
+  `lane-range-overlap` shape are unchanged, so a valid ledger reports exactly what
+  it reported before.
+- §6 above and ADR-0300 §10 rule 17 were amended in place: the scope bullet now
+  names the reported malformed row, and the policy rule states that a ledger typo
+  is a CI failure rather than a silent hole.
+
+### Verification (reviewed head `fb50c7e`)
+
+- Pins carried byte-identical through the squash: `adr-numbering.test.ts` blob
+  `3174d4a`, `adr-lane-ranges.test.ts` blob `3ad145a`; the PR diff carries no test
+  path.
+- Focused `adr-numbering` + `adr-lane-ranges`: **83 passed (83)**.
+- Real ledger: `{"ok":true,"issues":[]}` over **31** parsed ranges.
+- Full unit: **162 files, 2637 passed | 3 skipped (2640)** against the then-trunk's
+  **2625 passed | 3 skipped (2628)** — delta **+12**, exactly the new pins.
+- `tsc -p apps/web/tsconfig.json --noEmit` exit 0; eslint 0 errors with the helper
+  warnings identical to the trunk; prettier clean; 14/14 PR checks.
+
+### Load-bearing probes
+
+- Dropping the `start <= end` guard → **4 failed**.
+- Narrowing the range shape to four digits → **2 failed**.
+- Measured silent edges: an indented row → `{ok:true,issues:[]}`; an annotated cell
+  `` `0789`-`0808` (20 per lane) `` → `[]`; an inverted row beside a `0760`-`0799`
+  lane → the malformed issue only, no phantom overlap.
+
+### Landing
+
+- Squash `fc4ad00`. The four reviewed paths are byte-identical between `fb50c7e`
+  and the squash; the only other tree difference is trunk-owned `18f2056` (the
+  OP-129 ADR-0781 sign-off, +48 lines), which landed while PR #481 was open.
+- Re-run at the squash: focused **83 passed**, `tsc` exit 0. `docs/adr` holds
+  **289** records, with no duplicate number.
+
+### Open item routed, not fixed
+
+The §6 guarantee that a malformed row never feeds the overlap predicate was
+regression-invisible at that head: re-adding a descending four-digit pair to the
+range list left the focused suite at **83 passed**, and the indented-row and
+descending-pair-drop edges were asserted only in comments. That is a **coverage
+gap, not a defect in the shipped behaviour**. It was routed to card `t_ce88dbcb`
+(TEST, characterization pins; needs no GREEN), which landed three pins on PR
+[#484](https://github.com/yahodu/openpic-webapp/pull/484) as squash `beae024`, each
+proven load-bearing by a helper mutation:
+
+- `adr-numbering.test.ts`, phantom-overlap pin:
+  `reports only the malformed row when the inverted span would intersect a real lane`.
+  Mutation "also push the range-shaped row into `ranges`" → **3 failed | 83 passed
+  (86)**; the failure is the phantom
+  `lane-range-overlap [OP-201 alpha lane, OP-204 delta lane]` instead of
+  `lane-range-malformed [OP-201 alpha lane]`.
+- `adr-numbering.test.ts`, indented-row pin:
+  `stays silent for an indented row: the row shape requires a leading pipe`.
+  Deleting the `line.startsWith("|")` continue → **1 failed | 85 passed (86)**,
+  that case only.
+- `adr-lane-ranges.test.ts`, descending-pair pin:
+  `drops an inverted pair instead of returning the inverted span`. Dropping the
+  `start <= end` guard → **6 failed | 80 passed (86)**.
+
+With those pins on the merged trunk (`beae024`), the focused pair is **86 passed
+(86)** — the 83 above plus the three pins. The later OP-128 pin scoping
+(`ff0d03c`, PR [#477](https://github.com/yahodu/openpic-webapp/pull/477)) adds six
+cases to `adr-numbering.test.ts` without changing any assertion cited here, so the
+same pair is **92 passed (92)** on the trunk this section is appended to.
+
+### Figure correction (Info)
+
+The implementer handoff quoted a trunk baseline of `2632 passed`. The real baseline
+was **2625 passed | 3 skipped (2628)** — no test file changed on `main` between
+`a08d2aa` and `18f2056` — so the correct relation is 2625 + 12 pins = 2637. This is
+a figure correction, not a defect.
+
+### Post-review status
+
+Nothing in §6 or in the RED rounds 1–2 sign-off above is retracted. The F1 item in
+this section is carried by `t_ce88dbcb`, which is done (squash `beae024`). The card
+ids are the record, not an ADR number.
