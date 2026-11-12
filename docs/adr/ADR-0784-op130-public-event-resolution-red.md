@@ -244,9 +244,10 @@ imageCount` over the event's cached counters — \"nothing is still waiting\".
     `description` → **7 failed | 28 passed (35)**: `expected '300' to be '600'`, both
     `description` cases, and both rotated-slug cases (`expected 404 to be 410` —
     rotation puts the active link first, so `accessLinks[0]` addresses the wrong
-    one). Before the follow-up pins this same stub measured **6 failed |
-    26 passed (32)**; the previously recorded `5 failed | 26 passed (31)` summed to
-    31 and missed `I5: the rotated-away slug …` (review finding F3);
+    one). The round-1 review's independently written equivalent stub measured
+    **6 failed | 26 passed (32)** before these pins existed; the record's
+    `5 failed | 26 passed (31)` summed to 31 and missed
+    `I5: the rotated-away slug …` (review finding F3);
   - **the follow-up pins, one mutation each (the stub restored between probes):**
     - dropping the `eventId` predicate from the profile lookup → **1 failed |
       34 passed (35)**: only `I2: a profile on another event does not show
