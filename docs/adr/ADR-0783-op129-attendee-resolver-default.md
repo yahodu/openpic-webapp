@@ -82,3 +82,59 @@ and the body cannot disagree about which credential is in force.
   token refusal). F4: `attendee-sessions.test.ts` 18/18 (fall-through plus the lapsed-cookie
   companion).
 - Full suite counts and gates are recorded in the card handoff.
+
+## Review (round 1)
+
+**Verdict: APPROVED WITH FINDINGS.** Reviewed at head `cbe53de` and landed on the
+lane trunk `OP-129-task-attendee-session-edge-pins` as the squash `e9eceef`
+(PR #460, 11/11 checks green). Nothing above is retracted: §Context, §Decisions,
+§Consequences, §Alternatives considered and §Evidence stand as written. The
+reviewer edited no file in the reviewed delivery; the reviewed SHA is frozen and
+every finding below is a card, not a push.
+
+### The reviewed bytes are what landed
+
+`git diff --stat cbe53de e9eceef` is **empty (0 lines)**: the tree the review read
+is byte-identical to the squash, so every count below was measured on the merged
+bytes.
+
+`git diff --stat 38a7fa6..cbe53de` is **3 production files + 2 docs** — the
+production files are `current/route.ts`, `session-resolver.ts` and `guards.ts`,
+the docs are this record and the ledger — so the delivery edited no test.
+
+### Gates re-run independently at `cbe53de`
+
+- Focused pins: **35 passed (35)** — `auth-guards.test.ts` 17 plus
+  `attendee-sessions.test.ts` 18.
+- RED direction: with the three production files reverted to `38a7fa6` in a
+  throwaway worktree the run is **4 failed | 31 passed (35)**, and the four
+  failures carry exactly the expected messages — `expected 401 to be 200` (twice),
+  `expected null to match object { kind: 'attendee' }`, and
+  `expected 'authentication_required' to be 'attendee_session_expired'`. The
+  probe worktree was removed with `git worktree remove --force` and the reviewed
+  files restored byte-identically.
+- Full unit: **149 files, 2390 passed | 3 skipped**.
+- Full integration: **99 files, 930 passed**.
+- `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `prettier --check` clean on
+  every touched file.
+- ESLint: **0 errors**, warnings **3 → 2** (the resolver's warning is removed and
+  none is added).
+- PR Checks: **11/11**.
+
+### Findings (routed, not fixed here)
+
+- **F1 (Critical, lane)** — two sibling OP-129 pin branches both mint `ADR-0782`
+  (`…edge-pins.md` and `…rate-limit-pins.md`); with both files present
+  `checkAdrDirectory` reports a `duplicate` issue and the guard run is
+  `1 failed | 28 passed`. This is a lane-wide allocator decision, routed to the
+  orchestrator card `t_1b9c21c6`. This record's own `0783` was unique across
+  every open PR head and every worktree at review time.
+- **F2 (Low, this record)** — the `Relates to` header line and §Alternatives
+  considered cite `ADR-0769` and `ADR-0770`, which the lane repair renumbers. See
+  the note below.
+- **F3 (Low, test quality)** — no pin for two valid attendee credentials naming
+  different sessions, where the cookie must win. Routed to TEST card
+  `t_296d24bd`, which held the case on draft PR #462 at the time of writing. No
+  historical section is rewritten for it.
+
+`ADR-0769` and `ADR-0770` are renumbered to `ADR-0780` and `ADR-0781` by the lane repair (PR #444); the references above are to be re-pointed when that repair folds.
