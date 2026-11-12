@@ -1,3 +1,9 @@
+## [1.56.0](https://github.com/yahodu/openpic-webapp/compare/v1.55.1...v1.56.0) (2026-11-12)
+
+### Features
+
+- **rate-limit:** OP-129 enforce the attendee.session limit on the create route ([#451](https://github.com/yahodu/openpic-webapp/issues/451)) ([84952e3](https://github.com/yahodu/openpic-webapp/commit/84952e3808e49f7786be161e9e2fa2e59e839825)), closes [#446](https://github.com/yahodu/openpic-webapp/issues/446)
+
 ## [1.55.1](https://github.com/yahodu/openpic-webapp/compare/v1.55.0...v1.55.1) (2026-11-12)
 
 ### Bug Fixes
