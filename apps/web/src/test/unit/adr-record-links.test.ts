@@ -70,12 +70,16 @@ import { checkAdrRecordLinks, checkRepositoryAdrLinks } from "../helpers/adr-rec
  * fixture is the same shape: `0781-something-else.md` while 0781's real record
  * exists.
  *
- * **Trunk expectation — `ok: true`.** The sweep landed as a ratchet over the
- * **32 dangling occurrences of 16 distinct targets** it found in other lanes'
- * records, and the repair that retargeted every one of them retired the list in
- * the same change (the F2 coupling: a ratchet fails on a repair as well as on an
- * add). The real-tree case therefore asserts the empty report, with the
- * non-vacuity bounds below keeping a silently narrowed sweep from passing.
+ * **Trunk expectation — `ok: true`, with the census as a floor.** The sweep
+ * landed as a ratchet over the **32 dangling occurrences of 16 distinct
+ * targets** it found in other lanes' records, and the repair that retargeted
+ * every one of them retired the list in the same change (the F2 coupling: a
+ * ratchet fails on a repair as well as on an add). The real-tree case therefore
+ * asserts the empty report, and pins the census as a **floor**, never an
+ * equality: a minted record with a `Relates to` line raises `checkedLinks` by
+ * design, so an equality pin would couple every ADR to this file — the same
+ * friction, one direction over. The floor plus the non-vacuity bounds below are
+ * what keep a silently narrowed sweep from passing.
  *
  * **Ordering.** `issues` is sorted by `file`, then `line`, then `target`, so the
  * same records in any input order produce one report.
@@ -816,7 +820,7 @@ describe("checkRepositoryAdrLinks — the repository sweep", () => {
     });
   });
 
-  it("reports the repository tree's known dangling targets, as a ratchet", () => {
+  it("reports the whole repository tree clean and pins the census as a floor, never an equality", () => {
     // Act
     const result = checkRepositoryAdrLinks(repoRoot);
 
@@ -827,9 +831,17 @@ describe("checkRepositoryAdrLinks — the repository sweep", () => {
 
     // The inherited debt — 32 occurrences of 16 distinct targets — was repaired
     // record by record, so the honest end state is the empty report. The ratchet
-    // is retired, not re-pinned: a new dangling link fails here, and the two
-    // bounds above keep a silently narrowed sweep from passing vacuously.
-    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 881, scannedRecords: 292 });
+    // is retired, not re-pinned: a new dangling link fails here, and the bounds
+    // above keep a silently narrowed sweep from passing vacuously.
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+
+    // Anti-shrink floor — the drift-free replacement for the retired
+    // `checkedLinks: 881` equality. 881 is the census at the retirement; minting
+    // a record raises it and a record with no link leaves it unchanged, so an
+    // added ADR no longer reddens this case. It fails only if the sweep reads
+    // less than it read then — a narrowed sweep, or records deleted in bulk.
+    expect(result.checkedLinks).toBeGreaterThanOrEqual(881);
   });
 
   it("throws an ENOENT error when the root has no docs/adr directory", () => {
