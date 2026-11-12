@@ -1733,15 +1733,15 @@ function colonRouteSources(): SourceFileText[] {
 
 /**
  * Finding F-C (the OP-128 follow-up, card `t_399927fa`): a **colon-bearing path**
- * is a live route in this tree and neither token pattern can see it.
+ * is a live route in this tree and neither token pattern could see it.
  *
  * `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link/route.ts`
  * is a shipped App Router handler (OP-124 I5; `ADR-0721` — adr-fixture: the record
  * the rows below cite); the `:` is literal,
  * because the contract's URL is `POST …/uploads:link`, not a placeholder.
- * `RECORD_PATH_TOKEN_PATTERN` and `RECORD_SPECIFIER_TOKEN_PATTERN` read
- * `[A-Za-z0-9_./[\]-]`, so the `:` ends the match and a record naming that file
- * yields the truncated token `…/events/[eventId]/uploads`.
+ * `RECORD_PATH_TOKEN_PATTERN` and `RECORD_SPECIFIER_TOKEN_PATTERN` were
+ * `[A-Za-z0-9_./[\\]-]` before #506 widened both to `[A-Za-z0-9_./[\\]:-]`, so the `:`
+ * ended the match and the token truncated at `…/events/[eventId]/uploads`.
  *
  * The truncation is *worse than a miss*: `…/uploads` is the directory of the
  * colon-free sibling `…/uploads/params/route.ts`, so the channel verifies the
@@ -1764,17 +1764,17 @@ function colonRouteSources(): SourceFileText[] {
  * widening cannot redden the tree — but the moment `:` is a token character a
  * `…/route.ts:42` token stops matching its file exactly *and* stops matching the
  * directory arm, which needs a following `/`: a **false negative**, the one
- * direction the guard must never drift in. The pinned rule is the one
+ * direction the guard must never drift in. Two trims ship: the one
  * `trimPathToken` already applies to trailing punctuation — a trailing
- * `:<digits>` is a line annotation and is trimmed — so both the colon-free and
- * the colon-bearing shapes keep verifying. Pinning "unsupported" instead was the
- * alternative the review offered; trimming wins because it keeps a shape that
- * works today working, and costs one `:\d+$` in the trim.
+ * `:<digits>` is a line annotation and is trimmed — plus `stripTrailingAnnotation`
+ * (#519; dot allowed in the suffix since #522) for a `:<suffix>` such as `:D1.2`
+ * on a token that names no swept file (F-C3's blocks). "Unsupported" was the
+ * review's alternative; trimming wins because it keeps a shape that works today.
  *
  * The token class is the whole change: nothing here asks the guard to resolve a
  * dynamic segment, and no fixture of this block exists on disk — `records` and
- * `sources` are in-memory, so the real `ADR-0721` (adr-fixture: it declares no
- * `Consumers` field) has no bearing on these rows; nothing here reads a file.
+ * `sources` are in-memory fixtures, so the real `ADR-0721` (adr-fixture: it does
+ * declare `Consumers:` since PR #511) is not consulted; nothing here reads a file.
  */
 describe("checkSourceAdrConsumers — a colon-bearing path token (review finding F-C)", () => {
   it("keeps the colon-free sibling verified when the record names it by path (control)", () => {

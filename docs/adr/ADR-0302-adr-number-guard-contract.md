@@ -351,6 +351,17 @@ its own consumers, so participation is **declared per record, never inferred**.
   arm then verifies the colon-free sibling `…/uploads/…` while the file the
   record actually named is reported as a mismatch — a wrong file in both
   directions at once, which is the failure the widening removed.
+- **Literal first, annotation second.** A `Consumers:` path or `@/…` specifier
+  token whose written form names a swept file is read exactly as written; only a
+  token that names **no** swept file is re-read with **one** trailing `:<suffix>`
+  stripped. The suffix may contain a dot, so `…/route.ts:D1`,
+  `…/route.ts:D1.2` and `…/route.ts:4.2` all name `…/route.ts`, and a second `:`
+  is left alone. The order is load-bearing: a blind trim rewrites the directory
+  token `…/uploads:link` to `…/uploads`, the colon-free sibling's directory, so
+  the colon route and its decoy would both verify — the wrong-file failure above,
+  reintroduced. Read the other way round, a benign annotation the guard cannot
+  tell from a path keeps its citation verified instead of turning it into a
+  named failure.
 - **Duplicate numbers.** A citation is declared when _any_ record with that
   number declares, and verified when any of them identifies the citing file;
   reporting the duplicate stays §1's job.
@@ -358,10 +369,11 @@ its own consumers, so participation is **declared per record, never inferred**.
   the same per-line exemption, a reference whose record is missing counted in
   `danglingReferences` and left to §8, so
   `accuracy.checkedReferences + accuracy.danglingReferences === existence.checkedReferences`.
-- **Measured at the head this section is appended to (2026-11-12).** 1250 checked
-  references, 174 exempt, 0 dangling; 16 records declare the field, 149 citations
-  are verified, 1101 are `unlisted-consumer`, and `consumer-mismatch` and
-  `consumers-malformed` are both 0.
+- **No census snapshot is published here.** The counts move with every record
+  added, and a figure a reader cannot re-derive from a named commit is worse than
+  no figure, so measure them yourself at the commit under review with the guard's
+  own exports — `checkRepositoryAdrReferences`, `checkRepositoryAdrConsumers` and
+  `checkRepositoryAdrLinks`.
 - **Executable contract:** `apps/web/src/test/unit/adr-numbering.test.ts`.
 
 ### 10. Module layout (2026-11-12)
@@ -616,3 +628,57 @@ a figure correction, not a defect.
 Nothing in §6 or in the RED rounds 1–2 sign-off above is retracted. The F1 item in
 this section is carried by `t_ce88dbcb`, which is done (squash `beae024`). The card
 ids are the record, not an ADR number.
+
+## Review sign-off (annotation amendment, round 1 — artifact lens, landed)
+
+### Scope
+
+The §9 amendment delivered on PR [#524](https://github.com/yahodu/openpic-webapp/pull/524) — card `t_a9470ac6`
+(DOCS, Low: record the literal-first / annotation-second precedence and make the census snapshot reproducible) —
+reviewed at head `65c136a` and landed as squash `f9d3a62`. This section records that round only; it amends no
+contract and mints no number.
+
+### Verdict and landing proof
+
+- **APPROVED (round 1, artifact lens).** No changes were requested and nothing was re-merged: the PR was already
+  `MERGED` when the review ran.
+- The reviewed bytes are the shipped bytes: `git diff 65c136a f9d3a62` is empty over the whole tree, and both
+  commits share the tree hash `b3ae93097354c8842b5031f036d3d6fa757b880f`.
+- 15/15 PR checks pass at `65c136a` (incl. `ci`, `unit_test`, `test_coverage`, `lint`, `audit`, `secret-scan`,
+  `CodeQL`, branch-name and PR-title validation).
+
+### Verification, measured by the reviewer
+
+- `prettier --check docs/adr/ADR-0302-adr-number-guard-contract.md`: clean at the head and on the merged tree.
+- `vitest run --project unit apps/web/src/test/unit/adr-numbering.test.ts`: **200 passed (200)** at the head and
+  **200 passed (200)** on the merged tree.
+- Census measured by importing the guard's own exports from outside the swept tree, at the head and again on the
+  merged tree — identical both times: `checkRepositoryAdrReferences` ok, 0 issues, checked **1250**, exempt
+  **176**; `checkRepositoryAdrConsumers` ok, 0 issues, checked **1250**, dangling **0**, verified **149**,
+  unlisted **1101**, declared **16**, no `consumer-mismatch` and no `consumers-malformed`;
+  `checkRepositoryAdrLinks` ok, 0 issues, **881** links over **292** records. Identities:
+  `149 + 0 + 1101 = 1250` and `1250 + 0 = 1250 = existence.checkedReferences`. The trunk holds 292 `ADR-*.md`
+  files, the same number as `scannedRecords`.
+- Scope: one `M` record (+16/−4); `docs/adr/README.md` untouched; no ADR number minted; `ADR-0302` present once on
+  the trunk, no duplicate numbers in `docs/adr/`.
+
+### Findings
+
+- **F1 (was Low) — closed.** §9 now states literal first / annotation second, with the dotted suffix
+  (`…/route.ts:D1`, `:D1.2`, `:4.2`), a second `:` left alone, and both reasons the order is load-bearing — the
+  blind trim collapsing `…/uploads:link` onto the colon-free sibling's directory, and the reverse order turning a
+  benign annotation into a named failure. Checked against the shipped code, not the description:
+  `namesAFile(token) ? token : stripTrailingAnnotation(token)` on both `paths` and `specifiers`, with
+  `stripTrailingAnnotation = token.replace(/:[A-Za-z0-9_.-]+$/, "")`, and `trimPathToken`'s `:\d+$` stage intact.
+- **F2 (was Low) — closed.** The dated snapshot is replaced by a pointer to `checkRepositoryAdrReferences`,
+  `checkRepositoryAdrConsumers` and `checkRepositoryAdrLinks`; all three exports exist, so no figure is published
+  that a reader cannot re-derive.
+
+### Recorded, no change requested
+
+- The implementer committed with `--no-verify` because `pnpm lint-staged` aborted on
+  `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`; the identity check and prettier were run by hand and CI's `lint`
+  and format gates passed on the pushed head.
+- The census figures this record carried before the amendment (`1250` / `174` / `149` / `1101` / `16` at `960bb02`)
+  were accurate for their head but named no commit; removing them, rather than pinning a head, is the option the
+  card sanctioned and the one that cannot go stale.
