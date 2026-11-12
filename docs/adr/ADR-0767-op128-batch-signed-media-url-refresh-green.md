@@ -1,18 +1,18 @@
-# ADR-0765 — OP-128 GREEN: batch signed media URL refresh
+# ADR-0767 — OP-128 GREEN: batch signed media URL refresh
 
-- **Status:** Accepted (implements [ADR-0764](ADR-0764-op128-batch-signed-media-url-refresh-red.md) unamended)
+- **Status:** Accepted (implements [ADR-0766](ADR-0766-op128-batch-signed-media-url-refresh-red.md) unamended)
 - **Date:** 2026-11-12
 - **Ticket:** OP-128 — _batch signed media URL refresh_, phase 4 (Uploads & Media), epic Media
 - **Card:** `t_33c02c69` (GREEN), same worktree as the RED
   (`/root/openpic/openpic-webapp/.worktrees/t_133a4093`, branch `wt/t_133a4093` → the GREEN PR
   branch `OP-128-task-batch-signed-media-urls-green`), based on the RED head `c965dfd`
 - **Consumes:** contract §5.6, §5.7, §0.3, §0.6, §0.11, §0.14, §0.15; schema §16.1, §16.3, §17.5;
-  ADR-0762 (D5/A5, F1), ADR-0763 (the member grid's hidden-thumbnail signing), ADR-0764 (the pins)
+  ADR-0762 (D5/A5, F1), ADR-0763 (the member grid's hidden-thumbnail signing), ADR-0766 (the pins)
 - **Supersedes:** nothing
 
 ## Context
 
-The pins landed as ADR-0764: two spec files (24 unit cases on the decision table, 15 integration
+The pins landed as ADR-0766: two spec files (24 unit cases on the decision table, 15 integration
 cases on the endpoint) and no production code. This card writes exactly the code they demand and
 nothing else.
 
@@ -31,7 +31,7 @@ one place it could leak to the wire.
 
 The route declares no `auth` stage. The handler calls `resolvePrincipal` itself (the same resolver
 `requireAuth` uses, ADR-0025) so an anonymous caller reaches the per-item table instead of a
-gateway `401` (ADR-0764 D3/D4). The caller class is then: `member` when the resolved user holds an
+gateway `401` (ADR-0766 D3/D4). The caller class is then: `member` when the resolved user holds an
 `event_organizers` row (`organizer`/`co_organizer`, `revokedAt: null`) or an active
 `tenant_members` row of the scope event's tenant (`resolveEventActorRole`), else `attendee`, else
 `anonymous`.
@@ -88,20 +88,20 @@ addressed by the same `$in`-read asset, never by an extra query.
 
 ## Coverage gaps handed to the Test Author
 
-- A **member** refreshing a hidden image is still unpinned (ADR-0764 O1). The implementation allows
+- A **member** refreshing a hidden image is still unpinned (ADR-0766 O1). The implementation allows
   it, following ADR-0763's grid, which lists and signs hidden thumbnails.
-- The `op_att` anonymous-session variant of I6 (ADR-0764 O2) stays with OP-129. An `attendee`
+- The `op_att` anonymous-session variant of I6 (ADR-0766 O2) stays with OP-129. An `attendee`
   principal (`kind: "attendee"`) has no `userId`, so its `matched` fact is `false` and every item is
   `forbidden`/`not_found` — correct for this card, but the real attendee path needs OP-129.
 - Not pinned, and implemented with a documented fallback: an asset row missing the derivative format,
   an image row whose asset row is gone (treated as `not_found`), a malformed/unknown scope id
-  (`not_found` per item), and the `media.sign` class itself (ADR-0764 O3, declared but unpinned).
-- `expiresAt` stays the signer's RFC-3339 `…Z` string (ADR-0764 O5); the route never re-formats it.
+  (`not_found` per item), and the `media.sign` class itself (ADR-0766 O3, declared but unpinned).
+- `expiresAt` stays the signer's RFC-3339 `…Z` string (ADR-0766 O5); the route never re-formats it.
 
 ## Alternatives
 
 - **A schema `.max(200)`** — rejected by the pins themselves: it reaches the wire as `422`, and I4
-  requires `413` from the handler (ADR-0764 D7).
+  requires `413` from the handler (ADR-0766 D7).
 - **`requireAuth("user" | "attendee")` plus a per-item `authentication_required` entry** — impossible:
   the stage would answer `401` before the handler, and I6 pins a `200`.
 - **One `findOne` per item** — rejected by I5's query-budget pin and by §5.6's batch rationale.
