@@ -867,6 +867,8 @@ Auth `user` + event role `organizer` — remove an **accepted** co-organizer.
 
 Sets `eventMembers.status = "removed"` and the originating `invitations.status = "revoked"` (so the PRD's "must not be able to accept after removal" holds structurally). Emits `collab.member.removed` (to the removed user, in-app + email — they lose access to content they uploaded) and `collab.member.removed.ack` (to the organizer, in-app only).
 
+Removal is **idempotent**: removing a member who is already removed answers `204` and writes nothing further — no second `collab.member.removed`/`.ack` pair — so a retried or double-clicked `DELETE` is safe. `404 not_found` therefore means no `eventMembers` row exists for that `(eventId, userId)` at all (never a member, or another tenant's), not that the member has already been removed.
+
 `409 cannot_remove_organizer` if the target holds `role: "organizer"` — guarded by the unique partial index enforcing exactly one organizer per event.
 
 ---
