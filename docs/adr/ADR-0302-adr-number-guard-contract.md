@@ -846,3 +846,59 @@ no number to bump), `t_03cfe3db` (this card: §10 exception, the §1 cross-refer
 sign-offs), `t_0fb1fa25` (closed by `ad17a9a`).
 
 Nothing in §7 is retracted by this section: it records the form the floors take from here on.
+
+## Review sign-off (ADR-0302 §7 resolution-not-correctness, round 1 — artifact lens, landed)
+
+### Scope
+
+The §7 amendment delivered on PR [#538](https://github.com/yahodu/openpic-webapp/pull/538) — card
+`t_d7c2e90f`: a link that names a live record of the cited number is green even when that record
+decides a different thing, so a repair retargets to the record the sentence means, and names the gap
+in prose where no record on `main` decides it. Reviewed at head `77eba0d`, landed as squash `787d00c`.
+One file, `+12/−0`: the single `Resolution is not correctness` bullet at `:267-278` on the shipped
+tree, between the census-floors bullet and `### 8.`. This section records that round only; it amends
+§7 only and mints no number.
+
+### Verdict and landing proof
+
+- **APPROVED (round 1, artifact lens).** No changes were requested and nothing was re-merged: the PR
+  was already `MERGED` when the review ran.
+- The reviewed bytes are the shipped bytes: `git diff 77eba0d 787d00c` over the record path is empty.
+  The only path differing between the two trees is `docs/CONVENTIONS.md`, which is `main`'s own commit
+  `6310982` and landed inside the merge window.
+- 15/15 PR checks pass at `77eba0d`: `ci`, `unit_test`, `test_coverage`, `lint`, `audit`, `audit-dev`,
+  `env-changes`, `secret-scan`, `validate-branch-name`, `validate-pr-title`, `CodeQL`, both `Analyze`
+  legs, `Assert CI evidence` and the close side-effect `notify-discord`.
+
+### Measured by the reviewer
+
+- **Census unchanged, and provably cannot move.** `checkRepositoryAdrLinks` on the shipped trunk:
+  `ok: true`, 0 issues, **882** links over **294** records — the pre-change pair. Negative control: the
+  record restored to its pre-change `6310982` blob, swept in a copied `docs/adr` tree, also measures
+  882/294, because the added lines carry no bracket-and-parenthesis target.
+- `adr-record-links.test.ts` **28 passed (28)** and `adr-numbering.test.ts` **29 passed (29)**, so
+  **57 passed (57)** together; the whole `adr-*.test.ts` glob **218 passed (218)**.
+- `prettier --check` on this record: clean, rc=0.
+- Ledger: **294** record basenames on the trunk with an empty duplicate-number sweep;
+  `docs/adr/README.md` and `ADR-0300` byte-identical to the pre-change tree. No record added, no row and
+  no `Next free` cell touched.
+- The prose's own citations, checked at source: `ADR-0540` is the OP-114 branding-upload RED; `ADR-0040`
+  is the OP-89 identity-lifecycle-hooks RED and mentions `event_organizers` **zero** times;
+  `ADR-0560`/`ADR-0561:5` and `ADR-0600:5` now carry the prose form, so both instances are historical as
+  the bullet words them.
+
+### Findings, all Info, no code change
+
+- **I1** — the bullet's label attributes the round to `t_bd371d4d` alone, while the F1 instance came
+  from the review of `t_81980030`. The trail stays followable: the fix card `t_130572f1` is named inline.
+- **I2** — "the OP-104 pointers `ADR-0360`/`ADR-0361`" reads as link targets, where §7's retirement
+  bullet records those two as _prose names_. The phrase is the commissioning card's wording verbatim.
+- **I3** — the bullet does not cross-reference §7's exact-leaf bullet (`0306` → a different decision
+  passed as valid), which already describes this failure mode, minus the policy.
+
+### Post-review status
+
+No follow-up card beyond this sign-off. The F1 site was closed by `t_130572f1` (PR
+[#536](https://github.com/yahodu/openpic-webapp/pull/536), squash `302ff4d`) and the F2 site by
+`t_bd371d4d` (PR [#534](https://github.com/yahodu/openpic-webapp/pull/534), squash `a9d17bf`). Cards
+are cited by id and PRs by number, never by an ADR number that can renumber.
