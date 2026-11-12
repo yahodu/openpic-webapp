@@ -237,3 +237,15 @@ constrains an event whose links are all inactive (`[]`) and one whose single
 active link is the only one reported, so either "all active slugs" or "the link
 that was used" satisfies it; the GREEN card prescribes filtering the projected
 array by `active === true`, which is compatible with both.
+
+**GREEN delivery (`t_297eae5e`).** `eventIdsFor` now resolves
+`{ accessLinks: { $elemMatch: { slug, active: true } } }` and keeps the lookup
+before the insert, so a revoked slug answers the unchanged `404 not_found` and
+writes no session row. `eventSlugsFor` filters the projected `accessLinks[]` by
+`active === true`, so a since-deactivated link is reported as absent. Measured
+after the change: `attendee-sessions` integration **18 passed (18)**,
+`attendee-session-token` **9** and `attendee-session-cookie` **6** unit passed,
+ADR guards **54** passed with `checkAdrDirectory("docs/adr")` `{ ok: true,
+issues: [] }`, `tsc --noEmit` exit `0`, ESLint 0 errors, Prettier clean. Of the
+multiple-active-link question left open above, the "all active slugs" reading is
+implemented — the array is filtered, so the order the row carries is kept.
