@@ -127,12 +127,45 @@ range membership and `origin/main` freshness stay review-time.
   where `files` carries the two **holders** (the ledger's row labels, not file
   names) sorted ascending. Touching neighbours — `0760`–`0779` and `0780`–`0798`
   — are disjoint and clean.
-- **Scope: rows only, closed ranges only.** A row contributes a range only when
-  its second cell is a closed `` `NNNN`–`NNNN` `` pair (`–` U+2013 or `-`). The
-  open-ended `unallocated (future lanes)` cursor (`` `0700`+ … ``), a
-  single-number cell, a non-four-digit pair, the header and `---` separator rows,
-  the ADR index table and any prose mention are **skipped, never thrown on**. A
-  missing, empty or row-less `README.md` adds no issue.
+- **Scope: rows only, closed ranges only — but a range-shaped row is never
+  dropped silently.** A row contributes a range only when its second cell is a
+  closed `` `NNNN`–`NNNN` `` pair (`–` U+2013 or `-`) whose start is not above
+  its end. A cell that is **range-shaped** — two backticked 3–4 digit tokens with
+  one dash-family separator (`–`, `-`, `—`, `−`, `~`) and nothing else in the
+  cell — but fails that test is **reported**, not skipped:
+  `{ code: "lane-range-malformed", number: null, files: [holder] }`, one issue
+  per row, holder trimmed verbatim (finding F1 follow-up). Still **skipped**, and
+  named here so a later "fix" cannot red the board: the open-ended
+  `unallocated (future lanes)` cursor (`` `0700`+ … ``), a single-number cell,
+  the header and `---` separator rows, any prose mention, the ADR index rows
+  (their titles quote numbers — the real `0341` row reads "the `` `402`/`403` ``
+  denial split"), an **indented** row (the row shape requires a leading `|`), and
+  an **annotated** range cell such as `` `0789`-`0808` (20 per lane) `` (the
+  accepted cell is fully anchored). A missing, empty or row-less `README.md` adds
+  no issue.
+- **Why range notation, not "any non-alphanumeric separator".** The F1 pins
+  describe a row as "two backticked number tokens with a non-alphanumeric
+  separator between them"; applied literally to a whole cell that also catches
+  the `0341` index row and would call an annotated range malformed. The
+  implementation therefore gates on _range notation_ — one dash-family separator
+  inside an otherwise fully anchored cell. This is the one place the rule is
+  narrower than the pins' wording, and it is settled by the harder requirement
+  that `checkAdrDirectory("docs/adr")` on this repository stays exactly
+  `{ ok: true, issues: [] }`.
+- **A malformed row never feeds the overlap predicate.** `0780`-`0760` matches
+  the accepted pattern and would parse as `{ start: 780, end: 760 }`, inventing
+  an overlap against a lane at `0760`-`0799` that no lane reserved.
+  `parseLaneRanges` drops a descending pair (its result for every valid row is
+  unchanged), and the malformed issue is the only report that row produces.
+- **Measured (F1 follow-up).** An inverted (`0780`-`0760`), em-dash
+  (`0760`—`0779`), minus-sign, tilde and three-digit (`760`-`779`) row each
+  produce exactly one `lane-range-malformed` issue; an indented copy of the
+  inverted row produces none; the real ledger is `{ ok: true, issues: [] }` over
+  31 parsed ranges. **Why the silent direction was worse than the false
+  positive:** a skipped row is indistinguishable from a lane that reserved
+  nothing, so the guard reports clean while the ledger's promise is broken — the
+  same silence that let F-L1 ship. A false positive is a one-line ledger fix in
+  the PR that introduced it, and the code names the offending row.
 - **Parser.** `parseLaneRanges(markdown: string): LaneRange[]` in the same
   module returns one `{ holder, start, end }` per closed row — holder trimmed
   verbatim, leading zeros dropped, document order preserved. It is row-shape
