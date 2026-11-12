@@ -78,11 +78,13 @@ export const DELETE = defineRoute({
     const targetHex = targetUserId.toHexString();
     const members = platformRepo(db).collection(COLLECTIONS.eventOrganizers);
     // `event_organizers.userId` is the Better Auth id as a hex string (§15.2).
+    // Identity only: an already-removed row must still resolve, so a repeat
+    // answers `204` (an already-terminal transition is success, §0.7) instead
+    // of the `404` reserved for a member that never existed here.
     const member = (await members.findOne({
       tenantId: tenantKey,
       eventId,
       userId: targetHex,
-      revokedAt: null,
     })) as { readonly _id?: unknown; readonly role?: unknown } | null;
     if (member === null) {
       throw appError("not_found");
@@ -93,7 +95,7 @@ export const DELETE = defineRoute({
       });
     }
 
-    await withTransaction(async (session) => {
+    const removed = await withTransaction(async (session) => {
       // The predicate decides the winner: two `DELETE`s that both passed the
       // lookup above race here, and only the one that flips `revokedAt` from
       // null performs the removal (and therefore notifies). The loser answers
@@ -104,7 +106,7 @@ export const DELETE = defineRoute({
         { session }
       );
       if (removal.matchedCount === 0) {
-        return;
+        return false;
       }
 
       // Revoke the invitation that granted the seat, so it cannot be re-accepted.
@@ -128,14 +130,19 @@ export const DELETE = defineRoute({
           { db, session }
         );
       }
+
+      return true;
     });
 
-    getLogger().info("event member removed", {
-      event: "collab.member.removed",
-      tenantId: tenantKey,
-      eventId: eventIdHex,
-      userId: targetHex,
-    });
+    // Only the winner removed anything, so only the winner reports a removal.
+    if (removed) {
+      getLogger().info("event member removed", {
+        event: "collab.member.removed",
+        tenantId: tenantKey,
+        eventId: eventIdHex,
+        userId: targetHex,
+      });
+    }
 
     return { status: 204, body: null };
   },
