@@ -10,7 +10,7 @@ import {
 
 /**
  * Unit contract — anonymous attendee session token minting and hashing (OP-129
- * U1, contract §1.5, schema §13.5, ADR-0768).
+ * U1, contract §1.5, schema §13.5, ADR-0780).
  *
  * **Why this exists.** The `op_att` token is the *only* credential an anonymous
  * attendee holds, and it is a bearer key to that person's selfie and matched
@@ -38,7 +38,7 @@ import {
  * resolver can therefore hash an inbound cookie/header and compare it byte for
  * byte (contract §1.5, schema §13.5 `{tokenHash:1}` unique).
  *
- * ## Assumptions (ADR-0768 §Assumptions)
+ * ## Assumptions (ADR-0780 §Assumptions)
  *
  * - 32 bytes of entropy encoded as 43 unpadded base64url characters is the
  *   documented shape: it reuses the shipped `randomToken(32, "opat_")`

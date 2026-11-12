@@ -16,7 +16,7 @@ import { parseLaneRanges, type LaneRange } from "../helpers/adr-numbering.js";
  * could reserve **intersecting** ranges and only discover it later, as two ADRs
  * minted the same number. That happened: the OP-126 uploads lane reserved
  * `0760`–`0779` while the OP-129 attendee-identity lane reserved `0769`–`0788`,
- * and `ADR-0770` now exists twice in flight. Neither row is on `main`, so the
+ * and `ADR-0770` [adr-fixture] now exists twice in flight. Neither row is on `main`, so the
  * defect is invisible from the trunk — only a check that *reads the table* can
  * see it. This spec pins the parser half of that check; the checker half lives
  * in `adr-numbering.test.ts` (`checkAdrDirectory` → `lane-range-overlap`).

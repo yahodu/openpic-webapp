@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, type Dirent } from "node:fs";
+import { join, relative, sep } from "node:path";
 
 /**
  * Mechanical ADR-number guard for `docs/adr/` (review finding R-1, OP-96).
@@ -15,7 +15,9 @@ import { join } from "node:path";
  *   1. no two in-scope files share an `ADR-NNNN` number;
  *   2. every in-scope `ADR-*.md` file name is well-formed;
  *   3. no two rows of the reserved-range ledger in `docs/adr/README.md` reserve
- *      intersecting closed ranges (`lane-range-overlap`, ADR-0300 §10).
+ *      intersecting closed ranges (`lane-range-overlap`, ADR-0300 §10);
+ *   4. every `ADR-NNNN` reference inside a source file resolves to a
+ *      `docs/adr/ADR-NNNN-*.md` file (`dangling-reference`, finding F6-b).
  *
  * The third check parses exactly one table shape from the ledger: a pipe row
  * whose second cell is a closed `` `NNNN`–`NNNN` `` pair. It cannot see a
@@ -23,6 +25,14 @@ import { join } from "node:path";
  * file→lane map, and a lane's `Next free` cell is not its range end — so range
  * *membership* and `origin/main` freshness stay review-time obligations
  * (`docs/CONVENTIONS.md` §11). Range *disjointness* no longer is.
+ *
+ * The fourth check answers the question the first three cannot: "does the ADR
+ * this comment cites still exist?" It was added because the OP-128 round-1
+ * renumber left five shipped comments citing `ADR-0764`/`ADR-0765` [adr-fixture] after those
+ * decisions moved to `ADR-0766`/`ADR-0767` [adr-fixture] — and `0764`/`0765` belong to
+ * sibling lanes, so the comments pointed at the wrong decisions. Nothing read
+ * the references; now the sweep does. See {@link checkSourceAdrReferences} and
+ * {@link checkRepositoryAdrReferences}.
  *
  * @see docs/CONVENTIONS.md §11 (ADR numbering)
  * @see docs/adr/ADR-0300-adr-number-range-allocation-policy.md
@@ -281,6 +291,31 @@ function findLaneRangeOverlaps(markdown: string): AdrNumberIssue[] {
 }
 
 /**
+ * The module's one directory-read call site. `checkAdrDirectory` and the source
+ * sweep both go through it: the security preset flags every `readdirSync` with a
+ * non-literal argument, so a second call site would add a warning for nothing.
+ *
+ * @param dir - Absolute or relative path to the directory to list.
+ * @returns The raw directory entries (`fs.Dirent`s, so callers can tell a file
+ * from a directory from a symlink without another `stat`).
+ * @throws If `dir` cannot be read (missing directory, permission denied).
+ */
+function readDirectoryEntries(dir: string): Dirent[] {
+  return readdirSync(dir, { withFileTypes: true });
+}
+
+/**
+ * The module's one file-read call site (see {@link readDirectoryEntries}).
+ *
+ * @param filePath - Absolute or relative path to the file.
+ * @returns The file's whole text, UTF-8.
+ * @throws If `filePath` cannot be read.
+ */
+function readTextFile(filePath: string): string {
+  return readFileSync(filePath, "utf8");
+}
+
+/**
  * Read exactly one directory and apply {@link checkAdrNumbers} to its entries.
  *
  * The read is synchronous and **never recurses**: subdirectory entries are
@@ -301,7 +336,7 @@ function findLaneRangeOverlaps(markdown: string): AdrNumberIssue[] {
  * ```
  */
 export function checkAdrDirectory(dir: string): AdrCheckResult {
-  const fileNames = readdirSync(dir, { withFileTypes: true })
+  const fileNames = readDirectoryEntries(dir)
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name);
 
@@ -311,8 +346,261 @@ export function checkAdrDirectory(dir: string): AdrCheckResult {
     return numbering;
   }
 
-  const issues = [...numbering.issues, ...findLaneRangeOverlaps(readFileSync(readmePath, "utf8"))];
+  const issues = [...numbering.issues, ...findLaneRangeOverlaps(readTextFile(readmePath))];
   issues.sort(compareIssues);
 
   return { ok: issues.length === 0, issues };
+}
+
+/* ------------------------------------------------------------------------- *
+ * Invariant 4 — every in-source `ADR-NNNN` reference resolves (finding F6-b)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One source file handed to {@link checkSourceAdrReferences}. `path` is carried
+ * through into the report verbatim (repo-relative, POSIX separators), so the
+ * caller decides how a file is named and the check stays pure.
+ */
+export interface SourceFileText {
+  /** Repo-relative POSIX path, e.g. `apps/web/src/server/notifications/digest.ts`. */
+  path: string;
+
+  /** The whole file text; lines are split on `"\n"`. */
+  text: string;
+}
+
+/**
+ * One in-source `ADR-NNNN` reference with no `docs/adr/ADR-NNNN-*.md` file.
+ *
+ * `number` keeps the digits **as written** (leading zeros included) so the
+ * failure message can be pasted into a search; `line` is 1-based so it matches
+ * an editor's gutter.
+ */
+export interface SourceAdrReferenceIssue {
+  /** Always `"dangling-reference"`; the discriminant for this issue family. */
+  code: "dangling-reference";
+
+  /** Repo-relative POSIX path of the source file that carries the reference. */
+  file: string;
+
+  /** 1-based line number of the reference. */
+  line: number;
+
+  /** The four-digit ADR number as written, e.g. `"0764"`. */
+  number: string;
+}
+
+/** The report shape returned by {@link checkSourceAdrReferences}. */
+export interface SourceAdrReferenceResult {
+  /** `true` exactly when {@link SourceAdrReferenceResult.issues} is empty. */
+  ok: boolean;
+
+  /**
+   * One entry per dangling reference — not per number and not per file — sorted
+   * by `file`, then `line`, then `number`, so the report is identical for the
+   * same sources in any input order.
+   */
+  issues: SourceAdrReferenceIssue[];
+
+  /** References the rule evaluated (exempt ones are counted separately). */
+  checkedReferences: number;
+
+  /** References skipped because their line carries the fixture marker. */
+  exemptReferences: number;
+}
+
+/** Source-file extensions the repository sweep reads. */
+const SOURCE_FILE_EXTENSIONS: readonly string[] = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+
+/**
+ * The top-level trees the sweep walks. Deliberately not the whole repository:
+ * `scripts/` and the docs are outside the application's source, so a reference
+ * there is not a shipped comment.
+ */
+const SOURCE_SWEEP_ROOTS: readonly string[] = ["apps", "packages"];
+
+/**
+ * Directory names the sweep never descends into, at any depth. Dependencies and
+ * build output: `apps/web/.next/**` holds copies of the source, and counting
+ * them twice would make the sweep depend on whether a build ran.
+ */
+const SKIPPED_SOURCE_DIRECTORIES: ReadonlySet<string> = new Set([
+  "node_modules",
+  ".git",
+  ".next",
+  ".worktrees",
+  "coverage",
+  "dist",
+  "build",
+  ".turbo",
+  "playwright-report",
+  "test-results",
+]);
+
+/**
+ * The reference token: a case-sensitive `ADR-` followed by exactly four digits
+ * that are not followed by a fifth. The lookahead keeps a five-digit shape
+ * fixture (`ADR-12345`) from masquerading as a reference to `1234`; the
+ * case-sensitivity matches {@link checkAdrNumbers}, where `adr-…` is not an ADR
+ * file either.
+ */
+const SOURCE_ADR_REFERENCE_PATTERN = /ADR-(\d{4})(?!\d)/g;
+
+/**
+ * The fixture marker. A source line whose text contains this marker is exempt
+ * from the reference rule: the guard's own specs are full of synthetic numbers
+ * (`ADR-0000`/`ADR-9999` [adr-fixture] shape fixtures, sibling-lane numbers that only exist on
+ * an unmerged branch) that must never resolve. The exemption is deliberately
+ * per **line text** — not a line number (which goes stale when a fixture moves)
+ * and not a number range (which would hide a real defect behind it) — so an
+ * unmarked line in a marked file still fails.
+ */
+const SOURCE_ADR_REFERENCE_FIXTURE_MARKER = "adr-fixture";
+
+/**
+ * The numbers that {@link checkSourceAdrReferences} treats as resolvable: the
+ * digits of every **well-formed** ADR file name. Malformed names are already a
+ * `malformed` issue in {@link checkAdrNumbers}, so they resolve nothing here
+ * and the two guards agree instead of contradicting each other.
+ */
+function resolvableAdrNumbers(adrFileNames: readonly string[]): Set<string> {
+  const numbers = new Set<string>();
+
+  for (const fileName of adrFileNames) {
+    const digits = adrDigitsOf(fileName);
+    if (digits !== null) {
+      numbers.add(digits);
+    }
+  }
+
+  return numbers;
+}
+
+/** Order source-reference issues: file, then line, then number. */
+function compareSourceIssues(
+  left: SourceAdrReferenceIssue,
+  right: SourceAdrReferenceIssue
+): number {
+  const byFile = compareStrings(left.file, right.file);
+  if (byFile !== 0) {
+    return byFile;
+  }
+  if (left.line !== right.line) {
+    return left.line - right.line;
+  }
+  return compareStrings(left.number, right.number);
+}
+
+/**
+ * Check that every `ADR-NNNN` reference in `sources` resolves to one of
+ * `adrFileNames` (bare names from `docs/adr/`). Pure — it never touches the
+ * filesystem, so the rule is testable without fixtures on disk.
+ *
+ * One `dangling-reference` issue per **occurrence**: two comments citing the
+ * same missing number are two issues, and two files citing it are two issues,
+ * because each one is a separate wrong pointer to fix. References on a line
+ * that carries the fixture marker are skipped and counted in
+ * `exemptReferences`; every other reference is counted in `checkedReferences`.
+ *
+ * @param sources - The source files to scan, in any order.
+ * @param adrFileNames - Bare file names from the ADR directory.
+ * @returns `ok: true` with no issues when every reference resolves.
+ * @example
+ * ```ts
+ * checkSourceAdrReferences(
+ *   [{ path: "apps/web/src/server/x.ts", text: "// see ADR-0146-a.md" }],
+ *   ["ADR-0146-a.md"]
+ * );
+ * // { ok: true, issues: [], checkedReferences: 1, exemptReferences: 0 }
+ * ```
+ */
+export function checkSourceAdrReferences(
+  sources: readonly SourceFileText[],
+  adrFileNames: readonly string[]
+): SourceAdrReferenceResult {
+  const resolvable = resolvableAdrNumbers(adrFileNames);
+  const issues: SourceAdrReferenceIssue[] = [];
+  let checkedReferences = 0;
+  let exemptReferences = 0;
+
+  for (const source of sources) {
+    for (const [index, line] of source.text.split("\n").entries()) {
+      const references = [...line.matchAll(SOURCE_ADR_REFERENCE_PATTERN)];
+      if (references.length === 0) {
+        continue;
+      }
+
+      if (line.includes(SOURCE_ADR_REFERENCE_FIXTURE_MARKER)) {
+        exemptReferences += references.length;
+        continue;
+      }
+
+      for (const reference of references) {
+        checkedReferences += 1;
+        const number = reference[1] ?? "";
+        if (!resolvable.has(number)) {
+          issues.push({ code: "dangling-reference", file: source.path, line: index + 1, number });
+        }
+      }
+    }
+  }
+
+  issues.sort(compareSourceIssues);
+
+  return { ok: issues.length === 0, issues, checkedReferences, exemptReferences };
+}
+
+/**
+ * Walk one directory tree for source files, appending repo-relative POSIX paths
+ * to `collected`. Skips {@link SKIPPED_SOURCE_DIRECTORIES} by name at any depth
+ * and every file whose extension is not in {@link SOURCE_FILE_EXTENSIONS}.
+ */
+function collectSourceFiles(root: string, dir: string, collected: string[]): void {
+  for (const entry of readDirectoryEntries(dir)) {
+    const entryPath = join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      if (!SKIPPED_SOURCE_DIRECTORIES.has(entry.name)) {
+        collectSourceFiles(root, entryPath, collected);
+      }
+      continue;
+    }
+
+    if (entry.isFile() && SOURCE_FILE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) {
+      collected.push(relative(root, entryPath).split(sep).join("/"));
+    }
+  }
+}
+
+/**
+ * Apply {@link checkSourceAdrReferences} to a real working tree: read the
+ * resolvable numbers out of `<root>/docs/adr/`, then every source file under
+ * `<root>/apps/` and `<root>/packages/`.
+ *
+ * Nothing is hardcoded, so the pin follows the tree it runs in — a worktree, the
+ * shared checkout, or a CI clone. A build output copy (`apps/web/.next/**`, and
+ * the `.worktrees/` of a shared checkout) is never read, so the result does not
+ * depend on whether a build ran.
+ *
+ * @param root - Absolute path to the repository root.
+ * @returns The same report shape as {@link checkSourceAdrReferences}.
+ * @throws If `docs/adr`, `apps` or `packages` cannot be read — a wrong root must
+ * fail loudly instead of sweeping nothing and reporting a vacuous pass.
+ */
+export function checkRepositoryAdrReferences(root: string): SourceAdrReferenceResult {
+  // The ADR directory is read first on purpose: a bad root throws here, before
+  // any source is collected, so "no references found" can never be a false pass.
+  const adrFileNames = readDirectoryEntries(join(root, "docs/adr"))
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
+
+  const paths: string[] = [];
+  for (const top of SOURCE_SWEEP_ROOTS) {
+    collectSourceFiles(root, join(root, top), paths);
+  }
+  paths.sort(compareStrings);
+
+  const sources = paths.map((path) => ({ path, text: readTextFile(join(root, path)) }));
+
+  return checkSourceAdrReferences(sources, adrFileNames);
 }
