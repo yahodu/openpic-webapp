@@ -3190,12 +3190,12 @@ function colonRouteSources(): SourceFileText[] {
  * widening cannot redden the tree — but the moment `:` is a token character a
  * `…/route.ts:42` token stops matching its file exactly *and* stops matching the
  * directory arm, which needs a following `/`: a **false negative**, the one
- * direction the guard must never drift in. The shipped rule is two trims: the
- * one `trimPathToken` already applies to trailing punctuation — a trailing
+ * direction the guard must never drift in. Two trims ship: the one
+ * `trimPathToken` already applies to trailing punctuation — a trailing
  * `:<digits>` is a line annotation and is trimmed — plus `stripTrailingAnnotation`
- * (#519) for a trailing `:<suffix>` on a token that names no swept file (F-C3's block).
- * Pinning "unsupported" instead was the alternative the review offered; trimming
- * wins because it keeps a shape that works today working.
+ * (#519; dot allowed in the suffix since #522) for a `:<suffix>` such as `:D1.2`
+ * on a token that names no swept file (F-C3's blocks). "Unsupported" was the
+ * review's alternative; trimming wins because it keeps a shape that works today.
  *
  * The token class is the whole change: nothing here asks the guard to resolve a
  * dynamic segment, and no fixture of this block exists on disk — `records` and
