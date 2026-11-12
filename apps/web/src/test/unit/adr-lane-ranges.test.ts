@@ -83,30 +83,54 @@ function ledgerTable(rows: string[]): string {
   ].join("\n");
 }
 
-/** One closed-pair data row, the same shape the parser must accept. */
-const CLOSED_ROW_PATTERN = /^\|\s*[^|]+\|\s*`\d{4}`\s*[–-]\s*`\d{4}`\s*\|/;
+/**
+ * One closed-pair data row, the same shape the parser must accept, with the
+ * holder and the two numbers captured so an expectation can be derived from the
+ * ledger itself instead of being fossilised in this spec. Rows that are not a
+ * closed pair — the header, the `---` separator, the open-ended pool row, the
+ * ADR index — simply do not match.
+ */
+const CLOSED_ROW_PATTERN = /^\|\s*([^|]+?)\s*\|\s*`(\d{4})`\s*[–-]\s*`(\d{4})`\s*\|/;
+
+/**
+ * The real ledger's closed-pair rows, in document order, derived from the file
+ * with the row shape above. The structural pins use it so that a new lane row
+ * cannot turn the guard's own spec red while the guard still reports the ledger
+ * clean: the ledger is the board's most-edited file and new lanes are inserted
+ * between the `OP-122` row and the pool row, not appended below both.
+ */
+function closedRows(markdown: string): LaneRange[] {
+  return markdown.split("\n").flatMap((line) => {
+    const match = CLOSED_ROW_PATTERN.exec(line);
+    return match === null
+      ? []
+      : [{ holder: match[1].trim(), start: Number(match[2]), end: Number(match[3]) }];
+  });
+}
 
 describe("parseLaneRanges — the repository's ledger", () => {
   it("returns one range per closed row of the reserved-range table, in document order", () => {
     // Arrange — the real ledger, read from disk: no hard-coded copy can drift.
     const markdown = readAdrReadme();
-    const closedRowCount = markdown
-      .split("\n")
-      .filter((line) => CLOSED_ROW_PATTERN.test(line)).length;
+    const expectedRows = closedRows(markdown);
 
     // Act
     const ranges: LaneRange[] = parseLaneRanges(markdown);
 
     // Assert — every closed row is parsed (count equality catches both a
-    // skipped row and an over-parse of the header / pool / ADR-index rows), and
-    // the order is the document's, which is not numerically ascending.
-    expect(ranges).toHaveLength(closedRowCount);
+    // skipped row and an over-parse of the header / pool / ADR-index rows).
+    expect(expectedRows.length).toBeGreaterThan(0);
+    expect(ranges).toHaveLength(expectedRows.length);
+
+    // The first row is the board-wide reservation by convention; the last one is
+    // whatever row the ledger currently ends with. It is derived from the file,
+    // not pinned: the ledger grows by inserting lane rows above the pool row.
     expect(ranges[0]).toEqual({
       holder: "board-wide / process (orchestrator)",
       start: 300,
       end: 319,
     });
-    expect(ranges.at(-1)).toEqual({ holder: "OP-122 queue lane", start: 680, end: 699 });
+    expect(ranges.at(-1)).toEqual(expectedRows.at(-1));
   });
 
   it.each<[string, number, number]>([
