@@ -14,7 +14,7 @@ import { tenantStage } from "@/server/tenancy/route-stage";
 
 /**
  * `GET /api/v1/tenants/{tenantId}/events/{eventId}` — read one event
- * (OP-115 E1, contract §4.1; OP-121 ADR-0663 I-A3).
+ * (OP-115 E1, contract §4.1; OP-121 ADR-0665 I-A3).
  *
  * The read admits an **event actor**, not only a workspace member: a
  * co-organizer commonly holds no `tenantMembers` row (§4.3), so the shared

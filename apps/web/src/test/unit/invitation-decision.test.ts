@@ -47,7 +47,7 @@ import { decideTerminalOutcome } from "@/server/collaboration/invitation-decisio
  * `410 invitation_expired`; `pending` means the writer lost a race and must
  * re-read (never a `409`).
  *
- * ## Assumptions (ADR-0663 §Assumptions)
+ * ## Assumptions (ADR-0665 §Assumptions)
  *
  * - **U1-A1** — an `accepted`/`rejected` row that carries no `resolvedVia`
  *   (data written before the field existed) reads as `"in_app"`: the client

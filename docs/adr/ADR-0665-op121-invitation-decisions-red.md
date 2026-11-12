@@ -1,4 +1,4 @@
-# ADR-0663 — OP-121 RED: accept/reject across channels and member removal pinned
+# ADR-0665 — OP-121 RED: accept/reject across channels and member removal pinned
 
 - **Status:** Accepted
 - **Date:** 2026-11-11
@@ -7,11 +7,17 @@
 - **Branch:** `OP-121-task-invitation-decisions-red` (worktree
   `/root/openpic/openpic-webapp/.worktrees/t_108cd476`, off `origin/main`
   `3678c57`, the OP-120 squash merge)
-- **Range:** `0663` (the `OP-120 invitations lane` block `0660`–`0679`; the cell
-  advances to `0664`. `0660`/`0661` are on `main` and `0662` is held by the
-  in-flight sibling `t_b91b009e` — `ADR-0662-op120-gap-pins.md` on
-  `origin/OP-120-task-invitation-gap-pins-2` — so this record takes the next free
-  number in the lane and no number outside the block is touched)
+- **Range:** `0665` (the `OP-120 invitations lane` block `0660`–`0679`; the cell
+  now reads `0666`). This record was **first written as `0663`**: at that time
+  `0660`/`0661` were on `main`, `0662` was held by the in-flight sibling
+  `t_b91b009e` (`ADR-0662-op120-gap-pins.md` on
+  `origin/OP-120-task-invitation-gap-pins-2`), so the lane's next free number was
+  taken. Before this record merged, OP-120's delivery-failure log pin landed
+  number `0663` on `main` (`9fe6ff4`, PR #414), and **a merged record is never
+  renumbered**. The duplication was therefore resolved on the unmerged side:
+  this record moved above the lane's highest consumed number — this lane's own
+  GREEN `0664` — to `0665`, and the cell advanced to `0666`. No number outside
+  the block is touched.
 - **Gated GREEN:** `t_2b7da57f` (`openpic-webapp-backend-coder`) — **must base its
   branch on this pins branch**, not bare `origin/main`.
 
@@ -211,4 +217,5 @@ phone`, `unknown kind`, `missing contact`) and the "no invitee contact at all"
 - **Hotspot:** `docs/adr/README.md` — this lane's hunk is one cell (`0663` →
   `0664`) and one appended prose note; the in-flight sibling
   `OP-120-task-invitation-gap-pins-2` holds `0662` and the same cell, and the
-  union merge must keep the **highest** value (`0664`).
+  union merge must keep the **highest** value (`0664`). At the renumber above
+  the ledger row itself settled at cell `0666`, with this record as `0665`.

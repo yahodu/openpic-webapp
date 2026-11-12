@@ -9,13 +9,14 @@
   `5bf8381` of `OP-121-task-invitation-decisions-red`, PR #413)
 - **Range:** `0664` (the `OP-120 invitations lane` block `0660`–`0679`; the cell
   advances to `0665`. The sibling `t_b91b009e` landed `0662` on `main` first;
-  the union merge of this cell keeps the **highest** value)
-- **Supersedes nothing.** [ADR-0663](ADR-0663-op121-invitation-decisions-red.md)
+  the union merge of this cell keeps the **highest** value. The RED record was
+  later renumbered to `0665`, so the lane cell now reads `0666`)
+- **Supersedes nothing.** [ADR-0665](ADR-0665-op121-invitation-decisions-red.md)
   is the pinned contract this record implements.
 
 ## Context
 
-[ADR-0663](ADR-0663-op121-invitation-decisions-red.md) pinned the decision
+[ADR-0665](ADR-0665-op121-invitation-decisions-red.md) pinned the decision
 surface promised by contract §2.3: final and idempotent accept/reject across
 email, SMS and in-app, never a `409` for a repeated decision, `revoked`/`expired`
 structurally unacceptable, and the in-app affordance closing in every channel —
@@ -93,7 +94,7 @@ by `{invitationId}` on `/me`, by `sha256(token)` on the link — then reads the
 caller's Better Auth `user` document for the contact facts and asks `matchInvitee`
 once. A non-invitee is `403 invitation_not_for_you` with `{inviteeMasked}`; a
 matching but unverified contact is the shipped `403 account_incomplete`
-(ADR-0663 I-A2). An unknown id, an unknown token and a malformed id are the
+(ADR-0665 I-A2). An unknown id, an unknown token and a malformed id are the
 uniform `404 not_found`.
 
 The token path deliberately has **no** auth stage: it resolves the session

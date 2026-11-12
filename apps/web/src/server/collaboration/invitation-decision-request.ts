@@ -37,7 +37,7 @@ import {
  *
  * A known invitation addressed to someone else is `403 invitation_not_for_you`
  * on both paths (never `404`, which names no row), and a matching but unverified
- * contact is the shipped `403 account_incomplete` (ADR-0663 I-A2).
+ * contact is the shipped `403 account_incomplete` (ADR-0665 I-A2).
  */
 
 /** The Better Auth-owned user collection (schema §13.1). */

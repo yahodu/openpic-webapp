@@ -59,7 +59,7 @@ import { matchInvitee } from "@/server/collaboration/invitee-identity";
  * (U2-A3). The function is total: it never throws, and an unusable stored
  * invitee simply does not match.
  *
- * ## Assumptions (ADR-0663 §Assumptions)
+ * ## Assumptions (ADR-0665 §Assumptions)
  *
  * - **U2-A1** — a `user`-kind invitation is `contactVerified: true` by
  *   definition: it names an account id, not a contact, so there is no contact

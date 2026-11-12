@@ -94,7 +94,7 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   (the admission seam filters on `revokedAt: null`, so one without the other
  *   would leave access open), and revokes the originating invitation.
  *
- * ## Assumptions (ADR-0663 §Assumptions)
+ * ## Assumptions (ADR-0665 §Assumptions)
  *
  * - **I-A1** — a non-invitee who presents a known invitation id on the `/me`
  *   path is refused `403 invitation_not_for_you`, the same refusal the token
