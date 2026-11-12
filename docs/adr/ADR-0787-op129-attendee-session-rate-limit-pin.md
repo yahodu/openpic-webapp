@@ -7,18 +7,18 @@
 - **Lane:** OP-129 (epic Attendee Identity). Reserved range `0780`–`0798`; see
   §Number allocation — this record takes `0787` (minted as `0782`, renumbered by
   card `t_f4da0ad2`), not the cell's `0771`.
-- **Supersedes:** nothing. **Amends:** [ADR-0770](ADR-0770-op129-anonymous-attendee-sessions-green.md)
+- **Supersedes:** nothing. **Amends:** [ADR-0781](ADR-0781-op129-anonymous-attendee-sessions-green.md)
   §4 (its deferred rate-limit item), by pinning the class and its policy.
 
 ## Context
 
 Contract §1.5 declares `POST /api/v1/p/attendee-sessions` as **public, 60 / hour / IP**.
-The shipped route (ADR-0770) has no rate-limit stage, so an unauthenticated caller can mint
+The shipped route (ADR-0781) has no rate-limit stage, so an unauthenticated caller can mint
 `attendeeSessions` rows without limit — one row per call, each with a 30-day TTL, each a
 bearer credential to someone's photos. The round-1 review of the GREEN raised this as
 finding **F1 (High)**.
 
-ADR-0770 §4 deferred the limit because the executable class table had no row for it, and
+ADR-0781 §4 deferred the limit because the executable class table had no row for it, and
 `classes.test.ts` pins `Object.keys(RATE_LIMIT_CLASSES)` to **exactly** the contract §0.11
 class list. A class therefore cannot be added to the route alone: the contract table, the
 executable table, the failure policy and the route stage are one change.
@@ -99,13 +99,19 @@ envelope (`error.retryable === true`), it mints no session, and it sets no cooki
 | same                                                      | an unavailable limiter answers `503 service_unavailable` and mints no session                                                      | RED                  |
 | `docs/API Contract.md`                                    | §0.11 row for `attendee.session`; §1.5 line names the class                                                                        | GREEN (docs)         |
 
-`CONTRACT_CLASSES`, `FAIL_CLOSED` and `FAIL_OPEN` are typed `readonly string[]` **on
-purpose**: naming a class the `RateLimitClass` union does not yet have would otherwise need a
-cast that becomes `@typescript-eslint/no-unnecessary-type-assertion` the moment the GREEN
-widens the union. Once the member exists the GREEN may retype the three arrays to
-`readonly RateLimitClass[]`; the assertions do not change. The lane row lives in
-`LANE_RULES` (typed by name) rather than in `CONTRACT_RULES` (typed `[RateLimitClass, …]`)
-for the same reason, with an identical exact `toEqual` assertion.
+The three class arrays carry three different typings, each for a reason. In the RED all of them
+were typed on `string` — `CONTRACT_CLASSES`, `FAIL_CLOSED` and `FAIL_OPEN` as `readonly string[]`,
+`LANE_RULES` as `readonly [string, …]` — because naming a class the `RateLimitClass` union did not
+yet carry would otherwise need a cast that becomes
+`@typescript-eslint/no-unnecessary-type-assertion` the moment the union widens. The GREEN widened
+that union (ADR-0786), and follow-up `t_71979566` (`22f78ce`, PR #476) retyped the suite on it:
+`FAIL_CLOSED` and `FAIL_OPEN` are `readonly RateLimitClass[]`, `LANE_RULES` is
+`readonly [RateLimitClass, readonly RateLimitRule[]]` like `CONTRACT_RULES`, and `rulesOf` /
+`policyOf` take the union, so no cast remains; the assertions did not change.
+`CONTRACT_CLASSES` deliberately keeps `readonly string[]`, because it is compared with
+`Object.keys(RATE_LIMIT_CLASSES)`, a `string[]`. The lane row stays in `LANE_RULES` rather than in
+`CONTRACT_RULES` so the lane's one added row is a reviewable hunk of its own, and it carries the
+same exact `toEqual` assertion.
 
 ## Evidence
 

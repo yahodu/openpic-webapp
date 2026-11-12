@@ -4,7 +4,7 @@
 - **Card:** OP-129 round-1 review follow-up GREEN (`t_a909e641`) · **Branch:** `OP-129-task-attendee-session-resolver-default` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_a909e641`
 - **Consumers:** `@/server/auth/guards`, `@/server/attendee/session-resolver`, `@/api/v1/p/attendee-sessions/current`
 - **Lane:** OP-129 (epic Attendee Identity). Reserved range `0769`–`0788`, `Next free = 0783` → this record takes `0783`, cell advances to `0784`.
-- **Relates to:** [ADR-0769](ADR-0769-op129-anonymous-attendee-sessions-red.md) (the RED contract), [ADR-0770](ADR-0770-op129-anonymous-attendee-sessions-green.md) (the resolver this record re-wires), [ADR-0782](ADR-0782-op129-attendee-session-edge-pins.md) (the pins F3/F4 that demanded both changes)
+- **Relates to:** [ADR-0780](ADR-0780-op129-anonymous-attendee-sessions-red.md) (the RED contract), [ADR-0781](ADR-0781-op129-anonymous-attendee-sessions-green.md) (the resolver this record re-wires), [ADR-0782](ADR-0782-op129-attendee-session-edge-pins.md) (the pins F3/F4 that demanded both changes)
 - **Contract:** §0.2 (`attendee` label, cookie **or** header) · §1.5 (`GET /p/attendee-sessions/current`)
 
 ## Context
@@ -74,7 +74,7 @@ and the body cannot disagree about which credential is in force.
 - **Swallow the expiry and retry the header.** The lapsed-cookie companion pin answers
   `401 attendee_session_expired`; a retry would turn that into `200`. Rejected.
 - **Widen `AttendeePrincipal`** to carry the row so `current` need not re-read it. Out of scope for
-  F3/F4; ADR-0770 §3 already records the re-read as the cheaper trade.
+  F3/F4; ADR-0781 §3 already records the re-read as the cheaper trade.
 
 ## Evidence
 
@@ -137,4 +137,4 @@ the docs are this record and the ledger — so the delivery edited no test.
   `t_296d24bd`, which held the case on draft PR #462 at the time of writing. No
   historical section is rewritten for it.
 
-`ADR-0769` and `ADR-0770` are renumbered to `ADR-0780` and `ADR-0781` by the lane repair (PR #444); the references above are to be re-pointed when that repair folds.
+`ADR-0769` and `ADR-0770` were renumbered to `ADR-0780` and `ADR-0781` by the lane repair (PR #444); the live references in the header and §Alternatives considered were re-pointed to those files by the docs card `t_ea46ae99`, so every link in this record now resolves. The F2 finding text above and this note keep the old numbers as history, and the `Lane` line keeps the cell this record was minted against.
