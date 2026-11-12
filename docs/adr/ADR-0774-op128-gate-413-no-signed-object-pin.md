@@ -56,14 +56,18 @@ other row is touched, and no production file, contract text or mock moves.
 → **31 passed (31)**; the case count does not change, because this pin edits one case body rather than
 adding a row. **Focused unit**, `media-signed-urls-authorization.test.ts` → **24 passed (24)**, untouched.
 
-**The pin bites.** A throwaway mutation made the `413` path answer with a `urls` key (the cap branch
-returned a `413` whose body spread one signed thumbnail entry carrying the content hash, with the error
-code alongside it), and only that row failed:
+**The pin bites.** A throwaway mutation made the `413` path leak and exactly one row failed. The mechanism and the
+failure line are **corrected at round-1 review**: the reachable direction is the content hash, not a `urls` key. A
+handler body that holds both `error` and a top-level `urls` is rejected by the response serializer, the route
+answers `500` (`Unrecognized key: "error"`), and the error envelope (`toErrorEnvelope`) emits only `error` — so
+`payload.urls` cannot redden from this route today. Throwing
+`appError("payload_too_large", { details: { entries: [{ url, contentHash: <HASH_A> }] } })` in the cap branch — the
+shape the sibling `uploads/batch-resolve` route already uses for its `413` — reddens the row as follows:
 
 ```
-AssertionError: expected [ { …(4) } ] to be undefined
- ❯ apps/web/src/test/integration/media-signed-urls.test.ts:1910:26
-   1910|     expect(payload.urls).toBeUndefined();
+AssertionError: expected '{"error":{"code":"payload_too_large",…' not to contain 'bb6fc2a5…'
+ ❯ apps/web/src/test/integration/media-signed-urls.test.ts:1911:26
+   1911|     expect(JSON.stringify(payload)).not.toContain(HASH_A);
 ```
 
 The probe was reverted with `git checkout --`, and `sha256sum` of
@@ -88,3 +92,40 @@ payload_too_large` is an authorized organizer's cap refusal, not an account-gate
   five reviewed, approved rows for no behavioural gain; this card must not touch them.
 - **Add a new case for the cap refusal** — rejected: no new behaviour to observe, and it would inflate
   the suite without protecting anything the existing row now protects.
+
+## Round-1 review of the 413 no-signed-object pin (artifact lens)
+
+Reviewed by the `openpic-webapp-reviewer` profile on PR #454 (head `527a83e`), squash-merged into
+`OP-128-task-account-status-gate-pins` as `42652bf`. `git diff 527a83e 42652bf` is empty, so the merged tree is
+byte-identical to the reviewed head. Verdict: **approved with findings** — one Low and two Info, none blocking.
+
+**Gates the reviewer measured at `527a83e` and re-ran on the merged tree `42652bf`.** Focused integration
+`media-signed-urls.test.ts` **31 passed (31)** — the case count does not change, because this row edits a case body
+and the card's `32` was an assumption; focused unit `media-signed-urls-authorization.test.ts` + `adr-numbering`
+**53 passed (53)**; full unit **157 files / 2526 passed | 3 skipped**; full integration **104 files / 1038 passed**;
+`tsc -p apps/web/tsconfig.json --noEmit` exit **0**; ESLint 0 errors (the `security/detect-object-injection` warning
+at `:169` is byte-identical on the base blob); `prettier --check` clean on the spec, this record and the ledger;
+PR checks **11/11**. `ADR-0774` exists only on this lane — no other worktree, no `origin` ref, no open PR head —
+inside the OP-126 block (`0760`–`0779`), cell `0774` → `0775`.
+
+**The pin is load-bearing, and the Evidence mechanism is corrected.** The Evidence section first attributed the
+failure to a `urls` key on the `413` answer and quoted `expected [ { …(4) } ] to be undefined` at `:1910`. That
+shape is unreachable from the route: a handler body holding both `error` and a top-level `urls` is rejected by the
+response serializer, the route answers `500` (`Unrecognized key: "error"`), and the error envelope (`toErrorEnvelope`)
+emits only `error`, so `payload.urls` can redden only if that shared projection grows a key. The reachable direction
+is the content hash, and it reddens exactly one row at `:1911`
+(`expected '{"error":{"code":"payload_too_large",…' not to contain 'bb6fc2a5…'`); the Evidence section now states
+that mechanism and that failure line. The substantive claim holds — the row is load-bearing — nothing else in this
+record is retracted, and its decisions are not edited. The probe was reverted, and `route.ts` is `sha256 2db3d986…`
+before and after it, so the reviewed tree holds no production byte.
+
+**F2 — Info.** The `payload.urls` half of the pair is documentation-grade on this endpoint: no path reachable today
+can make it fail. That matches the five refusal rows approved earlier, so no card is owed.
+
+**F3 — Low.** The `I4` cap row (`refuses 201 items with 413 payload_too_large`, an authorized organizer) still
+stated only the status and the code, while six whole-request refusal rows now state the no-signed-object pair.
+Routed to card `t_cb3119c9` (PR #457), squash-merged as `a7b4083`.
+
+**Landing.** PR #454 was squash-merged into `OP-128-task-account-status-gate-pins` (`42652bf`). The uploads lane is
+still unmerged on `main`, so this is a stacked fold-in and no `main` ancestry is owed. The lane branch tips are no
+longer the SHAs named in older cards.

@@ -69,9 +69,10 @@ Gates, all on branch head `OP-128-bug-account-status-gate-green` over `29a4c8c`:
   counts ADR-0767 recorded, with the six I7 cases added.
 - **Static:** `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; ESLint 0 errors and
   `prettier --check` clean on the touched file; the `adr-numbering` guard green.
-- **Diff:** `route.ts` only (`+14/−1`: two imports, the gate, one docblock sentence), this record and
-  the ledger. Route `sha256` moves from `985f2d95…` (ADR-0768) to `ae0fa71f…`. **No test, mock,
-  fixture or factory is edited.**
+- **Diff:** `route.ts` only (`+15/−2`: two import lines, the two-line docblock sentence, the eleven-line gate
+  block), this record and the ledger. The figure read `+14/−1` until the round-1 review measured it; it is corrected
+  here, so the rest of the table can be trusted. Route `sha256` moves from `985f2d95…` (ADR-0768) to `ae0fa71f…`.
+  **No test, mock, fixture or factory is edited.**
 
 ## Consequences
 
@@ -81,3 +82,31 @@ Gates, all on branch head `OP-128-bug-account-status-gate-green` over `29a4c8c`:
   account-state refusal.
 - **O3 — the `media.sign` rate class, malformed-scope fallbacks and stale `ADR-0764`/`ADR-0765` doc
   comments** are other cards' (`t_8b3f316e`, `t_f7437615`).
+
+## F1 GREEN review (artifact lens)
+
+Reviewed by the `openpic-webapp-reviewer` profile on PR #445 (head `6a204fc`), squash-merged into
+`OP-128-task-account-status-gate-pins` as `cfed101`. Verdict: **approved with findings** — the gate is correct and
+the pins are load-bearing; the four findings below are routed.
+
+**Gates the reviewer re-ran at `6a204fc`.** Focused integration `media-signed-urls.test.ts` **21 passed (21)**;
+focused unit `media-signed-urls-authorization.test.ts` **24 passed (24)**, unedited; the `adr-numbering` guard
+**29 passed (29)**; full unit **157 files / 2526 passed | 3 skipped**; full integration **104 files / 1028 passed**;
+`tsc -p apps/web/tsconfig.json --noEmit` exit **0**; ESLint exit **0**; `prettier --check` clean; PR checks
+**11/11**.
+
+**Negative control.** With the gate removed in a detached probe worktree the focused spec went **4 failed | 17
+passed (21)**, every failure `AssertionError: expected 200 to be 403`. The six pins are load-bearing.
+
+**Matrix probes against the real Mongo harness.** `banExpires` in the past → **200**; `banExpires: null` → **403**;
+`status: "deleted"` → **403**; `suspended` with 201 items → **413**, so the item cap still precedes the gate. All
+four answers are correct.
+
+**D1–D3 of this record are not retracted.** They stand as written. F-G1 is an open contract question routed to a
+decision card, not a defect in this implementation.
+
+**Findings and routing.** F-G1 (Medium, the `423`-vs-`403` wire code for the account refusal) → orchestrator
+decision card `t_61de14fa`. F-G2 (Low, no `auth.denied` event on the refusal, so monitoring lost the endpoint) →
+the pins of card `t_8b3f316e` (PR #447) and the GREEN card `t_4b4c1a41` (PR #452). F-G3 (Low, the matrix breadth and
+the `413` order unpinned) → card `t_8b3f316e`. F-G4 (Low, the `+14/−1` diff figure) → corrected in the Evidence
+section above, at this review.
