@@ -1,3 +1,9 @@
+## [1.58.0](https://github.com/yahodu/openpic-webapp/compare/v1.57.11...v1.58.0) (2026-11-12)
+
+### Features
+
+- **attendee:** OP-130 implement public event resolution ([#456](https://github.com/yahodu/openpic-webapp/issues/456)) ([ecbb743](https://github.com/yahodu/openpic-webapp/commit/ecbb743c9dc6df72be797da183cd45d7cbf68a20)), closes [#521](https://github.com/yahodu/openpic-webapp/issues/521)
+
 ## [1.57.11](https://github.com/yahodu/openpic-webapp/compare/v1.57.10...v1.57.11) (2026-11-12)
 
 ### Bug Fixes
