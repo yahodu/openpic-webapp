@@ -13,6 +13,11 @@
   (batch-resolve), [ADR-0720](ADR-0720-op124-single-put-complete-link-only-red.md) /
   [ADR-0721](ADR-0721-op124-single-put-complete-link-only-green.md) (the single
   PUT, the registration transaction, the upload-window rule)
+- **Consumers:** the OP-125 multipart endpoints and the specs that pin them —
+  specs `apps/web/src/test/integration/uploads-multipart.test.ts`,
+  `apps/web/src/test/unit/uploads-multipart-handle.test.ts`,
+  `apps/web/src/test/unit/uploads-multipart-part-count.test.ts`,
+  `apps/web/src/test/unit/uploads-multipart-resume.test.ts`.
 
 ## Context
 

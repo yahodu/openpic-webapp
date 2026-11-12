@@ -4,6 +4,12 @@
 - **Card:** OP-124 RED (`t_b8940223`) · **Branch:** `OP-124-task-single-put-complete-link-only-red` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_b8940223`, based on the OP-123 GREEN head `d4d3314` (branch `OP-123-task-upload-config-batch-resolve-green`, PR #422, **unmerged** at the time of writing)
 - **Relates to:** [ADR-0700](ADR-0700-op123-upload-config-batch-resolve-red.md)/[ADR-0701](ADR-0701-op123-upload-config-batch-resolve-green.md) (the pre-check this completion path follows), [ADR-0009](ADR-0009-upload-type-guards.md) (the extension/MIME/magic-byte guard), [ADR-0340](ADR-0340-op103-entitlements-red.md) (the consume-inside-the-transaction rule), [ADR-0580](ADR-0580-op112-object-storage-port-red.md)/[ADR-0581](ADR-0581-op112-object-storage-port-green.md) (the `ObjectStorage` port), [ADR-0680](ADR-0680-op122-queue-port-red.md)/[ADR-0681](ADR-0681-op122-queue-green.md) (the queue port and `enqueueWork`), [ADR-0540](ADR-0540-op114-branding-upload-red.md)/[ADR-0541](ADR-0541-op114-branding-upload-green.md) (the append-only per-domain error-table shape and the single byte-accepting endpoint), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §7 (range allocation)
 - **Contract:** API contract §5.1/§5.2/§5.3 + §4.x (`GET …/images`), schema §16.1–§16.3, §14.2, §18.1/§18.2
+- **Consumers:** the OP-124 single-PUT pure rules and the specs that pin them —
+  modules `apps/web/src/server/uploads/sequence.ts`, `apps/web/src/server/uploads/size-tolerance.ts`;
+  specs `apps/web/e2e/uploads-single-put.spec.ts`,
+  `apps/web/src/test/integration/uploads-single-put.test.ts`,
+  `apps/web/src/test/unit/uploads-sequence.test.ts`,
+  `apps/web/src/test/unit/uploads-size-tolerance.test.ts`.
 
 ## Context
 

@@ -15,6 +15,12 @@
   (the multipart path), [ADR-0090](ADR-0090-op94-notification-fan-out-red.md)
   (the fan-out and its recipient port), [ADR-0029](ADR-0029-domain-events-outbox.md)
   (the outbox and `dedupeKey`)
+- **Consumers:** the OP-126 batch-status route and the specs that pin it —
+  modules `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads/batches/[batchId]/route.ts`,
+  `apps/web/src/server/db/indexes.ts`, `apps/web/src/server/uploads/batch-notifications.ts`,
+  `apps/web/src/server/uploads/batch-status.ts`, `apps/web/src/server/uploads/complete-upload.ts`;
+  specs `apps/web/src/test/integration/uploads-batch-status.test.ts`,
+  `apps/web/src/test/unit/uploads-batch-status.test.ts`.
 
 ## Context
 
