@@ -28,10 +28,13 @@ import { join, posix, relative, sep } from "node:path";
  *      a file that exists (`dangling-reference`, finding F3). The records are
  *      the one tree the source sweep never read, so a renamed record's links rot
  *      in silence — three OP-129 records pointed at pre-rename files while every
- *      guard stayed green. `docs/adr/README.md` is deliberately out (its ledger
- *      notes keep the old names on purpose), and a link shape inside a code span
- *      or a fenced block is prose. See {@link checkAdrRecordLinks} and
- *      {@link checkRepositoryAdrLinks}.
+ *      guard stayed green. A bare (`](x.md)`), titled (`](x.md "title")`) and
+ *      angle-bracket (`](<x.md>)`) inline target is read; a `./` path-bearing
+ *      target, a reference-style `[label][ref]` and its definition, a bare
+ *      autolink `<x.md>` and a target containing `(`/`)` are not, and a link
+ *      shape inside a code span or a fenced block is prose. `docs/adr/README.md`
+ *      is deliberately out (its ledger notes keep the old names on purpose).
+ *      See {@link checkAdrRecordLinks} and {@link checkRepositoryAdrLinks}.
  *
  * The third check parses exactly one table shape from the ledger: a pipe row
  * whose second cell is a closed `` `NNNN`–`NNNN` `` pair. It cannot see a
@@ -1323,11 +1326,30 @@ export interface AdrRecordLinkResult {
 }
 
 /**
- * A markdown inline link target: the text between `](` and the first `)` or
- * whitespace. A link title (`](x.md "title")`) therefore stops before the space,
- * and a URL is read whole.
+ * A markdown inline link's text: everything between `](` and the first `)`.
+ * {@link linkTarget} peels the target out of it, because the link can carry a
+ * title (`](x.md "title")`, not part of the file name) or angle brackets
+ * (`](<x.md>)`, which are markdown's way to quote the target).
+ *
+ * shortcut: only a double-quoted title is peeled; widen if a record ever uses
+ * `'title'` or `(title)`.
  */
-const MARKDOWN_LINK_TARGET_PATTERN = /\]\(([^)\s]+)\)/g;
+const MARKDOWN_LINK_TEXT_PATTERN = /\]\(([^)]*)\)/g;
+
+/**
+ * The target half of a link's text — the angle brackets and any link title
+ * removed, so a report quotes `ADR-….md` and never `<ADR-….md> "title"`. The
+ * `#fragment` is part of the target and stays. Out of scope, so never a target:
+ * a `./ADR-….md` path-bearing name (rejected by {@link adrLinkLeaf}), a
+ * reference-style `[label][ref]` and its `[ref]: ADR-….md` definition, a bare
+ * autolink `<ADR-….md>`, and a target containing `(` or `)`.
+ */
+function linkTarget(text: string): string {
+  const bracketed = text.startsWith("<") && text.includes(">");
+  const target = bracketed ? text.slice(1, text.indexOf(">")) : text;
+
+  return target.split(/\s+/)[0] ?? "";
+}
 
 /** The delimiter that opens and closes a fenced code block. */
 const FENCE_DELIMITER = "```";
@@ -1399,13 +1421,22 @@ function compareAdrRecordLinkIssues(
  * Pure: it never touches the filesystem, so the rule is testable without
  * fixtures on disk.
  *
- * A target is read only from a markdown inline link (`](target)`) and only when
- * its leaf, after any `#fragment` is stripped, is a same-directory `ADR-*.md`
- * file name; a `README.md` link, an anchor, a path-bearing relative link and an
- * external URL are not record files and are not counted. Fenced code blocks and
- * inline code spans are prose and are never read. Resolution is exact file-name
- * equality — never a prefix or a number-only match, which would accept a
- * renamed record's old slug whenever its number is still in use.
+ * A target is read from the three inline shapes a link can carry: a bare
+ * `](target)`, a titled target (`](target "title")`, whose title is not part of
+ * the file name) and an angle-bracket target (`](<target>)`, whose brackets are
+ * stripped). A `#fragment` is stripped for resolution and kept in the report.
+ * Out of scope, so never read: a `./ADR-….md` path-bearing target (rejected by
+ * {@link adrLinkLeaf}), a reference-style `[label][ref]` plus its
+ * `[ref]: ADR-….md` definition, a bare autolink `<ADR-….md>`, and a target that
+ * itself contains `(` or `)`.
+ *
+ * A target is counted only when its leaf, after any `#fragment` is stripped, is
+ * a same-directory `ADR-*.md` file name; a `README.md` link, an anchor, a
+ * path-bearing relative link and an external URL are not record files and are
+ * not counted. Fenced code blocks and inline code spans are prose and are never
+ * read. Resolution is exact file-name equality — never a prefix or a number-only
+ * match, which would accept a renamed record's old slug whenever its number is
+ * still in use.
  *
  * @param records - The `docs/adr` records to scan, in any order.
  * @param adrFileNames - Bare file names present in `docs/adr`.
@@ -1429,8 +1460,8 @@ export function checkAdrRecordLinks(
 
   for (const record of records) {
     for (const [index, line] of proseStrippedLines(record.text).entries()) {
-      for (const match of line.matchAll(MARKDOWN_LINK_TARGET_PATTERN)) {
-        const target = match[1] ?? "";
+      for (const match of line.matchAll(MARKDOWN_LINK_TEXT_PATTERN)) {
+        const target = linkTarget(match[1] ?? "");
         const leaf = adrLinkLeaf(target);
         if (leaf === null) {
           continue;
