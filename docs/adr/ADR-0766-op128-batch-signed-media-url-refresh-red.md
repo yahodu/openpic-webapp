@@ -1,4 +1,4 @@
-# ADR-0764 — OP-128 RED: batch signed media URL refresh
+# ADR-0766 — OP-128 RED: batch signed media URL refresh
 
 - **Status:** Accepted (RED pins; the implementation is the gated GREEN `t_33c02c69`)
 - **Date:** 2026-11-12
@@ -202,6 +202,8 @@ one — loudly, with a failure message that names the fact.
 
 ## Number allocation
 
-The lane row `OP-126 uploads lane` (`0760`–`0779`) reads `Next free = 0764`; this ADR takes
-`0764` and the cell advances to `0765` (ADR-0300 §7 — a dependent ticket continues its
-lane's range). No number outside `0760`–`0779` is touched.
+The lane row `OP-126 uploads lane` (`0760`–`0779`) read `Next free = 0764` at this branch's cut,
+but the sibling OP-127 lane landed `0764` (`ADR-0764-op127-event-images-followup-pins`) off the same
+snapshot (ADR-0300 §7) and its `#439` carries `0765`, so the round-1 review had this record and the
+GREEN renumber to `0766`/`0767`; the cell then reads `0768`. No number outside `0760`–`0779` is
+touched.
