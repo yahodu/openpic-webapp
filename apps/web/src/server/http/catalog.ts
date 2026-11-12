@@ -147,7 +147,7 @@ export const AUTH_ERROR_TRANSPORT: Readonly<Record<AuthErrorCode, ErrorCatalogEn
     retryable: false,
     message: "Your session has expired. Please sign in again.",
   },
-  // OP-129 (ADR-0770): a lapsed anonymous attendee session (contract §1.5,
+  // OP-129 (ADR-0781): a lapsed anonymous attendee session (contract §1.5,
   // Appendix A.1) carries `details: { recreateUrl }`.
   attendee_session_expired: {
     status: 401,
@@ -467,6 +467,42 @@ export const MEDIA_ERROR_TRANSPORT: Readonly<Record<MediaErrorCode, ErrorCatalog
     retryable: false,
     message: "The uploaded file exceeds the maximum allowed size.",
   },
+  // OP-123 (ADR-0701): the pre-check refusal for an event whose upload window
+  // has closed (contract §5.2, Appendix A row 3562); `details` carries the
+  // stored instant and whether the caller may extend the window.
+  upload_window_closed: {
+    status: 409,
+    retryable: false,
+    message: "The upload window for this event has closed.",
+  },
+  // OP-124 (ADR-0721 D4): the stored object's size is not the declared `bytes`
+  // within 1 % (contract §5.3); `details` carries both figures.
+  size_mismatch: {
+    status: 409,
+    retryable: false,
+    message: "The uploaded object's size does not match the declared size.",
+  },
+  // OP-125 (ADR-0741): the acknowledgement is missing part numbers the declared
+  // size slices into (contract §5.4); `details` names them.
+  parts_missing: {
+    status: 409,
+    retryable: false,
+    message: "The multipart completion is missing parts of the declared file.",
+  },
+  // OP-125 (ADR-0741): the provider no longer holds the multipart series, so the
+  // client restarts from the pre-check (contract §5.4); no details.
+  upload_expired: {
+    status: 409,
+    retryable: false,
+    message: "The multipart upload has expired and must be started again.",
+  },
+  // OP-127 (ADR-0762 D8): a reprocess of an image whose pipeline state is not
+  // `failed` (contract §4.4); only a failed image is reprocessable.
+  not_failed: {
+    status: 409,
+    retryable: false,
+    message: "Only an image whose processing failed can be reprocessed.",
+  },
 };
 
 /**
@@ -496,6 +532,29 @@ export const COLLABORATION_ERROR_TRANSPORT: Readonly<
     status: 409,
     retryable: false,
     message: "This invitee is already a co-organizer of the event.",
+  },
+  // OP-121 (§2.3 rule 4, Appendix A.5): the two terminal states make the
+  // decision structurally impossible — the affordance disappears, so both are
+  // `410`, not a conflict.
+  invitation_revoked: {
+    status: 410,
+    retryable: false,
+    message: "This invitation has been revoked.",
+  },
+  invitation_expired: {
+    status: 410,
+    retryable: false,
+    message: "This invitation has expired.",
+  },
+  invitation_not_for_you: {
+    status: 403,
+    retryable: false,
+    message: "This invitation is addressed to a different invitee.",
+  },
+  cannot_remove_organizer: {
+    status: 409,
+    retryable: false,
+    message: "The event organizer cannot be removed from the event.",
   },
 };
 

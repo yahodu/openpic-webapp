@@ -1199,7 +1199,8 @@ Rotation pushes a new element and sets `active: false` + `revokedAt` on the old 
 **Indexes:**
 
 - `{tenantId:1, status:1, startAt:-1}` — organizer event list
-- `{"accessLinks.slug":1}` unique **partial** on `"accessLinks.active": true` — public link resolution; sparse-unique so revoked slugs can't be reused but don't block
+- `{"accessLinks.slug":1}` unique **partial** on `"accessLinks.active": true` — slug uniqueness for public links; sparse-unique so revoked slugs can't be reused but don't block
+- `{"accessLinks.slug":1}` plain non-partial (`events_active_slug_lookup`) — serves the attendee `eventSlug` lookup, whose `$elemMatch` on `slug` + `active: true` the planner cannot match against the partial index above
 - `{status:1, uploadWindowEndsAt:1}` — window-closing sweeps
 - `{status:1, retentionExpiresAt:1}` — retention sweeps
 - `{tenantId:1, endAt:-1}` — dashboard/analytics
@@ -2091,7 +2092,8 @@ Non-obvious indexes only; the full set is listed per collection above.
 | `eventImages`            | `{eventId:1, assetId:1}`                                       | **unique**         | Concurrent duplicate upload by a co-organizer fails on insert — no read-check race. |
 | `faceMatches`            | `{profileId:1, imageId:1, faceIndex:1}`                        | **unique**         | Makes every incremental re-match idempotent. The whole §17.4 design rests on this.  |
 | `imageFaces`             | `vectors.<space>` + filters `eventId`, `createdAt`             | **vectorSearch**   | Event-scoped, incremental semantic search inside MongoDB (C3).                      |
-| `events`                 | `{"accessLinks.slug":1}` on `active: true`                     | **unique partial** | Public link resolution; revoked slugs can't be reused and don't collide.            |
+| `events`                 | `{"accessLinks.slug":1}` on `active: true`                     | **unique partial** | Slug uniqueness for public links; revoked slugs can't be reused and don't collide.  |
+| `events`                 | `{"accessLinks.slug":1}` plain, non-partial                    | plain              | Serves the attendee `eventSlug` lookup; the partial index cannot.                   |
 | `mediaAssets`            | `{tenantId:1, contentHash:1}`                                  | **unique**         | Tenant-scoped dedupe (§16.1).                                                       |
 | `providerWebhookEvents`  | `{provider:1, providerEventId:1}`                              | **unique**         | Webhook replay protection with zero application logic.                              |
 | all tenant-scoped        | `tenantId` as leading field                                    | compound           | P3 — makes the tenant-safe query the only fast query.                               |

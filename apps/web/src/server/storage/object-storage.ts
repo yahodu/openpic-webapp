@@ -111,8 +111,9 @@ export interface ObjectStorage {
     locationKey: StorageLocationKey,
     objectKey: string,
     uploadId: string,
-    partNumber: number
-  ): Promise<unknown>;
+    partNumber: number,
+    ttlSeconds: number
+  ): Promise<PresignedPut>;
   listParts(
     locationKey: StorageLocationKey,
     objectKey: string,

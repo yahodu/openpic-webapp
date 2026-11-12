@@ -2,6 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { ObjectId, type Db } from "mongodb";
 
+import { apiErrorSchema } from "@openpic/contracts";
+
 import * as currentRouteModule from "@/app/api/v1/p/attendee-sessions/current/route";
 import * as sessionsRouteModule from "@/app/api/v1/p/attendee-sessions/route";
 import {
@@ -17,6 +19,7 @@ import {
   setLogger,
   type MemoryTransport,
 } from "@/server/logging";
+import { createRateLimiter } from "@/server/rate-limit";
 
 import { setCookies } from "../helpers/auth-requests";
 import { APP_ORIGIN, startTestApp, type TestApp } from "../helpers/authed-app";
@@ -25,7 +28,7 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
 /**
  * Integration / contract — anonymous attendee sessions and the attendee auth
  * resolver (OP-129 I1–I5, contract §1.5 + §0.2 `attendee` label + §0.15,
- * schema §13.5, ADR-0768).
+ * schema §13.5, ADR-0780).
  *
  * **Why this exists.** An attendee must be able to upload a selfie without an
  * account (the epic's user story). The session that enables it is a **bearer
@@ -42,11 +45,18 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *
  *   - body `{ eventSlug?: string }` (JSON, so `{}` is a valid request — an
  *     absent content type is the pipeline's `415`, not this route's rule);
+ *   - an `eventSlug` resolves **only** through an `accessLinks[]` element of
+ *     one `events` row that is `active: true` — a revoked (rotated-away) link
+ *     must not bind a session, and neither the slug nor the active flag may be
+ *     satisfied by two *different* elements of the same row (contract §6
+ *     preamble: “Every route is scoped by the event's **active** access-link
+ *     `slug`”; §4.2: rotating sets `active: false` and “Already-printed QR
+ *     codes stop working”; schema §15.1; ADR-0781 + its F1 amendment);
  *   - `201` with **exactly** `{ sessionToken, expiresAt, issuedAt }`, RFC 3339
  *     UTC with millisecond precision and a `Z` (contract §0.13);
  *   - `Set-Cookie: op_att=<raw token>; Path=/; HttpOnly; SameSite=Lax;
  *     Max-Age=<retention.attendeeSessionDays in seconds>` — `Secure` is added
- *     only on a TLS deployment (U2, ADR-0768 §Assumptions);
+ *     only on a TLS deployment (U2, ADR-0780 §Assumptions);
  *   - the stored `attendeeSessions` row carries `tokenHash = sha256(token)`,
  *     `claimedByUserId: null`, `claimedAt: null`, `eventIds: []` when no slug is
  *     given, `deviceFingerprint` hashes and `expireAt = createdAt + TTL`
@@ -61,9 +71,9 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *     `details.recreateUrl` (contract §1.5 + Appendix A);
  *   - a missing/unknown token is `401 authentication_required` — a distinct
  *     code, so a client can tell "your 30 days are up, re-create" from "you sent
- *     nothing" (ADR-0768 §Decision 3).
+ *     nothing" (ADR-0780 §Decision 3).
  *
- * ## Assumptions (ADR-0768 §Assumptions)
+ * ## Assumptions (ADR-0780 §Assumptions)
  *
  * - The routes are `/api/v1/p/attendee-sessions[/current]` exactly as contract
  *   §1.5 spells them, and are driven here by invoking the exported handlers
@@ -79,22 +89,32 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   `x-forwarded-for` and `accept-language`. Which salt and which hash-of-what
  *   are **not** pinned — only that all three are 64-hex digests and that no raw
  *   component survives.
- * - An unknown `eventSlug` is `404 not_found` **and writes no row** (ADR-0770):
- *   F2 pins the binding, the 404 and the no-write half through the
- *   collection-agnostic scanner — a refactor that inserted the row before
- *   validating the slug would leak a credential's row while still answering
- *   404.
+ * - An unknown `eventSlug` is `404 not_found` **and writes no row** (ADR-0781;
+ *   the F2 pins in ADR-0782): a silently unbound session would let an attendee
+ *   believe a selfie was attached to an event it never reached, and a create
+ *   that inserted the row before validating the slug would still answer 404
+ *   while leaking a bearer credential's row — hence the collection-agnostic
+ *   scanner, before and after.
+ * - The same `404` is pinned here as the *control* that proves the machinery
+ *   exists, so the F1 red cases below cannot pass merely because every
+ *   unresolved slug is refused.
  * - `current` reads the `op_att` cookie first and the `X-Attendee-Session`
  *   header second, so a **stale** cookie shadows a valid header. §0.2 says
  *   "cookie **or** header", so F4 pins the intended fall-through (RED on the
  *   shipped implementation; GREEN `t_a909e641`) and keeps the lapsed-cookie
  *   answer (`401 attendee_session_expired`, never a header retry) green beside
  *   it, so the fall-through cannot be bought with a swallowed expiry.
+ * - A `current` body's `eventSlugs` lists the bound events' **active** link
+ *   slugs only. A link deactivated after the session was created is therefore
+ *   reported as absent (ADR-0781 F1 amendment), not as a stale slug.
  * - A signed-in user is **admitted** by the `attendee` label (`evaluateAuth`,
  *   pinned by `guards.test.ts`) and then answered `401
  *   authentication_required`, because §1.5 defines only the anonymous body
  *   (F5). That shipped answer is pinned, and the contract question is recorded
  *   in ADR-0782 §3.
+ * - A signed-in user calling `current` is out of scope for the same reason: the
+ *   `attendee` label admits a user session, and what `current` answers for a
+ *   user with no attendee session is not in the contract.
  */
 
 let app: TestApp;
@@ -389,14 +409,20 @@ interface SeededEvent {
   readonly slug: string;
 }
 
-/** Monotonic counter so every seeded event gets its own access-link slug. */
+/** A seeded `events` row: the id a session binds and its link slugs, in order. */
+interface FlaggedEvent {
+  readonly id: ObjectId;
+  readonly slugs: readonly string[];
+}
+
+/** Monotonic counter so every seeded event gets slugs no other row carries. */
 let seededEventSeq = 0;
 
 /**
  * Insert an `events` row carrying one active `accessLinks[0]` entry (schema §15.1).
  *
  * The create route resolves an `eventSlug` through `events.accessLinks[].slug`
- * (ADR-0770), so the row has to be a real event with a real link: a slug seeded
+ * (ADR-0781), so the row has to be a real event with a real link: a slug seeded
  * anywhere else would pin nothing about the binding.
  *
  * @returns The new row's `_id` and its access-link slug.
@@ -425,11 +451,71 @@ async function seedEventWithSlug(): Promise<SeededEvent> {
 }
 
 /**
- * Every document in the suite's database that carries a `tokenHash`.
+ * Insert a published `events` row whose `accessLinks[]` is exactly `activeFlags`
+ * (schema §15.1).
+ *
+ * The create route resolves its body's `eventSlug` through
+ * `events.accessLinks[]`, so the binding can only be pinned against a real event
+ * row. `activeFlags` is given per array position because rotation produces a row
+ * that carries a revoked element **and** a fresh active one — the shape in which
+ * a document-scoped match and an element-scoped match disagree.
+ *
+ * @param activeFlags - The `active` flag of each `accessLinks[]` element, in order.
+ * @returns The new row's `_id` and its link slugs, in `accessLinks[]` order.
+ */
+async function seedEvent(activeFlags: readonly boolean[]): Promise<FlaggedEvent> {
+  seededEventSeq += 1;
+  const tag = String(seededEventSeq).padStart(4, "0");
+  const now = new Date();
+  const links = activeFlags.map((active, index) => ({
+    slug: `op129f1${tag}${String(index)}`,
+    active,
+    createdAt: now,
+    // A revoked link is stamped by the rotation; an active one is not revoked.
+    revokedAt: active ? null : now,
+  }));
+  const _id = new ObjectId();
+  await app.db.collection(COLLECTIONS.events).insertOne({
+    _id,
+    tenantId: new ObjectId(),
+    name: `OP-129 F1 event ${tag}`,
+    description: "",
+    status: "published",
+    startAt: now,
+    endAt: now,
+    displayTimeZone: "Asia/Kolkata",
+    uploadWindowEndsAt: now,
+    retentionExpiresAt: now,
+    accessLinks: links,
+    createdAt: now,
+    schemaVersion: 1,
+  });
+  return { id: _id, slugs: links.map((link) => link.slug) };
+}
+
+/**
+ * The slug at `index` of a seeded event, failing with a naming message.
+ *
+ * @param event - The seeded row.
+ * @param index - The `accessLinks[]` position.
+ * @returns The slug stored at that position.
+ */
+function slugAt(event: FlaggedEvent, index: number): string {
+  const slug = event.slugs.at(index);
+  if (slug === undefined) {
+    throw new Error(`expected the seeded event to carry an access link at index ${String(index)}`);
+  }
+  return slug;
+}
+
+/**
+ * Every document in the suite's database that carries a `tokenHash`, tagged as
+ * `collection:digest`.
  *
  * The failed-create pin must prove that **no** attendee-session row was
  * written, and the collection that row lives in is the implementation's
- * choice — so the scan is collection-agnostic, like {@link documentsContaining}.
+ * choice — so the scan is collection-agnostic, like {@link documentsContaining},
+ * rather than a count on a named collection.
  *
  * @returns One `collection:tokenHash` tag per matching document, sorted.
  */
@@ -455,7 +541,7 @@ function objectIdHexes(value: unknown, field: string): string[] {
   return value.map((entry) => objectIdHex(entry, `${field}[]`));
 }
 
-/** A route's §Appendix A error envelope, as much as these pins read. */
+/** A route's §Appendix A error envelope, as far as these pins read it. */
 interface ErrorBody {
   readonly error: { readonly code: string; readonly details?: { recreateUrl?: unknown } };
 }
@@ -639,7 +725,7 @@ describe("GET /api/v1/p/attendee-sessions/current", () => {
 });
 
 describe("POST /api/v1/p/attendee-sessions — the eventSlug binding (§1.5)", () => {
-  // ADR-0770 decides what contract §1.5 left open: `eventSlug` names an event
+  // ADR-0781 decides what contract §1.5 left open: `eventSlug` names an event
   // through `events.accessLinks[].slug`, `eventIds` records exactly that event,
   // and a slug that matches nothing is `404 not_found` rather than a silently
   // unbound session. All three cases below are characterization pins: they
@@ -859,5 +945,233 @@ describe("the raw attendee token never reaches storage", () => {
 
     expect(await documentsContaining(first.sessionToken)).toEqual([]);
     expect(await documentsContaining(replayed.sessionToken)).toEqual([]);
+  });
+});
+
+/**
+ * F1 (review finding on the OP-129 landing) — the `eventSlug` binding must be
+ * scoped by an **active** access link.
+ *
+ * Contract §6 preamble: “Every route is scoped by the event's **active**
+ * access-link `slug`, resolved through the unique partial index on
+ * `accessLinks.slug` where `active: true`.” Contract §4.2: rotation sets
+ * `active: false` on the previous link and “**Already-printed QR codes stop
+ * working**”. Schema §15.1 embeds `accessLinks[]` on the event row and makes the
+ * slug index partial on `active: true`, so a rotated-away slug is not a
+ * resolvable public identifier even though the string still exists on the row.
+ *
+ * The two red cases below fail on the trunk that prompted them (a revoked slug
+ * answers `201` and binds its event); the three controls keep the assertion
+ * honest — they prove a slug is still refused when it matches nothing (so the
+ * red is about the *active* predicate, not about a blanket refusal) and still
+ * binds when it names an active link wherever that element sits in the array (so
+ * the red is not satisfied by refusing every slug, nor by reading
+ * `accessLinks[0]`).
+ */
+describe("POST /api/v1/p/attendee-sessions — eventSlug binds through an active access link (F1)", () => {
+  it("F1: a deactivated access-link slug is 404 not_found and writes no session row", async () => {
+    // The only link on the row was rotated away: nothing resolvable is left.
+    const event = await seedEvent([false]);
+    const before = await sessionRowTags();
+
+    const response = await createSession({ body: { eventSlug: slugAt(event, 0) } });
+
+    expect(response.status).toBe(404);
+    expect((await jsonOf<ErrorBody>(response)).error.code).toBe("not_found");
+    // A refused create must not leave a bearer credential's row behind.
+    expect(await sessionRowTags()).toEqual(before);
+  });
+
+  it("F1: a revoked slug does not bind even when the same event carries a newer active link", async () => {
+    // The shape rotation actually produces: the old element is revoked, a fresh
+    // active element sits beside it. The slug and the `active: true` flag are
+    // satisfied by two *different* elements, which is not a resolvable link.
+    const event = await seedEvent([false, true]);
+    const before = await sessionRowTags();
+
+    const response = await createSession({ body: { eventSlug: slugAt(event, 0) } });
+
+    expect(response.status).toBe(404);
+    expect((await jsonOf<ErrorBody>(response)).error.code).toBe("not_found");
+    expect(await sessionRowTags()).toEqual(before);
+  });
+
+  it("F1 control: an active slug still binds the session and current reports it", async () => {
+    const event = await seedEvent([true]);
+    const slug = slugAt(event, 0);
+
+    const created = await createdSession({ body: { eventSlug: slug } });
+    const stored = await storedSession(created.sessionToken);
+
+    // `eventIds` holds exactly the named event (ObjectId `toString()` is its hex).
+    expect(String(stored.document.eventIds)).toBe(event.id.toHexString());
+
+    const response = await currentSession({ cookie: `op_att=${created.sessionToken}` });
+    expect(response.status).toBe(200);
+    const current = await jsonOf<CurrentSession>(response);
+    expect(current.eventSlugs).toEqual([slug]);
+  });
+
+  it("F1 control: a slug that matches no event is 404 not_found and writes no session row", async () => {
+    // The 404 machinery every unresolved slug already gets: the red case above
+    // must be refused because its link is inactive, not because 404 is new.
+    const before = await sessionRowTags();
+
+    const response = await createSession({ body: { eventSlug: "op129f1-no-such-event" } });
+
+    expect(response.status).toBe(404);
+    expect((await jsonOf<ErrorBody>(response)).error.code).toBe("not_found");
+    expect(await sessionRowTags()).toEqual(before);
+  });
+
+  it("F1 control: an active link binds even when it is not the first accessLinks element", async () => {
+    // A fix that inspects `accessLinks[0]` only would break the post-rotation
+    // row: the active link is appended, so it is usually the *last* element.
+    const event = await seedEvent([false, true]);
+
+    const created = await createdSession({ body: { eventSlug: slugAt(event, 1) } });
+    const stored = await storedSession(created.sessionToken);
+
+    expect(String(stored.document.eventIds)).toBe(event.id.toHexString());
+  });
+});
+
+/**
+ * F1, read side — `current` must not echo a slug whose link was rotated away.
+ *
+ * Contract §4.2: “Already-printed QR codes stop working”. A session created
+ * while a link was active stays valid (the credential is the session, not the
+ * link), but the slug it projects back must stop being advertised the moment the
+ * link is deactivated — otherwise the attendee UI keeps offering a public URL
+ * that no longer resolves.
+ */
+describe("GET /api/v1/p/attendee-sessions/current — eventSlugs reports only active links (F1)", () => {
+  it("F1: a link deactivated after the session was created is not reported in eventSlugs", async () => {
+    const event = await seedEvent([true]);
+    const created = await createdSession({ body: { eventSlug: slugAt(event, 0) } });
+
+    // Rotation, exactly as §4.2 describes it: the row keeps the element and
+    // stamps it inactive.
+    await app.db
+      .collection(COLLECTIONS.events)
+      .updateOne(
+        { _id: event.id },
+        { $set: { "accessLinks.0.active": false, "accessLinks.0.revokedAt": new Date() } }
+      );
+
+    const response = await currentSession({ cookie: `op_att=${created.sessionToken}` });
+    expect(response.status).toBe(200);
+
+    const current = await jsonOf<CurrentSession>(response);
+    expect(current.eventSlugs).toEqual([]);
+  });
+});
+
+/**
+ * F1 — contract §0.11's `attendee.session` limit on the create route.
+ *
+ * The limit exists because the endpoint is **public and writes**: every allowed
+ * call mints a 30-day `attendeeSessions` row, so an unlimited caller grows the
+ * collection without bound. The class is keyed on the client IP alone
+ * (`{scope: "ip", limit: 60, windowSeconds: 3600}` — a public request has no
+ * principal and, before the session exists, no contact to key on).
+ *
+ * These cases run against the **real** limiter (the memory provider outside
+ * production counts for real), so the 61st denial is produced by the class
+ * table itself: a rule of 600 rather than 60, or a class keyed on a scope that
+ * does not exist for a public caller, reddens them. Every case announces its
+ * own client IP so one case's spent window can never leak into another's.
+ */
+describe("POST /api/v1/p/attendee-sessions — the §0.11 attendee.session limit", () => {
+  /** §0.11's allowance for the class: 60 / hour / IP. */
+  const CLASS_LIMIT = 60;
+
+  /** The window §0.11 gives the class, in seconds. */
+  const CLASS_WINDOW_SECONDS = 3600;
+
+  /** One client address spent by the deny case (the bucket is per IP). */
+  const SPENT_IP = "198.51.100.60";
+
+  /** A different client address, untouched by every other case in this file. */
+  const OTHER_IP = "198.51.100.61";
+
+  /**
+   * A create from a chosen client address.
+   *
+   * @param ip - The `x-forwarded-for` value the stage keys the bucket on.
+   * @returns The raw response.
+   */
+  function createFrom(ip: string): Promise<Response> {
+    return createSession({ headers: { "x-forwarded-for": ip } });
+  }
+
+  /** The number of `attendeeSessions` rows in this suite's database. */
+  function sessionCount(): Promise<number> {
+    return app.db.collection(COLLECTIONS.attendeeSessions).countDocuments();
+  }
+
+  it("F1: answers 201 to the first 60 creates from one IP, then 429 rate_limited to the 61st", async () => {
+    const statuses: number[] = [];
+    for (let call = 1; call <= CLASS_LIMIT; call += 1) {
+      const response = await createFrom(SPENT_IP);
+      statuses.push(response.status);
+    }
+    // One assertion over the whole window, so a denial inside it names itself.
+    expect(statuses.filter((status) => status !== 201)).toEqual([]);
+
+    const sessionsBefore = await sessionCount();
+    const limited = await createFrom(SPENT_IP);
+
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("ratelimit-limit")).toBe(String(CLASS_LIMIT));
+    expect(limited.headers.get("ratelimit-remaining")).toBe("0");
+    expect(limited.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect(limited.headers.get("retry-after")).toBe(limited.headers.get("ratelimit-reset"));
+    expect(Number(limited.headers.get("retry-after"))).toBeLessThanOrEqual(CLASS_WINDOW_SECONDS);
+
+    const body = await limited.json();
+    expect(body.error.code).toBe("rate_limited");
+    expect(body.error.retryable).toBe(true);
+    expect(apiErrorSchema.safeParse(body).success).toBe(true);
+
+    // A denied call is not a session: no cookie and no new row.
+    expect(limited.headers.get("set-cookie")).toBeNull();
+    expect(await sessionCount()).toBe(sessionsBefore);
+  });
+
+  it("F1: another client IP is not affected by a spent window (the bucket is the IP)", async () => {
+    const response = await createFrom(OTHER_IP);
+
+    expect(response.status).toBe(201);
+    // The stage runs on the happy path too, and its numbers are §0.11's: they
+    // come from the class table, not from a limiter stub.
+    expect(response.headers.get("ratelimit-limit")).toBe(String(CLASS_LIMIT));
+    expect(response.headers.get("ratelimit-remaining")).toBe(String(CLASS_LIMIT - 1));
+    expect(response.headers.get("ratelimit-reset")).toMatch(/^\d+$/);
+    expect(response.headers.get("retry-after")).toBeNull();
+  });
+
+  it("F1: fails closed — an unavailable limiter answers 503 and mints no session", async () => {
+    // The route reaches its limiter through the memoised `createRateLimiter()`
+    // (the `plans` route's accessor), so the instance spied here IS the one the
+    // stage consults: a second call returns the same object.
+    const limiter = createRateLimiter();
+    const unavailable = vi
+      .spyOn(limiter, "limit")
+      .mockRejectedValue(new Error("limiter unavailable"));
+
+    try {
+      const response = await createFrom(OTHER_IP);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("set-cookie")).toBeNull();
+
+      const body = await response.json();
+      expect(body.error.code).toBe("service_unavailable");
+      expect(body.error.retryable).toBe(true);
+      expect(apiErrorSchema.safeParse(body).success).toBe(true);
+    } finally {
+      unavailable.mockRestore();
+    }
   });
 });

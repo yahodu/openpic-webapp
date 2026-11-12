@@ -4,7 +4,7 @@
 - **Card:** OP-129 round-1 review follow-up GREEN (`t_a909e641`) · **Branch:** `OP-129-task-attendee-session-resolver-default` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_a909e641`
 - **Consumers:** `@/server/auth/guards`, `@/server/attendee/session-resolver`, `@/api/v1/p/attendee-sessions/current`
 - **Lane:** OP-129 (epic Attendee Identity). Reserved range `0769`–`0788`, `Next free = 0783` → this record takes `0783`, cell advances to `0784`.
-- **Relates to:** [ADR-0769](ADR-0769-op129-anonymous-attendee-sessions-red.md) (the RED contract), [ADR-0770](ADR-0770-op129-anonymous-attendee-sessions-green.md) (the resolver this record re-wires), [ADR-0782](ADR-0782-op129-attendee-session-edge-pins.md) (the pins F3/F4 that demanded both changes)
+- **Relates to:** [ADR-0780](ADR-0780-op129-anonymous-attendee-sessions-red.md) (the RED contract), [ADR-0781](ADR-0781-op129-anonymous-attendee-sessions-green.md) (the resolver this record re-wires), [ADR-0782](ADR-0782-op129-attendee-session-edge-pins.md) (the pins F3/F4 that demanded both changes)
 - **Contract:** §0.2 (`attendee` label, cookie **or** header) · §1.5 (`GET /p/attendee-sessions/current`)
 
 ## Context
@@ -74,7 +74,7 @@ and the body cannot disagree about which credential is in force.
 - **Swallow the expiry and retry the header.** The lapsed-cookie companion pin answers
   `401 attendee_session_expired`; a retry would turn that into `200`. Rejected.
 - **Widen `AttendeePrincipal`** to carry the row so `current` need not re-read it. Out of scope for
-  F3/F4; ADR-0770 §3 already records the re-read as the cheaper trade.
+  F3/F4; ADR-0781 §3 already records the re-read as the cheaper trade.
 
 ## Evidence
 
@@ -82,3 +82,59 @@ and the body cannot disagree about which credential is in force.
   token refusal). F4: `attendee-sessions.test.ts` 18/18 (fall-through plus the lapsed-cookie
   companion).
 - Full suite counts and gates are recorded in the card handoff.
+
+## Review (round 1)
+
+**Verdict: APPROVED WITH FINDINGS.** Reviewed at head `cbe53de` and landed on the
+lane trunk `OP-129-task-attendee-session-edge-pins` as the squash `e9eceef`
+(PR #460, 11/11 checks green). Nothing above is retracted: §Context, §Decisions,
+§Consequences, §Alternatives considered and §Evidence stand as written. The
+reviewer edited no file in the reviewed delivery; the reviewed SHA is frozen and
+every finding below is a card, not a push.
+
+### The reviewed bytes are what landed
+
+`git diff --stat cbe53de e9eceef` is **empty (0 lines)**: the tree the review read
+is byte-identical to the squash, so every count below was measured on the merged
+bytes.
+
+`git diff --stat 38a7fa6..cbe53de` is **3 production files + 2 docs** — the
+production files are `current/route.ts`, `session-resolver.ts` and `guards.ts`,
+the docs are this record and the ledger — so the delivery edited no test.
+
+### Gates re-run independently at `cbe53de`
+
+- Focused pins: **35 passed (35)** — `auth-guards.test.ts` 17 plus
+  `attendee-sessions.test.ts` 18.
+- RED direction: with the three production files reverted to `38a7fa6` in a
+  throwaway worktree the run is **4 failed | 31 passed (35)**, and the four
+  failures carry exactly the expected messages — `expected 401 to be 200` (twice),
+  `expected null to match object { kind: 'attendee' }`, and
+  `expected 'authentication_required' to be 'attendee_session_expired'`. The
+  probe worktree was removed with `git worktree remove --force` and the reviewed
+  files restored byte-identically.
+- Full unit: **149 files, 2390 passed | 3 skipped**.
+- Full integration: **99 files, 930 passed**.
+- `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `prettier --check` clean on
+  every touched file.
+- ESLint: **0 errors**, warnings **3 → 2** (the resolver's warning is removed and
+  none is added).
+- PR Checks: **11/11**.
+
+### Findings (routed, not fixed here)
+
+- **F1 (Critical, lane)** — two sibling OP-129 pin branches both mint `ADR-0782`
+  (`…edge-pins.md` and `…rate-limit-pins.md`); with both files present
+  `checkAdrDirectory` reports a `duplicate` issue and the guard run is
+  `1 failed | 28 passed`. This is a lane-wide allocator decision, routed to the
+  orchestrator card `t_1b9c21c6`. This record's own `0783` was unique across
+  every open PR head and every worktree at review time.
+- **F2 (Low, this record)** — the `Relates to` header line and §Alternatives
+  considered cite `ADR-0769` and `ADR-0770`, which the lane repair renumbers. See
+  the note below.
+- **F3 (Low, test quality)** — no pin for two valid attendee credentials naming
+  different sessions, where the cookie must win. Routed to TEST card
+  `t_296d24bd`, which held the case on draft PR #462 at the time of writing. No
+  historical section is rewritten for it.
+
+`ADR-0769` and `ADR-0770` were renumbered to `ADR-0780` and `ADR-0781` by the lane repair (PR #444); the live references in the header and §Alternatives considered were re-pointed to those files by the docs card `t_ea46ae99`, so every link in this record now resolves. The F2 finding text above and this note keep the old numbers as history, and the `Lane` line keeps the cell this record was minted against.

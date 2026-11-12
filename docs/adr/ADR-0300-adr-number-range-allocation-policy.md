@@ -267,3 +267,79 @@ cell. Enumerating in-flight reservations before reserving makes the number a
 function of what is actually outstanding rather than of a stale counter, at the
 cost of one enumeration per card creation. The choice is recorded on card
 `t_6b5e0fc9`.
+
+## §10 — A block starts above the highest in-flight range END, and a range is exclusive (2026-11-12, finding F-L1, card `t_95e7ed1e`)
+
+_2026-11-12, finding F-L1 (`t_95e7ed1e` lineage) — the OP-129 lane's block was
+minted from the uploads lane's `Next free` cell and landed inside its range._
+
+§7 makes an in-flight allocation count as **taken**; §8 (rule A) has the
+allocator reserve a number **when it creates the card**; §9 (rule B) makes the
+allocator enumerate the lane's in-flight reservations first. All three govern
+**one lane's own** numbers. None of them said where a **new lane's block**
+starts, and §7 was read as licence to take any unminted number — the OP-129
+ledger note states the reading outright: _"a dependent ticket does not continue
+its parent's range (ADR-0300 §7)"_. This section **supersedes that reading**. A
+dependent ticket (one whose story builds on the holder's code — OP-127 and
+OP-128 on the OP-126 uploads lane) **does** continue its parent lane's range; an
+independent ticket gets a fresh block **above the highest in-flight range end**;
+and no lane may mint a number inside another lane's range, including a gap that
+holder has not consumed. The range **end**, not the `Next free` cell, is what
+bounds the board, because the cell is a consumed-number counter and the range is
+a reservation.
+
+| fact (measured 2026-11-12 on `origin`) | value                                                                                                                                                                                                                             |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OP-126 uploads lane row                | `0760`–`0779`, `Next free` cell `0771` (branch `OP-128-task-account-status-gate-pins`, `cfed101`)                                                                                                                                 |
+| OP-129 attendee-identity lane row      | `0769`–`0788`, `Next free` cell `0770` (PR [#444](https://github.com/yahodu/openpic-webapp/pull/444), branch `OP-129-task-anonymous-attendee-sessions-red-fix`)                                                                   |
+| the two rows intersect                 | `0769`–`0779` — eleven numbers reserved twice                                                                                                                                                                                     |
+| the collision it produced in flight    | `ADR-0770` exists twice: `ADR-0770-op129-anonymous-attendee-sessions-green.md` and `ADR-0770-op128-account-status-gate-green.md`                                                                                                  |
+| why the block started at `0769`        | the allocator note says the lane drew "the allocator's unallocated pool `0769`–`0788`" because `0768` was the uploads cell at the time — i.e. `0769 = 0768 + 1`, a **consumed number plus one**, not the uploads range end `0779` |
+
+13. **A block starts above the highest in-flight range END.** A new lane's block
+    starts at **`max(end of every reserved range in flight) + 1`** — never
+    `max(consumed number) + 1`, never the `unallocated` cursor alone, never the
+    tail of the index. A `Next free` cell is a consumed-number counter: reading
+    it and adding one (`0768` → `0769`) mints inside a range that is still open,
+    which is exactly how F-L1 happened.
+14. **A reserved range is exclusive to its holder.** No other lane may mint a
+    number inside it, _including a gap the holder has not consumed_. A gap is
+    cheap; a revoked range is not — re-cutting a reserved row means renumbering
+    files that are already in flight and rewriting every citation of them.
+15. **Dependent versus independent tickets.** A **dependent** ticket — one whose
+    story builds on the holder's code (OP-127 and OP-128 on OP-126 uploads) —
+    **continues its parent lane's range** and takes the next number inside it.
+    An **independent** ticket gets its own block and never extends into another
+    lane's range. This supersedes "a dependent ticket does not continue its
+    parent's range", which is the sentence the OP-129 allocation relied on.
+16. **The cursor follows the ranges.** The `unallocated (future lanes)` cursor
+    is `max(closed range end) + 1`; the same commit that adds or re-cuts a row
+    moves the cursor. A cursor left below a closed range end invites the next
+    lane to start inside it.
+17. **The mechanical half.** `checkAdrDirectory`'s `lane-range-overlap` check
+    ([ADR-0302](ADR-0302-adr-number-guard-contract.md) §6) reports every pair of
+    reserved rows whose **closed** ranges intersect, so an intersecting row is a
+    CI failure rather than a review miss. It also reports a range-shaped ledger
+    row it cannot parse (`lane-range-malformed`), so a ledger typo is a CI
+    failure rather than a silent hole that quietly disables the check. It is the
+    only half a tool can enforce: a _file_ numbered inside a foreign range
+    remains a review-time defect, because the guard has no file→lane map.
+
+**Rejected alternative — a `reserved:` list inside the README.** Already
+rejected in §8/§9 for the same reason: a branch-local marker is a second source
+of truth that goes stale the moment the ledger row changes, and a parser keyed
+on it fails open when the marker is forgotten.
+
+**Rejected alternative — a per-file lane annotation.** Naming the owning lane in
+each ADR file (front matter or the H1) would let a tool check membership, but it
+is a second source of truth that drifts from both the ledger and the file name,
+and it must be written by the worker whose number is in question — the same
+actor the check exists to constrain.
+
+Rationale for keying the rule on the range **end**: the failure was not a
+missing check but a wrong _reference value_. The allocator had a legitimate
+question ("what is the highest number in use?") and answered it from the nearest
+number-shaped cell in the file, which is a consumed count. The range end is the
+only value in the ledger that is a reservation bound, and it is readable from
+the same row, so the correct rule costs the allocator nothing extra to apply.
+The choice is recorded on card `t_95e7ed1e`.

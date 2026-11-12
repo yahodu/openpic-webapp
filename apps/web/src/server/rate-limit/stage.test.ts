@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   rateLimitStage,
@@ -231,5 +231,182 @@ describe("rateLimitStage — hashed-identity hygiene for attendee classes", () =
     // The IP scope is still a salted hash, never the raw hop.
     expect(keys.join("|")).not.toContain("203.0.113.77");
     expect(keys.join("|")).toContain(hashIdentity("203.0.113.77", SALT));
+  });
+});
+
+/**
+ * Characterization pins for the two properties the `attendee.session` limit
+ * (60 requests / hour / IP, contract §0.11) actually rests on — review F2 of
+ * the OP-129 rate-limit lane.
+ *
+ * 1. The stage derives the IP leg through `resolveClientIp` **with the
+ *    `TRUSTED_CLIENT_IP_HEADER` knob** (ADR-0024). A client that forges or
+ *    rotates `x-forwarded-for` therefore cannot choose its own bucket; if a
+ *    future change injects `facts` into the stage or swaps the derivation for a
+ *    route-local `resolveClientIp(headers)` call, the 60/h/IP limit silently
+ *    becomes a per-forgeable-header limit. P1 pins that.
+ * 2. A request with no attributable IP is refused (`503 service_unavailable`),
+ *    never silently unlimited, and the limiter is not even consulted — the
+ *    fail-closed consequence the class declares (ADR-0786). P3 pins that.
+ *
+ * Both properties hold today: these pins are green on first run by design and
+ * exist only so a regression breaks a test instead of shipping.
+ */
+
+/** An allow result with the attendee.session allowance (for the consulted spy). */
+function attendeeSessionAllowed(): RateLimitResult {
+  return { success: true, limit: 60, remaining: 59, resetSeconds: 3600 };
+}
+
+/** A limiter that records the keys it is consulted with and admits the call. */
+function attendeeSessionLimiter(keys: string[]) {
+  return {
+    limit: (key: string, rule: { limit: number; windowSeconds: number }) => {
+      keys.push(key);
+      return Promise.resolve({
+        success: true,
+        limit: rule.limit,
+        remaining: rule.limit - 1,
+        resetSeconds: rule.windowSeconds,
+      });
+    },
+  } satisfies RateLimiter;
+}
+
+const ORIGINAL_TRUSTED_CLIENT_IP_HEADER = process.env.TRUSTED_CLIENT_IP_HEADER;
+
+describe("rateLimitStage — attendee.session IP trust model (review F2)", () => {
+  beforeEach(() => {
+    // The deployment knob: the edge overwrites `x-real-ip`, so it is the only
+    // header the stage may trust for the IP leg (ADR-0024).
+    process.env.TRUSTED_CLIENT_IP_HEADER = "x-real-ip";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_TRUSTED_CLIENT_IP_HEADER === undefined) {
+      delete process.env.TRUSTED_CLIENT_IP_HEADER;
+    } else {
+      process.env.TRUSTED_CLIENT_IP_HEADER = ORIGINAL_TRUSTED_CLIENT_IP_HEADER;
+    }
+  });
+
+  it("P1: keys the attendee.session bucket on the trusted header, so a forged x-forwarded-for cannot choose one", async () => {
+    const keys: string[] = [];
+    const stage = asCallable(
+      rateLimitStage({
+        classKey: "attendee.session",
+        limiter: attendeeSessionLimiter(keys),
+        salt: SALT,
+      })
+    );
+
+    // Same trusted IP, two different client-forged forwarding chains. A client
+    // that rotates `x-forwarded-for` must land in the SAME bucket, or the
+    // 60/h/IP limit is evaded by editing one header.
+    await stage(
+      context(),
+      new Request(URL, {
+        method: "POST",
+        headers: { "x-real-ip": "9.9.9.9", "x-forwarded-for": "1.1.1.1" },
+      })
+    );
+    await stage(
+      context(),
+      new Request(URL, {
+        method: "POST",
+        headers: { "x-real-ip": "9.9.9.9", "x-forwarded-for": "2.2.2.2" },
+      })
+    );
+
+    // Both requests were limited once each, on exactly the trusted-header IP —
+    // the forged values never became an identity.
+    const trustedKey = `attendee.session:ip:${hashIdentity("9.9.9.9", SALT)}`;
+    expect(keys).toEqual([trustedKey, trustedKey]);
+    expect(keys.join("|")).not.toContain("1.1.1.1");
+    expect(keys.join("|")).not.toContain("2.2.2.2");
+  });
+
+  it("P1: keys two different trusted-header IPs on two different attendee.session buckets", async () => {
+    const keys: string[] = [];
+    const stage = asCallable(
+      rateLimitStage({
+        classKey: "attendee.session",
+        limiter: attendeeSessionLimiter(keys),
+        salt: SALT,
+      })
+    );
+
+    await stage(
+      context(),
+      new Request(URL, { method: "POST", headers: { "x-real-ip": "9.9.9.9" } })
+    );
+    await stage(
+      context(),
+      new Request(URL, { method: "POST", headers: { "x-real-ip": "8.8.4.4" } })
+    );
+
+    // The control for the pin above: distinct callers still get distinct
+    // buckets, so P1 cannot pass by hashing every request onto one key.
+    expect(keys).toEqual([
+      `attendee.session:ip:${hashIdentity("9.9.9.9", SALT)}`,
+      `attendee.session:ip:${hashIdentity("8.8.4.4", SALT)}`,
+    ]);
+  });
+
+  it("P2: renders the attendee.session success headers (60 per 3600s) and no Retry-After", async () => {
+    const keys: string[] = [];
+    const stage = rateLimitStage({
+      classKey: "attendee.session",
+      limiter: attendeeSessionLimiter(keys),
+      salt: SALT,
+    });
+
+    const headers = await stage(
+      context(),
+      new Request(URL, { method: "POST", headers: { "x-real-ip": "9.9.9.9" } })
+    );
+
+    // The class allowance itself: 60 requests per hour (§0.11). An admitted
+    // request carries no `Retry-After` — that header belongs to a 429 only.
+    expect(headers).toEqual({
+      "RateLimit-Limit": "60",
+      "RateLimit-Remaining": "59",
+      "RateLimit-Reset": "3600",
+    });
+  });
+
+  it("P3: refuses an unattributable request with 503 service_unavailable and never consults the limiter", async () => {
+    const limit = vi.fn(() => Promise.resolve(attendeeSessionAllowed()));
+    const stage = asCallable(
+      rateLimitStage({ classKey: "attendee.session", limiter: { limit }, salt: SALT })
+    );
+
+    // The trusted header (~x-real-ip) is configured but absent, and the request
+    // carries no IP header at all, so there is no attributable IP.
+    await expect(stage(context(), new Request(URL, { method: "POST" }))).rejects.toMatchObject({
+      code: "service_unavailable",
+      status: 503,
+    });
+
+    // Fail-closed, not fail-unlimited: an unattributable request must not skip
+    // the limit, so the limiter is never even asked for a verdict.
+    expect(limit).toHaveBeenCalledTimes(0);
+  });
+
+  it("P3: refuses a request with no IP header at all when the trusted-header knob is unset", async () => {
+    // The dev/e2e fallback branch: no knob means `x-forwarded-for` then
+    // `x-real-ip`, and with neither present there is still no identity.
+    delete process.env.TRUSTED_CLIENT_IP_HEADER;
+    const limit = vi.fn(() => Promise.resolve(attendeeSessionAllowed()));
+    const stage = asCallable(
+      rateLimitStage({ classKey: "attendee.session", limiter: { limit }, salt: SALT })
+    );
+
+    await expect(stage(context(), new Request(URL, { method: "POST" }))).rejects.toMatchObject({
+      code: "service_unavailable",
+      status: 503,
+    });
+
+    expect(limit).toHaveBeenCalledTimes(0);
   });
 });

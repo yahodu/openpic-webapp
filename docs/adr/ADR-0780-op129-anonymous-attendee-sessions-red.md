@@ -1,12 +1,12 @@
-# ADR-0769 — OP-129 RED: anonymous attendee sessions and the attendee auth resolver
+# ADR-0780 — OP-129 RED: anonymous attendee sessions and the attendee auth resolver
 
 - **Status:** Accepted (RED / executable contract)
 - **Consumers:** the OP-129 RED specs — `apps/web/src/test/unit/attendee-session-token.test.ts`
   (U1), `apps/web/src/test/unit/attendee-session-cookie.test.ts` (U2),
   `apps/web/src/test/integration/attendee-sessions.test.ts` (I1–I5) and
   `apps/web/e2e/attendee-sessions.spec.ts` (E1)
-- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0769`–`0788`,
-  `Next free = 0770`.
+- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0780`–`0798`,
+  `Next free = 0782`.
 - **Supersedes:** nothing. **Amended by:** the OP-129 GREEN ADR (implementation
   choices left open here) and the review sign-off inside that record.
 

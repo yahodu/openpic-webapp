@@ -1,11 +1,23 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/adr-numbering.js";
+import {
+  checkAdrDirectory,
+  checkAdrNumbers,
+  checkRepositoryAdrConsumers,
+  checkRepositoryAdrReferences,
+  checkSourceAdrConsumers,
+  checkSourceAdrReferences,
+  parseAdrNumber,
+  type AdrNumberIssue,
+  type AdrRecordText,
+  type SourceAdrConsumerIssue,
+  type SourceFileText,
+} from "../helpers/adr-numbering.js";
 
 /**
  * Unit contract — `src/test/helpers/adr-numbering.ts` (review finding R-1, OP-96).
@@ -24,12 +36,49 @@ import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/a
  * fails on import. That is the intended first state — the guard ships with the
  * implementation that satisfies these assertions.
  *
- * **Scope.** Exactly two invariants:
+ * **Scope.** Four invariants:
  *   (i)  no two in-scope files share an `ADR-NNNN` number;
  *   (ii) every in-scope `ADR-*.md` file name matches
- *        `^ADR-(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`.
- * Reserved-range bookkeeping is deliberately **out of scope**: it lives in the
- * prose ledger `docs/adr/README.md`, and parsing that prose is brittle.
+ *        `^ADR-(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`;
+ *   (iii) no two rows of the reserved-range ledger in `<dir>/README.md` reserve
+ *        intersecting **closed** ranges (`lane-range-overlap`);
+ *   (iv) every `ADR-NNNN` reference **inside a source file** resolves to a
+ *        `docs/adr/ADR-NNNN-*.md` file (`dangling-reference`, finding F6-b);
+ *   (v)  every reference that resolves to a record declaring a `Consumers:`
+ *        field is made by a file that record names (`consumer-mismatch`,
+ *        finding F-N1).
+ * Range bookkeeping was out of scope until F-L1: the guard now parses the
+ * ledger's closed `` `NNNN`–`NNNN` `` rows (see `adr-lane-ranges.test.ts`).
+ * A *range-shaped* row that does not parse was skipped silently until F1: a row
+ * whose second cell holds two backticked numbers with one non-alphanumeric
+ * separator between them — inverted, em dash, minus sign, tilde, three digits —
+ * is now reported as `lane-range-malformed` with `number: null` and that row's
+ * holder, because that is the same silent direction that let the F-L1 collision
+ * through. Rows that are not range-shaped (header, `---` separator, the
+ * open-ended pool cell, a single backticked number, prose, the ADR index) stay
+ * silent, and so does an indented row: the row shape requires a leading `|`.
+ * Reference resolution was out of scope until F6-b: the guards pinned the ADR
+ * *directory* and the ledger, never the references pointing into it, so five
+ * shipped production comments kept citing `0764`/`0765` after the
+ * OP-128 round-1 renumber moved those decisions to `0766`/`0767` — they
+ * sent readers to a sibling lane's unrelated records and nothing failed. The
+ * `checkSourceAdrReferences` / `checkRepositoryAdrReferences` contract is
+ * documented in the block comment below.
+ * What it still cannot see: a *file* whose number sits inside another lane's
+ * reserved range — the guard has no file→lane map, so range membership stays a
+ * review-time obligation (ADR-0302 §4).
+ * Reference *accuracy* — does the cited record decide what the comment claims? —
+ * was unreachable mechanically until F-N1 (the land review of PR #465). Nine
+ * OP-129 spec headers cited the never-minted `0768`, and once a record with that
+ * number was minted for the OP-128 lane those nine became "valid" references to
+ * a record about a different feature: the guard proved *existence*, never
+ * *accuracy*. Invariant (v) closes the half of that gap that is decidable from
+ * the tree: a record that declares a `Consumers:` field makes a claim about who
+ * consumes it, and a citing file the record never names is a
+ * `consumer-mismatch`. A citation of a record that declares no `Consumers:`
+ * field is `unlisted-consumer` — reported and counted, not failed; the contract
+ * block for the two functions (near the end of this file) states the exact
+ * matching rule and why the unlisted half is not a hard failure yet.
  *
  * **Contract pinned here** (RED and GREEN must not diverge):
  *
@@ -78,7 +127,7 @@ import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/a
  * asking for a change):
  *   - the same file name passed twice is two group members, so the lone
  *     `duplicate` issue repeats the name (`["ADR-0146-a.md", "ADR-0146-a.md"]`);
- *   - `ADR-0000-x.md` and `ADR-9999-x.md` are well-formed: `parseAdrNumber`
+ *   - `ADR-000x.md` and `ADR-999x.md`-shaped names are well-formed: `parseAdrNumber`
  *     yields `0` / `9999`, and both are accepted when unique;
  *   - `checkAdrDirectory` on a missing directory throws (the TSDoc `@throws`
  *     branch), propagating the `node:fs` error with `code === "ENOENT"`;
@@ -92,14 +141,78 @@ const realAdrDir = join(repoRoot, "docs/adr");
 
 const tempDirs: string[] = [];
 
+/**
+ * The one `mkdirSync` + `writeFileSync` call site in this spec. Every fixture
+ * write goes through it, so the security preset's non-literal-`fs` warnings
+ * stay countable and no new one appears per fixture factory.
+ */
+function writeFixtureFile(filePath: string, text: string): void {
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(filePath, text);
+}
+
 function makeTempAdrDir(fileNames: string[]): string {
   const dir = mkdtempSync(join(tmpdir(), "adr-numbering-"));
   tempDirs.push(dir);
   for (const fileName of fileNames) {
-    writeFileSync(join(dir, fileName), "");
+    writeFixtureFile(join(dir, fileName), "");
   }
   return dir;
 }
+
+/**
+ * A temp ADR directory that also carries a `README.md` with `readmeMarkdown`
+ * (F-L1: the lane ledger the range check reads).
+ */
+function makeTempAdrDirWithReadme(fileNames: string[], readmeMarkdown: string): string {
+  const dir = makeTempAdrDir(fileNames);
+  writeFixtureFile(join(dir, "README.md"), readmeMarkdown);
+  return dir;
+}
+
+/**
+ * A throwaway repository root for the source-reference sweep: `files` maps a
+ * repo-relative POSIX path to its text, and every parent directory is created.
+ */
+function makeTempRepoRoot(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "adr-source-refs-"));
+  tempDirs.push(root);
+  for (const [relativePath, text] of Object.entries(files)) {
+    writeFixtureFile(join(root, relativePath), text);
+  }
+  return root;
+}
+
+/**
+ * The `### Reserved ranges` table as markdown — header row, `---` separator row,
+ * then `rows` verbatim. Fixture factory only: the case that uses it writes every
+ * lane row it pins.
+ */
+function laneLedger(rows: string[]): string {
+  return [
+    "### Reserved ranges (effective 2026-10-20)",
+    "",
+    "| Holder (lane)                       | Reserved range | Next free |",
+    "| ----------------------------------- | -------------- | --------- |",
+    ...rows,
+  ].join("\n");
+}
+
+/**
+ * Compile-time pin of the widened issue union: `AdrNumberIssue["code"]` must
+ * admit `"lane-range-overlap"`, so an implementation that appends an overlap
+ * issue without widening the type fails `tsc`, not just a runtime assertion.
+ */
+const overlapCode: AdrNumberIssue["code"] = "lane-range-overlap";
+
+/**
+ * Compile-time pin of the F1 follow-up's union widening: a ledger row that
+ * obviously intends a reservation but does not parse is reported as
+ * `lane-range-malformed`, so `AdrNumberIssue["code"]` must admit it. An
+ * implementation that appends the issue without widening the union fails `tsc`
+ * (`TS2322` on this line), not only a runtime assertion.
+ */
+const malformedCode: AdrNumberIssue["code"] = "lane-range-malformed";
 
 describe("checkAdrNumbers — clean input", () => {
   afterEach(() => {
@@ -126,7 +239,7 @@ describe("checkAdrNumbers — clean input", () => {
 
   it("accepts the boundary numbers 0000 and 9999 when they are unique", () => {
     // Act — the strict four-digit pattern admits both extremes of the range.
-    const result = checkAdrNumbers(["ADR-0000-x.md", "ADR-9999-y.md"]);
+    const result = checkAdrNumbers(["ADR-0000-x.md", "ADR-9999-y.md"]); // adr-fixture
 
     // Assert
     expect(result).toEqual({ ok: true, issues: [] });
@@ -307,8 +420,8 @@ describe("parseAdrNumber", () => {
   });
 
   it.each<[string, number]>([
-    ["ADR-0000-x.md", 0],
-    ["ADR-9999-x.md", 9999],
+    ["ADR-0000-x.md", 0], // adr-fixture
+    ["ADR-9999-x.md", 9999], // adr-fixture
   ])("parses the boundary number %s as %s", (fileName, expected) => {
     // Act + Assert
     expect(parseAdrNumber(fileName)).toBe(expected);
@@ -353,8 +466,7 @@ describe("checkAdrDirectory", () => {
   it("reads only the given directory and never recurses into subdirectories", () => {
     // Arrange
     const dir = makeTempAdrDir(["ADR-0146-a.md"]);
-    mkdirSync(join(dir, "archive"));
-    writeFileSync(join(dir, "archive", "ADR-0146-a.md"), "");
+    writeFixtureFile(join(dir, "archive", "ADR-0146-a.md"), "");
 
     // Act
     const result = checkAdrDirectory(dir);
@@ -410,5 +522,1627 @@ describe("checkAdrDirectory", () => {
 
     // Assert
     expect(result).toEqual({ ok: true, issues: [] });
+  });
+});
+
+describe("checkAdrDirectory — lane-range overlaps (ledger finding F-L1)", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports one overlap issue for the live OP-126 / OP-129 intersection", () => {
+    // Arrange — the measured in-flight state: the uploads lane reserved
+    // 0760-0779 and the attendee-identity lane reserved 0769-0788, which is how
+    // 0770 came to exist twice. README order is deliberately reversed, so
+    // the issue's holder order pins the ascending sort.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-op126-uploads-green.md"], // adr-fixture
+      laneLedger([
+        "| OP-129 attendee identity lane | `0769`–`0788` | `0770` |",
+        "| OP-126 uploads lane           | `0760`–`0779` | `0771` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-126 uploads lane", "OP-129 attendee identity lane"],
+        },
+      ],
+    });
+  });
+
+  it("reports no overlap for ranges that touch without intersecting", () => {
+    // Arrange — 0760-0779 and 0780-0798 are adjacent, so they are disjoint
+    // (this is the boundary the F-L1 repair relies on).
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-126 uploads lane           | `0760`–`0779` | `0771` |",
+        "| OP-129 attendee identity lane | `0780`–`0798` | `0782` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no overlap for a single reserved range", () => {
+    // Arrange
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger(["| OP-126 uploads lane | `0760`–`0779` | `0771` |"])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no overlap when the README table has no parseable row", () => {
+    // Arrange — header and `---` separator only.
+    const dir = makeTempAdrDirWithReadme(["ADR-0760-a.md"], laneLedger([])); // adr-fixture
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no overlap when the README only mentions ranges in prose", () => {
+    // Arrange — an empty README and a prose-only one both carry no reservation.
+    const emptyDir = makeTempAdrDirWithReadme(["ADR-0760-a.md"], ""); // adr-fixture
+    const proseDir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      "The OP-129 lane holds `0769`-`0788`; the uploads lane holds `0760`-`0779`."
+    );
+
+    // Act
+    const emptyResult = checkAdrDirectory(emptyDir);
+    const proseResult = checkAdrDirectory(proseDir);
+
+    // Assert
+    expect(emptyResult).toEqual({ ok: true, issues: [] });
+    expect(proseResult).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no overlap for a directory that has no README at all", () => {
+    // Arrange — a bare ADR directory must not throw on the missing ledger.
+    const dir = makeTempAdrDir(["ADR-0760-a.md"]); // adr-fixture
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports one issue per intersecting pair when three reserved ranges overlap", () => {
+    // Arrange — every pair of these three intersects, so the report carries
+    // three issues, not one per row.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `0760`–`0779` | `0761` |",
+        "| OP-202 beta lane  | `0769`–`0788` | `0770` |",
+        "| OP-203 gamma lane | `0775`–`0795` | `0776` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result.ok).toBe(false);
+    expect(result.issues).toHaveLength(3);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-201 alpha lane", "OP-202 beta lane"],
+        },
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-201 alpha lane", "OP-203 gamma lane"],
+        },
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-202 beta lane", "OP-203 gamma lane"],
+        },
+      ])
+    );
+  });
+
+  it("reports a duplicate number and a lane-range overlap from the same directory", () => {
+    // Arrange — the two invariants are independent: a directory can break both,
+    // and the range check must not swallow the numbering report (or vice versa).
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0146-a.md", "ADR-0146-b.md"],
+      laneLedger([
+        "| OP-126 uploads lane           | `0760`–`0779` | `0771` |",
+        "| OP-129 attendee identity lane | `0769`–`0788` | `0770` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result.ok).toBe(false);
+    expect(result.issues).toHaveLength(2);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        {
+          code: "duplicate",
+          number: "0146",
+          files: ["ADR-0146-a.md", "ADR-0146-b.md"],
+        },
+        {
+          code: overlapCode,
+          number: null,
+          files: ["OP-126 uploads lane", "OP-129 attendee identity lane"],
+        },
+      ])
+    );
+  });
+});
+
+describe("checkAdrDirectory — range-shaped rows that do not parse (review finding F1)", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an inverted range as one lane-range-malformed issue naming its holder", () => {
+    // Arrange — `0780`-`0760` obviously intends a reservation, but it is
+    // inverted, so today it parses as { start: 780, end: 760 } and the span the
+    // lane meant is invisible: the ledger is reported clean. A row that does not
+    // parse must be named, not dropped, or a typo silently disables the guard.
+    // One issue per row, carrying that row's holder once — not the two holders
+    // an overlap issue carries.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `0780`-`0760` | `0781` |",
+        "| OP-202 beta lane  | `0760`–`0779` | `0761` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: malformedCode, number: null, files: ["OP-201 alpha lane"] }],
+    });
+  });
+
+  it("reports only the malformed row when the inverted span would intersect a real lane", () => {
+    // Arrange — the discriminating fixture for the rule "a malformed row never
+    // feeds the overlap predicate": the inverted row is paired with a lane that
+    // its *inverted* span would intersect. `0780`-`0760` read as
+    // { start: 780, end: 760 } against 0760-0799 answers
+    // `780 <= 799 && 760 <= 760` — an overlap no lane reserved. The `0799` end is
+    // load-bearing: against 0760-0779 the predicate answers false for both rows,
+    // so the case would stay green under an implementation that feeds malformed
+    // rows to the predicate. Expected: the malformed row alone, no overlap.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `0780`-`0760` | `0781` |",
+        "| OP-204 delta lane | `0760`-`0799` | `0781` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert — exactly one issue, carrying the malformed row's holder once; a
+    // `lane-range-overlap` here would be a phantom the ledger never reserved.
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: malformedCode, number: null, files: ["OP-201 alpha lane"] }],
+    });
+  });
+
+  it("stays silent for an indented row: the row shape requires a leading pipe", () => {
+    // Arrange — a row pushed in by two spaces is not a pipe-table row, so it is
+    // neither a reservation nor a malformed one: Markdown does not read it as a
+    // table row either. Silence is the contract, and a false positive here would
+    // make every indented snippet in the ledger's notes fail the guard.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger(["  | OP-201 alpha lane | `0780`-`0760` | `0781` |"])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("still parses the valid rows of a ledger that carries one malformed row", () => {
+    // Arrange — a malformed row must not poison the rows around it: the two
+    // valid rows still overlap, so the report carries both the malformed row and
+    // the intersection the guard exists to catch.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `0780`-`0760` | `0781` |",
+        "| OP-202 beta lane  | `0760`–`0779` | `0761` |",
+        "| OP-203 gamma lane | `0770`–`0785` | `0776` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert — both issues carry `number: null`, so the shared
+    // (number, code, files[0]) ordering key puts `lane-range-malformed` first.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        { code: malformedCode, number: null, files: ["OP-201 alpha lane"] },
+        { code: overlapCode, number: null, files: ["OP-202 beta lane", "OP-203 gamma lane"] },
+      ],
+    });
+  });
+
+  it.each<[string, string]>([
+    ["the em dash (U+2014)", "\u2014"],
+    ["the minus sign (U+2212)", "\u2212"],
+    ["a tilde", "~"],
+  ])("reports a row whose range separator is %s", (_label, separator) => {
+    // Arrange — "two backticked numbers with one non-alphanumeric separator
+    // between them" is what makes a row range-shaped, whatever the separator
+    // is. Only `–` (U+2013) and `-` are accepted, so every other separator is a
+    // reservation the parser cannot see.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([`| OP-201 alpha lane | \`0760\`${separator}\`0779\` | \`0761\` |`])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: malformedCode, number: null, files: ["OP-201 alpha lane"] }],
+    });
+  });
+
+  it("reports a three-digit pair as lane-range-malformed", () => {
+    // Arrange — the ledger's numbers are zero-padded to four digits, so
+    // `760`-`779` is a typo that reserves nothing today.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `760`-`779` | `761` |",
+        "| OP-202 beta lane  | `0780`-`0799` | `0781` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert — the valid row is untouched, so exactly one issue is reported.
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: malformedCode, number: null, files: ["OP-201 alpha lane"] }],
+    });
+  });
+
+  it("reports one issue per offending row, ordered by holder", () => {
+    // Arrange — README order is deliberately reversed: the two rows tie on
+    // (number, code), so the report must order them by `files[0]`.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-203 gamma lane | `0780`-`0760` | `0781` |",
+        "| OP-201 alpha lane | `760`-`779` | `761` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        { code: malformedCode, number: null, files: ["OP-201 alpha lane"] },
+        { code: malformedCode, number: null, files: ["OP-203 gamma lane"] },
+      ],
+    });
+  });
+
+  it("reports no malformed row for a ledger whose rows all use the accepted form", () => {
+    // Arrange — no false positives: en dash, plain hyphen and a spaced en dash
+    // are all accepted, and none of them is reported.
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0760-a.md"], // adr-fixture
+      laneLedger([
+        "| OP-201 alpha lane | `0760`–`0779` | `0761` |",
+        "| OP-202 beta lane  | `0780`-`0799` | `0781` |",
+        "| OP-203 gamma lane | `0800` – `0819` | `0801` |",
+      ])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports no malformed row for the repository's real ledger", () => {
+    // Act — the zero-false-positive proof on the board's most-edited table: any
+    // row of `docs/adr/README.md` misread as range-shaped would show up here.
+    const result = checkAdrDirectory(realAdrDir);
+
+    // Assert (the same report is pinned by the plain `checkAdrDirectory` block
+    // above; this case names the malformed-row code so a false positive is
+    // diagnosable from the failing case alone).
+    expect(result.issues.filter((issue) => issue.code === malformedCode)).toEqual([]);
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("reports a duplicate number and a malformed range from the same directory", () => {
+    // Arrange — the two invariants are independent: neither may swallow the
+    // other. `duplicate` sorts first (it carries a number; both null-number
+    // issues come last).
+    const dir = makeTempAdrDirWithReadme(
+      ["ADR-0146-a.md", "ADR-0146-b.md"],
+      laneLedger(["| OP-201 alpha lane | `0780`-`0760` | `0781` |"])
+    );
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "duplicate",
+          number: "0146",
+          files: ["ADR-0146-a.md", "ADR-0146-b.md"],
+        },
+        { code: malformedCode, number: null, files: ["OP-201 alpha lane"] },
+      ],
+    });
+  });
+
+  it("reports nothing for rows that are not range-shaped", () => {
+    // Arrange — the non-vacuity control for the whole rule: the header row, the
+    // `---` separator row, the open-ended pool cell, a cell holding a single
+    // backticked number, a prose mention and the ADR index rows all stay silent.
+    // Only two backticked numbers with a non-alphanumeric separator between them
+    // make a row range-shaped.
+    const markdown = [
+      laneLedger([
+        "| unallocated (future lanes) | `0700`+ (20 per lane, in order) | `0700` |",
+        "| OP-201 alpha lane          | `0780`                          | `0781` |",
+      ]),
+      "",
+      "The OP-129 lane holds `0769`-`0788`; the uploads lane holds `0760`-`0779`.",
+      "",
+      "| ADR                                                                    | Title                    | Status   |",
+      "| ---------------------------------------------------------------------- | ------------------------ | -------- |",
+      "| [0001](ADR-0001-ports-and-adapters.md)                                 | Ports and adapters       | Accepted |",
+    ].join("\n");
+    const dir = makeTempAdrDirWithReadme(["ADR-0760-a.md"], markdown); // adr-fixture
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+
+  it("keeps an ADR index row whose title quotes two numbers with a slash silent", () => {
+    // Arrange — measured on the real ledger: the ADR-0341 index row's title cell
+    // reads "the `402`/`403` denial split". Read purely literally ("two
+    // backticked number tokens with a non-alphanumeric separator between them")
+    // that row is range-shaped, so reporting it would make the real ledger fail
+    // the clean-report pin above. A slash is not range notation, and an index
+    // row is not a reservation: it must stay silent.
+    const markdown = [
+      "| ADR                                          | Title                                                                  | Status   |",
+      "| -------------------------------------------- | ---------------------------------------------------------------------- | -------- |",
+      "| [0341](ADR-0341-op103-entitlements-green.md) | OP-103 GREEN: the `402`/`403` denial split and the registry extensions | Accepted |", // adr-fixture
+    ].join("\n");
+    const dir = makeTempAdrDirWithReadme(["ADR-0760-a.md"], markdown); // adr-fixture
+
+    // Act
+    const result = checkAdrDirectory(dir);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [] });
+  });
+});
+
+/**
+ * Unit contract — invariant (iv): an in-source `ADR-NNNN` reference must resolve
+ * to a `docs/adr/ADR-NNNN-*.md` file (finding F6-b, OP-128 follow-up).
+ *
+ * **Why this exists.** The OP-128 round-1 renumber moved two lane records from
+ * `0764`/`0765` to `0766`/`0767` (fix PR #461), but five shipped
+ * production comments and three spec headers kept citing the old numbers. Those
+ * numbers are *not free*: `0764` and `0765` belong to sibling lanes, so
+ * the stale comments pointed readers at a different lane's unrelated decisions.
+ * `checkAdrNumbers` could not see it — it reads file *names* in `docs/adr/` and
+ * never the references pointing into it. This block pins the check that closes
+ * that hole, in the same helper (`src/test/helpers/adr-numbering.ts`) as the
+ * shape and ledger checks.
+ *
+ * **Contract pinned here** (RED and GREEN must not diverge):
+ *
+ * ```
+ * interface SourceFileText { path: string; text: string }
+ * type SourceAdrReferenceIssue = {
+ *   code: "dangling-reference";
+ *   file: string;   // repo-relative POSIX path, e.g. "apps/web/src/server/x.ts"
+ *   line: number;   // 1-based line of the reference
+ *   number: string; // the four digits as written, leading zeros kept ("0764")
+ * }
+ * checkSourceAdrReferences(
+ *   sources: readonly SourceFileText[],
+ *   adrFileNames: readonly string[],
+ * ): { ok: boolean; issues: SourceAdrReferenceIssue[];
+ *      checkedReferences: number; exemptReferences: number }
+ * checkRepositoryAdrReferences(root: string): typeof checkSourceAdrReferences
+ * ```
+ *
+ * **The rule.** A reference is the literal token `ADR-` + FOUR digits, digits not
+ * followed by another digit (so `ADR-12345` is not a reference to `1234`) and the
+ * prefix case-sensitive (so `adr-0146` is not a reference — the same
+ * case-sensitivity `checkAdrNumbers` uses). A reference resolves when
+ * `adrFileNames` holds a **well-formed** `ADR-<NNNN>-<slug>.md` name with the
+ * same digits; anything else is one `dangling-reference` issue per occurrence.
+ * The rule is textual: a reference in a line comment, a block comment or a string
+ * literal all count — the F6 defect lived in comments.
+ *
+ * **Fixture marker.** A line **inside the guard's own test tree**
+ * (`apps/web/src/test/**`) whose text contains `adr-fixture` is exempt: those
+ * specs are full of synthetic numbers that must never resolve (`ADR-000x`/
+ * `ADR-999x` shape fixtures, `0764` lookalikes, lane numbers that only exist on
+ * an unmerged branch). The exemption is per **line text** *and* per **path** —
+ * never a line number, never a number range and never a whole file — so it
+ * travels with the fixture when it moves, a new dangling reference on an
+ * unmarked line still fails, and a stale pointer in `apps/web/src/server`,
+ * `apps/web/src/app` or any `packages` source tree fails **even when its line
+ * carries the marker** (finding F-M1). Exempt references are counted in
+ * `exemptReferences`, not in `checkedReferences`.
+ *
+ * **`checkRepositoryAdrReferences`** scans, deterministically and sorting-free
+ * (the report is sorted by file, then line, then number):
+ *   - `docs/adr/*` for the resolvable numbers (a missing `docs/adr` throws, so a
+ *     wrong root can never yield a vacuous pass);
+ *   - every `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` file under `apps/` and
+ *     `packages/` only (`scripts/` and every non-source extension is out of
+ *     scope), skipping `node_modules`, `.git`, `.next`, `.worktrees`, `coverage`,
+ *     `dist`, `build`, `.turbo`, `playwright-report` and `test-results` at any
+ *     depth — a build output copy of a source file must not be counted twice.
+ *
+ * **Assumptions resolved in this spec** (flagged in the handoff):
+ *   - Resolution reuses the strict file-name pattern (`adrDigitsOf`), so a
+ *     malformed ADR file name does not resolve — the two guards then fail
+ *     together instead of disagreeing.
+ *   - `checkedReferences` counts what the rule evaluated; the two counters add up
+ *     to the number of references the sweep saw.
+ *   - The scan root is the repository root the spec derives from its own
+ *     `import.meta.url`, so the check follows the worktree it runs in.
+ */
+
+describe("checkSourceAdrReferences — resolution against docs/adr", () => {
+  it("accepts an in-source reference that a docs/adr file resolves", () => {
+    // Arrange
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/notifications/digest.ts",
+        text: "// TTL rationale: docs/adr/ADR-0146-a.md",
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, ["ADR-0146-a.md", "README.md"]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedReferences: 1, exemptReferences: 0 });
+  });
+
+  it("reports a dangling reference naming the file, the 1-based line and the digits as written", () => {
+    // Arrange — line 3 carries the reference; the number is a sibling lane's,
+    // exactly the F6 shape (a comment sending readers to the wrong record).
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/media/signed-urls.ts",
+        text: ['import { sign } from "./sign";', "", "// see ADR-0764 for the decision"].join("\n"), // adr-fixture: 0764 has no docs/adr file on this tree
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, ["ADR-0766-decision.md"]); // adr-fixture: 0766 exists only on the unmerged lane
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "dangling-reference",
+          file: "apps/web/src/server/media/signed-urls.ts",
+          line: 3,
+          number: "0764", // adr-fixture: the dangling token itself
+        },
+      ],
+      checkedReferences: 1,
+      exemptReferences: 0,
+    });
+  });
+
+  it("reports one issue per file when the same dangling number appears in two files", () => {
+    // Arrange
+    const sources: SourceFileText[] = [
+      { path: "apps/web/src/server/b.ts", text: "// ADR-0764 again" }, // adr-fixture: 0764 is not a docs/adr file here
+      { path: "apps/web/src/server/a.ts", text: "// ADR-0764 first" }, // adr-fixture: 0764 is not a docs/adr file here
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert — sorted by file, so the input order cannot leak into the report.
+    expect(result.issues).toEqual([
+      { code: "dangling-reference", file: "apps/web/src/server/a.ts", line: 1, number: "0764" },
+      { code: "dangling-reference", file: "apps/web/src/server/b.ts", line: 1, number: "0764" },
+    ]);
+    expect(result.checkedReferences).toBe(2);
+  });
+
+  it("reports one issue per occurrence when the same dangling number repeats on two lines", () => {
+    // Arrange
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: [
+          "// ADR-0764 once", // adr-fixture: 0764 is not a docs/adr file here
+          "// ADR-0764 twice", // adr-fixture: 0764 is not a docs/adr file here
+        ].join("\n"),
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result.issues).toEqual([
+      { code: "dangling-reference", file: "apps/web/src/server/x.ts", line: 1, number: "0764" },
+      { code: "dangling-reference", file: "apps/web/src/server/x.ts", line: 2, number: "0764" },
+    ]);
+  });
+
+  it("reports every reference on one line, ordered by number", () => {
+    // Arrange — the F6 defect in a single comment: two sibling-lane numbers.
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// ADR-0764 and ADR-0765 were renumbered", // adr-fixture: both are sibling-lane numbers
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result.issues).toEqual([
+      { code: "dangling-reference", file: "apps/web/src/server/x.ts", line: 1, number: "0764" },
+      { code: "dangling-reference", file: "apps/web/src/server/x.ts", line: 1, number: "0765" },
+    ]);
+    expect(result.checkedReferences).toBe(2);
+  });
+
+  it("does not let a malformed ADR file name resolve a reference", () => {
+    // Arrange — the ADR directory's own naming rule (`^ADR-(\\d{4})-[a-z0-9-]+\\.md$`)
+    // governs resolution too, so the two guards cannot disagree.
+    const sources: SourceFileText[] = [
+      { path: "apps/web/src/server/x.ts", text: "// ADR-0146 rationale" },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, ["ADR-0146-Upper-Slug.md"]);
+
+    // Assert
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual([
+      { code: "dangling-reference", file: "apps/web/src/server/x.ts", line: 1, number: "0146" },
+    ]);
+  });
+});
+
+describe("checkSourceAdrReferences — what counts as a reference", () => {
+  it.each<[string, string]>([
+    ["a five-digit number", "// ADR-12345 is not four digits"], // adr-fixture: shape fixture, must never resolve
+    ["a two-digit number", "// ADR-96 keeps the short form"], // adr-fixture: shape fixture, must never resolve
+    ["a lowercase prefix", "// adr-0146 is not an ADR reference"],
+  ])("counts no reference for %s", (_shape, text) => {
+    // Act
+    const result = checkSourceAdrReferences([{ path: "apps/web/src/server/x.ts", text }], []);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedReferences: 0, exemptReferences: 0 });
+  });
+
+  it("reports references inside a block comment, a line comment and a string literal alike", () => {
+    // Arrange — the F6 defect was in comments, so comments are explicitly in scope.
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: [
+          "/**",
+          " * @see ADR-0001 for the rationale", // adr-fixture: shape fixture, no docs/adr file
+          " */",
+          "// ADR-0002 likewise", // adr-fixture: shape fixture, no docs/adr file
+          'const label = "ADR-0003";', // adr-fixture: shape fixture, no docs/adr file
+        ].join("\n"),
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result.issues.map((issue) => [issue.line, issue.number])).toEqual([
+      [2, "0001"],
+      [4, "0002"],
+      [5, "0003"],
+    ]);
+    expect(result.checkedReferences).toBe(3);
+  });
+});
+
+describe("checkSourceAdrReferences — the fixture marker", () => {
+  it("exempts every reference on a line that carries the marker and counts them", () => {
+    // Arrange — a synthetic number on a line that also carries `adr-fixture`.
+    const sources: SourceFileText[] = [
+      { path: "apps/web/src/test/unit/x.test.ts", text: "// ADR-0764 synthetic adr-fixture" }, // adr-fixture: the line under test is itself a fixture
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedReferences: 0, exemptReferences: 1 });
+  });
+
+  it("counts every reference on a marked line as exempt", () => {
+    // Arrange
+    const sources: SourceFileText[] = [
+      { path: "apps/web/src/test/unit/x.test.ts", text: "// ADR-0764 and ADR-0765 adr-fixture" }, // adr-fixture: the line under test is itself a fixture
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedReferences: 0, exemptReferences: 2 });
+  });
+
+  it("still reports a dangling reference on an unmarked line of a marked file", () => {
+    // Arrange — narrowness: the exemption is per line, not per file.
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/unit/x.test.ts",
+        text: ["// ADR-0764 synthetic adr-fixture", "// ADR-0764 unmarked"].join("\n"),
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: "dangling-reference",
+        file: "apps/web/src/test/unit/x.test.ts",
+        line: 2,
+        number: "0764",
+      },
+    ]);
+    expect(result.checkedReferences).toBe(1);
+    expect(result.exemptReferences).toBe(1);
+  });
+
+  it("does not exempt a marked dangling reference in the application source", () => {
+    // Arrange — the F-M1 hole: a real stale pointer in shipped source with the
+    // exemption word appended. The pre-scope helper swallowed it silently.
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/media/signed-urls.ts",
+        text: "// see ADR-0764 for the decision adr-fixture", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, ["ADR-0766-decision.md"]);
+
+    // Assert — the marker buys nothing outside the guard's own test tree.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "dangling-reference",
+          file: "apps/web/src/server/media/signed-urls.ts",
+          line: 1,
+          number: "0764",
+        },
+      ],
+      checkedReferences: 1,
+      exemptReferences: 0,
+    });
+  });
+
+  it.each<[string, string]>([
+    ["the app router tree", "apps/web/src/app/(public)/events/page.tsx"],
+    ["a package source tree", "packages/contracts/src/index.ts"],
+    ["a sibling directory whose name starts with `test`", "apps/web/src/test-tools/server.ts"],
+    ["a path that leaves the test tree", "apps/web/src/test/../server/x.ts"],
+  ])("does not exempt a marked dangling reference in %s", (_where, path) => {
+    // Arrange — every path here sits outside `apps/web/src/test/**`, so the
+    // marker must not be load-bearing. The last two rows pin an explicit
+    // directory boundary and a normalized path, not a raw prefix test.
+    const sources: SourceFileText[] = [
+      { path, text: "// ADR-0764 adr-fixture" }, // adr-fixture: the line under test is itself a fixture
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: "dangling-reference", file: path, line: 1, number: "0764" }],
+      checkedReferences: 1,
+      exemptReferences: 0,
+    });
+  });
+
+  it("exempts a marked line anywhere under the guard's own test tree", () => {
+    // Arrange — the fixture half of the scope: helpers, unit and integration
+    // specs all live under `apps/web/src/test/**`.
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/integration/media-signed-urls.test.ts",
+        text: "// ADR-0764 synthetic adr-fixture", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedReferences: 0, exemptReferences: 1 });
+  });
+});
+
+describe("checkRepositoryAdrReferences — the repository sweep", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the repository's real source tree as reference-clean", () => {
+    // Act — the characterization half of this card: every in-source reference at
+    // this head resolves to a docs/adr file (the uploads lane may not be on this
+    // tree yet, so the count is measured here, not copied from the card).
+    const result = checkRepositoryAdrReferences(repoRoot);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.ok).toBe(true);
+    // Non-vacuity: the sweep must see the whole tree, not just the two spec files.
+    expect(result.checkedReferences).toBeGreaterThanOrEqual(1000);
+  });
+
+  it("resolves references across apps/ and packages/ and reports the dangling ones in a stable order", () => {
+    // Arrange — a throwaway repository: one resolving reference plus four that
+    // have no ADR file, spread over apps/ and packages/ and over three extensions.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0146-alpha.md": "# alpha",
+      "docs/adr/README.md": "ledger",
+      "apps/web/src/resolved.ts": "// TTL rationale: ADR-0146-alpha.md",
+      "apps/web/src/both.mjs": "// ADR-0001 and ADR-0002", // adr-fixture: shape fixtures, no docs/adr file
+      "apps/web/src/dangling.ts": "const a = 1;\n// see ADR-0764 now", // adr-fixture: 0764 has no docs/adr file
+      "packages/contracts/src/x.tsx": "// ADR-0007", // adr-fixture: shape fixture, no docs/adr file
+    });
+
+    // Act
+    const result = checkRepositoryAdrReferences(root);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        { code: "dangling-reference", file: "apps/web/src/both.mjs", line: 1, number: "0001" },
+        { code: "dangling-reference", file: "apps/web/src/both.mjs", line: 1, number: "0002" },
+        { code: "dangling-reference", file: "apps/web/src/dangling.ts", line: 2, number: "0764" },
+        {
+          code: "dangling-reference",
+          file: "packages/contracts/src/x.tsx",
+          line: 1,
+          number: "0007",
+        },
+      ],
+      checkedReferences: 5,
+      exemptReferences: 0,
+    });
+  });
+
+  it("ignores dependencies, build output, non-source files and the root scripts/ directory", () => {
+    // Arrange — every reference here is outside the sweep's scope.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0146-alpha.md": "# alpha",
+      "apps/web/src/notes.md": "ADR-0003", // adr-fixture: not a source extension
+      "apps/web/src/data.json": '{ "note": "ADR-0004" }', // adr-fixture: not a source extension
+      "apps/web/node_modules/pkg/index.ts": "// ADR-0005", // adr-fixture: dependency, never swept
+      "apps/web/.next/server/page.ts": "// ADR-0006", // adr-fixture: build output, never swept
+      "packages/contracts/src/empty.ts": "export const nothing = 0;",
+      "scripts/tool.ts": "// ADR-0008", // adr-fixture: root scripts/ is out of scope
+    });
+
+    // Act
+    const result = checkRepositoryAdrReferences(root);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedReferences: 0, exemptReferences: 0 });
+  });
+
+  it("throws an ENOENT error when the root has no docs/adr directory", () => {
+    // Arrange — a wrong root must fail loudly, never pass vacuously.
+    const root = makeTempRepoRoot({ "apps/web/src/x.ts": "// no references here" });
+
+    // Act + Assert
+    expect(() => checkRepositoryAdrReferences(root)).toThrow(
+      expect.objectContaining({ code: "ENOENT" })
+    );
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * Invariant (v) — citation accuracy (finding F-N1)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Unit contract — invariant (v): a citation must be *accurate*, not merely
+ * resolvable (finding F-N1, the land review of PR #465, card `t_03a786bd`).
+ *
+ * **Why this exists.** Invariant (iv) proves that the record a comment cites
+ * *exists*. That is half the question. On the OP-129 tree nine spec headers
+ * cited the never-minted `0768`; then a record with that number was minted for
+ * the OP-128 lane, and overnight all nine became "valid" references to a record
+ * about a different feature — the media signer's account-status gate. The
+ * existence guard's real-tree case would go green on that tree, and that is how
+ * the defect it was written for survives a renumber. This block pins the half of
+ * "is this citation right?" that is decidable from the tree: **a record that
+ * declares a `Consumers:` field states who consumes it, and a citing file the
+ * record never names is a `consumer-mismatch`.**
+ *
+ * **Contract pinned here** (RED and GREEN must not diverge):
+ *
+ * ```
+ * interface AdrRecordText { fileName: string; text: string }
+ * type SourceAdrConsumerIssue = {
+ *   code: "consumer-mismatch" | "unlisted-consumer";
+ *   file: string;   // repo-relative POSIX path of the citing file
+ *   line: number;   // 1-based line of the reference
+ *   number: string; // the four digits as written, leading zeros kept ("0768")
+ *   record: string; // the cited record's file name, e.g. "ADR-0768-….md" (adr-fixture: shape only)
+ * }
+ * checkSourceAdrConsumers(
+ *   sources: readonly SourceFileText[],
+ *   records: readonly AdrRecordText[],
+ * ): { ok: boolean; issues: SourceAdrConsumerIssue[]; unlisted: SourceAdrConsumerIssue[];
+ *      checkedReferences: number; exemptReferences: number; danglingReferences: number;
+ *      verifiedReferences: number; declaredRecords: string[] }
+ * checkRepositoryAdrConsumers(root: string): typeof checkSourceAdrConsumers
+ * ```
+ *
+ * **Participation is declared, never inferred.** A record participates exactly
+ * when its text carries a `Consumers:` field — `- **Consumers:**` plus its
+ * continuation lines (until the next `- **Field:**` line or a blank line),
+ * anywhere in the record, header or body. A `Consumes:` field is *not* a
+ * consumer declaration (records use it for what the decision consumes, e.g. an
+ * upstream record); neither is prose that happens to contain the word. A record
+ * with no `Consumers:` field yields `unlisted-consumer` for each of its
+ * citations — reported and counted, not failed (see the decision below).
+ *
+ * **The identification rule** — what makes a citation *verified*. A declaring
+ * record identifies a citing file when its **whole text** carries one of:
+ *   1. the file's repo-relative path (`apps/…`, `packages/…`) as a path token;
+ *   2. the file's **bare name** (`attendee-sessions.test.ts`);
+ *   3. a `@/…` module specifier that resolves to it — `apps/web/src/` + the
+ *      specifier for a module, `apps/web/src/app/` + the specifier for an App
+ *      Router route (`@/api/v1/p/attendee-sessions` names the route), optionally
+ *      followed by a swept source extension, or a directory containing the file;
+ *      a trailing `[...]` annotation group is stripped first
+ *      (`@/api/v1/p/attendee-sessions[/current]` names both routes);
+ *   4. **in backticks, an identifier the citing file exports** — `export
+ *      const|let|var|function|class|interface|type|enum <Name>` or an
+ *      `export { <Name> }` alias — with `Name` at least **6** characters.
+ *
+ * Reading the whole record, not only its `Consumers:` block, is deliberate and
+ * measured at this head: 11 of the 32 citations of declaring records are named
+ * only in the record's prose (§Decision names the implementation file, the
+ * field names the pinning spec), so a block-only reading would fail 11
+ * legitimate citations on the pristine tree. The backticked-export channel is
+ * what covers the last one — a `packages/contracts` source whose exported
+ * `AUTH_ERROR_CODES` the record discusses without naming the file. The 6-char
+ * floor keeps short generic names (`GET`, `rate`) from verifying arbitrary
+ * files. Leniency is intentional in one direction only: a citation the record
+ * *does* talk about must never be reported, because a false failure would be
+ * silenced by the next worker with a wider exemption.
+ *
+ * **Decisions recorded here (measured at this head, not asserted as literals):**
+ *   - 4 records declare `Consumers:` (the OP-129 lane), 32 of the 1238 checked
+ *     references target them, and all 32 are verified — so the hard rule is
+ *     green on the pristine tree, exactly as the card requires. The floor in the
+ *     real-tree case is `>= 4`: an accepted ADR is never un-declared, so the
+ *     declaring population may only grow, and the floor catches a declaration
+ *     being quietly dropped.
+ *   - `unlisted-consumer` is counted, not failed. 1206 of the 1238 checked
+ *     references at this head cite a record written before the `Consumers:`
+ *     convention existed (175 distinct records). Failing them would make the
+ *     guard permanently red and demand a 175-record docs programme that this
+ *     card's scope lock (test files only, no `docs/adr/` byte) forbids. The code
+ *     exists so the debt is visible and a follow-up can drive adoption;
+ *     enforcement is **per record**, not per file or directory — the moment a
+ *     record adds a `Consumers:` field, every citation of it is hard-checked,
+ *     and nothing is exempt.
+ *   - A reference whose record does not exist is counted in
+ *     `danglingReferences` and not evaluated: invariant (iv) owns it, and the
+ *     two counters are reconciled against `checkRepositoryAdrReferences` below.
+ *   - A duplicate ADR number does not make this guard throw or go vacuous: a
+ *     citation is declared when *any* record with that number declares, and
+ *     verified when any of them identifies the citing file. Duplicate reporting
+ *     stays `checkAdrNumbers`' job.
+ *
+ * **Marker and population parity.** The accuracy sweep reads exactly the
+ * reference population invariant (iv) reads, with the same per-line
+ * `adr-fixture` exemption and the same `apps/web/src/test/**` path scope: an
+ * exempt reference is counted in `exemptReferences` and never classified, and
+ * a marked line in shipped source is still checked (finding F-M1).
+ *
+ * **Ordering.** `issues` and `unlisted` are sorted by `file`, then `line`, then
+ * `number`, so the same sources in any order produce the same report.
+ */
+
+/**
+ * The record names the fixtures point at. Synthetic on this tree: 0768 and 0786
+ * are real records elsewhere, which is the point — the defect this pins is a
+ * citation of an existing record that has nothing to do with the citing file.
+ */ // adr-fixture: the record names below are fixture targets, not references
+const fixtureRecord0768 = "ADR-0768-op128-account-status-gate-pins.md"; // adr-fixture: fixture record name
+const fixtureRecord0786 = "ADR-0786-op129-attendee-session-rate-limit-green.md"; // adr-fixture: fixture record name
+const fixtureRecord0781 = "ADR-0781-op129-anonymous-attendee-sessions-green.md"; // adr-fixture: fixture record name
+const fixtureRecord0780 = "ADR-0780-op129-anonymous-attendee-sessions-red.md"; // adr-fixture: fixture record name
+const fixtureRecord0025 = "ADR-0025-auth-guard-table.md"; // adr-fixture: fixture record name
+
+/**
+ * Compile-time pins of the accuracy union: an implementation that reports either
+ * case without widening `SourceAdrConsumerIssue["code"]` fails `tsc`, not only a
+ * runtime assertion.
+ */
+const consumerMismatchCode: SourceAdrConsumerIssue["code"] = "consumer-mismatch";
+const unlistedConsumerCode: SourceAdrConsumerIssue["code"] = "unlisted-consumer";
+
+/** One `docs/adr` record as the accuracy sweep reads it: bare name + whole text. */
+function adrRecord(fileName: string, text: string): AdrRecordText {
+  return { fileName, text };
+}
+
+describe("checkSourceAdrConsumers — a declared consumer is verified", () => {
+  it("accepts a citation of a record that names the citing file by repo-relative path", () => {
+    // Arrange
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0786,
+        [
+          "- **Status:** Accepted",
+          "- **Consumers:** `apps/web/src/server/rate-limit/classes.test.ts`",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/classes.test.ts",
+        text: "// the class table this spec pins ADR-0786", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 1,
+      declaredRecords: ["0786"],
+    });
+  });
+
+  it("accepts a citation of a record that names the citing file by module specifier", () => {
+    // Arrange — `[...]` is an annotation group, not part of the path: the
+    // specifier names the collection route and its `current` child.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0781,
+        [
+          "- **Status:** Accepted",
+          "- **Consumers:** `@/api/v1/p/attendee-sessions[/current]`",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/app/api/v1/p/attendee-sessions/current/route.ts",
+        text: "// D2 answers this handler ADR-0781", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.checkedReferences).toBe(1);
+  });
+
+  it("accepts a citation of a record that names only the citing file's bare name", () => {
+    // Arrange
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0780,
+        [
+          "- **Consumers:** the OP-129 RED specs, starting with",
+          "  `attendee-sessions.test.ts` (I1–I5)",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/integration/attendee-sessions.test.ts",
+        text: "// the I1-I5 pins live here ADR-0780", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("accepts a citation of a record that names an identifier the citing file exports", () => {
+    // Arrange — the record names the stage helper's API without naming the file.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0786,
+        [
+          "- **Status:** Accepted",
+          "- **Consumers:** the rate-limit stage helper",
+          "",
+          "The gate runs inside `evaluateRateLimit` before the route handler.",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/stage.ts",
+        text: "export function evaluateRateLimit() {\n  // stage gate ADR-0786\n}", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("accepts a citation when the record names the citing file's directory", () => {
+    // Arrange
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0786, "- **Consumers:** `apps/web/src/server/rate-limit`"),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/stage.ts",
+        text: "// stage gate ADR-0786", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("verifies a citation when any record carrying that number names the citing file", () => {
+    // Arrange — a duplicate number is `checkAdrNumbers`' issue; this guard must
+    // not throw on it, and must not ignore the record that does name the file.
+    const records: AdrRecordText[] = [
+      adrRecord("ADR-0786-duplicate-a.md", ["# a record that declares nothing"].join("\n")), // adr-fixture: duplicate-number fixture
+      adrRecord(
+        fixtureRecord0786,
+        ["- **Consumers:** `apps/web/src/server/rate-limit/classes.test.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/classes.test.ts",
+        text: "// the class table ADR-0786", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.declaredRecords).toEqual(["0786"]);
+  });
+
+  it("finds a Consumers: field declared in the record body, not only in its header", () => {
+    // Arrange — records add a §Post-review section with its own consumers.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0781,
+        [
+          "- **Status:** Accepted",
+          "- **Lane:** OP-129",
+          "",
+          "## Post-review status",
+          "",
+          "- **Consumers:** `apps/web/src/server/db/indexes.ts`",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/db/indexes.ts",
+        text: "// the slug index entry ADR-0781", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.declaredRecords).toEqual(["0781"]);
+  });
+});
+
+describe("checkSourceAdrConsumers — a citation the record does not claim", () => {
+  it("reports a citation of a record that declares a different consumer and says nothing about this file", () => {
+    // Arrange — the F-N1 shape precisely: the target record EXISTS (invariant
+    // (iv) is green) but it is another lane's decision.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0768,
+        [
+          "- **Status:** Accepted",
+          "- **Consumers:** `apps/web/src/test/integration/media-signed-urls.test.ts`",
+          "",
+          "## Decision",
+          "",
+          "The gate runs on the media signer's principal resolution.",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/integration/attendee-sessions.test.ts",
+        text: "// I3 pins the cookie contract ADR-0768", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: consumerMismatchCode,
+          file: "apps/web/src/test/integration/attendee-sessions.test.ts",
+          line: 1,
+          number: "0768",
+          record: fixtureRecord0768,
+        },
+      ],
+      unlisted: [],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 0,
+      declaredRecords: ["0768"],
+    });
+  });
+
+  it("does not accept a record that names only an exported identifier shorter than six characters", () => {
+    // Arrange — the noise floor: a short generic export must not verify a file.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0786,
+        ["- **Consumers:** the stage helper", "", "The `rate` value is capped per class."].join(
+          "\n"
+        )
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/rate.ts",
+        text: "export const rate = 1;\n// cap ADR-0786\n", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: "apps/web/src/server/rate-limit/rate.ts",
+        line: 2,
+        number: "0786",
+        record: fixtureRecord0786,
+      },
+    ]);
+  });
+
+  it("reports one issue per occurrence and orders the report by file, then line", () => {
+    // Arrange — input order is b, a; the report must be a, b.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0786,
+        ["- **Consumers:** `apps/web/src/server/rate-limit/classes.test.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/b.ts",
+        text: ["// first ADR-0786", "// second ADR-0786"].join("\n"), // adr-fixture: fixture citation targets
+      },
+      {
+        path: "apps/web/src/server/a.ts",
+        text: "// once ADR-0786", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues.map((issue) => [issue.file, issue.line])).toEqual([
+      ["apps/web/src/server/a.ts", 1],
+      ["apps/web/src/server/b.ts", 1],
+      ["apps/web/src/server/b.ts", 2],
+    ]);
+    expect(result.checkedReferences).toBe(3);
+    expect(result.verifiedReferences).toBe(0);
+  });
+});
+
+describe("checkSourceAdrConsumers — records that declare nothing", () => {
+  it("reports unlisted-consumer, and does not fail, when the cited record declares no consumers", () => {
+    // Arrange
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0025,
+        ["# The auth guard table", "", "## Decision", "", "One label table."].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/auth/guards.ts",
+        text: "// the label table ADR-0025", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — reported in its own channel, counted, and never a failure.
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [
+        {
+          code: unlistedConsumerCode,
+          file: "apps/web/src/server/auth/guards.ts",
+          line: 1,
+          number: "0025",
+          record: fixtureRecord0025,
+        },
+      ],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 0,
+      declaredRecords: [],
+    });
+  });
+
+  it("does not treat a Consumes: field as a consumer declaration", () => {
+    // Arrange — `Consumes:` is what the decision consumes, not who consumes it.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0768,
+        ["- **Status:** Accepted", "- **Consumes:** ADR-0025 (the auth guard table)"].join("\n") // adr-fixture: fixture citation target
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/auth/guards.ts",
+        text: "// the account-status gate ADR-0768", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+    expect(result.unlisted).toEqual([
+      {
+        code: unlistedConsumerCode,
+        file: "apps/web/src/server/auth/guards.ts",
+        line: 1,
+        number: "0768",
+        record: fixtureRecord0768,
+      },
+    ]);
+    expect(result.declaredRecords).toEqual([]);
+  });
+
+  it("does not evaluate a reference whose record does not exist", () => {
+    // Arrange — invariant (iv) owns the dangling case; this guard must not
+    // double-report it, and must still account for it in its counters.
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0786, "- **Consumers:** `apps/web/src/server/rate-limit`"),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// a record no file carries ADR-0999", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [],
+      checkedReferences: 0,
+      exemptReferences: 0,
+      danglingReferences: 1,
+      verifiedReferences: 0,
+      declaredRecords: ["0786"],
+    });
+  });
+});
+
+describe("checkSourceAdrConsumers — the fixture marker", () => {
+  it("exempts a marked fixture line from the accuracy rule", () => {
+    // Arrange — the marker's scope is the guard's own test tree, same as (iv).
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0786, "- **Consumers:** `apps/web/src/test/unit/other.test.ts`"),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/unit/x.test.ts",
+        text: "// a synthetic citation ADR-0786 adr-fixture", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [],
+      checkedReferences: 0,
+      exemptReferences: 1,
+      danglingReferences: 0,
+      verifiedReferences: 0,
+      declaredRecords: ["0786"],
+    });
+  });
+
+  it("does not exempt a marked line outside the guard's test tree", () => {
+    // Arrange — finding F-M1's shape: the marker appended to a real pointer.
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0786, "- **Consumers:** `apps/web/src/test/integration/x.test.ts`"),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/media/signed-urls.ts",
+        text: "// a real pointer adr-fixture ADR-0786", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.exemptReferences).toBe(0);
+    expect(result.checkedReferences).toBe(1);
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: "apps/web/src/server/media/signed-urls.ts",
+        line: 1,
+        number: "0786",
+        record: fixtureRecord0786,
+      },
+    ]);
+  });
+});
+
+describe("checkRepositoryAdrConsumers — the repository sweep", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the repository's real source tree as citation-accurate", () => {
+    // Act — every citation of a declaring record at this head is made by a file
+    // that record names: the OP-129 lane declares its consumers, and the
+    // pristine tree is clean under the rule.
+    const report = checkRepositoryAdrConsumers(repoRoot);
+
+    // Assert
+    expect(report.issues).toEqual([]);
+    expect(report.ok).toBe(true);
+    // Non-vacuity: a green report must come from the tree's declaring records,
+    // not from an empty population. An accepted ADR is never un-declared, so the
+    // floor may only rise.
+    expect(report.declaredRecords.length).toBeGreaterThanOrEqual(4);
+    expect(report.verifiedReferences).toBeGreaterThan(0);
+    // Every evaluated reference is classified exactly once.
+    expect(report.verifiedReferences + report.issues.length + report.unlisted.length).toBe(
+      report.checkedReferences
+    );
+  });
+
+  it("sweeps exactly the reference population the existence guard sweeps", () => {
+    // Act
+    const existence = checkRepositoryAdrReferences(repoRoot);
+    const accuracy = checkRepositoryAdrConsumers(repoRoot);
+
+    // Assert — the two guards cannot drift apart: same fixtures exempted, same
+    // references seen, the dangling ones credited to invariant (iv).
+    expect(accuracy.exemptReferences).toBe(existence.exemptReferences);
+    expect(accuracy.checkedReferences + accuracy.danglingReferences).toBe(
+      existence.checkedReferences
+    );
+  });
+
+  it("reports a wrong-but-existing target in a throwaway repository", () => {
+    // Arrange — the record exists, the citation resolves, and the record is
+    // about another lane's file: the case invariant (iv) cannot see.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0768-op128-account-status-gate-pins.md": [
+        // adr-fixture: fixture record name
+        "- **Status:** Accepted",
+        "- **Consumers:** `apps/web/src/test/integration/media-signed-urls.test.ts`",
+      ].join("\n"), // adr-fixture: fixture record name
+      "apps/web/src/test/integration/attendee-sessions.test.ts": "// I3 ADR-0768\n", // adr-fixture: fixture citation target
+      "packages/contracts/src/empty.ts": "export const nothing = 0;",
+    });
+
+    // Act
+    const report = checkRepositoryAdrConsumers(root);
+
+    // Assert
+    expect(report).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: consumerMismatchCode,
+          file: "apps/web/src/test/integration/attendee-sessions.test.ts",
+          line: 1,
+          number: "0768",
+          record: fixtureRecord0768,
+        },
+      ],
+      unlisted: [],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 0,
+      declaredRecords: ["0768"],
+    });
+  });
+
+  it("reports the undeclared-record citation in the unlisted channel instead of failing it", () => {
+    // Arrange
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0025-auth-guard-table.md": "# The auth guard table", // adr-fixture: fixture record name
+      "apps/web/src/server/auth/guards.ts": "// the label table ADR-0025", // adr-fixture: fixture citation target
+      "packages/contracts/src/empty.ts": "export const nothing = 0;",
+    });
+
+    // Act
+    const report = checkRepositoryAdrConsumers(root);
+
+    // Assert
+    expect(report.ok).toBe(true);
+    expect(report.issues).toEqual([]);
+    expect(report.unlisted).toEqual([
+      {
+        code: unlistedConsumerCode,
+        file: "apps/web/src/server/auth/guards.ts",
+        line: 1,
+        number: "0025",
+        record: fixtureRecord0025,
+      },
+    ]);
+    expect(report.declaredRecords).toEqual([]);
+  });
+
+  it("throws an ENOENT error when the root has no docs/adr directory", () => {
+    // Arrange — a wrong root must fail loudly, never pass vacuously.
+    const root = makeTempRepoRoot({ "apps/web/src/x.ts": "// no references here" });
+
+    // Act + Assert
+    expect(() => checkRepositoryAdrConsumers(root)).toThrow(
+      expect.objectContaining({ code: "ENOENT" })
+    );
   });
 });

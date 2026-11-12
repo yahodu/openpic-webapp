@@ -212,11 +212,17 @@ const pipelineSchema = z.object({
   backlogWarnAgeMinutes: z.number().int().positive(),
 });
 
-/** `upload` — size thresholds and the accepted MIME allow-list. */
+/** `upload` — size thresholds, the accepted MIME allow-list and the window grace. */
 const uploadSchema = z.object({
   multipartThresholdBytes: z.number().int().positive(),
   maxFileBytes: z.number().int().positive(),
   supportedMimeTypes: z.array(z.string().min(1)).min(1),
+  /**
+   * How long a session started before the upload window closed may still be
+   * completed (OP-124, contract §5.3, ADR-0721 A7): the window is a deadline
+   * for *starting*, not for finishing.
+   */
+  inflightGraceMinutes: z.number().int().positive(),
 });
 
 /** `notifications` — the poll cadence and digest throttles. */
@@ -301,6 +307,7 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettingsValues = {
   upload: {
     multipartThresholdBytes: 8_388_608,
     maxFileBytes: 104_857_600,
+    inflightGraceMinutes: 30,
     supportedMimeTypes: [
       "image/jpeg",
       "image/png",
