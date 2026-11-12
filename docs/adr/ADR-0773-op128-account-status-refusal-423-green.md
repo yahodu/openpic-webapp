@@ -129,9 +129,9 @@ throw of the same envelope keeps the focused spec **31 passed (31)** and emits *
 `auth-guards.test.ts:583` pins the shared helper through `requireAuth`, not through this route. Routed to card
 `t_86191c8d` (PR #455), squash-merged as `c62471d`.
 
-**F2 — Info.** The superseded drafts PR #447 and PR #450 stayed open; their pins are already on the lane branch via
-`1676673`. Both were closed with a supersession comment during the review follow-up, so the same specs cannot land
-twice.
+**F2 — Info.** The superseded drafts PR #447 and PR #450 stayed open after the review; their pins were already on
+the lane branch via `1676673`. Both were closed with a supersession comment in the sign-off follow-up (card
+`t_e7500b65`), so the same specs cannot land twice.
 
 **F3 — Info.** The ADR lane-range overlap (F-L1) was already closed: card `t_95e7ed1e` is done, the allocator and
 guard work is PR #448, and `0773` exists on this lane only.
