@@ -23,7 +23,15 @@ import { join, posix, relative, sep } from "node:path";
  *   5. every such reference that resolves to a record declaring a `Consumers:`
  *      field is made by a file that record names (`consumer-mismatch`, finding
  *      F-N1). A citation of a record that declares no `Consumers:` field is
- *      `unlisted-consumer`: reported and counted, not failed.
+ *      `unlisted-consumer`: reported and counted, not failed;
+ *   6. every **markdown link target** inside a `docs/adr/ADR-*.md` record names
+ *      a file that exists (`dangling-reference`, finding F3). The records are
+ *      the one tree the source sweep never read, so a renamed record's links rot
+ *      in silence — three OP-129 records pointed at pre-rename files while every
+ *      guard stayed green. `docs/adr/README.md` is deliberately out (its ledger
+ *      notes keep the old names on purpose), and a link shape inside a code span
+ *      or a fenced block is prose. See {@link checkAdrRecordLinks} and
+ *      {@link checkRepositoryAdrLinks}.
  *
  * The third check parses exactly one table shape from the ledger: a pipe row
  * whose second cell is a closed `` `NNNN`–`NNNN` `` pair. It cannot see a
@@ -1242,4 +1250,226 @@ export function checkRepositoryAdrConsumers(root: string): SourceAdrConsumerResu
   const sources = paths.map((path) => ({ path, text: readTextFile(join(root, path)) }));
 
   return checkSourceAdrConsumers(sources, records);
+}
+
+/* ------------------------------------------------------------------------- *
+ * Invariant 6 — every markdown link target inside a record resolves (F3)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One markdown record handed to {@link checkAdrRecordLinks}.
+ *
+ * `path` is carried through into the report verbatim (repo-relative, POSIX
+ * separators), so the caller decides how a record is named and the check stays
+ * pure — it never touches the filesystem.
+ */
+export interface AdrRecordLinkFileText {
+  /** Repo-relative POSIX path, e.g. `docs/adr/ADR-0782-op129-attendee-session-edge-pins.md`. */
+  path: string;
+
+  /** The record's whole markdown; lines are split on `"\n"`. */
+  text: string;
+}
+
+/**
+ * One markdown link target in a record with no `docs/adr` file of that exact
+ * name (finding F3).
+ *
+ * `target` keeps the target **as written** (`#fragment` included) so the reader
+ * can paste it back into the record, while `file` and `line` name the record and
+ * the line that carries it.
+ */
+export interface AdrRecordLinkIssue {
+  /** Always `"dangling-reference"`; the same discriminant the source sweep uses. */
+  code: "dangling-reference";
+
+  /** Repo-relative POSIX path of the record that carries the link. */
+  file: string;
+
+  /** 1-based line number of the link, matching an editor's gutter. */
+  line: number;
+
+  /**
+   * The link target as written, `#fragment` included, so a report can quote it
+   * back into the record, e.g. a renamed record's old file name.
+   */
+  target: string;
+}
+
+/** The report shape returned by {@link checkAdrRecordLinks}. */
+export interface AdrRecordLinkResult {
+  /** `true` exactly when {@link AdrRecordLinkResult.issues} is empty. */
+  ok: boolean;
+
+  /**
+   * One entry per dangling link **occurrence** — not per target and not per
+   * record — sorted by `file`, then `line`, then `target`.
+   */
+  issues: AdrRecordLinkIssue[];
+
+  /** ADR-shaped link targets the rule evaluated. */
+  checkedLinks: number;
+
+  /** Records swept, so "no issues" can never be a vacuous pass. */
+  scannedRecords: number;
+}
+
+/**
+ * A markdown inline link target: the text between `](` and the first `)` or
+ * whitespace. A link title (`](x.md "title")`) therefore stops before the space,
+ * and a URL is read whole.
+ */
+const MARKDOWN_LINK_TARGET_PATTERN = /\]\(([^)\s]+)\)/g;
+
+/** The delimiter that opens and closes a fenced code block. */
+const FENCE_DELIMITER = "```";
+
+/** An inline code span. Its contents are prose, never a link. */
+const INLINE_CODE_SPAN_PATTERN = /`[^`]*`/g;
+
+/**
+ * The leaf of a same-directory ADR link target, or `null` when the target is not
+ * one.
+ *
+ * Applied **after** any `#fragment` is stripped, and deliberately strict: no
+ * path separator (a `./` or `../` prefix or an external URL is not a record file
+ * name), a case-sensitive `ADR-` prefix and a `.md` suffix. The leaf is then
+ * compared with the directory's file names **exactly**, so a target that merely
+ * shares a number with a record (`0029-domain-event-outbox.md` next to the real
+ * `0029-domain-events-outbox.md`) or a name prefix of one is still dangling.
+ */
+function adrLinkLeaf(target: string): string | null {
+  const leaf = target.split("#")[0] ?? "";
+
+  if (leaf.includes("/") || !leaf.startsWith("ADR-") || !leaf.endsWith(".md")) {
+    return null;
+  }
+
+  return leaf;
+}
+
+/**
+ * The record's lines with its prose blanked: a fenced code block (the fence
+ * lines and everything between them) and every inline code span are replaced, so
+ * a `](…)` shape that *documents* a link is never read as one. Line count and
+ * indexes are preserved, so a reported line number stays the editor's.
+ */
+function proseStrippedLines(text: string): string[] {
+  const lines: string[] = [];
+  let inFence = false;
+
+  for (const line of text.split("\n")) {
+    if (line.trimStart().startsWith(FENCE_DELIMITER)) {
+      inFence = !inFence;
+      lines.push("");
+      continue;
+    }
+    lines.push(inFence ? "" : line.replace(INLINE_CODE_SPAN_PATTERN, ""));
+  }
+
+  return lines;
+}
+
+/** Order record-link issues: record path, then line, then target. */
+function compareAdrRecordLinkIssues(
+  left: { readonly file: string; readonly line: number; readonly target: string },
+  right: { readonly file: string; readonly line: number; readonly target: string }
+): number {
+  const byFile = compareStrings(left.file, right.file);
+  if (byFile !== 0) {
+    return byFile;
+  }
+  if (left.line !== right.line) {
+    return left.line - right.line;
+  }
+  return compareStrings(left.target, right.target);
+}
+
+/**
+ * Check that every markdown link target inside `records` names one of
+ * `adrFileNames` — the file names present in the same `docs/adr` directory.
+ * Pure: it never touches the filesystem, so the rule is testable without
+ * fixtures on disk.
+ *
+ * A target is read only from a markdown inline link (`](target)`) and only when
+ * its leaf, after any `#fragment` is stripped, is a same-directory `ADR-*.md`
+ * file name; a `README.md` link, an anchor, a path-bearing relative link and an
+ * external URL are not record files and are not counted. Fenced code blocks and
+ * inline code spans are prose and are never read. Resolution is exact file-name
+ * equality — never a prefix or a number-only match, which would accept a
+ * renamed record's old slug whenever its number is still in use.
+ *
+ * @param records - The `docs/adr` records to scan, in any order.
+ * @param adrFileNames - Bare file names present in `docs/adr`.
+ * @returns `ok: true` with no issues when every link target resolves.
+ * @example
+ * ```ts
+ * checkAdrRecordLinks(
+ *   [{ path: "docs/adr/ADR-0146-a.md", text: "see [b](ADR-0147-b.md)" }],
+ *   ["ADR-0146-a.md", "ADR-0147-b.md"]
+ * );
+ * // { ok: true, issues: [], checkedLinks: 1, scannedRecords: 1 }
+ * ```
+ */
+export function checkAdrRecordLinks(
+  records: readonly AdrRecordLinkFileText[],
+  adrFileNames: readonly string[]
+): AdrRecordLinkResult {
+  const resolvable = new Set(adrFileNames);
+  const issues: AdrRecordLinkIssue[] = [];
+  let checkedLinks = 0;
+
+  for (const record of records) {
+    for (const [index, line] of proseStrippedLines(record.text).entries()) {
+      for (const match of line.matchAll(MARKDOWN_LINK_TARGET_PATTERN)) {
+        const target = match[1] ?? "";
+        const leaf = adrLinkLeaf(target);
+        if (leaf === null) {
+          continue;
+        }
+
+        checkedLinks += 1;
+        if (resolvable.has(leaf)) {
+          continue;
+        }
+
+        issues.push({ code: "dangling-reference", file: record.path, line: index + 1, target });
+      }
+    }
+  }
+
+  issues.sort(compareAdrRecordLinkIssues);
+
+  return { ok: issues.length === 0, issues, checkedLinks, scannedRecords: records.length };
+}
+
+/**
+ * Apply {@link checkAdrRecordLinks} to a real working tree: read the file names
+ * and the `ADR-*.md` records out of `<root>/docs/adr/` — the same in-scope name
+ * predicate the numbering guard uses, so the two guards agree on what a record
+ * is.
+ *
+ * `docs/adr/README.md` is deliberately **not** swept: the ledger's historical
+ * notes keep pre-rename record names on purpose, and flagging them would force
+ * the record of a collision to stop describing it.
+ *
+ * @param root - Absolute path to the repository root.
+ * @returns The same report shape as {@link checkAdrRecordLinks}.
+ * @throws If `docs/adr` cannot be read — a wrong root must fail loudly instead
+ * of sweeping nothing and reporting a vacuous pass.
+ */
+export function checkRepositoryAdrLinks(root: string): AdrRecordLinkResult {
+  // The directory read comes first on purpose: a bad root throws here, before
+  // any record is read, so "no links found" can never be a false pass.
+  const entries = readDirectoryEntries(join(root, "docs/adr"));
+  const adrFileNames = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+
+  const records: AdrRecordLinkFileText[] = entries
+    .filter((entry) => entry.isFile() && IN_SCOPE_ADR_NAME_PATTERN.test(entry.name))
+    .map((entry) => ({
+      path: `docs/adr/${entry.name}`,
+      text: readTextFile(join(root, "docs/adr", entry.name)),
+    }));
+
+  return checkAdrRecordLinks(records, adrFileNames);
 }

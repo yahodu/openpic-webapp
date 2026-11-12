@@ -8,12 +8,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   checkAdrDirectory,
   checkAdrNumbers,
+  checkAdrRecordLinks,
   checkRepositoryAdrConsumers,
+  checkRepositoryAdrLinks,
   checkRepositoryAdrReferences,
   checkSourceAdrConsumers,
   checkSourceAdrReferences,
   parseAdrNumber,
   type AdrNumberIssue,
+  type AdrRecordLinkFileText,
+  type AdrRecordLinkIssue,
   type AdrRecordText,
   type SourceAdrConsumerIssue,
   type SourceFileText,
@@ -46,7 +50,10 @@ import {
  *        `docs/adr/ADR-NNNN-*.md` file (`dangling-reference`, finding F6-b);
  *   (v)  every reference that resolves to a record declaring a `Consumers:`
  *        field is made by a file that record names (`consumer-mismatch`,
- *        finding F-N1).
+ *        finding F-N1);
+ *   (vi) every **markdown link target** inside a `docs/adr/ADR-*.md` record
+ *        names a file that exists (`dangling-reference`, finding F3) — the
+ *        records' own navigation, which (iv) never read.
  *
  * F-N1's own accuracy gaps are pinned with it: a citation is verified by a bare
  * file name only when that name is unique across the swept population (finding
@@ -2437,6 +2444,386 @@ describe("checkRepositoryAdrConsumers — the repository sweep", () => {
 
     // Act + Assert
     expect(() => checkRepositoryAdrConsumers(root)).toThrow(
+      expect.objectContaining({ code: "ENOENT" })
+    );
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * Invariant (vi) — markdown link targets inside the records (finding F3)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Unit contract — invariant (vi): a `docs/adr` record's markdown link target
+ * must name a file that exists (finding F3, the OP-129 ledger verification
+ * `t_7d87f91b`, card `t_e042ab22`).
+ *
+ * **Why this exists.** Invariant (iv) proves that a *source comment's* citation
+ * of a record resolves, and it sweeps `apps/` and `packages/` only — so a
+ * record's own navigation was never read by anything. On the OP-129 tree three
+ * landed records linked pre-rename files (0769's RED draft, 0770's GREEN draft,
+ * and a never-minted 0782 rate-limit name) while every guard stayed green: the
+ * links 404'd permanently, in frozen records, with no mechanism able to notice.
+ * This block pins that mechanism.
+ *
+ * **The rule** (RED and GREEN must not diverge):
+ *
+ * ```
+ * interface AdrRecordLinkFileText { path: string; text: string }
+ * type AdrRecordLinkIssue = {
+ *   code: "dangling-reference";
+ *   file: string;   // repo-relative POSIX path of the record, e.g. docs/adr/ADR-…md
+ *   line: number;   // 1-based line of the link
+ *   target: string; // the link target AS WRITTEN, fragment kept
+ * }
+ * checkAdrRecordLinks(
+ *   records: readonly AdrRecordLinkFileText[],
+ *   adrFileNames: readonly string[],   // the file names present in docs/adr
+ * ): { ok: boolean; issues: AdrRecordLinkIssue[];
+ *      checkedLinks: number; scannedRecords: number }
+ * checkRepositoryAdrLinks(root: string): typeof checkAdrRecordLinks
+ * ```
+ *
+ * **Scope — the records, never the ledger.** Only `docs/adr/ADR-*.md` is swept;
+ * `checkRepositoryAdrLinks` applies the same in-scope name predicate the
+ * numbering guard uses. `docs/adr/README.md` is deliberately out of scope: its
+ * ledger notes keep pre-rename names on purpose (0819 and 0821 at this head) to
+ * describe the collision they record, and flagging history would force every
+ * future note to lie. Pinned in both directions: a broken link in a record is
+ * an issue, the same bytes in `README.md` are not swept.
+ *
+ * **Prose is not a link.** A fenced code block and an inline code span are
+ * prose: a `](…)` shape inside backticks documents a shape, it does not
+ * navigate. Both directions are pinned, because the record that documents this
+ * very rule will quote the shape in backticks.
+ *
+ * **A target is a same-directory ADR file name, matched exactly.** The link
+ * syntax read is a markdown inline `](target)`; the target must carry no path
+ * separator, start `ADR-` and end `.md`, after stripping a `#fragment`. It
+ * resolves only against a file name **equal** to the leaf — never a prefix,
+ * never a number-only match. Measured on this head, number keying would accept
+ * two real defects in silence: `0029-domain-event-outbox.md` (the record is the
+ * plural `…-domain-events-outbox.md`) and `0306-red-branch-pipeline.md` (0306 is
+ * now `0306-op101-stale-branch-deletion.md`, a different decision). The pinned
+ * fixture is the same shape: `0781-something-else.md` while 0781's real record
+ * exists.
+ *
+ * **Trunk expectation — a ratchet, not `ok: true`.** The OP-129 sites are
+ * repaired at this head (the five records this card's parent touched carry no
+ * dangling link), but a whole-record sweep still finds **32 dangling occurrences
+ * of 16 distinct targets** in other lanes' records — and one of them arrived
+ * *after* the repair, in the OP-129 credential-precedence record, which is the
+ * mechanism working on its first contact with the trunk. Asserting `ok: true`
+ * here would be a lie, and narrowing the sweep until it were true would hide the
+ * very class this card exists to catch. So the real-tree case pins the observed
+ * debt exactly: it fails when a dangling link is added *and* when one is
+ * repaired, so the list moves in the same change that moves the debt and the
+ * sweep's sight is proved each time.
+ *
+ * **Ordering.** `issues` is sorted by `file`, then `line`, then `target`, so the
+ * same records in any input order produce one report.
+ */
+
+/**
+ * Compile-time pin of the issue discriminant: the docs sweep reuses the
+ * numbering guard's `dangling-reference` code, so an implementation that invents
+ * a second code for the same defect fails `tsc`.
+ */
+const danglingLinkCode: AdrRecordLinkIssue["code"] = "dangling-reference";
+
+// Fixture record names, named once so each line stays readable. Synthetic on
+// this tree: the numbers below are real records' numbers, which is the point —
+// the rule keys on the whole file name, not on the digits.
+const fixture0780Red = "ADR-0780-op129-anonymous-attendee-sessions-red.md"; // adr-fixture: fixture record name
+const fixture0781Green = "ADR-0781-op129-anonymous-attendee-sessions-green.md"; // adr-fixture: fixture record name
+const fixture0782Edge = "ADR-0782-op129-attendee-session-edge-pins.md"; // adr-fixture: fixture record name
+const fixture0787Rate = "ADR-0787-op129-attendee-session-rate-limit-pin.md"; // adr-fixture: fixture record name
+const fixture0300Alpha = "ADR-0300-alpha.md"; // adr-fixture: fixture record name
+const fixture0301Alpha = "ADR-0301-alpha.md"; // adr-fixture: fixture record name
+const fixture0302Guard = "ADR-0302-adr-number-guard-contract.md"; // adr-fixture: fixture record name
+const fixture0304Omega = "ADR-0304-omega.md"; // adr-fixture: fixture record name
+const fixture0780Sessions = "ADR-0780-op129-attendee-sessions.md"; // adr-fixture: fixture record name
+const fixture0783Resolver = "ADR-0783-op129-attendee-resolver-default.md"; // adr-fixture: fixture record name
+
+/**
+ * One record as the docs sweep reads it. The fixture factory owns the
+ * `docs/adr/` prefix so every case writes only the file name and the text.
+ */
+function adrRecordFile(fileName: string, lines: string[]): AdrRecordLinkFileText {
+  return { path: `docs/adr/${fileName}`, text: lines.join("\n") };
+}
+
+describe("checkAdrRecordLinks — a link target must resolve to a record file", () => {
+  it("reports a link to a record that does not exist, naming the record and the line", () => {
+    // Arrange — one resolving link and one dangling link on the same line.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0782Edge, [
+        "# Attendee session edge pins",
+        "",
+        "- **Amends:** [ADR-0780](ADR-0780-op129-anonymous-attendee-sessions-red.md) and [ADR-0769](ADR-0769-op129-anonymous-attendee-sessions-red.md)", // adr-fixture: the 0769 draft has no docs/adr file
+      ]),
+    ];
+
+    // Act — only 0780's record exists in this fixture directory.
+    const result = checkAdrRecordLinks(records, [fixture0780Red]);
+
+    // Assert — the report names the record and the line and keeps the target as
+    // written, so the reader can open the record and fix that link.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0782Edge}`,
+          line: 3,
+          target: "ADR-0769-op129-anonymous-attendee-sessions-red.md", // adr-fixture: fixture link target
+        },
+      ],
+      checkedLinks: 2,
+      scannedRecords: 1,
+    });
+  });
+
+  it("accepts a link whose exact record file exists and counts what it checked", () => {
+    // Arrange — the repaired shape the OP-129 records carry at this head.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0780Red, [
+        "- **Relates to:** [ADR-0781](ADR-0781-op129-anonymous-attendee-sessions-green.md)", // adr-fixture: fixture record name
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0780Red, fixture0781Green]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 1, scannedRecords: 1 });
+  });
+
+  it("reports a target that only shares its number with an existing record", () => {
+    // Arrange — the false-accept shape: a rule keyed on the four digits (or on a
+    // name prefix) accepts this target because 0781's real record exists.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0787Rate, [
+        "- **Numbering:** the first draft was [ADR-0781](ADR-0781-something-else.md) before the renumber.", // adr-fixture: the exact leaf does not exist
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0781Green]);
+
+    // Assert — the leaf must be equal to a file name, never a prefix or a number.
+    expect(result.issues).toEqual([
+      {
+        code: danglingLinkCode,
+        file: `docs/adr/${fixture0787Rate}`,
+        line: 1,
+        target: "ADR-0781-something-else.md", // adr-fixture: fixture link target
+      },
+    ]);
+    expect(result.checkedLinks).toBe(1);
+  });
+
+  it("does not read a target that is not a same-directory ADR file name", () => {
+    // Arrange — an external URL, the ledger, a section anchor, a path-bearing
+    // relative link: none of them is a record file name.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **PR:** [review](https://github.com/yahodu/openpic-webapp/pull/448)",
+        "- **Ledger:** [the ledger](README.md), [a section](#numbering), [notes](../notes.md)",
+        "- **Relative:** [the draft](./ADR-0001-ports-and-adapters.md)", // adr-fixture: the "./" prefix puts it out of scope
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 0, scannedRecords: 1 });
+  });
+
+  it("treats a link shape inside an inline code span as prose, never as a link", () => {
+    // Arrange — the shape a record uses to *document* a link, not to navigate.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Rule:** a record writes a live link as `[ADR-0001](ADR-9999-missing.md)` and names a retired one as plain text.", // adr-fixture: the code-span shape must not be read
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert — nothing was even evaluated: the span is prose.
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 0, scannedRecords: 1 });
+  });
+
+  it("treats a link inside a fenced code block as prose, never as a link", () => {
+    // Arrange — an example block followed by one real link it must not hide.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Example:**",
+        "",
+        "```markdown",
+        "[the draft](ADR-9999-missing.md)", // adr-fixture: inside a fence, prose not a link
+        "```",
+        "",
+        "- **The record:** [ADR-0302](ADR-0302-adr-number-guard-contract.md)", // adr-fixture: fixture record name
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert — only the live link is counted, and it resolves.
+    expect(result).toEqual({ ok: true, issues: [], checkedLinks: 1, scannedRecords: 1 });
+  });
+
+  it("reports every occurrence, sorted by record path, then line, then target", () => {
+    // Arrange — two records in reverse path order, four dangling targets, two of
+    // them on one line.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0304Omega, [
+        "- **A:** [x](ADR-0302-missing.md)", // adr-fixture: no such docs/adr file
+        "",
+        "- **B:** [y](ADR-0304-gone.md)", // adr-fixture: no such docs/adr file
+      ]),
+      adrRecordFile(fixture0300Alpha, [
+        "- **C:** [z](ADR-0302-zeta.md) and [w](ADR-0302-alpha.md)", // adr-fixture: no such docs/adr files
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, []);
+
+    // Assert — one issue per occurrence, ordered by file, line, then target.
+    expect(
+      result.issues.map(({ file, line, target }) => `${file}:${String(line)}:${target}`)
+    ).toEqual([
+      "docs/adr/ADR-0300-alpha.md:1:ADR-0302-alpha.md", // adr-fixture: fixture expectation
+      "docs/adr/ADR-0300-alpha.md:1:ADR-0302-zeta.md", // adr-fixture: fixture expectation
+      "docs/adr/ADR-0304-omega.md:1:ADR-0302-missing.md", // adr-fixture: fixture expectation
+      "docs/adr/ADR-0304-omega.md:3:ADR-0304-gone.md", // adr-fixture: fixture expectation
+    ]);
+    expect(result.checkedLinks).toBe(4);
+    expect(result.scannedRecords).toBe(2);
+    expect(result.ok).toBe(false);
+  });
+
+  it("reports a dangling target that carries a fragment, as written", () => {
+    // Arrange — a link into a section of a record that does not exist is still a
+    // link to that record.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0301Alpha, [
+        "- **See:** [the decision](ADR-0769-op129-attendee-sessions-red.md#decision)", // adr-fixture: the 0769 draft has no docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, []);
+
+    // Assert — the fragment is stripped for resolution and kept in the report.
+    expect(result.issues).toEqual([
+      {
+        code: danglingLinkCode,
+        file: `docs/adr/${fixture0301Alpha}`,
+        line: 1,
+        target: "ADR-0769-op129-attendee-sessions-red.md#decision", // adr-fixture: fixture link target
+      },
+    ]);
+    expect(result.checkedLinks).toBe(1);
+  });
+});
+
+describe("checkRepositoryAdrLinks — the repository sweep", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("sweeps docs/adr/ADR-*.md records and never docs/adr/README.md", () => {
+    // Arrange — the ledger keeps pre-rename names on purpose, so its dangling
+    // links must stay unflagged while the record's own dangling link fails.
+    const root = makeTempRepoRoot({
+      "docs/adr/README.md": [
+        "- the 0769 draft [ADR-0769](ADR-0769-op129-gone.md) was renumbered", // adr-fixture: the ledger note keeps the old name
+        "- the 0770 draft [ADR-0770](ADR-0770-op129-gone.md) was renumbered", // adr-fixture: the ledger note keeps the old name
+      ].join("\n"),
+      [`docs/adr/${fixture0780Sessions}`]: [
+        "- **Ledger:** [README](README.md)",
+        "- **Self:** [this record](ADR-0780-op129-attendee-sessions.md)", // adr-fixture: fixture record name
+        "- **Draft:** [the draft](ADR-0783-op129-attendee-resolver-something-else.md)", // adr-fixture: exact leaf does not exist
+      ].join("\n"),
+      [`docs/adr/${fixture0783Resolver}`]: "# resolver default", // adr-fixture: fixture record name
+    });
+
+    // Act
+    const result = checkRepositoryAdrLinks(root);
+
+    // Assert — one issue, from the record, and the ledger's two links unwatched.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0780Sessions}`,
+          line: 3,
+          target: "ADR-0783-op129-attendee-resolver-something-else.md", // adr-fixture: fixture link target
+        },
+      ],
+      checkedLinks: 2,
+      scannedRecords: 2,
+    });
+  });
+
+  it("reports the repository tree's known dangling targets, as a ratchet", () => {
+    // Act
+    const result = checkRepositoryAdrLinks(repoRoot);
+
+    // Assert — non-vacuity first: the sweep must see the whole record population,
+    // not a narrow slice of it.
+    expect(result.scannedRecords).toBeGreaterThanOrEqual(250);
+    expect(result.checkedLinks).toBeGreaterThanOrEqual(800);
+
+    // The debt this head carries, in other lanes' records. Both directions are
+    // deliberate: a new dangling target fails the case, and repairing one fails
+    // it too so the list is updated in the change that moves the debt.
+    expect([...new Set(result.issues.map(({ target }) => target))].sort()).toEqual([
+      "ADR-0007-op82-platform-settings-red.md", // adr-fixture: known dangling target
+      "ADR-0009-op85-test-support-otp-route.md", // adr-fixture: known dangling target
+      "ADR-0029-domain-event-outbox.md", // adr-fixture: known dangling target
+      "ADR-0029-op88-domain-events-red.md", // adr-fixture: known dangling target
+      "ADR-0040-op83-event-members.md", // adr-fixture: known dangling target
+      "ADR-0096-message-transport-factory.md", // adr-fixture: known dangling target
+      "ADR-0105-op94-notification-transport-selection.md", // adr-fixture: known dangling target
+      "ADR-0306-op93-red-by-design-ci.md", // adr-fixture: known dangling target
+      "ADR-0306-red-branch-pipeline.md", // adr-fixture: known dangling target
+      "ADR-0360-op104-entitlements-usage-endpoints-red.md", // adr-fixture: known dangling target
+      "ADR-0361-op104-entitlements-usage-endpoints-green.md", // adr-fixture: known dangling target
+      "ADR-0421-op107-checkout-mandate-creation-green.md", // adr-fixture: known dangling target
+      "ADR-0520-op112-object-storage-port-red.md", // adr-fixture: known dangling target
+      "ADR-0521-op112-object-storage-port-green.md", // adr-fixture: known dangling target
+      "ADR-0540-op114-branding-upload-green.md", // adr-fixture: known dangling target
+      "ADR-0770-op129-anonymous-attendee-sessions-green.md", // adr-fixture: known dangling target
+    ]);
+    expect(result.issues).toHaveLength(32);
+    expect(result.ok).toBe(false);
+
+    // The OP-129 sites this card's parent repaired (0780, 0781, 0782, 0783 and
+    // 0787) must stay repaired: no issue may name one of those as its source.
+    // The credential-precedence record is *not* in that list on purpose — it
+    // landed after the repair carrying a fresh pre-rename link, which is exactly
+    // what the target list above pins as debt.
+    expect(
+      result.issues.filter(({ file }) => /ADR-07(?:80|81|82|83|87)-op129-/.test(file))
+    ).toEqual([]);
+  });
+
+  it("throws an ENOENT error when the root has no docs/adr directory", () => {
+    // Arrange — a wrong root must fail loudly, never pass vacuously.
+    const root = makeTempRepoRoot({ "apps/web/src/x.ts": "// no references here" });
+
+    // Act + Assert
+    expect(() => checkRepositoryAdrLinks(root)).toThrow(
       expect.objectContaining({ code: "ENOENT" })
     );
   });
