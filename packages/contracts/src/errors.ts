@@ -300,6 +300,11 @@ export const COLLABORATION_ERROR_CODES = [
   "invitation_already_pending",
   "cannot_invite_self",
   "already_member",
+  // OP-121 (§2.3, Appendix A.5): the decision surface's four refusals.
+  "invitation_revoked",
+  "invitation_expired",
+  "invitation_not_for_you",
+  "cannot_remove_organizer",
 ] as const;
 
 /** A member of the closed {@link COLLABORATION_ERROR_CODES} set. */
