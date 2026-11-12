@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
+import { withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { requireEventRole } from "@/server/events/access";
 import { eventIdAfterEventsSegment } from "@/server/events/event-id";
@@ -26,9 +27,10 @@ import { tenantStage } from "@/server/tenancy/route-stage";
  * row gets `status: "removed"` **and** `revokedAt` (the admission seam filters
  * on `revokedAt: null`, so one without the other would leave the removed member
  * admitted), and the invitation that granted the seat moves to `revoked` so the
- * row cannot be accepted again. The removed member and the organizer are both
- * notified (`collab.member.removed` / `.ack`), and the answer is `204` with no
- * body.
+ * row cannot be accepted again. Those two writes and the two
+ * `collab.member.removed` / `.ack` emits run in one transaction, so a failed
+ * removal moves neither row and stays replayable. The removed member and the
+ * organizer are both notified, and the answer is `204` with no body.
  */
 
 /** A 24-hex `ObjectId`, the only accepted `{userId}` shape. */
@@ -88,31 +90,35 @@ export const DELETE = defineRoute({
       });
     }
 
-    await members.updateOne(
-      { _id: member._id },
-      { $set: { status: "removed", revokedAt: now, updatedAt: now } }
-    );
-
-    // Revoke the invitation that granted the seat, so it cannot be re-accepted.
-    await tenantRepo(tenantKey, db)
-      .collection(COLLECTIONS.invitations)
-      .updateMany(
-        { eventId, status: "accepted", "invitee.userId": targetHex },
-        { $set: { status: "revoked", revokedAt: now, updatedAt: now } }
+    await withTransaction(async (session) => {
+      await members.updateOne(
+        { _id: member._id },
+        { $set: { status: "removed", revokedAt: now, updatedAt: now } },
+        { session }
       );
 
-    for (const eventKey of ["collab.member.removed", "collab.member.removed.ack"] as const) {
-      await emitDomainEvent(
-        {
-          eventKey,
-          tenantId: tenantKey,
-          actorRef: { kind: "user", id: scope.userId },
-          subjectRef: { kind: "user", id: targetHex },
-          payload: { eventId: eventIdHex, userId: targetHex },
-        },
-        { db }
-      );
-    }
+      // Revoke the invitation that granted the seat, so it cannot be re-accepted.
+      await tenantRepo(tenantKey, db)
+        .collection(COLLECTIONS.invitations)
+        .updateMany(
+          { eventId, status: "accepted", "invitee.userId": targetHex },
+          { $set: { status: "revoked", revokedAt: now, updatedAt: now } },
+          { session }
+        );
+
+      for (const eventKey of ["collab.member.removed", "collab.member.removed.ack"] as const) {
+        await emitDomainEvent(
+          {
+            eventKey,
+            tenantId: tenantKey,
+            actorRef: { kind: "user", id: scope.userId },
+            subjectRef: { kind: "user", id: targetHex },
+            payload: { eventId: eventIdHex, userId: targetHex },
+          },
+          { db, session }
+        );
+      }
+    });
 
     getLogger().info("event member removed", {
       event: "collab.member.removed",

@@ -1363,41 +1363,27 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId}", 
 });
 
 /* -------------------------------------------------------------------------- */
-/* F1 — the member removal is three independent writes                        */
+/* F1 — the member removal is one transaction                                 */
 /* -------------------------------------------------------------------------- */
 
 /**
- * The removal (`…/members/{userId}`) performs three writes with **no**
- * `withTransaction`: the `event_organizers` update, the revoke of the granting
- * invitation, then the two `collab.member.removed` emits — while the accept
- * branch of `invitation-transition.ts` puts its invitation write, its
- * `event_organizers` upsert and its emit in one transaction. A crash between
- * the first write and the last therefore leaves a half state, and nothing
- * measured that until this block.
+ * The removal (`…/members/{userId}`) performs three writes — the
+ * `event_organizers` update, the revoke of the granting invitation, then the
+ * two `collab.member.removed` emits — inside **one** `withTransaction`, so the
+ * request either moves both rows and notifies both parties, or moves neither.
  *
- * ## Which half is pinned
+ * Both failure arms are injected on the driver writes the removal goes
+ * through, and the same three promises are measured on each:
  *
- * The shipped order is row → invitation → emit, so a failure in either later
- * write cannot be answered `204`: the throw reaches the pipeline and the
- * request fails `500 internal_error`. That is the half the implementation
- * guarantees today, and it is pinned as an invariant:
+ * - a failed removal is **never** reported as a success (`204`) — it answers
+ *   `500 internal_error`;
+ * - no `collab.member.removed` / `.ack` row reaches the outbox for it;
+ * - neither of the two rows moved: the organizer row keeps its pre-removal
+ *   `status` and a null `revokedAt`, and the granting invitation still reads
+ *   `accepted`.
  *
- * - a failed removal is **never** reported as a success (`204`), and
- * - no `collab.member.removed` / `.ack` row reaches the outbox for it.
- *
- * The other half — "the request failed *and* the organizer row is untouched" —
- * does **not** hold: write 1 has already committed when write 2 or the emit
- * fails, so the two rows can disagree (removed member, invitation still
- * `accepted`). So the strict two-option reading of the contract is *neither*;
- * what is pinned is the weaker, true invariant above. The half-state is
- * asserted below as a *characterization* of the shipped behaviour, because it
- * is what makes the gap measurable, and the retry is asserted too: the moved
- * row no longer matches the handler's `revokedAt: null` lookup, so the replay
- * is `404` and the API cannot repair itself. Making both rows untouched needs
- * the three writes and both emits in one `withTransaction` — a production
- * change, out of scope for this test-only card. This block fails the moment
- * that change lands (the half-state cases go green-then-red), so whoever makes
- * it must re-derive them.
+ * That last point is what makes the removal replayable: the retry below asks
+ * again with a healthy seam, answers `204` and moves both rows.
  */
 
 /** The outbox rows of one event key (the emit seam these pins fail). */
@@ -1566,7 +1552,7 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} �
     expect((await errorOf(afterRemoval)).code).toBe("not_found");
   });
 
-  it("F1: a failing invitation revoke answers 500 internal_error and emits nothing", async () => {
+  it("F1: a failing invitation revoke answers 500 internal_error and rolls the member update back", async () => {
     const invitee = await signInVerified(makeIdentity("op121-f1-revoke-invitee"));
     const { fixture, invitationId } = await acceptedMember("op121-f1-revoke", invitee);
 
@@ -1587,26 +1573,27 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} �
     expect(await outboxRows("collab.member.removed")).toHaveLength(0);
     expect(await outboxRows("collab.member.removed.ack")).toHaveLength(0);
 
-    // Characterization of the shipped half state (not a guarantee): write 1
-    // committed before write 2 failed, so the member is gone while the
-    // invitation that granted the seat still reads `accepted`.
+    // The transaction: write 1 is rolled back with write 2, so the member is
+    // still admitted and the invitation that granted the seat still reads
+    // `accepted` — the two rows never disagree.
     const removed = (await eventMembers(fixture)).find(
       (row) => row.userId === invitee.userId.toHexString()
     );
-    expect(removed?.status).toBe("removed");
-    expect(removed?.revokedAt).toBeInstanceOf(Date);
+    expect(removed?.status).toBe("active");
+    expect(removed?.revokedAt ?? null).toBeNull();
     expect((await storedInvitation(invitationId))?.status).toBe("accepted");
 
-    // ...and the half state is permanent through the API: the moved row no
-    // longer matches the handler's `revokedAt: null` lookup.
+    // ...and because nothing moved, the API can repair itself: the retry with
+    // a healthy seam answers `204` and moves both rows.
     const retry = await removeMember(
       removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
     );
-    expect(retry.status).toBe(404);
-    expect(await outboxRows("collab.member.removed")).toHaveLength(0);
+    expect(retry.status).toBe(204);
+    expect((await storedInvitation(invitationId))?.status).toBe("revoked");
+    expect(await outboxRows("collab.member.removed")).toHaveLength(1);
   });
 
-  it("F1: a failing removal event answers 500 internal_error and drops both events", async () => {
+  it("F1: a failing removal event answers 500 internal_error, drops both events and moves neither row", async () => {
     const invitee = await signInVerified(makeIdentity("op121-f1-emit-invitee"));
     const { fixture, invitationId } = await acceptedMember("op121-f1-emit", invitee);
 
@@ -1627,14 +1614,22 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} �
     expect(await outboxRows("collab.member.removed")).toHaveLength(0);
     expect(await outboxRows("collab.member.removed.ack")).toHaveLength(0);
 
-    // Characterization of the shipped half state (not a guarantee): both row
-    // writes committed, the notification pair did not, and the endpoint said
-    // the removal failed.
+    // The transaction: both row writes are rolled back with the emit, so the
+    // removal is still to do rather than half done.
     const removed = (await eventMembers(fixture)).find(
       (row) => row.userId === invitee.userId.toHexString()
     );
-    expect(removed?.status).toBe("removed");
-    expect((await storedInvitation(invitationId))?.status).toBe("revoked");
+    expect(removed?.status).toBe("active");
+    expect(removed?.revokedAt ?? null).toBeNull();
+    expect((await storedInvitation(invitationId))?.status).toBe("accepted");
+
+    // ...and the retry with a healthy emit seam completes it.
+    const retry = await removeMember(
+      removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+    );
+    expect(retry.status).toBe(204);
+    expect(await outboxRows("collab.member.removed")).toHaveLength(1);
+    expect(await outboxRows("collab.member.removed.ack")).toHaveLength(1);
   });
 });
 
@@ -1643,32 +1638,24 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} �
 /* -------------------------------------------------------------------------- */
 
 /**
- * `transition()` writes `status: "rejected"` with a plain `findOneAndUpdate`
- * (no session); `decideInvitation()` then closes the affordance and emits
- * `collab.invite.rejected` outside any transaction — while the **accept**
- * branch does all three inside one `withTransaction`. A crash between the
- * status write and the emit drops the organizer's rejection event, and a crash
- * before the affordance closure leaves the invitee's in-app actions clickable
- * on a terminal row.
+ * `transition()` writes the terminal status, `decideInvitation()` then closes
+ * the in-app affordance and, for a reject, emits `collab.invite.rejected`.
+ * Both decisions run all three writes inside one `withTransaction`, so a
+ * failure on any step leaves the invitation `pending` with no `resolvedAt` and
+ * the invitee's affordance `open` / `available` — the decision is still to do,
+ * and a retry completes it.
  *
  * These pins inject the same failure class on both branches and measure the
  * outcome, so the pairing is asserted rather than assumed:
  *
  * - the endpoint never reports a decision it could not complete (`500`, never
  *   `200`) and writes no `collab.invite.rejected` row;
- * - the reject is nevertheless terminal for the invitee — the row reads
- *   `rejected`, and the affordance is closed (emit arm) or stays clickable
- *   (affordance arm) — and the replay answers `200 alreadyResolved: true`
- *   without repairing either;
- * - the accept branch's transaction really pairs all three writes: the same
- *   emit failure leaves the invitation `pending` and inserts no
+ * - the rolled-back reject is not terminal: the row still reads `pending`, the
+ *   in-app actions stay `available`, and the retry with the seam healthy
+ *   performs the reject and emits exactly one event;
+ * - the accept branch's transaction pairs all three writes the same way: the
+ *   same emit failure leaves the invitation `pending` and inserts no
  *   `event_organizers` row.
- *
- * The row/affordance assertions are the characterization this card asks for
- * (the shipped halves); the atomic reject they would replace needs the status
- * write, the closure and the emit in one transaction — a production change,
- * out of scope for this test-only card, and the cases below are what would
- * have to be re-derived if it ever lands.
  */
 describe("POST /api/v1/me/invitations/{invitationId}/reject — the write pairing (F2)", () => {
   it("F2-contrast: an accept whose event fails rolls back — the transaction pairs all three writes", async () => {
@@ -1699,7 +1686,7 @@ describe("POST /api/v1/me/invitations/{invitationId}/reject — the write pairin
     );
   });
 
-  it("F2: a reject whose event fails answers 500 with the row already rejected, and the replay cannot repair it", async () => {
+  it("F2: a reject whose event fails answers 500 and leaves the invitation pending, so the retry completes it", async () => {
     const fixture = await seedEvent("op121-f2-reject-emit");
     const invitee = await signInVerified(makeIdentity("op121-f2-reject-emit-invitee"));
     const invitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
@@ -1723,35 +1710,40 @@ describe("POST /api/v1/me/invitations/{invitationId}/reject — the write pairin
     expect((await errorOf(response)).code).toBe("internal_error");
     expect(await outboxRows("collab.invite.rejected")).toHaveLength(0);
 
-    // Characterization: the status write committed before the emit failed, and
-    // the closure that runs between them committed too.
+    // The transaction: the status write and the closure are rolled back with
+    // the emit, so the invitation is still pending and the invitee's actions
+    // are still there to use.
     const stored = await storedInvitation(invitationId);
-    expect(stored?.status).toBe("rejected");
-    expect(stored?.resolvedAt).toBeInstanceOf(Date);
+    expect(stored?.status).toBe("pending");
+    expect(stored?.resolvedAt ?? null).toBeNull();
     const after = await feedInviteRow(invitee.cookie);
     expect(after?.actionTarget).toEqual({
       kind: "invitation",
       id: invitationId,
-      state: "resolved",
+      state: "open",
     });
     expect(actionPairs(after)).toEqual([
-      ["accept", "unavailable"],
-      ["reject", "unavailable"],
+      ["accept", "available"],
+      ["reject", "available"],
     ]);
     expect(
       (await eventMembers(fixture)).filter((row) => row.userId === invitee.userId.toHexString())
     ).toHaveLength(0);
 
-    // Replay control, with the emit seam healthy again: the retry is a `200`
-    // `alreadyResolved` and does not re-emit, so the lost rejection event is
-    // lost for good.
-    const replay = await rejectInApp(inAppDecision(invitee.cookie, invitationId, "reject"));
-    expect(replay.status).toBe(200);
-    expect((await body(replay)).alreadyResolved).toBe(true);
-    expect(await outboxRows("collab.invite.rejected")).toHaveLength(0);
+    // ...and the retry with the emit seam healthy performs the reject instead
+    // of answering a replay: the decision was never made.
+    const retry = await rejectInApp(inAppDecision(invitee.cookie, invitationId, "reject"));
+    expect(retry.status).toBe(200);
+    expect((await body(retry)).alreadyResolved).toBe(false);
+    expect((await storedInvitation(invitationId))?.status).toBe("rejected");
+    expect(await outboxRows("collab.invite.rejected")).toHaveLength(1);
+    expect(actionPairs(await feedInviteRow(invitee.cookie))).toEqual([
+      ["accept", "unavailable"],
+      ["reject", "unavailable"],
+    ]);
   });
 
-  it("F2: a reject whose affordance write fails answers 500 and leaves the actions clickable on a terminal row", async () => {
+  it("F2: a reject whose affordance write fails answers 500 and leaves the invitation pending and clickable", async () => {
     const fixture = await seedEvent("op121-f2-reject-affordance");
     const invitee = await signInVerified(makeIdentity("op121-f2-reject-affordance-invitee"));
     const invitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
@@ -1773,10 +1765,10 @@ describe("POST /api/v1/me/invitations/{invitationId}/reject — the write pairin
     expect((await errorOf(response)).code).toBe("internal_error");
     expect(await outboxRows("collab.invite.rejected")).toHaveLength(0);
 
-    // Characterization: the row is terminal for the organizer's list…
-    expect((await storedInvitation(invitationId))?.status).toBe("rejected");
-    // …while the invitee's affordance is still open, because the closure was a
-    // separate write that never committed.
+    // The transaction: the status write is rolled back with the closure that
+    // failed, so the row is not terminal and the affordance is consistent with
+    // it.
+    expect((await storedInvitation(invitationId))?.status).toBe("pending");
     const after = await feedInviteRow(invitee.cookie);
     expect(after?.actionTarget).toEqual({
       kind: "invitation",
@@ -1788,15 +1780,15 @@ describe("POST /api/v1/me/invitations/{invitationId}/reject — the write pairin
       ["reject", "available"],
     ]);
 
-    // Replay control: the retry answers `200 alreadyResolved` and closes
-    // nothing, so the clickable affordance survives behind the terminal row.
-    const replay = await rejectInApp(inAppDecision(invitee.cookie, invitationId, "reject"));
-    expect(replay.status).toBe(200);
-    expect((await body(replay)).alreadyResolved).toBe(true);
+    // ...and the retry closes the affordance, the row and the event together.
+    const retry = await rejectInApp(inAppDecision(invitee.cookie, invitationId, "reject"));
+    expect(retry.status).toBe(200);
+    expect((await body(retry)).alreadyResolved).toBe(false);
+    expect((await storedInvitation(invitationId))?.status).toBe("rejected");
+    expect(await outboxRows("collab.invite.rejected")).toHaveLength(1);
     expect(actionPairs(await feedInviteRow(invitee.cookie))).toEqual([
-      ["accept", "available"],
-      ["reject", "available"],
+      ["accept", "unavailable"],
+      ["reject", "unavailable"],
     ]);
-    expect(await outboxRows("collab.invite.rejected")).toHaveLength(0);
   });
 });
