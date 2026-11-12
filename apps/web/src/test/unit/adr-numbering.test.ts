@@ -8,10 +8,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   checkAdrDirectory,
   checkAdrNumbers,
+  checkRepositoryAdrConsumers,
   checkRepositoryAdrReferences,
+  checkSourceAdrConsumers,
   checkSourceAdrReferences,
   parseAdrNumber,
   type AdrNumberIssue,
+  type AdrRecordText,
+  type SourceAdrConsumerIssue,
   type SourceFileText,
 } from "../helpers/adr-numbering.js";
 
@@ -39,7 +43,10 @@ import {
  *   (iii) no two rows of the reserved-range ledger in `<dir>/README.md` reserve
  *        intersecting **closed** ranges (`lane-range-overlap`);
  *   (iv) every `ADR-NNNN` reference **inside a source file** resolves to a
- *        `docs/adr/ADR-NNNN-*.md` file (`dangling-reference`, finding F6-b).
+ *        `docs/adr/ADR-NNNN-*.md` file (`dangling-reference`, finding F6-b);
+ *   (v)  every reference that resolves to a record declaring a `Consumers:`
+ *        field is made by a file that record names (`consumer-mismatch`,
+ *        finding F-N1).
  * Range bookkeeping was out of scope until F-L1: the guard now parses the
  * ledger's closed `` `NNNN`–`NNNN` `` rows (see `adr-lane-ranges.test.ts`).
  * A *range-shaped* row that does not parse was skipped silently until F1: a row
@@ -59,8 +66,19 @@ import {
  * documented in the block comment below.
  * What it still cannot see: a *file* whose number sits inside another lane's
  * reserved range — the guard has no file→lane map, so range membership stays a
- * review-time obligation (ADR-0302 §4). Reference *accuracy* (does the cited
- * ADR decide what the comment claims?) is likewise unreachable mechanically.
+ * review-time obligation (ADR-0302 §4).
+ * Reference *accuracy* — does the cited record decide what the comment claims? —
+ * was unreachable mechanically until F-N1 (the land review of PR #465). Nine
+ * OP-129 spec headers cited the never-minted `0768`, and once a record with that
+ * number was minted for the OP-128 lane those nine became "valid" references to
+ * a record about a different feature: the guard proved *existence*, never
+ * *accuracy*. Invariant (v) closes the half of that gap that is decidable from
+ * the tree: a record that declares a `Consumers:` field makes a claim about who
+ * consumes it, and a citing file the record never names is a
+ * `consumer-mismatch`. A citation of a record that declares no `Consumers:`
+ * field is `unlisted-consumer` — reported and counted, not failed; the contract
+ * block for the two functions (near the end of this file) states the exact
+ * matching rule and why the unlisted half is not a hard failure yet.
  *
  * **Contract pinned here** (RED and GREEN must not diverge):
  *
@@ -1407,6 +1425,723 @@ describe("checkRepositoryAdrReferences — the repository sweep", () => {
 
     // Act + Assert
     expect(() => checkRepositoryAdrReferences(root)).toThrow(
+      expect.objectContaining({ code: "ENOENT" })
+    );
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * Invariant (v) — citation accuracy (finding F-N1)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Unit contract — invariant (v): a citation must be *accurate*, not merely
+ * resolvable (finding F-N1, the land review of PR #465, card `t_03a786bd`).
+ *
+ * **Why this exists.** Invariant (iv) proves that the record a comment cites
+ * *exists*. That is half the question. On the OP-129 tree nine spec headers
+ * cited the never-minted `0768`; then a record with that number was minted for
+ * the OP-128 lane, and overnight all nine became "valid" references to a record
+ * about a different feature — the media signer's account-status gate. The
+ * existence guard's real-tree case would go green on that tree, and that is how
+ * the defect it was written for survives a renumber. This block pins the half of
+ * "is this citation right?" that is decidable from the tree: **a record that
+ * declares a `Consumers:` field states who consumes it, and a citing file the
+ * record never names is a `consumer-mismatch`.**
+ *
+ * **Contract pinned here** (RED and GREEN must not diverge):
+ *
+ * ```
+ * interface AdrRecordText { fileName: string; text: string }
+ * type SourceAdrConsumerIssue = {
+ *   code: "consumer-mismatch" | "unlisted-consumer";
+ *   file: string;   // repo-relative POSIX path of the citing file
+ *   line: number;   // 1-based line of the reference
+ *   number: string; // the four digits as written, leading zeros kept ("0768")
+ *   record: string; // the cited record's file name, e.g. "ADR-0768-….md" (adr-fixture: shape only)
+ * }
+ * checkSourceAdrConsumers(
+ *   sources: readonly SourceFileText[],
+ *   records: readonly AdrRecordText[],
+ * ): { ok: boolean; issues: SourceAdrConsumerIssue[]; unlisted: SourceAdrConsumerIssue[];
+ *      checkedReferences: number; exemptReferences: number; danglingReferences: number;
+ *      verifiedReferences: number; declaredRecords: string[] }
+ * checkRepositoryAdrConsumers(root: string): typeof checkSourceAdrConsumers
+ * ```
+ *
+ * **Participation is declared, never inferred.** A record participates exactly
+ * when its text carries a `Consumers:` field — `- **Consumers:**` plus its
+ * continuation lines (until the next `- **Field:**` line or a blank line),
+ * anywhere in the record, header or body. A `Consumes:` field is *not* a
+ * consumer declaration (records use it for what the decision consumes, e.g. an
+ * upstream record); neither is prose that happens to contain the word. A record
+ * with no `Consumers:` field yields `unlisted-consumer` for each of its
+ * citations — reported and counted, not failed (see the decision below).
+ *
+ * **The identification rule** — what makes a citation *verified*. A declaring
+ * record identifies a citing file when its **whole text** carries one of:
+ *   1. the file's repo-relative path (`apps/…`, `packages/…`) as a path token;
+ *   2. the file's **bare name** (`attendee-sessions.test.ts`);
+ *   3. a `@/…` module specifier that resolves to it — `apps/web/src/` + the
+ *      specifier for a module, `apps/web/src/app/` + the specifier for an App
+ *      Router route (`@/api/v1/p/attendee-sessions` names the route), optionally
+ *      followed by a swept source extension, or a directory containing the file;
+ *      a trailing `[...]` annotation group is stripped first
+ *      (`@/api/v1/p/attendee-sessions[/current]` names both routes);
+ *   4. **in backticks, an identifier the citing file exports** — `export
+ *      const|let|var|function|class|interface|type|enum <Name>` or an
+ *      `export { <Name> }` alias — with `Name` at least **6** characters.
+ *
+ * Reading the whole record, not only its `Consumers:` block, is deliberate and
+ * measured at this head: 11 of the 32 citations of declaring records are named
+ * only in the record's prose (§Decision names the implementation file, the
+ * field names the pinning spec), so a block-only reading would fail 11
+ * legitimate citations on the pristine tree. The backticked-export channel is
+ * what covers the last one — a `packages/contracts` source whose exported
+ * `AUTH_ERROR_CODES` the record discusses without naming the file. The 6-char
+ * floor keeps short generic names (`GET`, `rate`) from verifying arbitrary
+ * files. Leniency is intentional in one direction only: a citation the record
+ * *does* talk about must never be reported, because a false failure would be
+ * silenced by the next worker with a wider exemption.
+ *
+ * **Decisions recorded here (measured at this head, not asserted as literals):**
+ *   - 4 records declare `Consumers:` (the OP-129 lane), 32 of the 1238 checked
+ *     references target them, and all 32 are verified — so the hard rule is
+ *     green on the pristine tree, exactly as the card requires. The floor in the
+ *     real-tree case is `>= 4`: an accepted ADR is never un-declared, so the
+ *     declaring population may only grow, and the floor catches a declaration
+ *     being quietly dropped.
+ *   - `unlisted-consumer` is counted, not failed. 1206 of the 1238 checked
+ *     references at this head cite a record written before the `Consumers:`
+ *     convention existed (175 distinct records). Failing them would make the
+ *     guard permanently red and demand a 175-record docs programme that this
+ *     card's scope lock (test files only, no `docs/adr/` byte) forbids. The code
+ *     exists so the debt is visible and a follow-up can drive adoption;
+ *     enforcement is **per record**, not per file or directory — the moment a
+ *     record adds a `Consumers:` field, every citation of it is hard-checked,
+ *     and nothing is exempt.
+ *   - A reference whose record does not exist is counted in
+ *     `danglingReferences` and not evaluated: invariant (iv) owns it, and the
+ *     two counters are reconciled against `checkRepositoryAdrReferences` below.
+ *   - A duplicate ADR number does not make this guard throw or go vacuous: a
+ *     citation is declared when *any* record with that number declares, and
+ *     verified when any of them identifies the citing file. Duplicate reporting
+ *     stays `checkAdrNumbers`' job.
+ *
+ * **Marker and population parity.** The accuracy sweep reads exactly the
+ * reference population invariant (iv) reads, with the same per-line
+ * `adr-fixture` exemption and the same `apps/web/src/test/**` path scope: an
+ * exempt reference is counted in `exemptReferences` and never classified, and
+ * a marked line in shipped source is still checked (finding F-M1).
+ *
+ * **Ordering.** `issues` and `unlisted` are sorted by `file`, then `line`, then
+ * `number`, so the same sources in any order produce the same report.
+ */
+
+/**
+ * The record names the fixtures point at. Synthetic on this tree: 0768 and 0786
+ * are real records elsewhere, which is the point — the defect this pins is a
+ * citation of an existing record that has nothing to do with the citing file.
+ */ // adr-fixture: the record names below are fixture targets, not references
+const fixtureRecord0768 = "ADR-0768-op128-account-status-gate-pins.md"; // adr-fixture: fixture record name
+const fixtureRecord0786 = "ADR-0786-op129-attendee-session-rate-limit-green.md"; // adr-fixture: fixture record name
+const fixtureRecord0781 = "ADR-0781-op129-anonymous-attendee-sessions-green.md"; // adr-fixture: fixture record name
+const fixtureRecord0780 = "ADR-0780-op129-anonymous-attendee-sessions-red.md"; // adr-fixture: fixture record name
+const fixtureRecord0025 = "ADR-0025-auth-guard-table.md"; // adr-fixture: fixture record name
+
+/**
+ * Compile-time pins of the accuracy union: an implementation that reports either
+ * case without widening `SourceAdrConsumerIssue["code"]` fails `tsc`, not only a
+ * runtime assertion.
+ */
+const consumerMismatchCode: SourceAdrConsumerIssue["code"] = "consumer-mismatch";
+const unlistedConsumerCode: SourceAdrConsumerIssue["code"] = "unlisted-consumer";
+
+/** One `docs/adr` record as the accuracy sweep reads it: bare name + whole text. */
+function adrRecord(fileName: string, text: string): AdrRecordText {
+  return { fileName, text };
+}
+
+describe("checkSourceAdrConsumers — a declared consumer is verified", () => {
+  it("accepts a citation of a record that names the citing file by repo-relative path", () => {
+    // Arrange
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0786,
+        [
+          "- **Status:** Accepted",
+          "- **Consumers:** `apps/web/src/server/rate-limit/classes.test.ts`",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/classes.test.ts",
+        text: "// the class table this spec pins ADR-0786", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 1,
+      declaredRecords: ["0786"],
+    });
+  });
+
+  it("accepts a citation of a record that names the citing file by module specifier", () => {
+    // Arrange — `[...]` is an annotation group, not part of the path: the
+    // specifier names the collection route and its `current` child.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0781,
+        [
+          "- **Status:** Accepted",
+          "- **Consumers:** `@/api/v1/p/attendee-sessions[/current]`",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/app/api/v1/p/attendee-sessions/current/route.ts",
+        text: "// D2 answers this handler ADR-0781", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.checkedReferences).toBe(1);
+  });
+
+  it("accepts a citation of a record that names only the citing file's bare name", () => {
+    // Arrange
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0780,
+        [
+          "- **Consumers:** the OP-129 RED specs, starting with",
+          "  `attendee-sessions.test.ts` (I1–I5)",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/integration/attendee-sessions.test.ts",
+        text: "// the I1-I5 pins live here ADR-0780", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("accepts a citation of a record that names an identifier the citing file exports", () => {
+    // Arrange — the record names the stage helper's API without naming the file.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0786,
+        [
+          "- **Status:** Accepted",
+          "- **Consumers:** the rate-limit stage helper",
+          "",
+          "The gate runs inside `evaluateRateLimit` before the route handler.",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/stage.ts",
+        text: "export function evaluateRateLimit() {\n  // stage gate ADR-0786\n}", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("accepts a citation when the record names the citing file's directory", () => {
+    // Arrange
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0786, "- **Consumers:** `apps/web/src/server/rate-limit`"),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/stage.ts",
+        text: "// stage gate ADR-0786", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("verifies a citation when any record carrying that number names the citing file", () => {
+    // Arrange — a duplicate number is `checkAdrNumbers`' issue; this guard must
+    // not throw on it, and must not ignore the record that does name the file.
+    const records: AdrRecordText[] = [
+      adrRecord("ADR-0786-duplicate-a.md", ["# a record that declares nothing"].join("\n")), // adr-fixture: duplicate-number fixture
+      adrRecord(
+        fixtureRecord0786,
+        ["- **Consumers:** `apps/web/src/server/rate-limit/classes.test.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/classes.test.ts",
+        text: "// the class table ADR-0786", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.declaredRecords).toEqual(["0786"]);
+  });
+
+  it("finds a Consumers: field declared in the record body, not only in its header", () => {
+    // Arrange — records add a §Post-review section with its own consumers.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0781,
+        [
+          "- **Status:** Accepted",
+          "- **Lane:** OP-129",
+          "",
+          "## Post-review status",
+          "",
+          "- **Consumers:** `apps/web/src/server/db/indexes.ts`",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/db/indexes.ts",
+        text: "// the slug index entry ADR-0781", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues).toEqual([]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.declaredRecords).toEqual(["0781"]);
+  });
+});
+
+describe("checkSourceAdrConsumers — a citation the record does not claim", () => {
+  it("reports a citation of a record that declares a different consumer and says nothing about this file", () => {
+    // Arrange — the F-N1 shape precisely: the target record EXISTS (invariant
+    // (iv) is green) but it is another lane's decision.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0768,
+        [
+          "- **Status:** Accepted",
+          "- **Consumers:** `apps/web/src/test/integration/media-signed-urls.test.ts`",
+          "",
+          "## Decision",
+          "",
+          "The gate runs on the media signer's principal resolution.",
+        ].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/integration/attendee-sessions.test.ts",
+        text: "// I3 pins the cookie contract ADR-0768", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: consumerMismatchCode,
+          file: "apps/web/src/test/integration/attendee-sessions.test.ts",
+          line: 1,
+          number: "0768",
+          record: fixtureRecord0768,
+        },
+      ],
+      unlisted: [],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 0,
+      declaredRecords: ["0768"],
+    });
+  });
+
+  it("does not accept a record that names only an exported identifier shorter than six characters", () => {
+    // Arrange — the noise floor: a short generic export must not verify a file.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0786,
+        ["- **Consumers:** the stage helper", "", "The `rate` value is capped per class."].join(
+          "\n"
+        )
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/rate-limit/rate.ts",
+        text: "export const rate = 1;\n// cap ADR-0786\n", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.ok).toBe(false);
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: "apps/web/src/server/rate-limit/rate.ts",
+        line: 2,
+        number: "0786",
+        record: fixtureRecord0786,
+      },
+    ]);
+  });
+
+  it("reports one issue per occurrence and orders the report by file, then line", () => {
+    // Arrange — input order is b, a; the report must be a, b.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0786,
+        ["- **Consumers:** `apps/web/src/server/rate-limit/classes.test.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/b.ts",
+        text: ["// first ADR-0786", "// second ADR-0786"].join("\n"), // adr-fixture: fixture citation targets
+      },
+      {
+        path: "apps/web/src/server/a.ts",
+        text: "// once ADR-0786", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.issues.map((issue) => [issue.file, issue.line])).toEqual([
+      ["apps/web/src/server/a.ts", 1],
+      ["apps/web/src/server/b.ts", 1],
+      ["apps/web/src/server/b.ts", 2],
+    ]);
+    expect(result.checkedReferences).toBe(3);
+    expect(result.verifiedReferences).toBe(0);
+  });
+});
+
+describe("checkSourceAdrConsumers — records that declare nothing", () => {
+  it("reports unlisted-consumer, and does not fail, when the cited record declares no consumers", () => {
+    // Arrange
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0025,
+        ["# The auth guard table", "", "## Decision", "", "One label table."].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/auth/guards.ts",
+        text: "// the label table ADR-0025", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — reported in its own channel, counted, and never a failure.
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [
+        {
+          code: unlistedConsumerCode,
+          file: "apps/web/src/server/auth/guards.ts",
+          line: 1,
+          number: "0025",
+          record: fixtureRecord0025,
+        },
+      ],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 0,
+      declaredRecords: [],
+    });
+  });
+
+  it("does not treat a Consumes: field as a consumer declaration", () => {
+    // Arrange — `Consumes:` is what the decision consumes, not who consumes it.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0768,
+        ["- **Status:** Accepted", "- **Consumes:** ADR-0025 (the auth guard table)"].join("\n") // adr-fixture: fixture citation target
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/auth/guards.ts",
+        text: "// the account-status gate ADR-0768", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+    expect(result.unlisted).toEqual([
+      {
+        code: unlistedConsumerCode,
+        file: "apps/web/src/server/auth/guards.ts",
+        line: 1,
+        number: "0768",
+        record: fixtureRecord0768,
+      },
+    ]);
+    expect(result.declaredRecords).toEqual([]);
+  });
+
+  it("does not evaluate a reference whose record does not exist", () => {
+    // Arrange — invariant (iv) owns the dangling case; this guard must not
+    // double-report it, and must still account for it in its counters.
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0786, "- **Consumers:** `apps/web/src/server/rate-limit`"),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// a record no file carries ADR-0999", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [],
+      checkedReferences: 0,
+      exemptReferences: 0,
+      danglingReferences: 1,
+      verifiedReferences: 0,
+      declaredRecords: ["0786"],
+    });
+  });
+});
+
+describe("checkSourceAdrConsumers — the fixture marker", () => {
+  it("exempts a marked fixture line from the accuracy rule", () => {
+    // Arrange — the marker's scope is the guard's own test tree, same as (iv).
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0786, "- **Consumers:** `apps/web/src/test/unit/other.test.ts`"),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/unit/x.test.ts",
+        text: "// a synthetic citation ADR-0786 adr-fixture", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: true,
+      issues: [],
+      unlisted: [],
+      checkedReferences: 0,
+      exemptReferences: 1,
+      danglingReferences: 0,
+      verifiedReferences: 0,
+      declaredRecords: ["0786"],
+    });
+  });
+
+  it("does not exempt a marked line outside the guard's test tree", () => {
+    // Arrange — finding F-M1's shape: the marker appended to a real pointer.
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0786, "- **Consumers:** `apps/web/src/test/integration/x.test.ts`"),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/media/signed-urls.ts",
+        text: "// a real pointer adr-fixture ADR-0786", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert
+    expect(result.exemptReferences).toBe(0);
+    expect(result.checkedReferences).toBe(1);
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: "apps/web/src/server/media/signed-urls.ts",
+        line: 1,
+        number: "0786",
+        record: fixtureRecord0786,
+      },
+    ]);
+  });
+});
+
+describe("checkRepositoryAdrConsumers — the repository sweep", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the repository's real source tree as citation-accurate", () => {
+    // Act — every citation of a declaring record at this head is made by a file
+    // that record names: the OP-129 lane declares its consumers, and the
+    // pristine tree is clean under the rule.
+    const report = checkRepositoryAdrConsumers(repoRoot);
+
+    // Assert
+    expect(report.issues).toEqual([]);
+    expect(report.ok).toBe(true);
+    // Non-vacuity: a green report must come from the tree's declaring records,
+    // not from an empty population. An accepted ADR is never un-declared, so the
+    // floor may only rise.
+    expect(report.declaredRecords.length).toBeGreaterThanOrEqual(4);
+    expect(report.verifiedReferences).toBeGreaterThan(0);
+    // Every evaluated reference is classified exactly once.
+    expect(report.verifiedReferences + report.issues.length + report.unlisted.length).toBe(
+      report.checkedReferences
+    );
+  });
+
+  it("sweeps exactly the reference population the existence guard sweeps", () => {
+    // Act
+    const existence = checkRepositoryAdrReferences(repoRoot);
+    const accuracy = checkRepositoryAdrConsumers(repoRoot);
+
+    // Assert — the two guards cannot drift apart: same fixtures exempted, same
+    // references seen, the dangling ones credited to invariant (iv).
+    expect(accuracy.exemptReferences).toBe(existence.exemptReferences);
+    expect(accuracy.checkedReferences + accuracy.danglingReferences).toBe(
+      existence.checkedReferences
+    );
+  });
+
+  it("reports a wrong-but-existing target in a throwaway repository", () => {
+    // Arrange — the record exists, the citation resolves, and the record is
+    // about another lane's file: the case invariant (iv) cannot see.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0768-op128-account-status-gate-pins.md": [
+        // adr-fixture: fixture record name
+        "- **Status:** Accepted",
+        "- **Consumers:** `apps/web/src/test/integration/media-signed-urls.test.ts`",
+      ].join("\n"), // adr-fixture: fixture record name
+      "apps/web/src/test/integration/attendee-sessions.test.ts": "// I3 ADR-0768\n", // adr-fixture: fixture citation target
+      "packages/contracts/src/empty.ts": "export const nothing = 0;",
+    });
+
+    // Act
+    const report = checkRepositoryAdrConsumers(root);
+
+    // Assert
+    expect(report).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: consumerMismatchCode,
+          file: "apps/web/src/test/integration/attendee-sessions.test.ts",
+          line: 1,
+          number: "0768",
+          record: fixtureRecord0768,
+        },
+      ],
+      unlisted: [],
+      checkedReferences: 1,
+      exemptReferences: 0,
+      danglingReferences: 0,
+      verifiedReferences: 0,
+      declaredRecords: ["0768"],
+    });
+  });
+
+  it("reports the undeclared-record citation in the unlisted channel instead of failing it", () => {
+    // Arrange
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0025-auth-guard-table.md": "# The auth guard table", // adr-fixture: fixture record name
+      "apps/web/src/server/auth/guards.ts": "// the label table ADR-0025", // adr-fixture: fixture citation target
+      "packages/contracts/src/empty.ts": "export const nothing = 0;",
+    });
+
+    // Act
+    const report = checkRepositoryAdrConsumers(root);
+
+    // Assert
+    expect(report.ok).toBe(true);
+    expect(report.issues).toEqual([]);
+    expect(report.unlisted).toEqual([
+      {
+        code: unlistedConsumerCode,
+        file: "apps/web/src/server/auth/guards.ts",
+        line: 1,
+        number: "0025",
+        record: fixtureRecord0025,
+      },
+    ]);
+    expect(report.declaredRecords).toEqual([]);
+  });
+
+  it("throws an ENOENT error when the root has no docs/adr directory", () => {
+    // Arrange — a wrong root must fail loudly, never pass vacuously.
+    const root = makeTempRepoRoot({ "apps/web/src/x.ts": "// no references here" });
+
+    // Act + Assert
+    expect(() => checkRepositoryAdrConsumers(root)).toThrow(
       expect.objectContaining({ code: "ENOENT" })
     );
   });
