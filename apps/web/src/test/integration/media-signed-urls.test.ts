@@ -73,6 +73,13 @@ import * as signedUrlsRouteModule from "@/app/api/v1/media/signed-urls/route";
 import { getConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
+import {
+  createLogger,
+  getLogger,
+  memoryTransport,
+  setLogger,
+  type MemoryTransport,
+} from "@/server/logging";
 import { createMediaSigner } from "@/server/media/signer";
 import type { Entitlement } from "@/server/plans/plans";
 import { invalidatePlatformSettings } from "@/server/settings/platform-settings";
@@ -1508,6 +1515,101 @@ describe("I7: the account-status gate refuses a suspended, banned or deletion-pe
     // Assert
     expect(signedPairs(answer)).toEqual([`${image.imageId.toHexString()}:thumbnail`]);
     expect(deniedTriples(answer)).toEqual([`${unknown.toHexString()}:thumbnail:not_found`]);
+  });
+});
+
+/**
+ * The observable half of ADR-0773 §O3 — the refusal must reach security
+ * monitoring as **one** `warn` `auth.denied`, and an allowed request must log
+ * none at all.
+ *
+ * `enforceAuth` (`@/server/auth/guards`) writes the line, and
+ * `auth-guards.test.ts` pins it through `requireAuth`. This route resolves its
+ * own principal (it is `public`-labelled so per-item authorization can answer
+ * an anonymous caller) and calls `enforceAuth` itself, so the shared helper
+ * being pinned does not pin this call site: the reviewer replaced it with a
+ * route-local `evaluateAuth(...)` + `throw` carrying the identical wire
+ * envelope and measured **31 passed with zero `auth.denied` lines**, i.e. the
+ * deliverable's observable half was deletable on this endpoint.
+ *
+ * The `active` control keeps the pin honest: it proves the event is
+ * denial-only, because the same fixture shape and the same request answer `200`
+ * while adding no line.
+ */
+describe("I7c: the account refusal is one auth.denied warn and an allowed request logs none", () => {
+  it("logs exactly one warn auth.denied for a suspended caller and none for the active control", async () => {
+    // Arrange — capture every entry the port writes, as auth-guards.test.ts does.
+    const previous = getLogger();
+    const sink: MemoryTransport = memoryTransport();
+    setLogger(
+      createLogger({
+        level: "info",
+        transports: [sink],
+        service: "openpic-web",
+        env: "test",
+        version: "test-sha",
+      })
+    );
+
+    try {
+      const workspace = await seedWorkspace("i7c-suspended");
+      await seedOriginalsPlan(workspace.tenantKey, true);
+      const image = await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_A, {
+        sequence: 1,
+      });
+      await seedProfileStatus(workspace.organizer.userId, "suspended");
+
+      // Act — the refusal whose envelope `I7` already pins.
+      const refused = await requestSignedUrls(
+        [{ kind: "thumbnail", imageId: image.imageId.toHexString() }],
+        workspace.organizer.cookie,
+        workspace.eventId.toHexString()
+      );
+
+      // Assert — the wire answer is unchanged, and the refusal emits exactly one
+      // warn line naming the label, the reason and the route monitoring reads.
+      expect(refused.status).toBe(423);
+      expect((await errorOf(refused)).code).toBe("account_suspended");
+
+      expect(sink.entries.filter((entry) => entry.event === "auth.denied")).toHaveLength(1);
+      const denial = sink.entries.find((entry) => entry.event === "auth.denied");
+      expect(denial).toBeDefined();
+      expect(denial?.level).toBe("warn");
+      expect(denial?.label).toBe("user");
+      expect(denial?.reason).toBe("account_suspended");
+      expect(denial?.route).toBe(SIGNED_URLS_PATH);
+
+      // Act — the allowed control: the same fixture shape and the same kinds,
+      // with `active` the only difference.
+      const control = await seedWorkspace("i7c-control");
+      await seedOriginalsPlan(control.tenantKey, true);
+      const controlImage = await seedImageWithAsset(control.tenantKey, control.eventId, HASH_A, {
+        sequence: 1,
+      });
+      await seedProfileStatus(control.organizer.userId, "active");
+      const allowed = await requestSignedUrls(
+        [
+          { kind: "thumbnail", imageId: controlImage.imageId.toHexString() },
+          { kind: "original", imageId: controlImage.imageId.toHexString() },
+        ],
+        control.organizer.cookie,
+        control.eventId.toHexString()
+      );
+
+      // Assert — the control is genuinely allowed (so "no line" cannot be a
+      // silent refusal), and it added no denial: the event is denial-only.
+      expect(allowed.status).toBe(200);
+      expect((await answerOf(allowed)).denied).toEqual([]);
+      expect(sink.entries.filter((entry) => entry.event === "auth.denied")).toHaveLength(1);
+
+      // Assert — no credential ever reaches a log entry.
+      const refusedToken = workspace.organizer.cookie.split("=").slice(1).join("=");
+      const controlToken = control.organizer.cookie.split("=").slice(1).join("=");
+      expect(JSON.stringify(sink.entries)).not.toContain(refusedToken);
+      expect(JSON.stringify(sink.entries)).not.toContain(controlToken);
+    } finally {
+      setLogger(previous);
+    }
   });
 });
 
