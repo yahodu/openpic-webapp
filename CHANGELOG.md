@@ -1,3 +1,9 @@
+## [1.57.11](https://github.com/yahodu/openpic-webapp/compare/v1.57.10...v1.57.11) (2026-11-12)
+
+### Bug Fixes
+
+- **events:** OP-121 answer 204 when the removal retry budget is spent ([#528](https://github.com/yahodu/openpic-webapp/issues/528)) ([e2a4806](https://github.com/yahodu/openpic-webapp/commit/e2a480635ddb33ac5ddd519e510b505b9a0a5fc8))
+
 ## [1.57.10](https://github.com/yahodu/openpic-webapp/compare/v1.57.9...v1.57.10) (2026-11-12)
 
 ### Bug Fixes

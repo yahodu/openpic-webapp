@@ -3,14 +3,14 @@ import { z } from "zod";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
-import { withTransaction } from "@/server/db/transaction";
+import { isTransactionRetryLimitError, withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { requireEventRole } from "@/server/events/access";
 import { eventIdAfterEventsSegment } from "@/server/events/event-id";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
-import { platformRepo, tenantRepo } from "@/server/repos";
+import { platformRepo, tenantRepo, type RepositoryCollection } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { requireTenantScope, userAuth } from "@/server/tenancy/route-scope";
 import { tenantStage } from "@/server/tenancy/route-stage";
@@ -33,7 +33,9 @@ import { tenantStage } from "@/server/tenancy/route-stage";
  * same row, so the next removal matches it again. Those two writes and the two
  * `collab.member.removed` / `.ack` emits run in one transaction, so a failed
  * removal moves neither row and stays replayable. The removed member and the
- * organizer are both notified, and the answer is `204` with no body.
+ * organizer are both notified, and the answer is `204` with no body — also for
+ * the loser of a concurrent pair whose retry budget ran out before the winner
+ * committed.
  */
 
 /** A 24-hex `ObjectId`, the only accepted `{userId}` shape. */
@@ -55,6 +57,55 @@ function targetUserIdFromRequest(request: Request): ObjectId {
     throw appError("not_found");
   }
   return new ObjectId(raw);
+}
+
+/**
+ * How long a loser of the removal race waits for the winner's commit, in ms.
+ *
+ * shortcut: a fixed ceiling, not the winner's own duration; a removal
+ * transaction taking longer than this answers `500` as before. Upgrade to a
+ * shared per-member removal lock if a bounded wait proves too short.
+ */
+const RIVAL_COMMIT_TIMEOUT_MS = 1_000;
+
+/** Poll interval while waiting for the winner's committed removal, in ms. */
+const RIVAL_COMMIT_POLL_MS = 25;
+
+/** Resolve after `ms`, for the bounded wait below. */
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
+ * Wait, bounded, for a concurrent removal of the same member to commit.
+ *
+ * Two `DELETE`s of one member collide on the same document inside their
+ * transactions. The loser's bounded retry budget is spent **before** the
+ * winner commits (measured: three attempts inside the winner's open
+ * transaction), so the row still reads `revokedAt: null` at that moment and a
+ * single re-read would answer `500`. Poll until the winner's commit is
+ * visible instead (ADR-0664 §Amendment).
+ *
+ * @param members - The `event_organizers` collection.
+ * @param memberId - The row the pre-transaction lookup resolved.
+ * @returns `true` once the rival's removal is committed, `false` when the wait
+ *   ran out without it.
+ */
+async function rivalRemovalCommitted(
+  members: RepositoryCollection,
+  memberId: unknown
+): Promise<boolean> {
+  for (let waited = 0; waited <= RIVAL_COMMIT_TIMEOUT_MS; waited += RIVAL_COMMIT_POLL_MS) {
+    const row = (await members.findOne({ _id: memberId })) as {
+      readonly revokedAt?: unknown;
+    } | null;
+    if (row?.revokedAt !== null && row?.revokedAt !== undefined) {
+      return true;
+    }
+    await sleep(RIVAL_COMMIT_POLL_MS);
+  }
+  return false;
 }
 
 export const DELETE = defineRoute({
@@ -132,6 +183,18 @@ export const DELETE = defineRoute({
       }
 
       return true;
+    }).catch(async (error: unknown) => {
+      // Losing the race can spend the whole retry budget while the winner's
+      // transaction is still open. Nothing of the loser's attempt was written,
+      // so wait for the winner's commit and report the same `204` it does
+      // (§0.7); a removal that never lands stays a `500`.
+      if (!isTransactionRetryLimitError(error)) {
+        throw error;
+      }
+      if (!(await rivalRemovalCommitted(members, member._id))) {
+        throw error;
+      }
+      return false;
     });
 
     // Only the winner removed anything, so only the winner reports a removal.

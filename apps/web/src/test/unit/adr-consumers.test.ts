@@ -1996,11 +1996,11 @@ describe("checkSourceAdrConsumers — a trailing `:line` annotation (review find
  * gets silenced with a wider exemption. This block is drift control, not a live
  * defect.
  *
- * **RED.** The two path rows (a non-digit suffix on the colon-free sibling and on
- * the colon route) and the `@/` row fail today with *both* citing files reported
- * as `consumer-mismatch` and `verifiedReferences: 0` — the record names a file
- * and the guard accuses it. The three controls pass: `:42`, `:42.`, and the
- * directory token. The GREEN changes the helper, never this file.
+ * **RED** before #519 (`8b6abe2`): the two path rows (a non-digit suffix on the
+ * colon-free sibling and the colon route) and the `@/` row failed with *both* citing
+ * files reported as `consumer-mismatch` and `verifiedReferences: 0` — the record names
+ * a file and the guard accuses it. The three controls pass: `:42`, `:42.`, and the
+ * directory token. All six pass at this head; #519 changed the helper only.
  *
  * In-memory, like the two blocks above: nothing here reads a file, and the rows
  * reuse the same two-`route.ts` population and the same fixture record name, so
