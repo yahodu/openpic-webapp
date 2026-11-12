@@ -316,9 +316,10 @@ its own consumers, so participation is **declared per record, never inferred**.
   evaluated reference is classified once
   (`verifiedReferences + issues.length + unlisted.length === checkedReferences`).
 - **How a record identifies a citing file.** Over the record's **whole text**,
-  not only its field block — 11 of the 32 citations of declaring records are
-  named only in prose — by any of four channels: (1) the repo-relative path as a
-  token, exact or a directory prefix of the citing path; (2) an `@/…` specifier,
+  not only its field block: a file the record names in prose counts exactly as
+  one it names in the field. Identification is by any of four channels: (1) the
+  repo-relative path as a token, exact or a directory prefix of the citing path;
+  (2) an `@/…` specifier,
   resolved against both `apps/web/src/…` and `apps/web/src/app/…`, exact or with
   a swept extension or as a directory prefix, after a trailing `[...]`
   annotation group is stripped; (3) the bare file name as a whole token, but only
