@@ -2031,8 +2031,8 @@ describe("checkSourceAdrConsumers — records that declare nothing", () => {
  * Finding F1 (the land review of PR #488): the bare-name channel judged a
  * citation by the file's bare name alone, so a record naming *any* `…/route.ts`
  * verified **every** swept file whose bare name is `route.ts` — this head holds
- * 85 of them. The reviewer's probe added a citation of ADR-0786 to an unrelated
- * route handler and the whole spec stayed green, although that record names only
+ * 85 of them. The reviewer's probe added a citation of ADR-0786 (adr-fixture) to an
+ * unrelated route handler and the whole spec stayed green, although that record names
  * `apps/web/src/app/api/v1/p/attendee-sessions/route.ts`. adr-fixture: the
  * number is a fixture target, not a citation.
  *
