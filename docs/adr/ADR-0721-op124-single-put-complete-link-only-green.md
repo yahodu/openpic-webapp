@@ -4,6 +4,28 @@
 - **Card:** OP-124 GREEN (`t_bf46953d`) · **Branch:** `OP-124-task-single-put-complete-link-only-green` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_b8940223`, based on the OP-124 RED head `5d535ce` (branch `OP-124-task-single-put-complete-link-only-red`, PR #423), itself based on the OP-123 GREEN head `d4d3314` (PR #422, **unmerged** at the time of writing)
 - **Relates to:** [ADR-0720](ADR-0720-op124-single-put-complete-link-only-red.md) (the pins this GREEN satisfies), [ADR-0700](ADR-0700-op123-upload-config-batch-resolve-red.md)/[ADR-0701](ADR-0701-op123-upload-config-batch-resolve-green.md) (the pre-check and the `upload_window_closed`/extension rules), [ADR-0009](ADR-0009-upload-type-guards.md) (the three-claim type guard), [ADR-0340](ADR-0340-op103-entitlements-red.md) (consume-inside-the-transaction), [ADR-0580](ADR-0580-op112-object-storage-port-red.md)/[ADR-0581](ADR-0581-op112-object-storage-port-green.md) (the `ObjectStorage` port), [ADR-0680](ADR-0680-op122-queue-port-red.md)/[ADR-0681](ADR-0681-op122-queue-green.md) (the queue port and `enqueueWork`), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §7 (range allocation)
 - **Contract:** API contract §5.1/§5.3/§4.4 + §0.15, schema §16.1–§16.3, §18.1/§18.2, §22
+- **Consumers:** the three upload routes, the single-PUT server modules
+  they share, and the specs that pin them —
+  `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link/route.ts`,
+  `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads/params/route.ts`,
+  `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads/[uploadSessionId]/complete/route.ts`,
+  `apps/web/src/app/api/v1/test-support/storage/[token]/route.ts`,
+  `apps/web/src/server/adapters/memory-object-storage.ts`,
+  `apps/web/src/server/config/env.ts`,
+  `apps/web/src/server/db/indexes.ts`,
+  `apps/web/src/server/http/catalog.ts`,
+  `apps/web/src/server/images/filters.ts`,
+  `apps/web/src/server/queue/get-work-queue.ts`,
+  `apps/web/src/server/settings/platform-settings.ts`,
+  `apps/web/src/server/storage/memory-presigns.ts`,
+  `apps/web/src/server/uploads/complete-upload.ts`,
+  `apps/web/src/server/uploads/registration.ts`,
+  `apps/web/src/server/uploads/single-put.ts`,
+  `apps/web/src/server/uploads/upload-window.ts`,
+  `apps/web/src/test/integration/uploads-multipart.test.ts`,
+  `apps/web/src/test/unit/adr-numbering.test.ts`,
+  `apps/web/src/test/unit/event-images-query.test.ts`,
+  `packages/contracts/src/errors.ts`
 
 ## Context
 
