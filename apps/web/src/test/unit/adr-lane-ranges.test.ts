@@ -101,10 +101,10 @@ const CLOSED_ROW_PATTERN = /^\|\s*([^|]+?)\s*\|\s*`(\d{4})`\s*[–-]\s*`(\d{4})`
  */
 function closedRows(markdown: string): LaneRange[] {
   return markdown.split("\n").flatMap((line) => {
-    const match = CLOSED_ROW_PATTERN.exec(line);
-    return match === null
+    const [, holder, start, end] = CLOSED_ROW_PATTERN.exec(line) ?? [];
+    return holder === undefined
       ? []
-      : [{ holder: match[1].trim(), start: Number(match[2]), end: Number(match[3]) }];
+      : [{ holder: holder.trim(), start: Number(start), end: Number(end) }];
   });
 }
 
