@@ -1,3 +1,9 @@
+## [1.54.0](https://github.com/yahodu/openpic-webapp/compare/v1.53.0...v1.54.0) (2026-11-12)
+
+### Features
+
+- **uploads:** OP-123 land the phase-4 uploads and media lane (OP-123 to OP-128) ([bf8b441](https://github.com/yahodu/openpic-webapp/commit/bf8b441d171cfb935079c9642ea3d7b7233eabd2)), closes [#439](https://github.com/yahodu/openpic-webapp/issues/439)
+
 ## [1.53.0](https://github.com/yahodu/openpic-webapp/compare/v1.52.2...v1.53.0) (2026-11-12)
 
 ### Features
