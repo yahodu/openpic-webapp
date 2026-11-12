@@ -29,12 +29,17 @@ import {
  * fails on import. That is the intended first state — the guard ships with the
  * implementation that satisfies these assertions.
  *
- * **Scope.** Exactly two invariants:
+ * **Scope.** Three invariants:
  *   (i)  no two in-scope files share an `ADR-NNNN` number;
  *   (ii) every in-scope `ADR-*.md` file name matches
- *        `^ADR-(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`.
- * Reserved-range bookkeeping is deliberately **out of scope**: it lives in the
- * prose ledger `docs/adr/README.md`, and parsing that prose is brittle.
+ *        `^ADR-(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`;
+ *   (iii) no two rows of the reserved-range ledger in `<dir>/README.md` reserve
+ *        intersecting **closed** ranges (`lane-range-overlap`).
+ * Range bookkeeping was out of scope until F-L1: the guard now parses the
+ * ledger's closed `` `NNNN`–`NNNN` `` rows (see `adr-lane-ranges.test.ts`).
+ * What it still cannot see: a *file* whose number sits inside another lane's
+ * reserved range — the guard has no file→lane map, so range membership stays a
+ * review-time obligation (ADR-0302 §4).
  *
  * **Contract pinned here** (RED and GREEN must not diverge):
  *
