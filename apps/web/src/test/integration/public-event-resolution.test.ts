@@ -499,6 +499,24 @@ describe("GET /api/v1/p/events/{slug} — the refusal states (contract §6.1)", 
     expect(error.code).toBe("event_gone");
   });
 
+  it("I1: a deleting event's refusal body carries no event content", async () => {
+    const { event } = await seedPublishedEvent("op130-deleting-content", {
+      status: "deleting",
+      name: "Secret Society Farewell",
+    });
+
+    const response = await getPublicEvent(publicEventRequest(event.slug));
+    const parsed = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(410);
+    // An event being purged is a stranger's slug too: the refusal may say
+    // "gone", never *what* is gone (ADR-0784 §4).
+    expect(Object.keys(parsed)).toEqual(["error"]);
+    expect(JSON.stringify(parsed)).not.toContain("Secret Society Farewell");
+    expect(JSON.stringify(parsed)).not.toContain(event.id.toHexString());
+    expect(objectAt(parsed, "error").code).toBe("event_gone");
+  });
+
   it("I1: a draft answers exactly like an unknown slug, so the two are indistinguishable", async () => {
     const { event } = await seedPublishedEvent("op130-draft-oracle", { status: "draft" });
 
@@ -791,6 +809,34 @@ describe("GET /api/v1/p/events/{slug} — the session hint (contract §6.1)", ()
     });
   });
 
+  it("I2: a profile on another event does not show hasProfile true on this event's page", async () => {
+    // Two events, two tenants, one attendee session: the session's profile
+    // belongs to the event it was created for, so the page it did *not* come
+    // from must not claim "you are already in this event" — an attendee who
+    // scanned a different QR would be sent back to a profile they do not have
+    // here (ADR-0784 §3, review finding F1).
+    const own = await seedPublishedEvent("op130-anon-profile-own");
+    const other = await seedPublishedEvent("op130-anon-profile-other");
+    const cookie = await createSessionCookie(own.event.slug);
+    const token = cookie.slice(cookie.indexOf("=") + 1);
+    await seedProfile({
+      tenantKey: own.tenantId.toHexString(),
+      eventId: own.event.id,
+      sessionId: await sessionIdForToken(token),
+    });
+
+    const ownPage = await fetchPublicEvent(own.event.slug, cookie);
+    const otherPage = await fetchPublicEvent(other.event.slug, cookie);
+
+    const ownSession = objectAt(ownPage, "session");
+    const otherSession = objectAt(otherPage, "session");
+    expect(ownSession).toMatchObject({ kind: "anonymous", hasProfile: true });
+    // The evidential line: the lookup is scoped by *this* event's id, so a
+    // profile on another event cannot answer `true` here.
+    expect(otherSession.hasProfile).toBe(false);
+    expect(otherSession).toMatchObject({ kind: "anonymous", canClaimByLogin: true });
+  });
+
   it("I2: a lapsed session cookie still renders the page (§6.1 has no 401)", async () => {
     const { event } = await seedPublishedEvent("op130-lapsed-session");
     const token = "opat_expired-session-token-for-op130";
@@ -845,14 +891,18 @@ describe("GET /api/v1/p/events/{slug} — the §0.11 class it mounts (contract �
 /* ─────────────────────── I5 — rotation: revoked vs unknown ───────────────── */
 
 describe("GET /api/v1/p/events/{slug} — a rotated link (contract §6.1)", () => {
+  /** The name every rotated event carries, so a leaked name in a body is findable. */
+  const ROTATED_EVENT_NAME = "Aurora & Lantern Reception";
+
   /** Rotate the organizer's link once per case and hand back both slugs. */
   async function rotateOnce(
     prefix: string
-  ): Promise<{ oldSlug: string; newSlug: string; eventId: string }> {
+  ): Promise<{ oldSlug: string; newSlug: string; eventId: string; name: string }> {
     const { user, tenantId } = await seedOwner(prefix);
     const event = await seedEvent({
       tenantKey: tenantId.toHexString(),
       ownerUserId: user.userId.toHexString(),
+      name: ROTATED_EVENT_NAME,
     });
 
     const rotated = await rotateAccessLink(
@@ -873,7 +923,12 @@ describe("GET /api/v1/p/events/{slug} — a rotated link (contract §6.1)", () =
     if (newLink === undefined) {
       throw new Error("expected the rotation to answer exactly one active link");
     }
-    return { oldSlug: event.slug, newSlug: newLink.slug, eventId: event.id.toHexString() };
+    return {
+      oldSlug: event.slug,
+      newSlug: newLink.slug,
+      eventId: event.id.toHexString(),
+      name: ROTATED_EVENT_NAME,
+    };
   }
 
   it("I5: the rotated-away slug answers 410 access_link_revoked with the message", async () => {
@@ -885,6 +940,24 @@ describe("GET /api/v1/p/events/{slug} — a rotated link (contract §6.1)", () =
     const error = await errorBody(response);
     expect(error.code).toBe("access_link_revoked");
     expect(error.details?.message).toBe(REVOKED_MESSAGE);
+  });
+
+  it("I5: a rotated slug's refusal body carries no event content", async () => {
+    const { oldSlug, eventId, name } = await rotateOnce("op130-rotate-content");
+
+    const response = await getPublicEvent(publicEventRequest(oldSlug));
+    const parsed = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(410);
+    // Whoever holds a rotated QR is a stranger to this event from now on, so
+    // the refusal may name the *link* and never the event behind it (review
+    // finding F2: `access_link_revoked` details in particular).
+    expect(Object.keys(parsed)).toEqual(["error"]);
+    expect(JSON.stringify(parsed)).not.toContain(name);
+    expect(JSON.stringify(parsed)).not.toContain(eventId);
+    const error = objectAt(parsed, "error");
+    expect(error.code).toBe("access_link_revoked");
+    expect(objectAt(error, "details").message).toBe(REVOKED_MESSAGE);
   });
 
   it("I5: the new slug answers 200 and resolves the same event", async () => {
