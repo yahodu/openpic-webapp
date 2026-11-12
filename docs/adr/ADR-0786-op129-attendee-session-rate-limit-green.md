@@ -221,3 +221,38 @@ statements are superseded in place without being rewritten, and both stay true a
 about the round-1 tree: §Evidence's counts describe the reviewed head, and §Number
 allocation's "the cell advances to `0787`" describes the ledger cell read at mint time —
 the lane cell has since advanced to `0788` because the renumber consumed `0787`.
+
+## Landing note — the stack was stranded, not rewritten (card `t_c2ec1845`)
+
+**No new decision. No new ADR number.** The class, the fail-closed policy and the pins
+above were already written and reviewed; they had never reached `main`. PR #451 was a
+draft whose base branch `OP-129-task-anonymous-attendee-sessions-red-fix` had itself
+landed (PR #446), so GitHub reported the PR `CONFLICTING` / `DIRTY` and its only checks
+were CodeQL and a failed "Assert CI evidence". This card landed the same work.
+
+- PR #451 was retargeted to `main` and `origin/main` (`e63b5cf`) was merged into the lane
+  as `d138e12`. No production file changed in the merge beyond the conflict resolution.
+- Conflicts resolved, both sides kept:
+  - `docs/adr/README.md` — union of the ledger: every index row from both sides in
+    ascending order, both prose blocks, and the OP-129 `Next free` cell at the **highest**
+    value (`0788`; the merged side read `0782`).
+  - `POST /p/attendee-sessions` — `main`'s `$elemMatch` slug binding kept, this lane's
+    `rateLimit` stage added. `GET …/current` keeps `main`'s `active === true` filter and
+    gains no limiter.
+  - The spec files, the ADR guard helper and ADR-0781 take `main`'s side, which is the
+    strict superset (`main` carries the F1 rotation pins and the dangling-reference
+    guard); the rate-limit `describe` block is appended to `attendee-sessions.test.ts`
+    unchanged, so the pins are byte-identical to the reviewed ones.
+- ADR sweep immediately before the push: `main`'s highest is `0781`, and the only
+  in-flight numbers across every open PR head are `0782`–`0785` (other OP-129 / OP-130
+  cards) and `0788`. `0786` and `0787` exist on this branch only, so nothing was
+  renumbered.
+- Gates on the merged tree: `adr-numbering` 54 passed and `adr-lane-ranges` 17 passed
+  (`checkAdrDirectory("docs/adr")` → `{ ok: true, issues: [] }`); `classes.test.ts` 40,
+  `stage.test.ts` 11, `attendee-sessions.test.ts` 21 (the 18 F1 pins plus the 3 rate-limit
+  pins), `attendee-session-token` 9 and `attendee-session-cookie` 6; full unit
+  162 files / 2625 passed | 3 skipped; full integration 1102 passed with two 5 s timeouts
+  in specs this lane does not touch (`admin-two-factor-signin` I10 and
+  `notification-digest-flush-claim-lease`), both green in isolation; `tsc -p
+apps/web/tsconfig.json --noEmit` exit `0`; ESLint 0 errors; `prettier --check` clean.
+- The merged tree differs from `origin/main` by 9 files, `+822/−9`, all of them this lane.
