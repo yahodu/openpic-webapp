@@ -281,3 +281,59 @@ principle cross the flag boundary and skip the winning log line — unreachable 
 
 **Nothing in the sections above is retracted.** No decision in the lane's earlier sections is re-pinned,
 no code changes come with this sign-off, and no ADR number of a still-unmerged follow-up is cited.
+
+## Amendment — the concurrent-removal retry budget (2026-11-12)
+
+**Why this amendment exists instead of a new record.** Card `t_d3a3c553` (review finding F1 of card
+`t_2849a4ca`, severity High) repairs a pre-existing flake on the removal route. No ADR number was
+minted: the repository sweep in `adr-numbering.test.ts` pins the tree's population exactly
+(`checkedLinks: 881, scannedRecords: 292`), so a new record — or a new link inside any record —
+reddens that ratchet, and editing a test is outside an implementer's lane. This section therefore
+carries the decision with no new file and no new link, and the lane's `Next free` cell is untouched.
+
+**The failure, measured.** `DELETE …/members/{userId}` decides the winner with
+`members.updateOne({ _id, revokedAt: null }, …)` inside `withTransaction`, whose budget is three
+attempts. The concurrent cases of `event-invitation-decisions.test.ts` answered `500` instead of `204`
+at random: trunk `f9d3a62` (run `43294038554`, job `ci`, `expected 500 to be 204`) and the docs-only
+`14b456d` (first `test_coverage` attempt, `expected [ 500, 204 ] to deeply equal [ 204, 204 ]`), both
+green on a rerun of the identical commit. Two probes on the harness — both deleted, neither a pin —
+established the mechanism rather than assuming it:
+
+1. two transactions racing the same `updateOne`: the loser spent the whole budget in **19 ms** as
+   `TransactionRetryLimitError` from the wrapper's own guard (not the driver), **while the winner's
+   transaction was still open**, and the member row still read `revokedAt: null` at that moment —
+   the winner's flip is invisible until it commits;
+2. the real route with a rival transaction holding the document lock and committing 250 ms later:
+   **3/3 rounds `500 internal_error`** before the fix and **3/3 `204`** with **zero** loser
+   `event member removed` lines after it.
+
+The driver's transient retries carry no delay, so three attempts span a few milliseconds — shorter
+than the winner's transaction (a member flip, an invitation revoke and two outbox emits) whenever the
+runner is loaded. The route did not handle the exhausted-budget signal, so the pipeline mapped it to
+`500`.
+
+**What the fix is.** `DELETE` catches `isTransactionRetryLimitError` (already exported by the wrapper,
+already used this way by the access-links rotation) and answers the same settled `204` the ordinary
+loser answers (contract §0.7); nothing of the loser's attempt was written, since the callback aborted.
+It does **not** re-read once: probe 1 shows the row still reads `revokedAt: null` at that instant, so a
+single re-read would answer `500` again. It polls the member row instead — 25 ms interval, 1 s ceiling
+— until the winner's commit is visible. A removal that never lands still surfaces the original error
+as `500`, so no client is told a seat was removed when it was not. The retry budget stays at three, the
+in-transaction predicate, the emit pair, the invitation revoke, the `409` arm, the `204` shape and the
+single-log-line rule are untouched.
+
+**Alternatives rejected.** Raising the budget at this call site (the retries are immediate, so a wider
+guess at the same race, and a deliberate bound is weakened for nothing); retrying the whole transaction
+in a second round (re-runs three writes and two emits to learn what one read answers); splitting the
+member flip out of the transaction (forbidden by the failing-emit pin, which requires the flip, the
+invitation revoke and both emits to roll back together); and editing the spec to serialize the pair
+(the flake is real product behaviour under a double click, not a test artifact).
+
+**Residual risk, named.** The 1 s ceiling is a fixed bound, not the winner's own duration: a removal
+transaction longer than 1 s under extreme load still answers `500`. Upgrade to a shared per-member
+removal lock if that is ever observed. Handed to the Test Author as a gap: the retry-limit branch has
+no deterministic committed pin — the existing concurrent cases exercise it only probabilistically, and
+this lane could not add one.
+
+**Nothing in the sections above is retracted.** No decision of the lane's earlier sections is
+re-pinned, and no code changes come with this amendment.
