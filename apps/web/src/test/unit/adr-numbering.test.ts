@@ -52,8 +52,8 @@ import {
  * silent, and so does an indented row: the row shape requires a leading `|`.
  * Reference resolution was out of scope until F6-b: the guards pinned the ADR
  * *directory* and the ledger, never the references pointing into it, so five
- * shipped production comments kept citing `ADR-0764`/`ADR-0765` [adr-fixture] after the
- * OP-128 round-1 renumber moved those decisions to `ADR-0766`/`ADR-0767` [adr-fixture] — they
+ * shipped production comments kept citing `0764`/`0765` after the
+ * OP-128 round-1 renumber moved those decisions to `0766`/`0767` — they
  * sent readers to a sibling lane's unrelated records and nothing failed. The
  * `checkSourceAdrReferences` / `checkRepositoryAdrReferences` contract is
  * documented in the block comment below.
@@ -109,7 +109,7 @@ import {
  * asking for a change):
  *   - the same file name passed twice is two group members, so the lone
  *     `duplicate` issue repeats the name (`["ADR-0146-a.md", "ADR-0146-a.md"]`);
- *   - `ADR-0000-x.md` and `ADR-9999-x.md` [adr-fixture] are well-formed: `parseAdrNumber`
+ *   - `ADR-000x.md` and `ADR-999x.md`-shaped names are well-formed: `parseAdrNumber`
  *     yields `0` / `9999`, and both are accepted when unique;
  *   - `checkAdrDirectory` on a missing directory throws (the TSDoc `@throws`
  *     branch), propagating the `node:fs` error with `code === "ENOENT"`;
@@ -517,7 +517,7 @@ describe("checkAdrDirectory — lane-range overlaps (ledger finding F-L1)", () =
   it("reports one overlap issue for the live OP-126 / OP-129 intersection", () => {
     // Arrange — the measured in-flight state: the uploads lane reserved
     // 0760-0779 and the attendee-identity lane reserved 0769-0788, which is how
-    // ADR-0770 [adr-fixture] came to exist twice. README order is deliberately reversed, so
+    // 0770 came to exist twice. README order is deliberately reversed, so
     // the issue's holder order pins the ascending sort.
     const dir = makeTempAdrDirWithReadme(
       ["ADR-0760-op126-uploads-green.md"], // adr-fixture
@@ -971,9 +971,9 @@ describe("checkAdrDirectory — range-shaped rows that do not parse (review find
  * to a `docs/adr/ADR-NNNN-*.md` file (finding F6-b, OP-128 follow-up).
  *
  * **Why this exists.** The OP-128 round-1 renumber moved two lane records from
- * `ADR-0764`/`ADR-0765` to `ADR-0766`/`ADR-0767` [adr-fixture] (fix PR #461), but five shipped
+ * `0764`/`0765` to `0766`/`0767` (fix PR #461), but five shipped
  * production comments and three spec headers kept citing the old numbers. Those
- * numbers are *not free*: `ADR-0764` and `ADR-0765` [adr-fixture] belong to sibling lanes, so
+ * numbers are *not free*: `0764` and `0765` belong to sibling lanes, so
  * the stale comments pointed readers at a different lane's unrelated decisions.
  * `checkAdrNumbers` could not see it — it reads file *names* in `docs/adr/` and
  * never the references pointing into it. This block pins the check that closes
@@ -1007,13 +1007,17 @@ describe("checkAdrDirectory — range-shaped rows that do not parse (review find
  * The rule is textual: a reference in a line comment, a block comment or a string
  * literal all count — the F6 defect lived in comments.
  *
- * **Fixture marker.** A line whose text contains `adr-fixture` is exempt: the
- * guard's own specs are full of synthetic numbers that must never resolve
- * (`ADR-0000`/`ADR-9999` [adr-fixture] shape fixtures, `ADR-0764` [adr-fixture] lookalikes, lane numbers that
- * only exist on an unmerged branch). The exemption is per **line text**, never a
- * line number and never a number range, so it travels with the fixture when it
- * moves and a new dangling reference on an unmarked line still fails. Exempt
- * references are counted in `exemptReferences`, not in `checkedReferences`.
+ * **Fixture marker.** A line **inside the guard's own test tree**
+ * (`apps/web/src/test/**`) whose text contains `adr-fixture` is exempt: those
+ * specs are full of synthetic numbers that must never resolve (`ADR-000x`/
+ * `ADR-999x` shape fixtures, `0764` lookalikes, lane numbers that only exist on
+ * an unmerged branch). The exemption is per **line text** *and* per **path** —
+ * never a line number, never a number range and never a whole file — so it
+ * travels with the fixture when it moves, a new dangling reference on an
+ * unmarked line still fails, and a stale pointer in `apps/web/src/server`,
+ * `apps/web/src/app` or any `packages` source tree fails **even when its line
+ * carries the marker** (finding F-M1). Exempt references are counted in
+ * `exemptReferences`, not in `checkedReferences`.
  *
  * **`checkRepositoryAdrReferences`** scans, deterministically and sorting-free
  * (the report is sorted by file, then line, then number):
@@ -1250,6 +1254,77 @@ describe("checkSourceAdrReferences — the fixture marker", () => {
     ]);
     expect(result.checkedReferences).toBe(1);
     expect(result.exemptReferences).toBe(1);
+  });
+
+  it("does not exempt a marked dangling reference in the application source", () => {
+    // Arrange — the F-M1 hole: a real stale pointer in shipped source with the
+    // exemption word appended. The pre-scope helper swallowed it silently.
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/media/signed-urls.ts",
+        text: "// see ADR-0764 for the decision adr-fixture", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, ["ADR-0766-decision.md"]);
+
+    // Assert — the marker buys nothing outside the guard's own test tree.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "dangling-reference",
+          file: "apps/web/src/server/media/signed-urls.ts",
+          line: 1,
+          number: "0764",
+        },
+      ],
+      checkedReferences: 1,
+      exemptReferences: 0,
+    });
+  });
+
+  it.each<[string, string]>([
+    ["the app router tree", "apps/web/src/app/(public)/events/page.tsx"],
+    ["a package source tree", "packages/contracts/src/index.ts"],
+    ["a sibling directory whose name starts with `test`", "apps/web/src/test-tools/server.ts"],
+    ["a path that leaves the test tree", "apps/web/src/test/../server/x.ts"],
+  ])("does not exempt a marked dangling reference in %s", (_where, path) => {
+    // Arrange — every path here sits outside `apps/web/src/test/**`, so the
+    // marker must not be load-bearing. The last two rows pin an explicit
+    // directory boundary and a normalized path, not a raw prefix test.
+    const sources: SourceFileText[] = [
+      { path, text: "// ADR-0764 adr-fixture" }, // adr-fixture: the line under test is itself a fixture
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: "dangling-reference", file: path, line: 1, number: "0764" }],
+      checkedReferences: 1,
+      exemptReferences: 0,
+    });
+  });
+
+  it("exempts a marked line anywhere under the guard's own test tree", () => {
+    // Arrange — the fixture half of the scope: helpers, unit and integration
+    // specs all live under `apps/web/src/test/**`.
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/integration/media-signed-urls.test.ts",
+        text: "// ADR-0764 synthetic adr-fixture", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedReferences: 0, exemptReferences: 1 });
   });
 });
 
