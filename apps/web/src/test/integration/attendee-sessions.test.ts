@@ -12,6 +12,13 @@ import {
 } from "@/server/settings/platform-settings";
 import { hashAttendeeSessionToken } from "@/server/attendee/session-token";
 import { COLLECTIONS } from "@/server/db/collections";
+import {
+  createLogger,
+  getLogger,
+  memoryTransport,
+  setLogger,
+  type MemoryTransport,
+} from "@/server/logging";
 import { createRateLimiter } from "@/server/rate-limit";
 
 import { setCookies } from "../helpers/auth-requests";
@@ -82,18 +89,32 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   `x-forwarded-for` and `accept-language`. Which salt and which hash-of-what
  *   are **not** pinned — only that all three are 64-hex digests and that no raw
  *   component survives.
- * - An unknown `eventSlug` is `404 not_found` (ADR-0781 decided what contract
- *   §1.5 left open: a silently unbound session would let an attendee believe a
- *   selfie was attached to an event it never reached). It is pinned here only
- *   as the *control* that proves the 404 machinery exists, so the F1 red cases
- *   below cannot pass merely because every unresolved slug is refused.
+ * - An unknown `eventSlug` is `404 not_found` **and writes no row** (ADR-0781;
+ *   the F2 pins in ADR-0782): a silently unbound session would let an attendee
+ *   believe a selfie was attached to an event it never reached, and a create
+ *   that inserted the row before validating the slug would still answer 404
+ *   while leaking a bearer credential's row — hence the collection-agnostic
+ *   scanner, before and after.
+ * - The same `404` is pinned here as the *control* that proves the machinery
+ *   exists, so the F1 red cases below cannot pass merely because every
+ *   unresolved slug is refused.
+ * - `current` reads the `op_att` cookie first and the `X-Attendee-Session`
+ *   header second, so a **stale** cookie shadows a valid header. §0.2 says
+ *   "cookie **or** header", so F4 pins the intended fall-through (RED on the
+ *   shipped implementation; GREEN `t_a909e641`) and keeps the lapsed-cookie
+ *   answer (`401 attendee_session_expired`, never a header retry) green beside
+ *   it, so the fall-through cannot be bought with a swallowed expiry.
  * - A `current` body's `eventSlugs` lists the bound events' **active** link
  *   slugs only. A link deactivated after the session was created is therefore
  *   reported as absent (ADR-0781 F1 amendment), not as a stale slug.
- * - A signed-in user calling `current` is out of scope too: the `attendee` label
- *   admits a user session (`evaluateAuth`, already pinned by
- *   `guards.test.ts`), and what `current` answers for a user with no attendee
- *   session is not in the contract.
+ * - A signed-in user is **admitted** by the `attendee` label (`evaluateAuth`,
+ *   pinned by `guards.test.ts`) and then answered `401
+ *   authentication_required`, because §1.5 defines only the anonymous body
+ *   (F5). That shipped answer is pinned, and the contract question is recorded
+ *   in ADR-0782 §3.
+ * - A signed-in user calling `current` is out of scope for the same reason: the
+ *   `attendee` label admits a user session, and what `current` answers for a
+ *   user with no attendee session is not in the contract.
  */
 
 let app: TestApp;
@@ -382,14 +403,52 @@ function cookiePairOf(header: string): string {
   return pair;
 }
 
-/** A seeded `events` row: the id a session binds and its link slugs, in order. */
+/** A seeded `events` row: the id a session binds and the slug that names it. */
 interface SeededEvent {
+  readonly id: ObjectId;
+  readonly slug: string;
+}
+
+/** A seeded `events` row: the id a session binds and its link slugs, in order. */
+interface FlaggedEvent {
   readonly id: ObjectId;
   readonly slugs: readonly string[];
 }
 
 /** Monotonic counter so every seeded event gets slugs no other row carries. */
 let seededEventSeq = 0;
+
+/**
+ * Insert an `events` row carrying one active `accessLinks[0]` entry (schema §15.1).
+ *
+ * The create route resolves an `eventSlug` through `events.accessLinks[].slug`
+ * (ADR-0781), so the row has to be a real event with a real link: a slug seeded
+ * anywhere else would pin nothing about the binding.
+ *
+ * @returns The new row's `_id` and its access-link slug.
+ */
+async function seedEventWithSlug(): Promise<SeededEvent> {
+  seededEventSeq += 1;
+  const slug = `op129edge${String(seededEventSeq).padStart(4, "0")}`;
+  const _id = new ObjectId();
+  const now = new Date();
+  await app.db.collection(COLLECTIONS.events).insertOne({
+    _id,
+    tenantId: new ObjectId(),
+    name: `OP-129 edge event ${String(seededEventSeq)}`,
+    description: "",
+    status: "published",
+    startAt: now,
+    endAt: now,
+    displayTimeZone: "Asia/Kolkata",
+    uploadWindowEndsAt: now,
+    retentionExpiresAt: now,
+    accessLinks: [{ slug, active: true, createdAt: now, revokedAt: null }],
+    createdAt: now,
+    schemaVersion: 1,
+  });
+  return { id: _id, slug };
+}
 
 /**
  * Insert a published `events` row whose `accessLinks[]` is exactly `activeFlags`
@@ -404,7 +463,7 @@ let seededEventSeq = 0;
  * @param activeFlags - The `active` flag of each `accessLinks[]` element, in order.
  * @returns The new row's `_id` and its link slugs, in `accessLinks[]` order.
  */
-async function seedEvent(activeFlags: readonly boolean[]): Promise<SeededEvent> {
+async function seedEvent(activeFlags: readonly boolean[]): Promise<FlaggedEvent> {
   seededEventSeq += 1;
   const tag = String(seededEventSeq).padStart(4, "0");
   const now = new Date();
@@ -441,7 +500,7 @@ async function seedEvent(activeFlags: readonly boolean[]): Promise<SeededEvent> 
  * @param index - The `accessLinks[]` position.
  * @returns The slug stored at that position.
  */
-function slugAt(event: SeededEvent, index: number): string {
+function slugAt(event: FlaggedEvent, index: number): string {
   const slug = event.slugs.at(index);
   if (slug === undefined) {
     throw new Error(`expected the seeded event to carry an access link at index ${String(index)}`);
@@ -453,11 +512,12 @@ function slugAt(event: SeededEvent, index: number): string {
  * Every document in the suite's database that carries a `tokenHash`, tagged as
  * `collection:digest`.
  *
- * The collection that holds a session row is the implementation's choice, so "no
- * session was written" has to be a database-wide scan (like
- * {@link documentsContaining}) rather than a count on a named collection.
+ * The failed-create pin must prove that **no** attendee-session row was
+ * written, and the collection that row lives in is the implementation's
+ * choice — so the scan is collection-agnostic, like {@link documentsContaining},
+ * rather than a count on a named collection.
  *
- * @returns One tag per stored session row, sorted.
+ * @returns One `collection:tokenHash` tag per matching document, sorted.
  */
 async function sessionRowTags(): Promise<string[]> {
   const tags: string[] = [];
@@ -473,9 +533,17 @@ async function sessionRowTags(): Promise<string[]> {
   return tags.sort();
 }
 
+/** Read a value as an array of `ObjectId` hex ids, failing with a naming message. */
+function objectIdHexes(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`expected ${field} to be an array, got ${typeof value}`);
+  }
+  return value.map((entry) => objectIdHex(entry, `${field}[]`));
+}
+
 /** A route's §Appendix A error envelope, as far as these pins read it. */
 interface ErrorBody {
-  readonly error: { readonly code: string };
+  readonly error: { readonly code: string; readonly details?: { recreateUrl?: unknown } };
 }
 
 describe("POST /api/v1/p/attendee-sessions", () => {
@@ -653,6 +721,167 @@ describe("GET /api/v1/p/attendee-sessions/current", () => {
     expect((await jsonOf<{ error: { code: string } }>(malformed)).error.code).toBe(
       "authentication_required"
     );
+  });
+});
+
+describe("POST /api/v1/p/attendee-sessions — the eventSlug binding (§1.5)", () => {
+  // ADR-0781 decides what contract §1.5 left open: `eventSlug` names an event
+  // through `events.accessLinks[].slug`, `eventIds` records exactly that event,
+  // and a slug that matches nothing is `404 not_found` rather than a silently
+  // unbound session. All three cases below are characterization pins: they
+  // describe the shipped implementation and pass on it unchanged.
+
+  it("F2: binds the session to the event named by the slug and current projects it back", async () => {
+    const event = await seedEventWithSlug();
+
+    const created = await createdSession({ body: { eventSlug: event.slug } });
+    const stored = await storedSession(created.sessionToken);
+
+    expect(objectIdHexes(stored.document.eventIds, "attendeeSessions.eventIds")).toEqual([
+      event.id.toHexString(),
+    ]);
+
+    const response = await currentSession({ cookie: `op_att=${created.sessionToken}` });
+    expect(response.status).toBe(200);
+    const current = await jsonOf<CurrentSession>(response);
+
+    expect(current.eventSlugs).toEqual([event.slug]);
+    expect(current.kind).toBe("anonymous");
+  });
+
+  it("F2: a slug that matches no event is 404 not_found and writes no session row", async () => {
+    // The important half: `eventIdsFor()` must run **before** the insert. A
+    // refactor that inserted the row first and validated the slug second would
+    // still answer 404, but it would leave a bearer credential's row behind —
+    // hence the database-wide scan rather than a status-only assertion.
+    const before = await sessionRowTags();
+
+    const response = await createSession({ body: { eventSlug: "op129edge-no-such-event" } });
+
+    expect(response.status).toBe(404);
+    expect((await jsonOf<ErrorBody>(response)).error.code).toBe("not_found");
+    expect(await sessionRowTags()).toEqual(before);
+  });
+
+  it("F2: a slug naming a different event binds only that event", async () => {
+    const other = await seedEventWithSlug();
+    const bound = await seedEventWithSlug();
+
+    const created = await createdSession({ body: { eventSlug: bound.slug } });
+    const stored = await storedSession(created.sessionToken);
+
+    expect(objectIdHexes(stored.document.eventIds, "attendeeSessions.eventIds")).toEqual([
+      bound.id.toHexString(),
+    ]);
+
+    const response = await currentSession({ cookie: `op_att=${created.sessionToken}` });
+    expect(response.status).toBe(200);
+    const current = await jsonOf<CurrentSession>(response);
+
+    expect(current.eventSlugs).toEqual([bound.slug]);
+    expect(current.eventSlugs).not.toContain(other.slug);
+  });
+});
+
+describe("GET /api/v1/p/attendee-sessions/current — cookie vs header precedence (§0.2)", () => {
+  /**
+   * Contract §0.2 says the `op_att` cookie **or** the `X-Attendee-Session`
+   * header authenticates. Today the resolver reads the cookie first and stops
+   * when that token matches no row, so a stale cookie shadows a valid header
+   * (`t_a909e641` is the GREEN that makes the fall-through reach the header).
+   *
+   * This case is RED by design: it pins the **intended** answer, not today's.
+   * If the contract owner keeps cookie-first precedence instead, the flip is
+   * contained in this one case — change the status expectation to `401` and
+   * replace the body assertions with
+   * `expect((await jsonOf<ErrorBody>(response)).error.code).toBe("authentication_required")`
+   * — and the companion case below must stay green either way.
+   */
+  it("F4: a stale op_att cookie falls through to a valid X-Attendee-Session header", async () => {
+    const created = await createdSession();
+    const stored = await storedSession(created.sessionToken);
+
+    const response = await currentSession({
+      cookie: "op_att=opat_never-issued-000",
+      "x-attendee-session": created.sessionToken,
+    });
+
+    expect(response.status).toBe(200);
+
+    const current = await jsonOf<CurrentSession>(response);
+
+    expect(current.id).toBe(objectIdHex(stored.document._id, "attendeeSessions._id"));
+    expect(current.kind).toBe("anonymous");
+    expect(current.expiresAt).toBe(created.expiresAt);
+    expect(JSON.stringify(current)).not.toContain(created.sessionToken);
+  });
+
+  /**
+   * The companion the F4 fix must **not** buy with a swallowed expiry: a
+   * lapsed cookie is an explicit `401 attendee_session_expired` with
+   * `details.recreateUrl`, never a second attempt against the header. This case
+   * is green on the shipped implementation and must stay green.
+   */
+  it("F4: a lapsed op_att cookie is 401 attendee_session_expired even with a valid header", async () => {
+    const lapsed = await createdSession();
+    await ageSession(lapsed.sessionToken, new Date(Date.now() - 1_000));
+    const valid = await createdSession();
+
+    const response = await currentSession({
+      cookie: `op_att=${lapsed.sessionToken}`,
+      "x-attendee-session": valid.sessionToken,
+    });
+
+    expect(response.status).toBe(401);
+
+    const parsed = await jsonOf<ErrorBody>(response);
+
+    expect(parsed.error.code).toBe("attendee_session_expired");
+    if (typeof parsed.error.details?.recreateUrl !== "string") {
+      throw new Error("expected details.recreateUrl to be a string");
+    }
+    expect(parsed.error.details.recreateUrl.startsWith("/")).toBe(true);
+  });
+});
+
+describe("GET /api/v1/p/attendee-sessions/current — a signed-in user (§1.5)", () => {
+  /**
+   * The `attendee` label admits a **user** principal (`evaluateAuth`, pinned by
+   * `guards.test.ts`), and §1.5 then defines no body for one: the handler
+   * answers `401 authentication_required` because it has no attendee token to
+   * project. That shipped answer is what this case pins, and the contract
+   * question it leaves open ("does §1.5 owe a user projection?") is recorded in
+   * ADR-0782 §3 — a future user projection flips this case to `200` with the
+   * user's own body.
+   *
+   * The status alone cannot tell "the guard admitted the user" from "the guard
+   * refused the user" — both are `401 authentication_required` — so the case
+   * also asserts the guard's own observable: **no** `auth.denied` record is
+   * logged for this request. That is what makes the pin bite.
+   */
+  it("F5: a signed-in user is admitted by the label and answered 401 authentication_required", async () => {
+    const user = await app.signIn();
+
+    const previous = getLogger();
+    const sink: MemoryTransport = memoryTransport();
+    setLogger(
+      createLogger({
+        level: "info",
+        transports: [sink],
+        service: "openpic-web",
+        env: "test",
+        version: "test-sha",
+      })
+    );
+    const response = await currentSession({ cookie: user.cookie }).finally(() => {
+      setLogger(previous);
+    });
+
+    expect(response.status).toBe(401);
+    expect((await jsonOf<ErrorBody>(response)).error.code).toBe("authentication_required");
+    // The sink must have observed the request, or "no auth.denied" is vacuous.
+    expect(sink.entries.some((entry) => entry.event === "http.request.rejected")).toBe(true);
+    expect(sink.entries.filter((entry) => entry.event === "auth.denied")).toEqual([]);
   });
 });
 

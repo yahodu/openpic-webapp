@@ -19,7 +19,11 @@ import { join, posix, relative, sep } from "node:path";
  *      that does not parse is reported rather than skipped
  *      (`lane-range-malformed`) (ADR-0300 §10);
  *   4. every `ADR-NNNN` reference inside a source file resolves to a
- *      `docs/adr/ADR-NNNN-*.md` file (`dangling-reference`, finding F6-b).
+ *      `docs/adr/ADR-NNNN-*.md` file (`dangling-reference`, finding F6-b);
+ *   5. every such reference that resolves to a record declaring a `Consumers:`
+ *      field is made by a file that record names (`consumer-mismatch`, finding
+ *      F-N1). A citation of a record that declares no `Consumers:` field is
+ *      `unlisted-consumer`: reported and counted, not failed.
  *
  * The third check parses exactly one table shape from the ledger: a pipe row
  * whose second cell is a closed `` `NNNN`–`NNNN` `` pair. It cannot see a
@@ -35,6 +39,17 @@ import { join, posix, relative, sep } from "node:path";
  * sibling lanes, so the comments pointed at the wrong decisions. Nothing read
  * the references; now the sweep does. See {@link checkSourceAdrReferences} and
  * {@link checkRepositoryAdrReferences}.
+ *
+ * The fifth answers the question the fourth cannot: "is the record this comment
+ * cites the *right* record?" Existence is not accuracy. Nine OP-129 spec headers
+ * cited a number that had never been minted; when a record with that number was
+ * minted for the OP-128 lane, all nine silently became "valid" references to a
+ * decision about a different feature, and the fourth check's real-tree case
+ * stayed green. The accuracy rule is decidable only where a record states its
+ * own consumers, so it is opt-in per record: a record carrying a `Consumers:`
+ * field is hard-checked against every file that cites it, and a record without
+ * one is counted as `unlisted-consumer` so the debt stays visible. See
+ * {@link checkSourceAdrConsumers} and {@link checkRepositoryAdrConsumers}.
  *
  * @see docs/CONVENTIONS.md §11 (ADR numbering)
  * @see docs/adr/ADR-0300-adr-number-range-allocation-policy.md
@@ -566,8 +581,8 @@ function resolvableAdrNumbers(adrFileNames: readonly string[]): Set<string> {
 
 /** Order source-reference issues: file, then line, then number. */
 function compareSourceIssues(
-  left: SourceAdrReferenceIssue,
-  right: SourceAdrReferenceIssue
+  left: { readonly file: string; readonly line: number; readonly number: string },
+  right: { readonly file: string; readonly line: number; readonly number: string }
 ): number {
   const byFile = compareStrings(left.file, right.file);
   if (byFile !== 0) {
@@ -695,4 +710,446 @@ export function checkRepositoryAdrReferences(root: string): SourceAdrReferenceRe
   const sources = paths.map((path) => ({ path, text: readTextFile(join(root, path)) }));
 
   return checkSourceAdrReferences(sources, adrFileNames);
+}
+
+/* ------------------------------------------------------------------------- *
+ * Invariant 5 — every citation of a declaring record names the citing file
+ * (finding F-N1)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One ADR record as the accuracy sweep reads it: the bare file name (so a
+ * report can say *which* record a citation resolved to) and the whole
+ * markdown. The caller decides where the text comes from, so
+ * {@link checkSourceAdrConsumers} stays pure and testable without fixtures on
+ * disk.
+ */
+export interface AdrRecordText {
+  /** Bare file name, e.g. `ADR-0302-adr-number-guard-contract.md`. */
+  fileName: string;
+
+  /** The record's whole markdown. */
+  text: string;
+}
+
+/**
+ * One accuracy finding for an in-source citation.
+ *
+ * `consumer-mismatch` — the cited record declares a `Consumers:` field and does
+ * not name the citing file; that is a failure. `unlisted-consumer` — the cited
+ * record declares no `Consumers:` field, so there is no claim to check; the
+ * citation is reported (and counted) in its own channel, never as a failure,
+ * because 1206 of this head's 1238 references point at records written before
+ * the field existed and a hard failure would demand a 175-record docs
+ * programme. Enforcement is therefore **per record**: the moment a record adds
+ * `Consumers:`, every citation of it is hard-checked, and nothing is exempt by
+ * file or directory.
+ */
+export interface SourceAdrConsumerIssue {
+  /** `consumer-mismatch` fails the report; `unlisted-consumer` is reported only. */
+  code: "consumer-mismatch" | "unlisted-consumer";
+
+  /** Repo-relative POSIX path of the citing file. */
+  file: string;
+
+  /** 1-based line number of the reference, matching an editor's gutter. */
+  line: number;
+
+  /** The four digits as written, e.g. `"0786"`. */
+  number: string;
+
+  /** The cited record's bare file name. */
+  record: string;
+}
+
+/** The report shape returned by {@link checkSourceAdrConsumers}. */
+export interface SourceAdrConsumerResult {
+  /** `true` exactly when {@link SourceAdrConsumerResult.issues} is empty. */
+  ok: boolean;
+
+  /** One `consumer-mismatch` per citation the declaring record does not claim. */
+  issues: SourceAdrConsumerIssue[];
+
+  /** One `unlisted-consumer` per citation of a record that declares nothing. */
+  unlisted: SourceAdrConsumerIssue[];
+
+  /** References the accuracy rule evaluated (the cited record exists, not exempt). */
+  checkedReferences: number;
+
+  /** References skipped because a fixture-tree line carries the marker. */
+  exemptReferences: number;
+
+  /**
+   * References whose record does not exist. Invariant 4 owns them; this counter
+   * lets the two reports be reconciled
+   * (`checkedReferences + danglingReferences === checkSourceAdrReferences(...).checkedReferences`).
+   */
+  danglingReferences: number;
+
+  /** Evaluated references the cited record names. */
+  verifiedReferences: number;
+
+  /** Numbers (as written) of the records that declare consumers, ascending. */
+  declaredRecords: string[];
+}
+
+/**
+ * The consumer declaration: exactly the `Consumers:` field label at the start of
+ * a list item. `Consumes:` is a different field (what the decision consumes, not
+ * who consumes it) and must never be read as one of these.
+ */
+const CONSUMERS_FIELD_PATTERN = /^-\s+\*\*Consumers:\*\*/m;
+
+/**
+ * A repo-relative path token in a record, e.g. `apps/web/src/server/x.ts`.
+ * Brackets are part of the path (Next.js route segments), so they stay in.
+ */
+const RECORD_PATH_TOKEN_PATTERN = /(?:apps|packages)\/[A-Za-z0-9_./[\]-]+/g;
+
+/**
+ * A module specifier in a record, e.g. `` `@/server/rate-limit/classes` ``. A
+ * trailing `[...]` group is an annotation (`@/api/v1/p/attendee-sessions[/current]`
+ * names the route and its child), so it is stripped before resolution.
+ */
+const RECORD_SPECIFIER_TOKEN_PATTERN = /@\/[A-Za-z0-9_./[\]-]+/g;
+
+/** A backticked identifier in a record, e.g. `` `AUTH_ERROR_CODES` ``. */
+const RECORD_BACKTICKED_NAME_PATTERN = /`([A-Za-z_$][A-Za-z0-9_$]*)`/g;
+
+/** An exported declaration in a source file, e.g. `export function gate(`. */
+const SOURCE_EXPORTED_DECLARATION_PATTERN =
+  /\bexport\s+(?:const|let|var|function|class|interface|type|enum)\b|\bexport\s+async\s+function\b/g;
+
+/** The identifier a declaration introduces, read from the text after it. */
+const EXPORTED_IDENTIFIER_PATTERN = /^\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)/;
+
+/** An export list in a source file, e.g. `export { a, b as c }`. */
+const SOURCE_EXPORT_LIST_PATTERN = /\bexport\s*\{([^}]*)\}/g;
+
+/**
+ * The identifier floor for the exported-symbol channel. Short generic names
+ * (`GET`, `rate`, `db`) appear in hundreds of records and would verify
+ * arbitrary files; six characters is the point where a name is specific enough
+ * to identify a file's API. Deliberate leniency in one direction only: a false
+ * accept hides a citation the record does talk about, a false failure would get
+ * silenced with a wider exemption.
+ */
+const MIN_EXPORTED_SYMBOL_LENGTH = 6;
+
+/** Trim the punctuation a prose mention leaves on a path token. */
+function trimPathToken(token: string): string {
+  return token.replace(/[.,;:]+$/, "");
+}
+
+/** Strip a trailing `[...]` annotation group from a module specifier. */
+function stripSpecifierAnnotation(specifier: string): string {
+  return specifier.replace(/\[[^\]]*\]$/, "");
+}
+
+/** The facts a record contributes to the accuracy rule, computed once. */
+interface RecordConsumerFacts {
+  /** The record's file name, reported verbatim. */
+  fileName: string;
+
+  /** Does the record declare a `Consumers:` field at all? */
+  declaresConsumers: boolean;
+
+  /** Repo-relative path tokens, trimmed. */
+  paths: string[];
+
+  /** `@/…` specifiers mapped to `apps/web/src/…` and de-annotated. */
+  specifiers: string[];
+
+  /** The backticked identifiers the record names. */
+  symbols: ReadonlySet<string>;
+
+  /** The whole markdown, for the bare-file-name channel. */
+  text: string;
+}
+
+/** Read one record's identification surface. */
+function recordConsumerFacts(record: AdrRecordText): RecordConsumerFacts {
+  const paths = [...record.text.matchAll(RECORD_PATH_TOKEN_PATTERN)]
+    .map((match) => trimPathToken(match[0]))
+    .filter((token) => token.length > "apps/".length);
+
+  const specifiers = [...record.text.matchAll(RECORD_SPECIFIER_TOKEN_PATTERN)]
+    .map((match) => stripSpecifierAnnotation(trimPathToken(match[0])))
+    .filter((token) => token.length > "@/".length)
+    // `@/x` names `apps/web/src/x` for a module, and `apps/web/src/app/x` for an
+    // App Router route: records write `@/api/v1/p/attendee-sessions[/current]`
+    // for the route as well as `@/server/db/indexes` for the module, and both
+    // must resolve or the channel would only ever work for one of them.
+    .flatMap((token) => [`apps/web/src/${token.slice(2)}`, `apps/web/src/app/${token.slice(2)}`]);
+
+  const symbols = new Set(
+    [...record.text.matchAll(RECORD_BACKTICKED_NAME_PATTERN)].map((match) => match[1] ?? "")
+  );
+  symbols.delete("");
+
+  return {
+    fileName: record.fileName,
+    declaresConsumers: CONSUMERS_FIELD_PATTERN.test(record.text),
+    paths,
+    specifiers,
+    symbols,
+    text: record.text,
+  };
+}
+
+/** Does `text` mention `token` as a whole name (not as part of a longer one)? */
+function mentionsToken(text: string, token: string): boolean {
+  const isNameCharacter = (character: string): boolean => /[A-Za-z0-9_$-]/.test(character);
+  let index = text.indexOf(token);
+
+  while (index !== -1) {
+    const before = text.charAt(index - 1);
+    const after = text.charAt(index + token.length);
+    const boundaryBefore = before === "" || (!isNameCharacter(before) && before !== ".");
+    const boundaryAfter = after === "" || !isNameCharacter(after);
+
+    if (boundaryBefore && boundaryAfter) {
+      return true;
+    }
+    index = text.indexOf(token, index + 1);
+  }
+
+  return false;
+}
+
+/** The identifiers a source file exports, minus the ones below the floor. */
+function exportedIdentifiers(text: string): string[] {
+  const names = new Set<string>();
+
+  for (const match of text.matchAll(SOURCE_EXPORTED_DECLARATION_PATTERN)) {
+    const rest = text.slice(match.index + match[0].length);
+    const declared = EXPORTED_IDENTIFIER_PATTERN.exec(rest)?.[1];
+    if (declared !== undefined) {
+      names.add(declared);
+    }
+  }
+
+  for (const list of text.matchAll(SOURCE_EXPORT_LIST_PATTERN)) {
+    for (const entry of (list[1] ?? "").split(",")) {
+      const alias =
+        entry
+          .trim()
+          .split(/\s+as\s+/)
+          .pop() ?? "";
+      const name = alias.replace(/^type\s+/, "").trim();
+      if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
+        names.add(name);
+      }
+    }
+  }
+
+  return [...names].filter((name) => name.length >= MIN_EXPORTED_SYMBOL_LENGTH);
+}
+
+/**
+ * Does `facts` identify the file at `sourcePath`, given the identifiers that
+ * file exports? The four channels are, in the order the module docblock states
+ * them: repo-relative path (exact or directory prefix), `@/` module specifier
+ * (exact, plus a swept extension, or directory prefix), the bare file name as a
+ * whole token, and an exported identifier the record names in backticks.
+ */
+function identifiesFile(
+  facts: RecordConsumerFacts,
+  sourcePath: string,
+  exported: readonly string[]
+): boolean {
+  const normalized = posix.normalize(sourcePath);
+
+  if (
+    facts.paths.some(
+      (candidate) =>
+        normalized === candidate || normalized.startsWith(`${candidate.replace(/\/+$/, "")}/`)
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    facts.specifiers.some(
+      (candidate) =>
+        normalized === candidate ||
+        normalized.startsWith(`${candidate.replace(/\/+$/, "")}/`) ||
+        normalized.startsWith(`${candidate}.`)
+    )
+  ) {
+    return true;
+  }
+
+  const bareName = normalized.slice(normalized.lastIndexOf("/") + 1);
+  if (bareName.length > 0 && mentionsToken(facts.text, bareName)) {
+    return true;
+  }
+
+  return exported.some((name) => facts.symbols.has(name));
+}
+
+/**
+ * Check that every `ADR-NNNN` reference in `sources` points at a record that
+ * names the citing file, when the record declares who its consumers are
+ * (finding F-N1). Pure — it never touches the filesystem.
+ *
+ * The reference population is exactly {@link checkSourceAdrReferences}'s, with
+ * the same per-line `adr-fixture` exemption inside `apps/web/src/test` and the
+ * same case-sensitive token, so the two reports reconcile. Each citation is
+ * classified once: a reference whose record is missing is counted in
+ * `danglingReferences` and left to invariant 4; a citation of a record without a
+ * `Consumers:` field is `unlisted-consumer`; a citation of a declaring record
+ * that identifies the file is `verifiedReferences`; everything else is a
+ * `consumer-mismatch` issue.
+ *
+ * Duplicate numbers do not make this throw or go vacuous: a citation is declared
+ * when *any* record with that number declares, and verified when any of them
+ * identifies the citing file — reporting duplicates stays
+ * {@link checkAdrNumbers}' job.
+ *
+ * @param sources - The source files to scan, in any order.
+ * @param records - The `docs/adr` records: bare file name plus whole text.
+ * @returns The accuracy report; `ok` is `false` exactly when a declaring record
+ * does not claim a file that cites it.
+ * @example
+ * ```ts
+ * checkSourceAdrConsumers(
+ *   [{ path: "apps/web/src/server/x.ts", text: "// see ADR-0146-a.md" }],
+ *   [{ fileName: "ADR-0146-a.md", text: "- **Consumers:** `apps/web/src/server/x.ts`" }]
+ * );
+ * // { ok: true, issues: [], verifiedReferences: 1, declaredRecords: ["0146"], … }
+ * ```
+ */
+export function checkSourceAdrConsumers(
+  sources: readonly SourceFileText[],
+  records: readonly AdrRecordText[]
+): SourceAdrConsumerResult {
+  const factsByNumber = new Map<string, RecordConsumerFacts[]>();
+  for (const record of [...records].sort((left, right) =>
+    compareStrings(left.fileName, right.fileName)
+  )) {
+    const digits = adrDigitsOf(record.fileName);
+    if (digits === null) {
+      continue;
+    }
+    const seen = factsByNumber.get(digits);
+    const facts = recordConsumerFacts(record);
+    if (seen === undefined) {
+      factsByNumber.set(digits, [facts]);
+    } else {
+      seen.push(facts);
+    }
+  }
+
+  const declaredRecords = [...factsByNumber.entries()]
+    .filter(([, facts]) => facts.some((entry) => entry.declaresConsumers))
+    .map(([digits]) => digits)
+    .sort((left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10));
+
+  const issues: SourceAdrConsumerIssue[] = [];
+  const unlisted: SourceAdrConsumerIssue[] = [];
+  let checkedReferences = 0;
+  let exemptReferences = 0;
+  let danglingReferences = 0;
+  let verifiedReferences = 0;
+
+  for (const source of sources) {
+    const exported = exportedIdentifiers(source.text);
+
+    for (const [index, line] of source.text.split("\n").entries()) {
+      const references = [...line.matchAll(SOURCE_ADR_REFERENCE_PATTERN)];
+      if (references.length === 0) {
+        continue;
+      }
+
+      if (
+        isSourceAdrFixturePath(source.path) &&
+        line.includes(SOURCE_ADR_REFERENCE_FIXTURE_MARKER)
+      ) {
+        exemptReferences += references.length;
+        continue;
+      }
+
+      for (const reference of references) {
+        const number = reference[1] ?? "";
+        const facts = factsByNumber.get(number);
+        if (facts === undefined) {
+          danglingReferences += 1;
+          continue;
+        }
+
+        checkedReferences += 1;
+        const citedRecord = facts[0]?.fileName ?? "";
+        if (!facts.some((entry) => entry.declaresConsumers)) {
+          unlisted.push({
+            code: "unlisted-consumer",
+            file: source.path,
+            line: index + 1,
+            number,
+            record: citedRecord,
+          });
+          continue;
+        }
+
+        if (facts.some((entry) => identifiesFile(entry, source.path, exported))) {
+          verifiedReferences += 1;
+          continue;
+        }
+
+        issues.push({
+          code: "consumer-mismatch",
+          file: source.path,
+          line: index + 1,
+          number,
+          record: citedRecord,
+        });
+      }
+    }
+  }
+
+  issues.sort(compareSourceIssues);
+  unlisted.sort(compareSourceIssues);
+
+  return {
+    ok: issues.length === 0,
+    issues,
+    unlisted,
+    checkedReferences,
+    exemptReferences,
+    danglingReferences,
+    verifiedReferences,
+    declaredRecords,
+  };
+}
+
+/**
+ * Apply {@link checkSourceAdrConsumers} to a real working tree: read the records
+ * out of `<root>/docs/adr/`, then every source file under `<root>/apps/` and
+ * `<root>/packages/` — the same roots, extensions and skipped directories as
+ * {@link checkRepositoryAdrReferences}, so the two sweeps see one population.
+ *
+ * @param root - Absolute path to the repository root.
+ * @returns The same report shape as {@link checkSourceAdrConsumers}.
+ * @throws If `docs/adr`, `apps` or `packages` cannot be read, so a wrong root
+ * fails loudly instead of reporting a vacuous pass.
+ */
+export function checkRepositoryAdrConsumers(root: string): SourceAdrConsumerResult {
+  // Read the ADR directory first: a bad root throws here, before any source is
+  // collected, so "nothing to check" can never be a false pass.
+  const records: AdrRecordText[] = readDirectoryEntries(join(root, "docs/adr"))
+    .filter((entry) => entry.isFile() && IN_SCOPE_ADR_NAME_PATTERN.test(entry.name))
+    .map((entry) => ({
+      fileName: entry.name,
+      text: readTextFile(join(root, "docs/adr", entry.name)),
+    }));
+
+  const paths: string[] = [];
+  for (const top of SOURCE_SWEEP_ROOTS) {
+    collectSourceFiles(root, join(root, top), paths);
+  }
+  paths.sort(compareStrings);
+
+  const sources = paths.map((path) => ({ path, text: readTextFile(join(root, path)) }));
+
+  return checkSourceAdrConsumers(sources, records);
 }
