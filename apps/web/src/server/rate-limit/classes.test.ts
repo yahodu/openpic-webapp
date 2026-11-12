@@ -25,8 +25,10 @@ import {
  * part of the production union: ADR-0786 added the member, so the class table
  * (`RATE_LIMIT_CLASSES`, `Readonly<Record<RateLimitClass, readonly RateLimitRule[]>>`)
  * and the two policy sets (`FAIL_CLOSED_CLASSES` and `RATE_LIMIT_BYPASS_CLASSES`,
- * both `ReadonlySet<RateLimitClass>`) are typed on it, and naming the row needs no
- * cast. What stops drift is the exact pin, not the row's presence: the lane rule is
+ * both `ReadonlySet<RateLimitClass>`) are typed on it. This suite names the row
+ * with a `RateLimitClass` key, so no name is asserted into the union with a cast:
+ * a rename or a removal of the member is a `tsc` error, not a silent string
+ * mismatch. What stops drift is the exact pin, not the row's presence: the lane rule is
  * asserted with `toEqual` as `{ scope: "ip", limit: 60, windowSeconds: 3600 }` and
  * the fail-closed membership is asserted class by class, so the row can neither
  * gain, lose nor drift a limit — nor flip its failure policy — without failing this
@@ -97,13 +99,12 @@ const CONTRACT_RULES: ReadonlyArray<readonly [RateLimitClass, readonly RateLimit
 /**
  * The §0.11 rows this lane adds to the executable table (OP-129 F1).
  *
- * Typed by **name**, not by `RateLimitClass`: the production union has no member
- * for `attendee.session` yet, and widening that union alone would also break the
- * `RATE_LIMIT_CLASSES` `Record` over it. Both halves are the GREEN's single
- * change, so the row is pinned as data here — with the same exact `toEqual`
- * assertion `CONTRACT_RULES` carries.
+ * The row is keyed by its `RateLimitClass` name, so the compiler holds it to the
+ * production union: a renamed or removed member fails `tsc` instead of silently
+ * missing the table. It carries the same exact `toEqual` assertion
+ * `CONTRACT_RULES` does, so neither the limit nor the window can drift.
  */
-const LANE_RULES: ReadonlyArray<readonly [string, readonly RateLimitRule[]]> = [
+const LANE_RULES: ReadonlyArray<readonly [RateLimitClass, readonly RateLimitRule[]]> = [
   ["attendee.session", [{ scope: "ip", limit: 60, windowSeconds: 3600 }]],
 ];
 
@@ -114,7 +115,7 @@ const LANE_RULES: ReadonlyArray<readonly [string, readonly RateLimitRule[]]> = [
  * @returns The configured rules.
  * @throws {Error} When the class is absent from the executable table.
  */
-function rulesOf(classKey: string): readonly RateLimitRule[] {
+function rulesOf(classKey: RateLimitClass): readonly RateLimitRule[] {
   const entry = Object.entries(RATE_LIMIT_CLASSES).find(([name]) => name === classKey);
   if (entry === undefined) {
     throw new Error(`contract §0.11 class ${classKey} is missing from RATE_LIMIT_CLASSES`);
@@ -125,15 +126,16 @@ function rulesOf(classKey: string): readonly RateLimitRule[] {
 /**
  * The failure policy for a class, by its §0.11 name.
  *
- * The names are strings because this suite names a class the `RateLimitClass`
- * union has yet to gain (the RED); the production signature still takes the
- * union, so the name is narrowed here.
+ * The parameter is the production `RateLimitClass`, so the name is checked
+ * against the union at compile time and reaches `rateLimitFailurePolicy` with no
+ * cast. `it.each` supplies union-typed keys, so a class the union does not carry
+ * cannot be named here.
  *
  * @param classKey - The class name as the contract spells it.
  * @returns `"fail-closed"` or `"fail-open"`.
  */
-function policyOf(classKey: string): RateLimitFailurePolicy {
-  return rateLimitFailurePolicy(classKey as RateLimitClass);
+function policyOf(classKey: RateLimitClass): RateLimitFailurePolicy {
+  return rateLimitFailurePolicy(classKey);
 }
 
 describe("rate-limit class table (contract §0.11)", () => {
@@ -185,7 +187,7 @@ describe("failure policy", () => {
    * row, so an unavailable limiter must not degrade into an unbounded mint
    * (`auth.otp`, `selfie.submit` are the precedent — ADR-0787 §Decision).
    */
-  const FAIL_CLOSED: readonly string[] = [
+  const FAIL_CLOSED: readonly RateLimitClass[] = [
     "auth.otp",
     "auth.verify",
     "selfie.submit",
@@ -193,7 +195,7 @@ describe("failure policy", () => {
     "attendee.session",
   ];
 
-  const FAIL_OPEN: readonly string[] = [
+  const FAIL_OPEN: readonly RateLimitClass[] = [
     "read.hot",
     "read.normal",
     "write.normal",
