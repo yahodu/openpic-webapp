@@ -2845,9 +2845,17 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
    * composition, so the heading axis must not be the one combination left
    * unenforced (finding F1 of card t_ba4928fb).
    *
-   * These three rows are **RED by design**: they pin the intended contract, and
-   * the GREEN (card t_23bb5c2f) adds the `#{1,6}` alternative to the second peel.
-   * Do not weaken them — an underscore-bold heading is a field, not a sentence.
+   * These three rows are green since the `#{1,6}` alternative landed (squash
+   * `a96253b`), but that peel still removes **one** marker token: a line carrying
+   * two marker-like axes — a heading plus a bullet or an ordered marker, in
+   * either order — keeps the second marker and never reaches
+   * `^Consumers[*_]{0,3}\s*:`. Measured at `a96253b`, every one of the seven rows
+   * after the triple below returns `issues: []`, `declares: []`, `ok: true`,
+   * `unlisted: 1`, i.e. it silently stops declaring: the exact F2/F-A failure
+   * mode. Those seven rows are **RED by design** — they pin the composition
+   * class the sequence peel leaves open, and the GREEN (card t_6402c405) peels
+   * the marker axes until none remains. Do not weaken them — a second marker is
+   * punctuation, not a licence to stop declaring.
    */
   it.each<[string, string[]]>([
     [
@@ -2861,6 +2869,34 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
     [
       "a double-underscore bold heading at column 0",
       ["## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "an ordered marker before a double-underscore bold heading",
+      ["1. ## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a double-underscore bold heading before an ordered marker",
+      ["## 1. __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a bullet before a double-underscore bold heading",
+      ["- ## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a blockquote × ordered marker × double-underscore bold heading",
+      ["> 1. ## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a blockquote × bullet × double-underscore bold heading",
+      ["> - ## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a nested blockquote × ordered marker × double-underscore bold heading",
+      ["> > 1. ## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a parenthesized ordered marker before a double-underscore bold heading",
+      ["1) ## __Consumers:__ `apps/web/src/server/x.ts`"],
     ],
   ])("reports consumers-malformed, and still declares, for %s", (_shape, fieldLines) => {
     // Arrange — the field is on line 2 of the record, after the status line.
