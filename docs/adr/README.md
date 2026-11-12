@@ -62,7 +62,8 @@ the rejected alternatives are recorded in
 | OP-123 uploads lane                 | `0700`–`0719`                   | `0702`    |
 | OP-124 uploads lane                 | `0720`–`0739`                   | `0722`    |
 | OP-125 uploads lane                 | `0740`–`0759`                   | `0742`    |
-| unallocated (future lanes)          | `0760`+ (20 per lane, in order) | `0760`    |
+| OP-126 uploads lane                 | `0760`–`0779`                   | `0761`    |
+| unallocated (future lanes)          | `0780`+ (20 per lane, in order) | `0780`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
 `0139`–`0141` (OP-96 round-3), `0131`/`0132` (OP-97 RED, PR #215), `0111`/`0112`
@@ -366,6 +367,7 @@ _The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-card-serializati
 | [0721](ADR-0721-op124-single-put-complete-link-only-green.md) | OP-124 GREEN: the single-PUT upload, its completion transaction and the link-only attach implemented — the two pure rules, the three routes, the shared upload-window rule, the 30-minute in-flight grace, `409 size_mismatch`, the storage port's `getObjectRange`/`deleteObject`, the memory adapter's opaque-token presign plus its test-support `PUT` route, the memoized `getWorkQueue()`, and a minimal `GET …/images` | Accepted |
 | [0740](ADR-0740-op125-multipart-uploads-red.md) | OP-125 RED: the multipart upload endpoints for Uppy's `@uppy/aws-s3` hooks pinned | Accepted |
 | [0741](ADR-0741-op125-multipart-uploads-green.md) | OP-125 GREEN: the six Uppy `@uppy/aws-s3` hooks implemented — the two pure rules plus `PART_SIZE_BYTES` in `@/server/uploads/multipart`, the session-bound handle resolver that maps every refusal to `404`, the five event-scoped routes (`create`/`listParts`/`sign`/`complete`/`abort`, with the offsets the behaviour actually demands — ADR-0740's table is off by one on four rows), one `loadMultipartUpload` preamble for the four calls after `create`, `409 parts_missing` derived from the **declared** part count before the provider is asked to assemble, `409 upload_expired` normalized from the provider's `NoSuchUpload`, the idempotent `204` abort, `presignPart`/`abortMultipart` on the `ObjectStorage` port and the R2 adapter (an absent `Parts` element is `[]`, not drift), the OP-124 registration transaction extracted to `@/server/uploads/complete-upload` and shared, and both new codes appended to `MEDIA_ERROR_CODES`/`MEDIA_ERROR_TRANSPORT` | Accepted |
+| [0760](ADR-0760-op126-batch-status-notifications-red.md) | OP-126 RED: the batch status read and the upload lifecycle notifications pinned — `deriveUploadBatchPhase` and the user-safe `describeUploadFailure` table, `GET …/uploads/batches/{batchId}` with the phase-derived `files`/`pipeline`/`failures`/`stalledSessions` blocks, and `checkUploadBatchTransition` emitting one summary per (batch, uploader) plus the `upload.blocked.quota` pair to the uploader and organizer | Accepted |
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
