@@ -5,7 +5,7 @@ import { appError } from "@/server/http/errors";
 import { platformRepo, tenantRepo } from "@/server/repos";
 import type { TenantAdmission, TenantAdmissionContext } from "@/server/tenancy/route-stage";
 
-import { eventIdFromRequest } from "./event-id";
+import { eventIdAfterEventsSegment, eventIdFromRequest } from "./event-id";
 
 /**
  * Event-actor admission for the global `/api/v1/events/{eventId}` mutation
@@ -88,13 +88,19 @@ export async function resolveEventActorRole(
  * @param context - The resolved workspace, the caller and the stage's `deny`.
  * @param segmentFromEnd - How far from the path's end the event id sits: `2`
  *   for `…/events/{eventId}/members`, `3` for
- *   `…/events/{eventId}/uploads/batch-resolve` (ADR-0701).
+ *   `…/events/{eventId}/uploads/batch-resolve` (ADR-0701). Omitted when the
+ *   route has no fixed suffix at all (`…/events/{eventId}`, the OP-121 detail
+ *   read): the id is then located by its `events` anchor, so a route whose
+ *   suffix length varies does not read the wrong segment.
  */
 export async function admitEventActor(
   { db, request, tenantId, userId, deny }: TenantAdmissionContext,
-  segmentFromEnd = 2
+  segmentFromEnd?: number
 ): Promise<void> {
-  const eventId = eventIdFromRequest(request, { segmentFromEnd });
+  const eventId =
+    segmentFromEnd === undefined
+      ? eventIdAfterEventsSegment(request)
+      : eventIdFromRequest(request, { segmentFromEnd });
   const tenantKey = tenantId.toHexString();
 
   const event = await tenantRepo(tenantKey, db)

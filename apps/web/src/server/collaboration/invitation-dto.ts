@@ -66,6 +66,23 @@ export const invitationBodySchema = z.object({
 /** The `GET …/invitations` body (§2.3). */
 export const invitationListSchema = z.object({ data: z.array(invitationBodySchema) });
 
+/**
+ * One §2.3 accept/reject response — the first call and every replay.
+ *
+ * A **closed** key set: the five decision facts plus `membership` (accept only)
+ * and `redirectUrl` (accept only). A decision body never carries a contact, a
+ * token, a `userId` or a tenant id.
+ */
+export const invitationDecisionSchema = z.object({
+  id: idSchema,
+  status: z.enum(["accepted", "rejected"]),
+  resolvedAt: isoDateTimeSchema,
+  resolvedVia: z.string(),
+  alreadyResolved: z.boolean(),
+  membership: z.object({ eventId: idSchema, role: z.literal(CO_ORGANIZER_ROLE) }).optional(),
+  redirectUrl: z.string().optional(),
+});
+
 /** The public `GET /invitations/{token}` body (assumption A8). */
 export const invitationPreviewSchema = z.object({
   status: invitationStatusSchema,
@@ -77,6 +94,9 @@ export const invitationPreviewSchema = z.object({
 
 /** A projected invitation body. */
 export type InvitationBody = z.infer<typeof invitationBodySchema>;
+
+/** A projected §2.3 decision response. */
+export type InvitationDecisionBody = z.infer<typeof invitationDecisionSchema>;
 
 /** A projected public preview. */
 export type InvitationPreview = z.infer<typeof invitationPreviewSchema>;
