@@ -1,11 +1,15 @@
 # ADR-0784 — OP-130 RED: public event resolution (`GET /api/v1/p/events/{slug}`)
 
 - **Status:** Accepted (RED / executable contract)
+- **Amended in place:** the round-1 review follow-up (`t_629f08dc`, findings
+  F1–F3) — the pins and figures below are the amended record; **no new ADR
+  number** is minted (the ledger cell stays `0785` and the index is unchanged
+  apart from the prose case count).
 - **Consumers:** the OP-130 RED specs —
-  `apps/web/src/test/unit/public-event-format.test.ts` (U1),
-  `apps/web/src/test/unit/public-event-state.test.ts` (U2),
+  `apps/web/src/test/unit/public-event-format.test.ts` (U1, 10 cases),
+  `apps/web/src/test/unit/public-event-state.test.ts` (U2, 17 cases),
   `apps/web/src/test/integration/public-event-resolution.test.ts` (I1–I5 + the
-  §0.11 class pin) and `apps/web/e2e/public-event-resolution.spec.ts` (E1)
+  §0.11 class pin, 35 cases) and `apps/web/e2e/public-event-resolution.spec.ts` (E1)
 - **Lane:** OP-130 (epic Attendee Surface), a dependent ticket of OP-129. The
   number is taken **above every in-flight reservation** of the shared attendee
   block per CONVENTIONS §11 rule B: `0769`/`0770` are landed on this branch,
@@ -110,7 +114,12 @@ The `200` body is exactly the §6.1 six keys (`slug`, `event`, `gallery`,
 `event.description` (§ below). Refusals are the §10.4 envelope with `error` as
 the only top-level key, and `access_link_revoked` carries `details.message` =
 _\"This QR code is no longer valid. Ask the organizer for the current link.\"_
-verbatim.
+verbatim. Every refusal row is pinned **content-free**, not just the `draft`
+one: for a rotated slug and for a `deleting` event the body's top level is
+exactly `[\"error\"]` and its serialized form contains neither the event's name
+nor its hex id — the attendee holding a dead QR, and the stranger holding a
+`deleting` event's slug, both stay strangers to the event behind it (review
+finding F2).
 
 `:slug` is **not** pinned as a 24-hex value or a length range: contract §6.1's
 example is `k7m2xq9p`, and the rotation owns the alphabet. The pins use unknown
@@ -139,7 +148,12 @@ slugs that cannot collide with a seeded one.
   **this** event and **this** subject. It is `false` for a caller with no
   credential and for a fresh anonymous session, `true` once a profile row exists,
   and `canClaimByLogin` is `true` for an anonymous session (claiming keeps the
-  profile; schema §15.3).
+  profile; schema §15.3). The event scope is pinned **adversarially**, not only
+  by the positive case: one session holding a profile on event **A** answers
+  `hasProfile: true` on **A**'s page and `hasProfile: false` on event **B**'s
+  page, so a lookup that forgets the `eventId` predicate answers "you are
+  already in this event" to an attendee who scanned a different QR and fails the
+  pin (review finding F1).
 
 ### 4. What the pins refuse to observe
 
@@ -153,6 +167,12 @@ slugs that cannot collide with a seeded one.
   cookie must degrade to `session.kind: "anonymous"`, `hasProfile: false` and a
   `200`. Turning a dead cookie into a refusal would strand an attendee on a
   screen with no way forward.
+- **No refusal row carries event content.** Three rows are pinned by value:
+  `draft`, a **rotated** slug and a **`deleting`** event. Each body's top level
+  is exactly `["error"]` and `JSON.stringify(body)` contains neither the
+  seeded event's name nor its hex id, so a `details.eventName`/`details.eventId`
+  added to `access_link_revoked` or `event_gone` — the leak a rotated or purged
+  slug's holder would gain — fails the suite (review finding F2).
 
 ### 5. Assumptions (contract or schema is silent)
 
@@ -190,9 +210,9 @@ imageCount` over the event's cached counters — \"nothing is still waiting\".
   instead branches inline in the handler must duplicate the table in tests or
   lose the matrix.
 - The refusal pins are negative-first. `I1` asserts that a draft and an unknown
-  slug agree on code **and** message, and that no refusal body carries the event
-  name or id; the strongest mutation a future refactor can make (answering `404`
-  with a helpful message) is therefore loud.
+  slug agree on code **and** message, and that no refusal body — `draft`, rotated
+  or `deleting` — carries the event name or id; the strongest mutation a future
+  refactor can make (answering `404` with a helpful message) is therefore loud.
 - `startAtLocal` lives on the server on purpose: contract §6.1 says the attendee
   page needs no timezone library. If a later card moves formatting to the client,
   U1 is the record of what the server promised.
@@ -202,21 +222,41 @@ imageCount` over the event's cached counters — \"nothing is still waiting\".
 - **Honest RED, delivered state:** `Cannot find package '@/server/attendee/public-event'`
   for both unit specs and `Cannot find package '@/app/api/v1/p/events/[slug]/route'`
   for the integration spec (`no tests` in all three files — the modules do not exist).
+  With `apps/web/.next` cleared, `npx tsc -p apps/web/tsconfig.json --noEmit` reports
+  exactly **4 `TS2307`s**, every one of them naming those two modules and nothing else.
 - **Type-correct:** with two throwaway stubs (the pure module and a near-fix route
   handler) `npx tsc -p apps/web/tsconfig.json --noEmit` exited `0`.
 - **Satisfiable:** against those stubs the unit project ran **27 passed (27)** and
-  the integration spec **32 passed (32)** on a real `MongoMemoryReplSet`.
+  the integration spec **35 passed (35)** on a real `MongoMemoryReplSet`.
 - **The pins bite** (each mutation assertion-level, every stub restored by `sha256`
-  before deletion):
-  - a fixed `UTC` zone in `formatStartAtLocal` → `11 failed | 16 passed (27)`,
-    beginning `expected '2026-11-14T12:00:00+00:00' to be '2026-11-14T17:30:00+05:30'`;
+  before deletion; these counts are stub-dependent and were re-measured at this head
+  against the stubs described here):
+  - a fixed `UTC` zone in `formatStartAtLocal` → **9 failed | 18 passed (27)**,
+    beginning `expected '2026-11-14T12:00:00+00:00' to be '2026-11-14T17:30:00+05:30'`.
+    The nine are the eight offset rows plus the sub-minute-remainder row; the
+    no-milliseconds/no-`Z` shape cases stay **green**, because `+00:00` is still a
+    well-formed numeric offset — the earlier `11 failed | 16 passed` assumed they
+    would fail and does not reproduce (review finding F3);
   - `draft` checked before `revoked` → the contract-order row fails
     (`expected { kind: 'error', status: 404, …(1) } to deeply equal { kind: 'error', status: 410, …(1) }`);
   - `>` instead of `>=` on the retention comparison → the inclusive-instant row fails;
   - a route resolving `accessLinks[0]`, mounting `read.normal` and omitting
-    `description` → `5 failed | 26 passed (31)`, including
-    `expected '300' to be '600'` and
-    `expected [ 'displayTimeZone', 'endAt', …(7) ] to deeply equal [ 'description', …(9) ]`.
+    `description` → **7 failed | 28 passed (35)**: `expected '300' to be '600'`, both
+    `description` cases, and both rotated-slug cases (`expected 404 to be 410` —
+    rotation puts the active link first, so `accessLinks[0]` addresses the wrong
+    one). Before the follow-up pins this same stub measured **6 failed |
+    26 passed (32)**; the previously recorded `5 failed | 26 passed (31)` summed to
+    31 and missed `I5: the rotated-away slug …` (review finding F3);
+  - **the follow-up pins, one mutation each (the stub restored between probes):**
+    - dropping the `eventId` predicate from the profile lookup → **1 failed |
+      34 passed (35)**: only `I2: a profile on another event does not show
+hasProfile true on this event's page` (`expected true to be false`);
+    - adding `eventName` + `eventId` to the `access_link_revoked` `details` →
+      **1 failed | 34 passed (35)**: only `I5: a rotated slug's refusal body
+carries no event content`;
+    - adding `eventName` to the `event_gone` `details` → **1 failed |
+      34 passed (35)**: only `I1: a deleting event's refusal body carries no event
+content`.
 - **E1 is listed but not executable yet:** `npx playwright test --list -g "E1"`
   resolves it (`public-event-resolution.spec.ts:59:7`), and `next build` typechecks,
   so a RED branch cannot produce the standalone server the `api` project needs
