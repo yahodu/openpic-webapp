@@ -103,6 +103,35 @@ export async function findAttendeeSession(
 }
 
 /**
+ * Read the session a request names, and fall through from the cookie to the
+ * mobile header when the cookie names no row.
+ *
+ * Contract §0.2 authenticates on the cookie **or** the header, so a stale
+ * `op_att` cookie must not shadow a valid header. Only an *unknown* cookie
+ * token falls through: a lapsed cookie still throws `attendee_session_expired`,
+ * because that client needs the re-create answer, not a second attempt.
+ *
+ * @param options - The database and an optional clock.
+ * @param request - The inbound request.
+ * @returns The stored row, or `null` when neither credential names one.
+ * @throws {AppError} `attendee_session_expired` when the cookie's row lapsed.
+ */
+export async function findRequestAttendeeSession(
+  options: AttendeeSessionLookupOptions,
+  request: Request
+): Promise<AttendeeSessionRow | null> {
+  const cookie = cookieToken(request);
+  if (cookie !== null) {
+    const row = await findAttendeeSession(options, cookie);
+    if (row !== null) {
+      return row;
+    }
+  }
+  const header = request.headers.get(SESSION_HEADER);
+  return header === null ? null : findAttendeeSession(options, header);
+}
+
+/**
  * Build the `AttendeeSessionResolver` the `attendee` auth label consumes.
  *
  * @param options - The database and an optional clock.
@@ -113,11 +142,7 @@ export function createAttendeeSessionResolver(
 ): AttendeeSessionResolver {
   return {
     resolve: async (request: Request) => {
-      const token = attendeeTokenFrom(request);
-      if (token === null) {
-        return null;
-      }
-      const session = await findAttendeeSession(options, token);
+      const session = await findRequestAttendeeSession(options, request);
       if (session === null) {
         return null;
       }
