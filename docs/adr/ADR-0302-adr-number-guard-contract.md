@@ -127,12 +127,45 @@ range membership and `origin/main` freshness stay review-time.
   where `files` carries the two **holders** (the ledger's row labels, not file
   names) sorted ascending. Touching neighbours — `0760`–`0779` and `0780`–`0798`
   — are disjoint and clean.
-- **Scope: rows only, closed ranges only.** A row contributes a range only when
-  its second cell is a closed `` `NNNN`–`NNNN` `` pair (`–` U+2013 or `-`). The
-  open-ended `unallocated (future lanes)` cursor (`` `0700`+ … ``), a
-  single-number cell, a non-four-digit pair, the header and `---` separator rows,
-  the ADR index table and any prose mention are **skipped, never thrown on**. A
-  missing, empty or row-less `README.md` adds no issue.
+- **Scope: rows only, closed ranges only — but a range-shaped row is never
+  dropped silently.** A row contributes a range only when its second cell is a
+  closed `` `NNNN`–`NNNN` `` pair (`–` U+2013 or `-`) whose start is not above
+  its end. A cell that is **range-shaped** — two backticked 3–4 digit tokens with
+  one dash-family separator (`–`, `-`, `—`, `−`, `~`) and nothing else in the
+  cell — but fails that test is **reported**, not skipped:
+  `{ code: "lane-range-malformed", number: null, files: [holder] }`, one issue
+  per row, holder trimmed verbatim (finding F1 follow-up). Still **skipped**, and
+  named here so a later "fix" cannot red the board: the open-ended
+  `unallocated (future lanes)` cursor (`` `0700`+ … ``), a single-number cell,
+  the header and `---` separator rows, any prose mention, the ADR index rows
+  (their titles quote numbers — the real `0341` row reads "the `` `402`/`403` ``
+  denial split"), an **indented** row (the row shape requires a leading `|`), and
+  an **annotated** range cell such as `` `0789`-`0808` (20 per lane) `` (the
+  accepted cell is fully anchored). A missing, empty or row-less `README.md` adds
+  no issue.
+- **Why range notation, not "any non-alphanumeric separator".** The F1 pins
+  describe a row as "two backticked number tokens with a non-alphanumeric
+  separator between them"; applied literally to a whole cell that also catches
+  the `0341` index row and would call an annotated range malformed. The
+  implementation therefore gates on _range notation_ — one dash-family separator
+  inside an otherwise fully anchored cell. This is the one place the rule is
+  narrower than the pins' wording, and it is settled by the harder requirement
+  that `checkAdrDirectory("docs/adr")` on this repository stays exactly
+  `{ ok: true, issues: [] }`.
+- **A malformed row never feeds the overlap predicate.** `0780`-`0760` matches
+  the accepted pattern and would parse as `{ start: 780, end: 760 }`, inventing
+  an overlap against a lane at `0760`-`0799` that no lane reserved.
+  `parseLaneRanges` drops a descending pair (its result for every valid row is
+  unchanged), and the malformed issue is the only report that row produces.
+- **Measured (F1 follow-up).** An inverted (`0780`-`0760`), em-dash
+  (`0760`—`0779`), minus-sign, tilde and three-digit (`760`-`779`) row each
+  produce exactly one `lane-range-malformed` issue; an indented copy of the
+  inverted row produces none; the real ledger is `{ ok: true, issues: [] }` over
+  31 parsed ranges. **Why the silent direction was worse than the false
+  positive:** a skipped row is indistinguishable from a lane that reserved
+  nothing, so the guard reports clean while the ledger's promise is broken — the
+  same silence that let F-L1 ship. A false positive is a one-line ledger fix in
+  the PR that introduced it, and the code names the offending row.
 - **Parser.** `parseLaneRanges(markdown: string): LaneRange[]` in the same
   module returns one `{ holder, start, end }` per closed row — holder trimmed
   verbatim, leading zeros dropped, document order preserved. It is row-shape
@@ -178,3 +211,171 @@ range membership and `origin/main` freshness stay review-time.
   _policy_ and says so ("this record is the policy, not the guard"); keeping the
   guard's contract separate lets the boundary change without rewriting the
   policy, and matches the "one decision per record" rule.
+
+## Review sign-off (RED rounds 1–2, execution lens)
+
+- **Verdicts: round 1 — CHANGES REQUESTED (one High finding); round 2 — APPROVED.** Nothing in
+  §Decision is retracted: the round-1 finding was inside the RED's spec, not in this contract, and
+  the GREEN closed it before the guard landed. Recorded here, inside the delivered ADR, so the
+  sign-off consumes no new ADR number.
+- **Reviewer:** `openpic-webapp-reviewer` (card `t_2aaa8a18`) · **RED card:** `t_e23bb540` ·
+  **GREEN card:** `t_94a437c4` · **PR:** [#448](https://github.com/yahodu/openpic-webapp/pull/448) ·
+  **Branch:** `OP-96-task-adr-lane-range-guard` · **Reviewed heads:** `440b00b` (round 1) →
+  `d327e47` (round 2).
+
+### Scope
+
+The sign-off covers the RED deliverable of card `t_e23bb540`: the pins for `parseLaneRanges` and
+for the `lane-range-overlap` report shape that later became §6. That card delivered them on PR
+#448 as a **draft, RED-by-design**. The draft itself was never merged — the GREEN card `t_94a437c4`
+promoted the same PR, added the implementation, ADR-0300 §10, this §6 and the README bullets, and
+the guard review + land card `t_c8727284` approved and squash-merged it as `d85de6f`. "Never
+merged" therefore describes the pre-GREEN draft only, not PR #448 as a whole.
+
+### Round 1 (artifact lens) — CHANGES REQUESTED, one High finding
+
+- **F1 (High, spec brittleness).** The real-ledger case pinned the ledger's then-last row,
+  `OP-122 queue lane 0680`–`0699`. Any new lane row inserted above the pool row therefore turned
+  the guard's own spec red while the guard still reported the ledger clean — the pin would have
+  blocked an allocation the guard correctly accepted.
+- **Measured.** With a faithful stub: `54 passed (54)`. Inserting `| OP-129 attendee identity lane | 0780–0798 | 0782 |` above the pool row: `1 failed | 53 passed`.
+- The finding was in the pin, not in the contract: §6 as written needed no change.
+
+### Round 2 (execution lens) — APPROVED
+
+- **F1 closed** by deriving the last closed row from the file (`closedRows()`) instead of naming it. The reviewer re-ran the same insert at **both ends** of the table; both stayed `54 passed (54)`, while the pre-fix spec failed the same probe.
+- The `TS2532` follow-on fix in `d327e47` (`noUncheckedIndexedAccess` on the derived-row helper)
+  weakens no assertion.
+- **Red state on the reviewed head** (`d327e47`): `adr-numbering.test.ts 3 failed | 34 passed (37)`, `adr-lane-ranges.test.ts 17 failed (17)`, and the full unit project `20 failed | 2380 passed | 3 skipped` with only those two specs. `lint`, `secret-scan`, `audit`, `audit-dev`, `env-changes`, branch-name, PR-title and CodeQL green; `unit_test` red by design on exactly those 20 cases.
+- **Contract untouched.** The specs' only removed lines were one import and four docblock lines;
+  `checkAdrNumbers` and `parseAdrNumber` bodies were not edited.
+
+### The acceptance proof, measured in a throwaway worktree
+
+- An intersecting row, or the live bug itself (uploads rows `0700`–`0779` with OP-129 still at
+  `0769`–`0788`), turns `finds no intersecting pair among the repository's reserved ranges` **and**
+  the delivered `checkAdrDirectory(realAdrDir)` case red: `2 failed | 52 passed`.
+- The destination state (uploads `0700`–`0779`, OP-129 `0780`–`0798`, pool `0799`+) is
+  `54 passed (54)`, and that is the ledger `main` now carries.
+- That measured bite is why the lane repair card `t_da4088d2` was gated on the guard: the guard
+  cannot be green on a ledger that still carries the live overlap.
+
+### Recorded, no change requested
+
+- The RED spec pins the real ledger **by row shape**, not by the `### Reserved ranges` heading —
+  the heading carries a date that is re-worded more often than the rows are written.
+- `ranges[0]` stays positional by convention in the overlap cases.
+- The derived last-row assertion is near-redundant with the count check, but still catches a wrong
+  `end`, so it was kept deliberately.
+- The helper is **exempt from the coverage gate**: `vitest.config.ts` `include` covers only
+  `packages/contracts/src/**`, `apps/web/src/app/api/**` and `apps/web/src/server/**`, and
+  `exclude` carries `**/*.test.ts`, `**/__tests__/**` and `**/test/**`; so no defensive branch had
+  to be deleted to hold 80 %.
+- **F1 (Low) from the guard's land review `t_c8727284`** — recorded, with no change to §6. A
+  range-shaped ledger row that does not parse is skipped silently: an inverted `0780`–`0760` cell
+  parses as `{ start: 780, end: 760 }` and reports `{"ok":true,"issues":[]}` even with another
+  lane inside the intended span; an em dash and three-digit pairs behave the same way. That is
+  inside §6's documented "skipped, never thrown on" scope, so it is a limitation, not a contract
+  violation. Follow-ups: card `t_4f74644d` (TEST, pins `lane-range-malformed`) → card
+  `t_00321ecb` (GREEN, implements it and amends §6 in place).
+
+### Post-review status
+
+The open items are carried by card, never by an ADR number: `t_c8727284` (guard review + land —
+done, squash `d85de6f`), `t_4f74644d` → `t_00321ecb` (the Low F1 above), `t_da4088d2` (lane repair
+— done, delivered on PR #444), `t_b8c449d4` (OP-129 stack land — done, squash `741b607`). Nothing
+recorded above is retracted; those cards' own records document what followed.
+
+## Review sign-off (F1 GREEN, round 1 — artifact lens, landed)
+
+### Scope
+
+The GREEN for the Low F1 recorded under the RED sign-off above: card `t_00321ecb`
+(GREEN, report `lane-range-malformed` for a range-shaped ledger row that does not
+parse), delivered on PR [#481](https://github.com/yahodu/openpic-webapp/pull/481),
+reviewed at head `fb50c7e` and landed as squash `fc4ad00`. This section records that
+round only; it amends no contract and mints no number.
+
+### What shipped
+
+- `lane-range-malformed` joins `AdrNumberIssue["code"]`; `scanLaneLedger` reports
+  `{ code: "lane-range-malformed", number: null, files: [holder] }` for a
+  range-shaped row that is not an accepted ascending four-digit pair.
+- The accepted cell form, the `parseLaneRanges` contract for valid rows and the
+  `lane-range-overlap` shape are unchanged, so a valid ledger reports exactly what
+  it reported before.
+- §6 above and ADR-0300 §10 rule 17 were amended in place: the scope bullet now
+  names the reported malformed row, and the policy rule states that a ledger typo
+  is a CI failure rather than a silent hole.
+
+### Verification (reviewed head `fb50c7e`)
+
+- Pins carried byte-identical through the squash: `adr-numbering.test.ts` blob
+  `3174d4a`, `adr-lane-ranges.test.ts` blob `3ad145a`; the PR diff carries no test
+  path.
+- Focused `adr-numbering` + `adr-lane-ranges`: **83 passed (83)**.
+- Real ledger: `{"ok":true,"issues":[]}` over **31** parsed ranges.
+- Full unit: **162 files, 2637 passed | 3 skipped (2640)** against the then-trunk's
+  **2625 passed | 3 skipped (2628)** — delta **+12**, exactly the new pins.
+- `tsc -p apps/web/tsconfig.json --noEmit` exit 0; eslint 0 errors with the helper
+  warnings identical to the trunk; prettier clean; 14/14 PR checks.
+
+### Load-bearing probes
+
+- Dropping the `start <= end` guard → **4 failed**.
+- Narrowing the range shape to four digits → **2 failed**.
+- Measured silent edges: an indented row → `{ok:true,issues:[]}`; an annotated cell
+  `` `0789`-`0808` (20 per lane) `` → `[]`; an inverted row beside a `0760`-`0799`
+  lane → the malformed issue only, no phantom overlap.
+
+### Landing
+
+- Squash `fc4ad00`. The four reviewed paths are byte-identical between `fb50c7e`
+  and the squash; the only other tree difference is trunk-owned `18f2056` (the
+  OP-129 ADR-0781 sign-off, +48 lines), which landed while PR #481 was open.
+- Re-run at the squash: focused **83 passed**, `tsc` exit 0. `docs/adr` holds
+  **289** records, with no duplicate number.
+
+### Open item routed, not fixed
+
+The §6 guarantee that a malformed row never feeds the overlap predicate was
+regression-invisible at that head: re-adding a descending four-digit pair to the
+range list left the focused suite at **83 passed**, and the indented-row and
+descending-pair-drop edges were asserted only in comments. That is a **coverage
+gap, not a defect in the shipped behaviour**. It was routed to card `t_ce88dbcb`
+(TEST, characterization pins; needs no GREEN), which landed three pins on PR
+[#484](https://github.com/yahodu/openpic-webapp/pull/484) as squash `beae024`, each
+proven load-bearing by a helper mutation:
+
+- `adr-numbering.test.ts`, phantom-overlap pin:
+  `reports only the malformed row when the inverted span would intersect a real lane`.
+  Mutation "also push the range-shaped row into `ranges`" → **3 failed | 83 passed
+  (86)**; the failure is the phantom
+  `lane-range-overlap [OP-201 alpha lane, OP-204 delta lane]` instead of
+  `lane-range-malformed [OP-201 alpha lane]`.
+- `adr-numbering.test.ts`, indented-row pin:
+  `stays silent for an indented row: the row shape requires a leading pipe`.
+  Deleting the `line.startsWith("|")` continue → **1 failed | 85 passed (86)**,
+  that case only.
+- `adr-lane-ranges.test.ts`, descending-pair pin:
+  `drops an inverted pair instead of returning the inverted span`. Dropping the
+  `start <= end` guard → **6 failed | 80 passed (86)**.
+
+With those pins on the merged trunk (`beae024`), the focused pair is **86 passed
+(86)** — the 83 above plus the three pins. The later OP-128 pin scoping
+(`ff0d03c`, PR [#477](https://github.com/yahodu/openpic-webapp/pull/477)) adds six
+cases to `adr-numbering.test.ts` without changing any assertion cited here, so the
+same pair is **92 passed (92)** on the trunk this section is appended to.
+
+### Figure correction (Info)
+
+The implementer handoff quoted a trunk baseline of `2632 passed`. The real baseline
+was **2625 passed | 3 skipped (2628)** — no test file changed on `main` between
+`a08d2aa` and `18f2056` — so the correct relation is 2625 + 12 pins = 2637. This is
+a figure correction, not a defect.
+
+### Post-review status
+
+Nothing in §6 or in the RED rounds 1–2 sign-off above is retracted. The F1 item in
+this section is carried by `t_ce88dbcb`, which is done (squash `beae024`). The card
+ids are the record, not an ADR number.

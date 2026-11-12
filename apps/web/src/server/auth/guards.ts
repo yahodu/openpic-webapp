@@ -229,6 +229,43 @@ export function evaluateAuth(label: GuardLabel, facts: GuardFacts): AuthDecision
   return { allowed: true };
 }
 
+/**
+ * Apply the table for `label` and, on a denial, emit one `warn` `auth.denied`
+ * carrying the label and reason code — never the credential — then throw the
+ * catalogue `AppError` (Appendix A.1 status and details).
+ *
+ * This is the action {@link requireAuth} takes on a denial, factored out so a
+ * route that resolves its own principal (`POST /api/v1/media/signed-urls` is
+ * `public`-labelled so per-item authorization can answer an anonymous caller)
+ * refuses through the same seam instead of duplicating it.
+ *
+ * @param label - The label whose rules apply.
+ * @param facts - The resolved credential and the injected clock.
+ * @param request - The request the log line is scoped to.
+ * @param route - The matched route template, for the log line.
+ */
+export function enforceAuth(
+  label: GuardLabel,
+  facts: GuardFacts,
+  request: Request,
+  route: string
+): void {
+  const decision = evaluateAuth(label, facts);
+  if (decision.allowed) {
+    return;
+  }
+
+  requestLogger(request, { route }).warn("auth request denied", {
+    event: "auth.denied",
+    label,
+    reason: decision.code,
+  });
+  throw appError(
+    decision.code,
+    decision.details === undefined ? {} : { details: decision.details }
+  );
+}
+
 /** A structural view of the `userProfiles` fields the resolver reads (schema §13.2). */
 interface UserProfileDocument {
   readonly status?: unknown;
@@ -445,24 +482,17 @@ export function requireAuth(label: AuthLabel, options: RequireAuthOptions): Rout
         : { attendeeResolver: options.attendeeResolver }),
     });
 
-    const decision = evaluateAuth(label, {
-      principal,
-      now: systemClock.now(),
-      ...(options.allowBanned === true ? { allowBanned: true } : {}),
-      ...(options.allowDeletionPending === true ? { allowDeletionPending: true } : {}),
-    });
-
-    if (!decision.allowed) {
-      requestLogger(request, { route: ctx.route }).warn("auth request denied", {
-        event: "auth.denied",
-        label,
-        reason: decision.code,
-      });
-      throw appError(
-        decision.code,
-        decision.details === undefined ? {} : { details: decision.details }
-      );
-    }
+    enforceAuth(
+      label,
+      {
+        principal,
+        now: systemClock.now(),
+        ...(options.allowBanned === true ? { allowBanned: true } : {}),
+        ...(options.allowDeletionPending === true ? { allowDeletionPending: true } : {}),
+      },
+      request,
+      ctx.route
+    );
 
     if (principal !== null && principal.kind === "user") {
       Object.assign(ctx, {

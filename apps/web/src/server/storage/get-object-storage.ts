@@ -39,7 +39,7 @@ export function getObjectStorage(): ObjectStorage {
   const config = getConfig();
 
   if (config.storage.provider === "memory") {
-    cachedMemoryStorage ??= memoryObjectStorage();
+    cachedMemoryStorage ??= memoryObjectStorage({ baseUrl: config.app.baseUrl });
     return cachedMemoryStorage;
   }
 

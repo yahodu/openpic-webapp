@@ -45,3 +45,26 @@ export function eventIdFromRequest(
   }
   return new ObjectId(raw);
 }
+
+/**
+ * Parse the event id that follows the literal `events` path segment.
+ *
+ * The tenant-scoped routes nest the event under
+ * `/tenants/{tenantId}/events/{eventId}/…`, and the segments that follow it
+ * differ per route (`/members`, `/invitations`, or nothing at all on the event
+ * detail read), so the id is located by its own anchor rather than by a fixed
+ * distance from the end.
+ *
+ * @param request - The inbound request.
+ * @returns The event id.
+ * @throws An `AppError` with code `not_found` when the segment after `events`
+ *   is not a valid 24-hex id.
+ */
+export function eventIdAfterEventsSegment(request: Request): ObjectId {
+  const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
+  const raw = segments[segments.indexOf("events") + 1] ?? "";
+  if (!OBJECT_ID_PATTERN.test(raw)) {
+    throw appError("not_found");
+  }
+  return new ObjectId(raw);
+}

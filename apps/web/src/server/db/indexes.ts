@@ -102,6 +102,25 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+  // upload_sessions — expire automatically once their window passes (§16.2,
+  // §22). OP-124 is the first lane to write a session row (ADR-0721 D2).
+  {
+    collection: COLLECTIONS.uploadSessions,
+    name: "upload_sessions_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+  // upload_sessions — the §5.5 batch read and its transition check tally one
+  // client-generated batch by status (OP-126; ADR-0760 A5).
+  {
+    collection: COLLECTIONS.uploadSessions,
+    name: "upload_sessions_event_batch_status",
+    keys: [
+      ["eventId", 1],
+      ["batchId", 1],
+      ["status", 1],
+    ],
+  },
   // invitations — "my pending invitations": the caller's pending count on the
   // `GET /me` bootstrap and the §1.2 feed read `{ "invitee.userId", status }`
   // newest-first, so the compound index must carry all three keys in this
@@ -302,6 +321,17 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     ],
     unique: true,
   },
+  // event_images — the §5.5 batch read tallies one upload batch's rows (§16.3;
+  // OP-126, ADR-0760 A5).
+  {
+    collection: COLLECTIONS.eventImages,
+    name: "event_images_tenant_event_batch",
+    keys: [
+      ["tenantId", 1],
+      ["eventId", 1],
+      ["uploadBatchId", 1],
+    ],
+  },
 
   // access_links — one active link per slug (revoked rows excluded).
   {
@@ -327,6 +357,20 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["accessLinks.slug", 1]],
     unique: true,
     partialFilterExpression: { "accessLinks.active": true },
+  },
+  // events — the public attendee create route resolves a slug with
+  // `{accessLinks: {$elemMatch: {slug, active: true}}}` (ADR-0781 F1). The
+  // partial index above cannot serve it: the planner's subset check does not
+  // accept an ELEM_MATCH_VALUE predicate. This plain non-partial index on the
+  // same path bounds the slug equality; the `$elemMatch` still runs in the
+  // FETCH stage, so the unauthenticated route stops full-scanning `events`.
+  // Single-key on purpose: the U1 tenant-prefix rule governs compound indexes,
+  // and a `tenantId`-led variant was measured as a COLLSCAN — it cannot serve
+  // this filter. Uniqueness stays on the partial index above.
+  {
+    collection: COLLECTIONS.events,
+    name: "events_active_slug_lookup",
+    keys: [["accessLinks.slug", 1]],
   },
 
   // media_assets — content-addressed dedupe within a tenant (§16.1).
