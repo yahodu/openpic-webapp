@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { Collection, ObjectId } from "mongodb";
+import { Collection, ObjectId, type ClientSession } from "mongodb";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { findForbiddenFields, maskEmail } from "@openpic/contracts";
@@ -19,6 +19,8 @@ import { DELETE as revokeInvitation } from "@/app/api/v1/tenants/[tenantId]/even
 import { DELETE as removeMember } from "@/app/api/v1/tenants/[tenantId]/events/[eventId]/members/[userId]/route";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
+import { withTransaction } from "@/server/db/transaction";
+import { emitDomainEvent } from "@/server/domain/domain-events";
 import {
   createLogger,
   getLogger,
@@ -32,6 +34,7 @@ import {
   seedNotificationTemplates,
   seedNotificationTypes,
 } from "@/server/notifications/seed-notification-types";
+import { tenantRepo } from "@/server/repos";
 import { mongoRecipientRepository } from "@/server/repos/notification-recipients";
 import { sha256Hex } from "@/server/runtime/crypto";
 import { getNotificationTransport } from "@/server/services/notification-transport";
@@ -1992,5 +1995,334 @@ describe("POST /api/v1/me/invitations/{invitationId}/reject — the write pairin
       ["accept", "unavailable"],
       ["reject", "unavailable"],
     ]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* F1 — the removal retry-limit branch, pinned deterministically              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The removal route's retry-limit branch, pinned without waiting for the race
+ * to spend the loser's budget by chance.
+ *
+ * A rival `withTransaction` takes the write lock on the member's
+ * `event_organizers` row and holds it, so the route's own transaction can never
+ * commit: its three immediate attempts (`@/server/db/transaction`) all conflict
+ * and the wrapper throws `TransactionRetryLimitError` **while the rival's
+ * transaction is still open**. Because the rival's flip is invisible until it
+ * commits, the member row still reads `revokedAt: null` at that instant — a
+ * single re-read would answer `500`, which is why the route polls.
+ *
+ * The rival performs the winner's real writes (the row flip, the invitation
+ * revoke and both `collab.member.removed` emits) inside its own transaction, so
+ * the counts below are the ones a genuinely winning request leaves behind.
+ *
+ * - **R1** — the rival commits the removal while the loser is waiting: the
+ *   loser answers the same settled `204` the winner's effect deserves, and logs
+ *   no removal of its own.
+ * - **R2** — the rival commits a write that is *not* the removal: nothing was
+ *   removed, so the loser's bounded wait runs out and the original error
+ *   surfaces as `500 internal_error` instead of a `204` for a removal that
+ *   never happened.
+ *
+ * Determinism: the cases never race the wall clock. They wait for the wrapper's
+ * own `db.transaction.retry` lines (one per retry, so two lines mean the third
+ * and last attempt was already started) before releasing the rival, so the
+ * loser has certainly spent its budget. The 150 ms grace after that covers the
+ * last attempt's conflict round-trip (measured: three attempts in ~19 ms), which
+ * is what puts the loser in the polling loop rather than inside an attempt.
+ */
+
+/** Resolve after `ms`; the suite's only clock use, for the two bounded waits. */
+async function pause(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/** A one-shot gate: `wait` resolves once, when `open` is called. */
+interface Latch {
+  readonly wait: Promise<void>;
+  readonly open: () => void;
+}
+
+/**
+ * Build a one-shot gate.
+ *
+ * @returns The gate.
+ */
+function latch(): Latch {
+  const gate: { resolve: () => void } = { resolve: () => undefined };
+  const wait = new Promise<void>((resolve) => {
+    gate.resolve = resolve;
+  });
+  return {
+    wait,
+    open: () => {
+      gate.resolve();
+    },
+  };
+}
+
+/** True for the wrapper's `db.transaction.retry` line (one per retry). */
+function isRetryLine(entry: MemoryTransport["entries"][number]): boolean {
+  return entry.event === "db.transaction.retry";
+}
+
+/**
+ * Wait until the sink holds `count` `db.transaction.retry` lines.
+ *
+ * The wrapper logs one line per retry (`attempt > 1`), so two lines mean the
+ * third and last attempt of the removal's transaction was already started: the
+ * loser really spent the budget instead of winning the row.
+ *
+ * @param sink - The installed memory sink.
+ * @param count - How many retry lines to wait for.
+ * @throws Error when they never appear, so a vacuous run fails loudly.
+ */
+async function waitForTransactionRetries(sink: MemoryTransport, count: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  let seen = sink.entries.filter(isRetryLine).length;
+  while (seen < count) {
+    if (Date.now() > deadline) {
+      throw new Error(
+        `the removal transaction never retried: ${String(seen)} of ${String(count)} retry lines`
+      );
+    }
+    await pause(10);
+    seen = sink.entries.filter(isRetryLine).length;
+  }
+}
+
+/**
+ * The awaited member row's `_id`, which the route's pre-transaction lookup
+ * resolves and the rival transaction writes.
+ *
+ * @param fixture - The event.
+ * @param userId - The member's user id.
+ * @returns The `event_organizers` row id.
+ */
+async function memberRowId(fixture: EventFixture, userId: ObjectId): Promise<ObjectId> {
+  const row = await app.db
+    .collection(COLLECTIONS.eventOrganizers)
+    .findOne({ eventId: fixture.eventId, userId: userId.toHexString() });
+  if (row === null) {
+    throw new Error("the seeded co-organizer row is missing");
+  }
+  return row._id;
+}
+
+/**
+ * Run a rival transaction that holds the member row's write lock until the case
+ * releases it.
+ *
+ * @param writes - The rival's writes; the first one takes the row's lock.
+ * @param gates - `locked` opens once `writes` has resolved inside the open
+ *   transaction, `release` lets it commit.
+ */
+async function holdRivalTransaction(
+  writes: (session: ClientSession) => Promise<void>,
+  gates: { readonly locked: Latch; readonly release: Latch }
+): Promise<void> {
+  await withTransaction(async (session) => {
+    await writes(session);
+    gates.locked.open();
+    await gates.release.wait;
+  });
+}
+
+/**
+ * The winner's three writes, as the route performs them: the `event_organizers`
+ * flip, the revoke of the granting invitation and the two outbox emits.
+ *
+ * @param fixture - The event.
+ * @param memberId - The row the route's lookup resolves.
+ * @param targetUserId - The removed member.
+ * @param session - The rival transaction's session.
+ */
+async function winnerWrites(
+  fixture: EventFixture,
+  memberId: ObjectId,
+  targetUserId: ObjectId,
+  session: ClientSession
+): Promise<void> {
+  const now = new Date();
+  const tenantKey = fixture.workspace.tenantId.toHexString();
+  const targetHex = targetUserId.toHexString();
+
+  await app.db
+    .collection(COLLECTIONS.eventOrganizers)
+    .updateOne(
+      { _id: memberId, revokedAt: null },
+      { $set: { status: "removed", revokedAt: now, updatedAt: now } },
+      { session }
+    );
+  await tenantRepo(tenantKey, app.db)
+    .collection(COLLECTIONS.invitations)
+    .updateMany(
+      { eventId: fixture.eventId, status: "accepted", "invitee.userId": targetHex },
+      { $set: { status: "revoked", revokedAt: now, updatedAt: now } },
+      { session }
+    );
+  for (const eventKey of ["collab.member.removed", "collab.member.removed.ack"] as const) {
+    await emitDomainEvent(
+      {
+        eventKey,
+        tenantId: tenantKey,
+        actorRef: { kind: "user", id: fixture.workspace.organizer.userId.toHexString() },
+        subjectRef: { kind: "user", id: targetHex },
+        payload: { eventId: fixture.eventId.toHexString(), userId: targetHex },
+      },
+      { db: app.db, session }
+    );
+  }
+}
+
+/**
+ * A competing write on the same row that is **not** the removal: it takes the
+ * lock the loser needs, and leaves `revokedAt` alone.
+ *
+ * @param memberId - The row the route's lookup resolves.
+ * @param session - The rival transaction's session.
+ */
+async function nonRemovalWrite(memberId: ObjectId, session: ClientSession): Promise<void> {
+  await app.db
+    .collection(COLLECTIONS.eventOrganizers)
+    .updateOne({ _id: memberId }, { $set: { updatedAt: new Date() } }, { session });
+}
+
+/** Install a memory sink for one case and hand back its entries. */
+function captureLogs(): { readonly sink: MemoryTransport; readonly restore: () => void } {
+  const previous = getLogger();
+  const sink: MemoryTransport = memoryTransport();
+  setLogger(
+    createLogger({ level: "info", transports: [sink], service: "openpic-web", env: "test" })
+  );
+  return {
+    sink,
+    restore: () => {
+      setLogger(previous);
+    },
+  };
+}
+
+describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} — the exhausted retry budget (F1)", () => {
+  it("R1: answers the settled 204 when the rival's removal commits after the loser's retry budget is spent", async () => {
+    const logs = captureLogs();
+    try {
+      // Arrange — an accepted co-organizer, and the winner's writes held open in
+      // a rival transaction on the very row the route will try to flip.
+      const invitee = await signInVerified(makeIdentity("op121-r1-settled-invitee"));
+      const { fixture, invitationId } = await acceptedMember("op121-r1-settled", invitee);
+      const memberId = await memberRowId(fixture, invitee.userId);
+
+      const locked = latch();
+      const release = latch();
+      const rival = holdRivalTransaction(
+        (session) => winnerWrites(fixture, memberId, invitee.userId, session),
+        { locked, release }
+      );
+
+      // The rival holds the row's write lock from here on, so the route's
+      // transaction can only conflict — it cannot win the row.
+      await locked.wait;
+
+      // Act — the route's own DELETE, deliberately not awaited.
+      const pending = removeMember(
+        removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+      );
+
+      // Wait for the loser to spend all three attempts, give the last one its
+      // conflict round-trip, then let the winner commit while the loser polls.
+      await waitForTransactionRetries(logs.sink, 2);
+      await pause(150);
+      release.open();
+
+      const [response] = await Promise.all([pending, rival]);
+
+      // Assert — the loser reports the settled removal the winner performed.
+      expect(response.status).toBe(204);
+      expect((await response.arrayBuffer()).byteLength).toBe(0);
+
+      // Arrange guard, not a new contract: the loser really spent the whole
+      // three-attempt budget (two retry lines) instead of winning the row, so
+      // the `204` above can only come from the retry-limit branch.
+      expect(logs.sink.entries.filter(isRetryLine)).toHaveLength(2);
+
+      const removed = (await eventMembers(fixture)).find(
+        (row) => row.userId === invitee.userId.toHexString()
+      );
+      expect(removed?.status).toBe("removed");
+      expect(removed?.revokedAt).toBeInstanceOf(Date);
+      expect((await storedInvitation(invitationId))?.status).toBe("revoked");
+
+      // The winner's two emits, and only those: the loser removed nothing, so
+      // a second pair would report a removal that never happened.
+      expect(await outboxRows("collab.member.removed")).toHaveLength(1);
+      expect(await outboxRows("collab.member.removed.ack")).toHaveLength(1);
+
+      // The loser performed no removal, so it reports none. The route's log call
+      // is guarded by its own `removed` flag, and this is the branch where a
+      // refactor could wrongly log the winner's removal a second time.
+      expect(
+        logs.sink.entries.filter((entry) => entry.msg === "event member removed")
+      ).toHaveLength(0);
+    } finally {
+      logs.restore();
+    }
+  });
+
+  it("R2: answers 500 internal_error when the loser's spent retry budget finds no committed removal", async () => {
+    const logs = captureLogs();
+    try {
+      // Arrange — the same collision, but the rival's write is not a removal:
+      // it holds the row's lock and leaves `revokedAt` null forever.
+      const invitee = await signInVerified(makeIdentity("op121-r2-unsettled-invitee"));
+      const { fixture, invitationId } = await acceptedMember("op121-r2-unsettled", invitee);
+      const memberId = await memberRowId(fixture, invitee.userId);
+
+      const locked = latch();
+      const release = latch();
+      const rival = holdRivalTransaction((session) => nonRemovalWrite(memberId, session), {
+        locked,
+        release,
+      });
+
+      await locked.wait;
+
+      // Act — the route's own DELETE, deliberately not awaited.
+      const pending = removeMember(
+        removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+      );
+
+      await waitForTransactionRetries(logs.sink, 2);
+      await pause(150);
+      release.open();
+
+      const [response] = await Promise.all([pending, rival]);
+
+      // Assert — nothing was removed, so the honest answer is the original
+      // failure, not the `204` reserved for a settled removal.
+      expect(response.status).toBe(500);
+      expect((await errorOf(response)).code).toBe("internal_error");
+      expect(logs.sink.entries.filter(isRetryLine)).toHaveLength(2);
+
+      // Neither row moved and nobody was notified: a `204` here would tell the
+      // organizer a seat was removed while the member is still admitted.
+      const member = (await eventMembers(fixture)).find(
+        (row) => row.userId === invitee.userId.toHexString()
+      );
+      expect(member?.status).toBe("active");
+      expect(member?.revokedAt ?? null).toBeNull();
+      expect((await storedInvitation(invitationId))?.status).toBe("accepted");
+      expect(await outboxRows("collab.member.removed")).toHaveLength(0);
+      expect(await outboxRows("collab.member.removed.ack")).toHaveLength(0);
+      expect(
+        logs.sink.entries.filter((entry) => entry.msg === "event member removed")
+      ).toHaveLength(0);
+    } finally {
+      logs.restore();
+    }
   });
 });

@@ -337,3 +337,61 @@ this lane could not add one.
 
 **Nothing in the sections above is retracted.** No decision of the lane's earlier sections is
 re-pinned, and no code changes come with this amendment.
+
+## Amendment — the retry-limit branch, pinned deterministically (2026-11-12)
+
+**Why this is an amendment and not a new record.** Card `t_a29a9e7c` (review finding M-1 of
+`t_d3a3c553`) closes the gap the previous amendment handed to the Test Author: the retry-limit branch
+had no deterministic committed pin. The repository sweep in `adr-numbering.test.ts` pins the tree's
+population exactly (`checkedLinks: 881, scannedRecords: 292`), so a new record — or a new link inside
+any record — reddens that ratchet, and editing the guard is outside a test-authoring lane. Same route
+as before: no new file, no new link, the README and the lane's `Next free` cell untouched.
+
+**What was missing.** The concurrent cases (`F1: two concurrent removals …`, `P3: a double removal
+writes exactly one … log line`) reach the branch only when the race actually spends the loser's
+budget, which is the flake itself. With the `.catch` replaced by an immediate rethrow in a probe
+worktree at `e2a4806`, the focused spec stayed 48/48 green over three serial runs: deleting the repair
+was invisible until CI flaked again.
+
+**The committed pin.** Two additive cases in `event-invitation-decisions.test.ts`, in a new describe
+below the F1 block, both on the file's own `seedEvent` / `addEventMember` / accepted-invitation
+fixture family:
+
+- **R1** — a rival `withTransaction` performs the winner's three writes (the `event_organizers` flip,
+  the invitation revoke and both `collab.member.removed` emits) on the same row, then holds the write
+  lock. The route's own `DELETE` is fired unawaited; its three immediate attempts all conflict and the
+  wrapper throws its own `TransactionRetryLimitError` while the rival is still open. The case releases
+  the rival and asserts `204`, an empty body, exactly one `collab.member.removed` and one `.ack`
+  outbox row, a `removed` row with `revokedAt`, a `revoked` invitation, and **zero**
+  `event member removed` lines.
+- **R2** — the same collision, but the rival commits a write that is not the removal. Nothing was
+  removed, so the bounded wait runs out and the loser rethrows: `500 internal_error`, zero outbox
+  rows, the member still `active` with a null `revokedAt`, the invitation still `accepted`, zero
+  removal lines. This is the arm that pins the rethrow, not only the `204`.
+
+**Determinism, measured.** The cases do not race the clock the way the flake does: they wait for the
+wrapper's own two `db.transaction.retry` lines (one per retry, so the third and last attempt was
+already started), allow 150 ms for that attempt's conflict round-trip (measured: three attempts in
+about 19 ms), then release the rival. The retry-line gate throws with a named message when the budget
+is never spent, and each case asserts exactly two retry lines, so neither can pass because the route
+won the row instead.
+
+**The pin bites, measured (throwaway probe; the route restored byte-identically afterwards, sha256
+`8498443674b5865c4d546f3cf10af5d13e6e8254bfcc1c7d90298846e1437a5a`):**
+
+- delete the `.catch` (immediate rethrow): R1 red, `expected 500 to be 204`; R2 stays green, which is
+  what the second arm is for;
+- make `rivalRemovalCommitted` answer `true` without ever seeing a removal: R2 red,
+  `expected 204 to be 500`;
+- leave the removal log line unguarded: R1 red, `expected [ { service: 'openpic-web', …(8) } ] to have
+a length of +0 but got 1`.
+
+Green on arrival at `e2a4806` (trunk `3e268a0`): focused spec 50/50, and the two new cases 2/2 over
+three serial runs.
+
+**Residual risk, named.** The 1 s ceiling is unchanged: a removal transaction longer than the ceiling
+still answers `500`, and R2 is the honest arm for that shape. The 150 ms grace is a margin, not the
+rendezvous — the retry-line gate is the rendezvous, and it fails loudly rather than passing vacuously.
+
+**Nothing in the sections above is retracted.** No earlier decision of this record is re-pinned, and no
+production code changes come with this amendment.
