@@ -13,7 +13,7 @@ import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
-import { resolveClientIp } from "@/server/rate-limit/client-ip";
+import { createRateLimiter, rateLimitStage, resolveClientIp } from "@/server/rate-limit";
 import { platformRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
@@ -114,6 +114,14 @@ export const POST = defineRoute({
   route: "/api/v1/p/attendee-sessions",
   body: createBodySchema,
   response: createdSessionSchema,
+  // §0.11 `attendee.session`: 60/hour/IP, fail-closed (ADR-0787, ADR-0786). The
+  // stage resolves the IP through the trusted-header knob, so a forged
+  // `x-forwarded-for` cannot pick its own bucket.
+  rateLimit: rateLimitStage({
+    classKey: "attendee.session",
+    limiter: createRateLimiter(),
+    salt: getRateLimitConfig().salt,
+  }),
   handler: async (ctx) => {
     const db = getDb();
     const settings = await getPlatformSettings({ db });
