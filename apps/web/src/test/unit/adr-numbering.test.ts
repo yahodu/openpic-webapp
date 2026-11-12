@@ -1606,13 +1606,11 @@ const consumerMismatchCode: SourceAdrConsumerIssue["code"] = "consumer-mismatch"
 const unlistedConsumerCode: SourceAdrConsumerIssue["code"] = "unlisted-consumer";
 
 /**
- * The third code of that union (finding F2), pinned at runtime only and typed
- * `string` on purpose: this RED branch must keep `tsc` at exit 0, and naming a
- * union member that does not exist yet would fail the typecheck before the GREEN
- * widens `SourceAdrConsumerIssue["code"]`. Widening the union to carry this value
- * is what lets the implementation type the issue it must report.
+ * The third code of that union (finding F2), pinned at compile time like its two
+ * siblings: the union carries `"consumers-malformed"`, so a rename or a drop on
+ * the implementation side fails `tsc` here rather than only at runtime.
  */
-const consumersMalformedCode = "consumers-malformed";
+const consumersMalformedCode: SourceAdrConsumerIssue["code"] = "consumers-malformed";
 
 /** A record no file of this tree carries: the F2 shape fixtures point at it. */
 const fixtureRecord0901 = "ADR-0901-consumers-shape-fixture.md"; // adr-fixture: fixture record name
@@ -2784,18 +2782,20 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
   );
 
   /**
-   * A heading is a fourth way to write the field, and it is classified on the
-   * **raw** line — before the blockquote peel — so a heading inside a blockquote
-   * is silently unenforced (measured at `319532d`: `issues: []`, `ok: true`,
-   * `unlisted: 1`). That is the exact F2/F-A failure mode: a punctuation slip
-   * must not switch enforcement off without a signal. The column-0 controls
-   * (`## **Consumers:** …` and `## Consumers: …`) already report and are pinned
-   * elsewhere in this file.
+   * A heading is a fourth way to write the field. At `319532d` it was classified
+   * on the **raw** line, before the blockquote peel, so a heading inside a
+   * blockquote was silently unenforced (measured: `issues: []`, `ok: true`,
+   * `unlisted: 1`); the GREEN (card t_ba4928fb) peels the blockquote levels
+   * first, so both rows below pass since `25a5c52`. That is the exact F2/F-A
+   * failure mode: a punctuation slip must not switch enforcement off without a
+   * signal. Do not weaken these rows — a blockquoted heading declares exactly
+   * like the column-0 one.
    *
-   * These two rows are **RED by design**: they pin the intended contract, and the
-   * GREEN (card t_ba4928fb) peels the blockquote levels, *then* runs the heading
-   * test, then the list-marker/bold peel. Do not weaken them — a blockquoted
-   * heading declares exactly like the column-0 one.
+   * Of the column-0 controls, only the **colon-less** `## Consumers` heading is
+   * pinned elsewhere in this file (four rows: the malformed report, the
+   * declaration, the counting arm and the counter reconciliation). The
+   * `## **Consumers:** …` column-0 heading was pinned nowhere, so the `it` after
+   * the underscore-heading block below pins it.
    */
   it.each<[string, string[]]>([
     ["a double-star bold heading", ["> ## **Consumers:** `apps/web/src/server/x.ts`"]],
@@ -2834,6 +2834,100 @@ describe("checkSourceAdrConsumers — residual Consumers shapes report instead o
       expect(result.verifiedReferences).toBe(1);
     }
   );
+
+  /**
+   * The heading axis has a second bold style, and every `__…__` row pinned above
+   * composes it with a *list* marker. A heading carries no list marker, so the
+   * second peel (`^(?:\d+[.)]|[-*+])[ \t]+`) removes nothing and
+   * `## __Consumers:__ …` reaches the label test as prose: measured at `25a5c52`
+   * as `issues: []`, `declares: []`, `ok: true`, `unlisted: 1` for all three rows
+   * below. `__…__` is the same field vocabulary as `**…**` in every non-heading
+   * composition, so the heading axis must not be the one combination left
+   * unenforced (finding F1 of card t_ba4928fb).
+   *
+   * These three rows are **RED by design**: they pin the intended contract, and
+   * the GREEN (card t_23bb5c2f) adds the `#{1,6}` alternative to the second peel.
+   * Do not weaken them — an underscore-bold heading is a field, not a sentence.
+   */
+  it.each<[string, string[]]>([
+    [
+      "a double-underscore bold heading inside a blockquote",
+      ["> ## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a triple-underscore bold heading inside a blockquote",
+      ["> ## ___Consumers:___ `apps/web/src/server/x.ts`"],
+    ],
+    [
+      "a double-underscore bold heading at column 0",
+      ["## __Consumers:__ `apps/web/src/server/x.ts`"],
+    ],
+  ])("reports consumers-malformed, and still declares, for %s", (_shape, fieldLines) => {
+    // Arrange — the field is on line 2 of the record, after the status line.
+    const records: AdrRecordText[] = [
+      adrRecord(fixtureRecord0902, ["- **Status:** Accepted", ...fieldLines].join("\n")),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — the underscore-bold heading reports exactly like its
+    // double-star sibling, and the record keeps hard-checking.
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0902,
+        line: 2,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.unlisted).toEqual([]);
+    expect(result.declaredRecords).toEqual(["0902"]);
+    expect(result.verifiedReferences).toBe(1);
+  });
+
+  it("reports consumers-malformed for a double-star bold heading at column 0", () => {
+    // Arrange — the control the widened peel must not disturb: a column-0
+    // heading is matched by the heading test before any peel runs.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0902,
+        ["- **Status:** Accepted", "## **Consumers:** `apps/web/src/server/x.ts`"].join("\n")
+      ),
+    ];
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/x.ts",
+        text: "// the helper the field names ADR-0902", // adr-fixture: fixture citation target
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(sources, records);
+
+    // Assert — still reported once, still declaring, still verified.
+    expect(result.issues).toEqual([
+      {
+        code: consumersMalformedCode,
+        file: fixtureRecord0902,
+        line: 2,
+        number: "0902",
+        record: fixtureRecord0902,
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(result.unlisted).toEqual([]);
+    expect(result.declaredRecords).toEqual(["0902"]);
+    expect(result.verifiedReferences).toBe(1);
+  });
 
   it("reports the citation mismatch too when a blockquote field does not name the citing file", () => {
     // Arrange — the field names `x.ts`; `y.ts` cites the record.
