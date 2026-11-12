@@ -1,3 +1,15 @@
+## [1.54.1](https://github.com/yahodu/openpic-webapp/compare/v1.54.0...v1.54.1) (2026-11-12)
+
+### Bug Fixes
+
+- **attendee:** OP-129 bind attendee sessions only through active access links ([#469](https://github.com/yahodu/openpic-webapp/issues/469)) ([0b1eaa1](https://github.com/yahodu/openpic-webapp/commit/0b1eaa128ae5ebc8e3ba589299a371f28f75b68f))
+
+## [1.54.0](https://github.com/yahodu/openpic-webapp/compare/v1.53.0...v1.54.0) (2026-11-12)
+
+### Features
+
+- **uploads:** OP-123 land the phase-4 uploads and media lane (OP-123 to OP-128) ([bf8b441](https://github.com/yahodu/openpic-webapp/commit/bf8b441d171cfb935079c9642ea3d7b7233eabd2)), closes [#439](https://github.com/yahodu/openpic-webapp/issues/439)
+
 ## [1.53.0](https://github.com/yahodu/openpic-webapp/compare/v1.52.2...v1.53.0) (2026-11-12)
 
 ### Features

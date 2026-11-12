@@ -41,15 +41,25 @@ const currentSessionSchema = z.object({
 
 /** The `events` fields the slug projection reads (schema §15.1). */
 interface EventSlugRow {
-  readonly accessLinks?: readonly { readonly slug?: unknown }[];
+  readonly accessLinks?: readonly {
+    readonly slug?: unknown;
+    readonly active?: unknown;
+  }[];
 }
 
 /**
  * The public slugs of the events an attendee session is bound to.
  *
+ * Only **active** links are reported: a session created while a link was
+ * active stays valid (the credential is the session, not the link), but a
+ * rotated-away slug must stop being advertised the moment `active` is cleared,
+ * or the attendee UI keeps offering a URL that no longer resolves (§4.2,
+ * ADR-0781 F1 amendment).
+ *
  * @param db - The database to read `events` from.
  * @param eventIds - The row's `eventIds`.
- * @returns The slugs, in `eventIds` order; `[]` when nothing is bound.
+ * @returns The active slugs, in `eventIds` order then row order; `[]` when
+ * nothing active is bound.
  */
 async function eventSlugsFor(db: Db, eventIds: readonly ObjectId[]): Promise<string[]> {
   if (eventIds.length === 0) {
@@ -60,9 +70,11 @@ async function eventSlugsFor(db: Db, eventIds: readonly ObjectId[]): Promise<str
     .find({ _id: { $in: [...eventIds] } }, { projection: { accessLinks: 1 } })
     .toArray()) as EventSlugRow[];
 
-  return events
-    .map((event) => event.accessLinks?.[0]?.slug)
-    .filter((slug): slug is string => typeof slug === "string");
+  return events.flatMap((event) =>
+    (event.accessLinks ?? []).flatMap((link) =>
+      link.active === true && typeof link.slug === "string" ? [link.slug] : []
+    )
+  );
 }
 
 export const GET = defineRoute({
