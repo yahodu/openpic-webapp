@@ -489,6 +489,13 @@ export const MEDIA_ERROR_TRANSPORT: Readonly<Record<MediaErrorCode, ErrorCatalog
     retryable: false,
     message: "The multipart upload has expired and must be started again.",
   },
+  // OP-127 (ADR-0762 D8): a reprocess of an image whose pipeline state is not
+  // `failed` (contract §4.4); only a failed image is reprocessable.
+  not_failed: {
+    status: 409,
+    retryable: false,
+    message: "Only an image whose processing failed can be reprocessed.",
+  },
 };
 
 /**

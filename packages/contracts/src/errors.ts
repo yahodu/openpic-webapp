@@ -268,6 +268,9 @@ export const MEDIA_ERROR_CODES = [
   // OP-125 (ADR-0741): the provider no longer holds the multipart series (the
   // 7-day lifecycle rule aborted it), so the client restarts from batch-resolve.
   "upload_expired",
+  // OP-127 (ADR-0762 D8): a single-image reprocess of an image that is not
+  // `failed` (contract §4.4); only a failed image is reprocessable.
+  "not_failed",
 ] as const;
 
 /** A member of the closed {@link MEDIA_ERROR_CODES} set. */
