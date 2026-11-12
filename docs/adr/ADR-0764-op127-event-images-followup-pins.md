@@ -127,6 +127,8 @@ range is touched.
 
 - Focused suite `vitest run --project integration …/event-images-management.test.ts` →
   **26/26 passed** (the 20 pre-existing OP-127 cases plus these 6).
+- Full `vitest run --project integration` at this head → **103 files / 1007 passed** (the
+  lane's 1001 at `8588010` plus these 6; no regression in the other 102 files).
 - `tsc -p apps/web/tsconfig.json --noEmit` → exit 0.
 - `eslint` on the spec → 0 errors (the single `security/detect-object-injection` warning is
   the pre-existing `requireHandler` namespace read at line 212).
