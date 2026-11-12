@@ -821,10 +821,12 @@ const CONSUMERS_FIELD_PATTERN = /^-\s+\*\*Consumers:\*\*/;
  * cannot silently switch the rule off for its record (finding F2).
  *
  * Recognition is deliberately wider than canonicality and the peels run in
- * sequence, so the shapes compose: the caller has already ruled out the
- * column-0 canonical form, hence anything recognized here is malformed by
- * construction. Prose is not a field shape: once the markers are gone the label
- * must open the line and, unless the line is a heading, carry its colon.
+ * sequence, so the shapes compose: every blockquote level, then every heading
+ * or list marker (a line can carry both, in either order), then the bold
+ * markers. The caller has already ruled out the column-0 canonical form, hence
+ * anything recognized here is malformed by construction. Prose is not a field
+ * shape: once the markers are gone the label must open the line and, unless the
+ * line is a heading, carry its colon.
  */
 function isMalformedConsumersField(line: string): boolean {
   let body = line.trim();
@@ -835,7 +837,14 @@ function isMalformedConsumersField(line: string): boolean {
     return true; // after the peel, so a quoted heading cannot go silent
   }
 
-  body = body.replace(/^(?:\d+[.)]|[-*+]|#{1,6})[ \t]+/, "").replace(/^[*_]+/, "");
+  for (;;) {
+    const peeled = body.replace(/^(?:\d+[.)]|[-*+]|#{1,6})[ \t]+/, "");
+    if (peeled === body) {
+      break;
+    }
+    body = peeled;
+  }
+  body = body.replace(/^[*_]+/, "");
   return /^Consumers[*_]{0,3}\s*:/.test(body);
 }
 
