@@ -358,6 +358,20 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     unique: true,
     partialFilterExpression: { "accessLinks.active": true },
   },
+  // events — the public attendee create route resolves a slug with
+  // `{accessLinks: {$elemMatch: {slug, active: true}}}` (ADR-0781 F1). The
+  // partial index above cannot serve it: the planner's subset check does not
+  // accept an ELEM_MATCH_VALUE predicate. This plain non-partial index on the
+  // same path bounds the slug equality; the `$elemMatch` still runs in the
+  // FETCH stage, so the unauthenticated route stops full-scanning `events`.
+  // Single-key on purpose: the U1 tenant-prefix rule governs compound indexes,
+  // and a `tenantId`-led variant was measured as a COLLSCAN — it cannot serve
+  // this filter. Uniqueness stays on the partial index above.
+  {
+    collection: COLLECTIONS.events,
+    name: "events_active_slug_lookup",
+    keys: [["accessLinks.slug", 1]],
+  },
 
   // media_assets — content-addressed dedupe within a tenant (§16.1).
   {
