@@ -139,7 +139,7 @@ const ERROR_CASES: readonly OutcomeCase[] = [
 
 const RENDERING_CASES: readonly OutcomeCase[] = [
   ...RENDERING_STATUSES.map((status): OutcomeCase => ({
-    name: `renders an open gallery for a ${String(status)} event inside its retention window`,
+    name: `renders an open gallery for a ${status} event inside its retention window`,
     facts: makeFacts({ status }),
     expected: { kind: "ok", galleryOpen: true, galleryExpiredAt: null },
   })),
