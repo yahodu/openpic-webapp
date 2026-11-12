@@ -37,7 +37,7 @@ import { checkEntitlement } from "@/server/services/entitlements";
  * The route is **`public`**-labelled: §5.6 names `user` or `attendee`, but its
  * authorization is per item, and an anonymous caller must learn per item that
  * it has to sign in (`denied[] authentication_required`) rather than receive a
- * gateway `401` (ADR-0764 D3/D4). The principal is therefore resolved here —
+ * gateway `401` (ADR-0766 D3/D4). The principal is therefore resolved here —
  * and put through the `user` label's account-status guard (ADR-0772) — and
  * decides the caller class — an event member (organizer, co-organizer or
  * active tenant member) or an attendee (a caller with a `face_matches` row for
@@ -64,7 +64,7 @@ const itemSchema = z.object({
  *
  * The item array carries no `.max(200)`: a schema cap would reach the wire as
  * `422 validation_failed`, while the card's contract is `413
- * payload_too_large` for a 201-item list (ADR-0764 D7) — so the cap is the
+ * payload_too_large` for a 201-item list (ADR-0766 D7) — so the cap is the
  * handler's own check.
  */
 const requestSchema = z.object({

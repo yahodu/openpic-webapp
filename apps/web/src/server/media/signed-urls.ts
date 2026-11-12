@@ -11,14 +11,14 @@
  * - `not_found` outranks every other denial, so an id that is not a live image
  *   of the scope event never reveals whether it exists (§0.4).
  * - `anonymous` has no identity to match, so `authentication_required` never
- *   aggregates into the batch `403` (ADR-0764 A1/D4).
+ *   aggregates into the batch `403` (ADR-0766 A1/D4).
  * - `original` needs the tenant plan's `originals.download` gate (§0.14, §6.6).
  * - an attendee is allowed only for an image they are matched in **and** that
  *   the organizer has not hidden (§5.6, ADR-0762 D5/A5).
  *
  * `SignedUrlDecision` keeps `code` optional — an allowed item carries no code and
  * a denied one always does, and the route refuses a denial without one rather
- * than inventing a code (ADR-0765 D1).
+ * than inventing a code (ADR-0767 D1).
  */
 
 /** The derivatives a refresh item may ask for (§5.6). */
@@ -88,7 +88,7 @@ export function authorizeSignedUrlItem(input: SignedUrlAuthorizationInput): Sign
  *
  * An all-denied batch escalates unless a denial is `authentication_required`:
  * an anonymous caller has nothing to be authorized *for*, so it learns per item
- * that it must sign in (ADR-0764 A1/D4). An empty batch stays `200`; the wire
+ * that it must sign in (ADR-0766 A1/D4). An empty batch stays `200`; the wire
  * validation refuses it before this rule runs.
  *
  * @param decisions - Every item's decision, in request order.
