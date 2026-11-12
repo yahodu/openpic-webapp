@@ -1,3 +1,9 @@
+## [1.53.0](https://github.com/yahodu/openpic-webapp/compare/v1.52.2...v1.53.0) (2026-11-12)
+
+### Features
+
+- **adr:** OP-96 reject intersecting lane ranges and start blocks above the in-flight range end ([#448](https://github.com/yahodu/openpic-webapp/issues/448)) ([d85de6f](https://github.com/yahodu/openpic-webapp/commit/d85de6fac334ef9feb67a3a9c05219ece9718a7f))
+
 ## [1.52.2](https://github.com/yahodu/openpic-webapp/compare/v1.52.1...v1.52.2) (2026-11-11)
 
 ### Bug Fixes
