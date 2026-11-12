@@ -2,6 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { ObjectId, type Db } from "mongodb";
 
+import { apiErrorSchema } from "@openpic/contracts";
+
 import * as currentRouteModule from "@/app/api/v1/p/attendee-sessions/current/route";
 import * as sessionsRouteModule from "@/app/api/v1/p/attendee-sessions/route";
 import {
@@ -10,6 +12,7 @@ import {
 } from "@/server/settings/platform-settings";
 import { hashAttendeeSessionToken } from "@/server/attendee/session-token";
 import { COLLECTIONS } from "@/server/db/collections";
+import { createRateLimiter } from "@/server/rate-limit";
 
 import { setCookies } from "../helpers/auth-requests";
 import { APP_ORIGIN, startTestApp, type TestApp } from "../helpers/authed-app";
@@ -791,5 +794,114 @@ describe("GET /api/v1/p/attendee-sessions/current — eventSlugs reports only ac
 
     const current = await jsonOf<CurrentSession>(response);
     expect(current.eventSlugs).toEqual([]);
+  });
+});
+
+/**
+ * F1 — contract §0.11's `attendee.session` limit on the create route.
+ *
+ * The limit exists because the endpoint is **public and writes**: every allowed
+ * call mints a 30-day `attendeeSessions` row, so an unlimited caller grows the
+ * collection without bound. The class is keyed on the client IP alone
+ * (`{scope: "ip", limit: 60, windowSeconds: 3600}` — a public request has no
+ * principal and, before the session exists, no contact to key on).
+ *
+ * These cases run against the **real** limiter (the memory provider outside
+ * production counts for real), so the 61st denial is produced by the class
+ * table itself: a rule of 600 rather than 60, or a class keyed on a scope that
+ * does not exist for a public caller, reddens them. Every case announces its
+ * own client IP so one case's spent window can never leak into another's.
+ */
+describe("POST /api/v1/p/attendee-sessions — the §0.11 attendee.session limit", () => {
+  /** §0.11's allowance for the class: 60 / hour / IP. */
+  const CLASS_LIMIT = 60;
+
+  /** The window §0.11 gives the class, in seconds. */
+  const CLASS_WINDOW_SECONDS = 3600;
+
+  /** One client address spent by the deny case (the bucket is per IP). */
+  const SPENT_IP = "198.51.100.60";
+
+  /** A different client address, untouched by every other case in this file. */
+  const OTHER_IP = "198.51.100.61";
+
+  /**
+   * A create from a chosen client address.
+   *
+   * @param ip - The `x-forwarded-for` value the stage keys the bucket on.
+   * @returns The raw response.
+   */
+  function createFrom(ip: string): Promise<Response> {
+    return createSession({ headers: { "x-forwarded-for": ip } });
+  }
+
+  /** The number of `attendeeSessions` rows in this suite's database. */
+  function sessionCount(): Promise<number> {
+    return app.db.collection(COLLECTIONS.attendeeSessions).countDocuments();
+  }
+
+  it("F1: answers 201 to the first 60 creates from one IP, then 429 rate_limited to the 61st", async () => {
+    const statuses: number[] = [];
+    for (let call = 1; call <= CLASS_LIMIT; call += 1) {
+      const response = await createFrom(SPENT_IP);
+      statuses.push(response.status);
+    }
+    // One assertion over the whole window, so a denial inside it names itself.
+    expect(statuses.filter((status) => status !== 201)).toEqual([]);
+
+    const sessionsBefore = await sessionCount();
+    const limited = await createFrom(SPENT_IP);
+
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("ratelimit-limit")).toBe(String(CLASS_LIMIT));
+    expect(limited.headers.get("ratelimit-remaining")).toBe("0");
+    expect(limited.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect(limited.headers.get("retry-after")).toBe(limited.headers.get("ratelimit-reset"));
+    expect(Number(limited.headers.get("retry-after"))).toBeLessThanOrEqual(CLASS_WINDOW_SECONDS);
+
+    const body = await limited.json();
+    expect(body.error.code).toBe("rate_limited");
+    expect(body.error.retryable).toBe(true);
+    expect(apiErrorSchema.safeParse(body).success).toBe(true);
+
+    // A denied call is not a session: no cookie and no new row.
+    expect(limited.headers.get("set-cookie")).toBeNull();
+    expect(await sessionCount()).toBe(sessionsBefore);
+  });
+
+  it("F1: another client IP is not affected by a spent window (the bucket is the IP)", async () => {
+    const response = await createFrom(OTHER_IP);
+
+    expect(response.status).toBe(201);
+    // The stage runs on the happy path too, and its numbers are §0.11's: they
+    // come from the class table, not from a limiter stub.
+    expect(response.headers.get("ratelimit-limit")).toBe(String(CLASS_LIMIT));
+    expect(response.headers.get("ratelimit-remaining")).toBe(String(CLASS_LIMIT - 1));
+    expect(response.headers.get("ratelimit-reset")).toMatch(/^\d+$/);
+    expect(response.headers.get("retry-after")).toBeNull();
+  });
+
+  it("F1: fails closed — an unavailable limiter answers 503 and mints no session", async () => {
+    // The route reaches its limiter through the memoised `createRateLimiter()`
+    // (the `plans` route's accessor), so the instance spied here IS the one the
+    // stage consults: a second call returns the same object.
+    const limiter = createRateLimiter();
+    const unavailable = vi
+      .spyOn(limiter, "limit")
+      .mockRejectedValue(new Error("limiter unavailable"));
+
+    try {
+      const response = await createFrom(OTHER_IP);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("set-cookie")).toBeNull();
+
+      const body = await response.json();
+      expect(body.error.code).toBe("service_unavailable");
+      expect(body.error.retryable).toBe(true);
+      expect(apiErrorSchema.safeParse(body).success).toBe(true);
+    } finally {
+      unavailable.mockRestore();
+    }
   });
 });
