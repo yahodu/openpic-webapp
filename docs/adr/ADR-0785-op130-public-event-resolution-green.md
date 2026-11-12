@@ -161,3 +161,20 @@ invoked handler sees no Next `params`).
   owns the per-plan answer, and the page must agree with the submit route.
 - **Answer the lapsed cookie with `401 attendee_session_expired`.** Rejected:
   §6.1's error table is closed and the page must still render.
+
+## Addendum (post-rebase) — the session fixture carries a client address
+
+This lane was rebased onto `main` (`103290f`) after [ADR-0787](ADR-0787-op129-attendee-session-rate-limit-pin.md)
+had mounted the **fail-closed** `attendee.session` class on
+`POST /api/v1/p/attendee-sessions`. `createSessionCookie` — the spec's own helper —
+posted with only `content-type`, so `resolveClientIp` answered `undefined`
+(`TRUSTED_CLIENT_IP_HEADER` is unset in the integration env, so the `x-forwarded-for`
+fallback applies), the stage reported `unavailable` and the four
+`session.hasProfile` cases failed in the **fixture**, before the route under test ran.
+
+The fix is one header, `"x-forwarded-for": "203.0.113.77"` — the address
+`attendee-sessions.test.ts` already uses for the same route. Nothing else changed:
+no assertion, case name, count, fixture body or production file. Weakening the stage
+instead would contradict ADR-0787 and redden `main`'s `stage.test.ts` P3 pin, so the
+fixture is the correct side of the contract to move. Evidence after the fix:
+`public-event-resolution.test.ts` → **36 passed (36)**.

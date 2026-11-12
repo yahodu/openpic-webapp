@@ -412,12 +412,19 @@ async function seedPublishedEvent(
   return { tenantId, event };
 }
 
-/** Create a real anonymous attendee session bound to `slug`, returning its cookie. */
+/**
+ * Create a real anonymous attendee session bound to `slug`, returning its cookie.
+ *
+ * The address is required, not decorative: the route mounts a fail-closed
+ * `attendee.session` class, so a request with no attributable IP is refused
+ * `503 service_unavailable` before the handler runs — the §0.11 behaviour
+ * `rate-limit/stage.test.ts` P3 pins on `main`.
+ */
 async function createSessionCookie(slug: string): Promise<string> {
   const response = await createAttendeeSession(
     new Request(new URL("/api/v1/p/attendee-sessions", APP_ORIGIN), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.77" },
       body: JSON.stringify({ eventSlug: slug }),
     })
   );
