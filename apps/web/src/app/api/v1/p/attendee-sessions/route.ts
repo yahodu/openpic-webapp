@@ -20,7 +20,7 @@ import { getPlatformSettings } from "@/server/settings/platform-settings";
 
 /**
  * `POST /api/v1/p/attendee-sessions` — create an anonymous attendee session
- * (OP-129, contract §1.5, schema §13.5; ADR-0769, ADR-0770).
+ * (OP-129, contract §1.5, schema §13.5; ADR-0780, ADR-0781).
  *
  * The attendee has no account, so the session **is** the credential: the route
  * mints an `opat_` token, stores only its SHA-256 (plus a hashed device
@@ -55,7 +55,7 @@ const SECONDS_PER_DAY = 24 * 60 * 60;
  *
  * A slug that matches no event is `404 not_found` rather than a silently
  * unbound session: the attendee would otherwise believe their selfie was
- * attached to an event it never reached (ADR-0770).
+ * attached to an event it never reached (ADR-0781).
  *
  * @param db - The database to read `events` from.
  * @param slug - The optional `accessLinks[].slug` from the body.

@@ -52,7 +52,7 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
  * OP-129 appends `attendee_session_expired` (contract §1.5 / Appendix A.1,
  * `401`, details `{ recreateUrl }`): an anonymous attendee token whose session
  * lapsed is a distinct failure from a missing one, so the client can tell "your
- * 30 days are up, re-create" from "you sent nothing" (ADR-0770).
+ * 30 days are up, re-create" from "you sent nothing" (ADR-0781).
  */
 export const AUTH_ERROR_CODES = [
   "authentication_required",

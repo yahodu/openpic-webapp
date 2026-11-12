@@ -4,7 +4,7 @@
 - **Consumers:** `apps/web/src/server/rate-limit/classes.test.ts` (contract §0.11 table +
   failure policy), `apps/web/src/test/integration/attendee-sessions.test.ts` (F1 pins),
   `docs/API Contract.md` §0.11 + §1.5
-- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0769`–`0788`; see
+- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0780`–`0798`; see
   §Number allocation — this record takes `0787` (minted as `0782`, renumbered by
   card `t_f4da0ad2`), not the cell's `0771`.
 - **Supersedes:** nothing. **Amends:** [ADR-0770](ADR-0770-op129-anonymous-attendee-sessions-green.md)
@@ -196,8 +196,8 @@ resolver-default record (`ADR-0783-op129-attendee-resolver-default.md`, card `t_
 `adr-numbering.test.ts` fails — the moment the two records share a tree.
 
 This record therefore takes **`0787`** (card `t_f4da0ad2`, review finding **F1**): inside the
-lane's reserved `0769`–`0788` range, above the `0780`/`0781` repair boundary and above every
-number in flight. The lane cell advances to `0788`. A sweep of every open PR head
+lane's reserved `0780`–`0798` range, above the two records the `0780`/`0781` repair re-cut and
+above every number in flight. The lane cell advances to `0788`. A sweep of every open PR head
 (`git ls-tree -r <ref> -- docs/adr`) plus `ls docs/adr` taken immediately before the push shows
 no `ADR-0787` and no `ADR-0788` anywhere in flight, so `0787` is free. The reasoning that got
 here is unchanged: a record takes the next number above the in-flight high-water mark, and a

@@ -23,7 +23,7 @@ import { hashAttendeeSessionToken } from "./session-token";
  *     answers `401 authentication_required`);
  *   - a token whose session has lapsed → throws `attendee_session_expired`
  *     with `details.recreateUrl`, so the attendee is told to re-create a
- *     session and re-upload a selfie (ADR-0769 §3);
+ *     session and re-upload a selfie (ADR-0780 §3);
  *   - otherwise the principal, carrying the session id.
  *
  * Expiry is inclusive (`now >= expireAt`), matching the MongoDB TTL monitor.

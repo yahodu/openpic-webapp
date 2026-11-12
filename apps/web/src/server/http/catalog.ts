@@ -147,7 +147,7 @@ export const AUTH_ERROR_TRANSPORT: Readonly<Record<AuthErrorCode, ErrorCatalogEn
     retryable: false,
     message: "Your session has expired. Please sign in again.",
   },
-  // OP-129 (ADR-0770): a lapsed anonymous attendee session (contract §1.5,
+  // OP-129 (ADR-0781): a lapsed anonymous attendee session (contract §1.5,
   // Appendix A.1) carries `details: { recreateUrl }`.
   attendee_session_expired: {
     status: 401,

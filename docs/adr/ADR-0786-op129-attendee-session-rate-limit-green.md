@@ -5,7 +5,7 @@
   `apps/web/src/server/rate-limit/classes.ts`; pinned by
   `apps/web/src/server/rate-limit/classes.test.ts` and
   `apps/web/src/test/integration/attendee-sessions.test.ts`
-- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0769`–`0788`; see
+- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0780`–`0798`; see
   §Number allocation — this record takes `0786`, not the cell's `0783`.
 - **Supersedes:** nothing. **Amends:** ADR-0787 §3–§4 (it declared the change; this
   record makes it).
