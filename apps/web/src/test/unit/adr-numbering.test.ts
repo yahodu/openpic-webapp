@@ -711,13 +711,17 @@ describe("checkAdrDirectory — lane-range overlaps (ledger finding F-L1)", () =
  * The rule is textual: a reference in a line comment, a block comment or a string
  * literal all count — the F6 defect lived in comments.
  *
- * **Fixture marker.** A line whose text contains `adr-fixture` is exempt: the
- * guard's own specs are full of synthetic numbers that must never resolve
- * (`ADR-0000`/`ADR-9999` [adr-fixture] shape fixtures, `ADR-0764` [adr-fixture] lookalikes, lane numbers that
- * only exist on an unmerged branch). The exemption is per **line text**, never a
- * line number and never a number range, so it travels with the fixture when it
- * moves and a new dangling reference on an unmarked line still fails. Exempt
- * references are counted in `exemptReferences`, not in `checkedReferences`.
+ * **Fixture marker.** A line **inside the guard's own test tree**
+ * (`apps/web/src/test/**`) whose text contains `adr-fixture` is exempt: those
+ * specs are full of synthetic numbers that must never resolve (`ADR-000x`/
+ * `ADR-999x` shape fixtures, `0764` lookalikes, lane numbers that only exist on
+ * an unmerged branch). The exemption is per **line text** *and* per **path** —
+ * never a line number, never a number range and never a whole file — so it
+ * travels with the fixture when it moves, a new dangling reference on an
+ * unmarked line still fails, and a stale pointer in `apps/web/src/server`,
+ * `apps/web/src/app` or any `packages` source tree fails **even when its line
+ * carries the marker** (finding F-M1). Exempt references are counted in
+ * `exemptReferences`, not in `checkedReferences`.
  *
  * **`checkRepositoryAdrReferences`** scans, deterministically and sorting-free
  * (the report is sorted by file, then line, then number):
@@ -954,6 +958,77 @@ describe("checkSourceAdrReferences — the fixture marker", () => {
     ]);
     expect(result.checkedReferences).toBe(1);
     expect(result.exemptReferences).toBe(1);
+  });
+
+  it("does not exempt a marked dangling reference in the application source", () => {
+    // Arrange — the F-M1 hole: a real stale pointer in shipped source with the
+    // exemption word appended. The pre-scope helper swallowed it silently.
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/server/media/signed-urls.ts",
+        text: "// see ADR-0764 for the decision adr-fixture", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, ["ADR-0766-decision.md"]);
+
+    // Assert — the marker buys nothing outside the guard's own test tree.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "dangling-reference",
+          file: "apps/web/src/server/media/signed-urls.ts",
+          line: 1,
+          number: "0764",
+        },
+      ],
+      checkedReferences: 1,
+      exemptReferences: 0,
+    });
+  });
+
+  it.each<[string, string]>([
+    ["the app router tree", "apps/web/src/app/(public)/events/page.tsx"],
+    ["a package source tree", "packages/contracts/src/index.ts"],
+    ["a sibling directory whose name starts with `test`", "apps/web/src/test-tools/server.ts"],
+    ["a path that leaves the test tree", "apps/web/src/test/../server/x.ts"],
+  ])("does not exempt a marked dangling reference in %s", (_where, path) => {
+    // Arrange — every path here sits outside `apps/web/src/test/**`, so the
+    // marker must not be load-bearing. The last two rows pin an explicit
+    // directory boundary and a normalized path, not a raw prefix test.
+    const sources: SourceFileText[] = [
+      { path, text: "// ADR-0764 adr-fixture" }, // adr-fixture: the line under test is itself a fixture
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: "dangling-reference", file: path, line: 1, number: "0764" }],
+      checkedReferences: 1,
+      exemptReferences: 0,
+    });
+  });
+
+  it("exempts a marked line anywhere under the guard's own test tree", () => {
+    // Arrange — the fixture half of the scope: helpers, unit and integration
+    // specs all live under `apps/web/src/test/**`.
+    const sources: SourceFileText[] = [
+      {
+        path: "apps/web/src/test/integration/media-signed-urls.test.ts",
+        text: "// ADR-0764 synthetic adr-fixture", // adr-fixture: the line under test is itself a fixture
+      },
+    ];
+
+    // Act
+    const result = checkSourceAdrReferences(sources, []);
+
+    // Assert
+    expect(result).toEqual({ ok: true, issues: [], checkedReferences: 0, exemptReferences: 1 });
   });
 });
 
