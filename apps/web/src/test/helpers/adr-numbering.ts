@@ -17,15 +17,15 @@
  *      {@link checkAdrDirectory}.
  *
  * The six invariants, and the module each one lives in, are tabulated once, in
- * `0302` §1. Every other invariant is implemented in its own module and
- * re-exported below.
+ * `0302` (`## Decision`, the six-row invariant table). Every other invariant is
+ * implemented in its own module and re-exported below.
  *
  * **The barrel is frozen.** New invariants are imported from their own module
  * and are added to this barrel only if an external caller needs them. The
  * re-exports at the bottom exist because the specs and the `0300` §12 pre-merge
  * command import from this path — not because appending here is how the guard
- * grows. A new invariant is a new module, its own spec, and one row in the
- * `0302` §1 table.
+ * grows. A new invariant is a new module, its own spec, and one row in that
+ * six-row table.
  *
  * @see docs/CONVENTIONS.md §11 (ADR numbering)
  * @see docs/adr/ADR-0300-adr-number-range-allocation-policy.md

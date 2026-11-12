@@ -8,8 +8,9 @@ import { checkAdrRecordLinks, checkRepositoryAdrLinks } from "../helpers/adr-rec
 
 /**
  * ADR guard, invariant (vi) — the guard's six invariants are tabulated once, in
- * `ADR-0302` §1. This file owns one of them: every markdown link target inside
- * a `docs/adr/ADR-*.md` record must name a file that exists.
+ * `ADR-0302` (`## Decision`, the six-row invariant table). This file owns one of
+ * them: every markdown link target inside a `docs/adr/ADR-*.md` record must name
+ * a file that exists.
  */
 /* ------------------------------------------------------------------------- *
  * Invariant (vi) — markdown link targets inside the records (finding F3)

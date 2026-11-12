@@ -1,7 +1,8 @@
 /**
  * ADR guard, invariant (iii) — reserved-range disjointness in the ledger
  * (ADR-0300 §10). The guard's six invariants are tabulated once, in `0302`
- * §1; the decision detail for this one is §6.
+ * (`## Decision`, the six-row invariant table); the decision detail for this
+ * one is §6.
  *
  * One `lane-range-overlap` issue per pair of rows whose **closed** ranges
  * intersect (touching neighbours are disjoint), and one `lane-range-malformed`

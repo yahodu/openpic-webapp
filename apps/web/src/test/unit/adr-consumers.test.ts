@@ -13,9 +13,9 @@ import { checkRepositoryAdrReferences } from "../helpers/adr-source-references.j
 
 /**
  * ADR guard, invariant (v) — the guard's six invariants are tabulated once, in
- * `ADR-0302` §1. This file owns one of them: a citation must be *accurate*, so
- * a record that declares a `Consumers:` field must name every file that cites
- * it.
+ * `ADR-0302` (`## Decision`, the six-row invariant table). This file owns one of
+ * them: a citation must be *accurate*, so a record that declares a `Consumers:`
+ * field must name every file that cites it.
  */
 /* ------------------------------------------------------------------------- *
  * Invariant (v) — citation accuracy (finding F-N1)

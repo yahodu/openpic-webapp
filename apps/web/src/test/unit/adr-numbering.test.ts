@@ -13,8 +13,9 @@ import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/a
 
 /**
  * ADR guard, invariants (i) and (ii) — the guard's six invariants are tabulated
- * once, in `ADR-0302` §1. This file owns the first two and the
- * `checkAdrDirectory` composition that applies them to one directory:
+ * once, in `ADR-0302` (`## Decision`, the six-row invariant table). This file
+ * owns the first two and the `checkAdrDirectory` composition that applies them
+ * to one directory:
  *   (i)   no two in-scope files share an `ADR-NNNN` number;
  *   (ii)  every in-scope `ADR-*.md` file name matches
  *         `^ADR-(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`.

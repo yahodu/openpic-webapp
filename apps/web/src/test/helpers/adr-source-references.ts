@@ -1,7 +1,8 @@
 /**
  * ADR guard, invariant (iv) — every in-source `ADR-NNNN` reference resolves
  * (finding F6-b). The guard's six invariants are tabulated once, in `0302`
- * §1; the decision detail for this one is §8.
+ * (`## Decision`, the six-row invariant table); the decision detail for this
+ * one is §8.
  *
  * The check answers the question the numbering guard cannot: "does the ADR this
  * comment cites still exist?" It was added because the OP-128 round-1 renumber

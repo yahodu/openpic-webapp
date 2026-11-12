@@ -1,7 +1,8 @@
 /**
  * ADR guard, invariant (v) — every citation of a declaring record names the
  * citing file (finding F-N1). The guard's six invariants are tabulated once, in
- * `0302` §1; the decision detail for this one is §9.
+ * `0302` (`## Decision`, the six-row invariant table); the decision detail for
+ * this one is §9.
  *
  * This is the question invariant (iv) cannot answer: "is the record this comment
  * cites the *right* record?" Existence is not accuracy. Nine OP-129 spec headers
