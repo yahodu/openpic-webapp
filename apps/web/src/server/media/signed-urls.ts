@@ -21,15 +21,25 @@
  * than inventing a code (ADR-0765 D1).
  */
 
+/** The derivatives a refresh item may ask for (§5.6). */
+export const SIGNED_URL_KINDS = ["thumbnail", "original"] as const;
+
 /** The derivative a refresh item asks for (§5.6). */
-export type SignedUrlKind = "thumbnail" | "original";
+export type SignedUrlKind = (typeof SIGNED_URL_KINDS)[number];
 
 /** The caller classes the decision table splits on. */
 export type SignedUrlCaller = "member" | "attendee" | "anonymous";
 
 /** The stable denial codes the §5.6 answer carries. */
-export type SignedUrlDenialCode =
-  "authentication_required" | "forbidden" | "not_found" | "feature_not_available";
+export const SIGNED_URL_DENIAL_CODES = [
+  "authentication_required",
+  "forbidden",
+  "not_found",
+  "feature_not_available",
+] as const;
+
+/** One denial code; the wire enum and the type share this list. */
+export type SignedUrlDenialCode = (typeof SIGNED_URL_DENIAL_CODES)[number];
 
 /** One item's verdict: allowed carries no code; a denial always carries one. */
 export interface SignedUrlDecision {

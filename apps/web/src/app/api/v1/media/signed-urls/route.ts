@@ -11,10 +11,13 @@ import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { createMediaSigner } from "@/server/media/signer";
 import {
+  SIGNED_URL_DENIAL_CODES,
+  SIGNED_URL_KINDS,
   authorizeSignedUrlItem,
   signedUrlBatchStatus,
   type SignedUrlCaller,
   type SignedUrlDecision,
+  type SignedUrlDenialCode,
   type SignedUrlKind,
 } from "@/server/media/signed-urls";
 import { createRateLimiter, rateLimitStage } from "@/server/rate-limit";
@@ -50,7 +53,7 @@ const ORIGINALS_KEY = "originals.download";
 
 /** One refresh item as the wire carries it. */
 const itemSchema = z.object({
-  kind: z.enum(["thumbnail", "original"]),
+  kind: z.enum(SIGNED_URL_KINDS),
   imageId: z.string().min(1),
 });
 
@@ -75,7 +78,7 @@ const responseSchema = z.object({
   urls: z.array(
     z.object({
       imageId: z.string(),
-      kind: z.enum(["thumbnail", "original"]),
+      kind: z.enum(SIGNED_URL_KINDS),
       url: z.string(),
       expiresAt: z.string(),
     })
@@ -83,8 +86,8 @@ const responseSchema = z.object({
   denied: z.array(
     z.object({
       imageId: z.string(),
-      kind: z.enum(["thumbnail", "original"]),
-      code: z.enum(["authentication_required", "forbidden", "not_found", "feature_not_available"]),
+      kind: z.enum(SIGNED_URL_KINDS),
+      code: z.enum(SIGNED_URL_DENIAL_CODES),
     })
   ),
 });
@@ -112,6 +115,21 @@ interface AssetRow {
 /** The `face_matches` fields the attendee gate reads (§17.5). */
 interface FaceMatchRow {
   readonly imageId: ObjectId;
+}
+
+/** One signed entry of the §5.6 answer. */
+interface SignedUrlEntry {
+  readonly imageId: string;
+  readonly kind: SignedUrlKind;
+  readonly url: string;
+  readonly expiresAt: string;
+}
+
+/** One denial of the §5.6 answer — always coded (§5.6). */
+interface SignedUrlDenial {
+  readonly imageId: string;
+  readonly kind: SignedUrlKind;
+  readonly code: SignedUrlDenialCode;
 }
 
 /**
@@ -217,13 +235,8 @@ export const POST = defineRoute({
       currentSecret: getConfig().media.signingSecretCurrent,
     });
 
-    const urls: {
-      imageId: string;
-      kind: SignedUrlKind;
-      url: string;
-      expiresAt: string;
-    }[] = [];
-    const denied: { imageId: string; kind: SignedUrlKind; code: string }[] = [];
+    const urls: SignedUrlEntry[] = [];
+    const denied: SignedUrlDenial[] = [];
     const decisions: SignedUrlDecision[] = [];
 
     for (const item of items) {
