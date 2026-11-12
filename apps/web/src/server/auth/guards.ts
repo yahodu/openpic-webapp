@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import type { AuthErrorCode } from "@openpic/contracts";
 
 import type { AuthLike } from "@/server/auth";
+import { createAttendeeSessionResolver } from "@/server/attendee/session-resolver";
 import { appError } from "@/server/http/errors";
 import type { RouteStage } from "@/server/http/define-route";
 import { requestLogger } from "@/server/logging";
@@ -281,17 +282,13 @@ const GET_SESSION_PATH = "/api/auth/get-session";
 /**
  * A port for resolving anonymous attendee sessions (OP-129 owns the real one).
  *
- * Until OP-129 lands, the default resolver never resolves an attendee, so the
- * `attendee` label behaves exactly as `user` for a real request.
+ * A route that injects no port gets the real resolver built from the
+ * `database` the guard is already given, so every `attendee`-labelled route
+ * admits a genuine `op_att` cookie — not just `…/attendee-sessions/current`.
  */
 export interface AttendeeSessionResolver {
   resolve(request: Request): Promise<AttendeePrincipal | null>;
 }
-
-/** The default attendee resolver: no attendee sessions exist yet. */
-export const noAttendeeSessions: AttendeeSessionResolver = {
-  resolve: () => Promise.resolve(null),
-};
 
 /** Options accepted by {@link resolvePrincipal}. */
 export interface ResolvePrincipalOptions {
@@ -299,7 +296,7 @@ export interface ResolvePrincipalOptions {
   readonly auth: AuthLike;
   /** The database holding `userProfiles`. */
   readonly database: Db;
-  /** Attendee-session port; defaults to the OP-129 stub. */
+  /** Attendee-session port; defaults to the real resolver over `database`. */
   readonly attendeeResolver?: AttendeeSessionResolver;
 }
 
@@ -434,7 +431,11 @@ function resolveAttendee(
   request: Request,
   options: ResolvePrincipalOptions
 ): Promise<Principal | null> {
-  return (options.attendeeResolver ?? noAttendeeSessions).resolve(request);
+  // Built per call, never at module scope: `getDb()`/`getAuth()` read
+  // validated configuration and `next build`'s page-data pass runs without it.
+  const resolver =
+    options.attendeeResolver ?? createAttendeeSessionResolver({ database: options.database });
+  return resolver.resolve(request);
 }
 
 /** Options accepted by {@link requireAuth}. */
@@ -447,7 +448,7 @@ export interface RequireAuthOptions {
   readonly allowBanned?: boolean;
   /** Set on the §1.4 deletion-cancel route (see {@link GuardFacts}). */
   readonly allowDeletionPending?: boolean;
-  /** Attendee-session port; defaults to the OP-129 stub. */
+  /** Attendee-session port; defaults to the real resolver over `database`. */
   readonly attendeeResolver?: AttendeeSessionResolver;
 }
 

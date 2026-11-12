@@ -1,11 +1,7 @@
 import type { Db, ObjectId } from "mongodb";
 import { z } from "zod";
 
-import {
-  attendeeTokenFrom,
-  createAttendeeSessionResolver,
-  findAttendeeSession,
-} from "@/server/attendee/session-resolver";
+import { attendeeTokenFrom, findRequestAttendeeSession } from "@/server/attendee/session-resolver";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
@@ -83,14 +79,8 @@ export const GET = defineRoute({
   // Built per request: `getAuth()`/`getDb()` read validated configuration, so
   // evaluating them at module scope would fail `next build`'s page-data
   // collection (which runs without a configured environment).
-  auth: (ctx, request) => {
-    const database = getDb();
-    return requireAuth("attendee", {
-      auth: getAuth(),
-      database,
-      attendeeResolver: createAttendeeSessionResolver({ database }),
-    })(ctx, request);
-  },
+  auth: (ctx, request) =>
+    requireAuth("attendee", { auth: getAuth(), database: getDb() })(ctx, request),
   handler: async (ctx) => {
     const db = getDb();
     const token = attendeeTokenFrom(ctx.request);
@@ -99,7 +89,7 @@ export const GET = defineRoute({
     if (token === null) {
       throw appError("authentication_required");
     }
-    const session = await findAttendeeSession({ database: db }, token);
+    const session = await findRequestAttendeeSession({ database: db }, ctx.request);
     if (session === null) {
       throw appError("authentication_required");
     }
