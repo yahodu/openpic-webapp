@@ -2185,6 +2185,189 @@ describe("checkSourceAdrConsumers — a non-digit colon suffix on a path token (
     expect(result.checkedReferences).toBe(2);
   });
 });
+/**
+ * Finding F-C3, dotted half (the OP-128 follow-up, card `t_177466f2`): the
+ * delivered annotation trim is correct for every suffix its class can see, and
+ * blind to a suffix that carries a dot.
+ *
+ * `stripTrailingAnnotation` strips one trailing `:<suffix>` where the suffix is
+ * `[A-Za-z0-9_-]+`, so `…/route.ts:D1` reduces to `…/route.ts` and the citation
+ * verifies (pinned in the block above). A section pointer does not: `:D1.2` and
+ * `:4.2` keep the dot, name no swept file, and are reported against **both**
+ * citing files — the record names a file and the guard accuses it.
+ *
+ * The decided contract (pin card `t_4a7e37a6`) is "**one** trailing `:<suffix>`"
+ * with no character restriction. A dotted suffix is one trailing `:<suffix>`, so
+ * the regex is the gap, not the decision. `.` is already a token character in
+ * both `RECORD_PATH_TOKEN_PATTERN` and `RECORD_SPECIFIER_TOKEN_PATTERN`, so the
+ * suffix sits *inside* the matched token: the trim is the only remedy, and
+ * widening the single-suffix class by one dot serves both channels.
+ *
+ * **RED.** The two path rows and the `@/` row fail today with both citing files
+ * reported as `consumer-mismatch` and `verifiedReferences: 0`. The two controls
+ * pass, and must stay passing.
+ *
+ * **The literal-first precedence stays.** `…/uploads:link` is a real directory of
+ * this population, so a blind suffix trim (`:…` with a dot in the class too)
+ * rewrites it to the sibling's directory, verifies both files, and reintroduces
+ * the wrong-file failure the F-C block above removed. The directory-token row
+ * below restates that pin inside this block: widening the class is the fix,
+ * dropping `namesAFile` first is not.
+ *
+ * In-memory, like the blocks above: no fixture is read, and every row runs the
+ * same two-`route.ts` population and the same `ADR-0721` (adr-fixture: the record
+ * the rows below cite, never read from disk).
+ */
+describe("checkSourceAdrConsumers — a dotted colon suffix on a path token (review finding F-C3)", () => {
+  it("verifies the colon-free sibling when the record glues `:D1.2` to its path", () => {
+    // Arrange — the same `.ts`-followed-by-`:D1` shape the block above pins,
+    // with a dotted section pointer after the colon. No space ends the token.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads/params/route.ts:D1.2`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert — the file the record names verifies; only the sibling mismatches.
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: colonRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.checkedReferences).toBe(2);
+  });
+
+  it("verifies the colon-free sibling when the record glues the section pointer `:4.2` to its path", () => {
+    // Arrange — the plausible prose shape: a dotted section number, no letter
+    // anywhere in the suffix, so a class widened only for `[A-Za-z]` cannot
+    // satisfy it.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads/params/route.ts:4.2`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: colonRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.checkedReferences).toBe(2);
+  });
+
+  it("keeps the literal-first precedence for the `…/uploads:link` directory token (control)", () => {
+    // Arrange — a token whose written form names a directory of the population,
+    // so it must never be re-read with a suffix stripped, whatever the suffix
+    // class becomes.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert — one verified (the colon route), one mismatch (the sibling): the
+    // population is not swallowed.
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: uploadsParamsRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.checkedReferences).toBe(2);
+  });
+
+  it("keeps verifying the colon route when the record glues `:D1` to its colon-bearing path (control)", () => {
+    // Arrange — the undotted suffix on the colon route: green today, and a row
+    // that must not regress when the class is widened.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `apps/web/src/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads:link/route.ts:D1`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: uploadsParamsRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.checkedReferences).toBe(2);
+  });
+
+  it("verifies the colon-free sibling when the record glues `:D1.2` to its `@/app/api/…` specifier", () => {
+    // Arrange — the same dotted suffix in the specifier channel; both token
+    // patterns keep `.`, so fixing only the path channel leaves this arm
+    // narrowing.
+    const records: AdrRecordText[] = [
+      adrRecord(
+        fixtureRecord0721,
+        [
+          "- **Consumers:** `@/app/api/v1/tenants/[tenantId]/events/[eventId]/uploads/params/route.ts:D1.2`",
+        ].join("\n")
+      ),
+    ];
+
+    // Act
+    const result = checkSourceAdrConsumers(colonRouteSources(), records);
+
+    // Assert
+    expect(result.issues).toEqual([
+      {
+        code: consumerMismatchCode,
+        file: colonRoutePath,
+        line: 1,
+        number: "0721",
+        record: fixtureRecord0721,
+      },
+    ]);
+    expect(result.verifiedReferences).toBe(1);
+    expect(result.checkedReferences).toBe(2);
+  });
+});
 
 describe("checkSourceAdrConsumers — the fixture marker", () => {
   it("exempts a marked fixture line from the accuracy rule", () => {

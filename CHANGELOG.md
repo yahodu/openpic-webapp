@@ -1,3 +1,9 @@
+## [1.57.10](https://github.com/yahodu/openpic-webapp/compare/v1.57.9...v1.57.10) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 strip a dotted annotation suffix on a Consumers path token ([#522](https://github.com/yahodu/openpic-webapp/issues/522)) ([df6a199](https://github.com/yahodu/openpic-webapp/commit/df6a19994c355686e001ecd1b097dfa5f32cd491)), closes [#520](https://github.com/yahodu/openpic-webapp/issues/520)
+
 ## [1.57.9](https://github.com/yahodu/openpic-webapp/compare/v1.57.8...v1.57.9) (2026-11-12)
 
 ### Bug Fixes
