@@ -1,17 +1,17 @@
-# ADR-0770 — OP-129 GREEN: anonymous attendee sessions implemented
+# ADR-0781 — OP-129 GREEN: anonymous attendee sessions implemented
 
-- **Status:** Accepted (implementation of the ADR-0769 contract)
+- **Status:** Accepted (implementation of the ADR-0780 contract)
 - **Consumers:** `@/server/attendee/session-token`, `@/server/attendee/session-cookie`,
   `@/server/attendee/session-resolver`, `@/api/v1/p/attendee-sessions[/current]`,
   `@/server/db/collections` + `@/server/db/indexes`, `@/server/http/catalog`
-- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0769`–`0788`,
-  `Next free = 0771`.
-- **Supersedes:** nothing. **Amends:** [ADR-0769](ADR-0769-op129-anonymous-attendee-sessions-red.md)
+- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0780`–`0798`,
+  `Next free = 0782`.
+- **Supersedes:** nothing. **Amends:** [ADR-0780](ADR-0780-op129-anonymous-attendee-sessions-red.md)
   (the RED contract) by answering its §Open questions.
 
 ## Context
 
-ADR-0769 fixed the executable contract and left five decisions to this GREEN: the
+ADR-0780 fixed the executable contract and left five decisions to this GREEN: the
 persistence name, the unknown-`eventSlug` answer, the idempotency stage, the
 rate-limit class, `lastSeenAt` on read and the `current` answer for a user
 session. The 30 pins it delivered are the specification; nothing here adds
@@ -58,9 +58,9 @@ principal `{kind: "attendee", sessionId, eventId}`. The throw is essential: a
 principal deliberately carries only the session id, and widening that port would
 touch every guard consumer for one read; a second indexed `tokenHash` lookup is
 the smaller change. It also keeps `noAttendeeSessions` from being the silent
-default, as ADR-0769's consequences required.
+default, as ADR-0780's consequences required.
 
-### 4. Answers to ADR-0769's open questions
+### 4. Answers to ADR-0780's open questions
 
 | Question                         | Answer                                                                                                                                                                                                                                      |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

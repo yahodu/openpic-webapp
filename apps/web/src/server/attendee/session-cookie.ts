@@ -8,7 +8,7 @@
  *
  * The builder is pure — no environment read, no clock read — so the route owns
  * both policy reads, exactly as `buildCookieOptions` scopes the Better Auth
- * cookie's TLS attributes to the deploy environment (ADR-0769 §4).
+ * cookie's TLS attributes to the deploy environment (ADR-0780 §4).
  */
 
 /** The cookie carrying the attendee session token. */
