@@ -144,6 +144,7 @@ const HASH_BULK_OTHER_EVENT = hashFor("bulk-other-event");
 const HASH_UPLOADER_ONE = hashFor("uploader-one");
 const HASH_UPLOADER_TWO = hashFor("uploader-two");
 const HASH_SHARED_ASSET = hashFor("shared-asset");
+const HASH_REPEAT_DELETE = hashFor("repeat-delete");
 const HASH_FILTER_DONE = hashFor("filter-done");
 const HASH_FILTER_FAILED = hashFor("filter-failed");
 const HASH_FILTER_HIDDEN = hashFor("filter-hidden");
@@ -1615,6 +1616,118 @@ describe("DELETE …/images/{imageId} — one reference of a shared asset (R2)",
       1
     );
     expect(await readStorageMeter(workspace.tenantKey)).toBe(0);
+  });
+});
+
+describe("DELETE …/images/{imageId} — a repeat call changes nothing (F1)", () => {
+  it("a second DELETE of the same image is 404 not_found and moves neither the asset, the counters nor the meter", async () => {
+    // Arrange — R2's fixture: one stored asset (refCount 2) referenced by two
+    // events of one tenant, with the plan and meter I3 seeds so a second
+    // release would be observable rather than vacuous.
+    const workspace = await seedWorkspace("op127-delete-again");
+    const otherEventId = await seedEvent(workspace.tenantKey, workspace.organizer.userId, {
+      name: "Another Wedding",
+    });
+    await seedRoomyPlan(workspace.tenantKey);
+    await seedStorageMeter(workspace.tenantKey, ORIGINAL_BYTES * 2);
+    const assetId = await seedAsset(workspace.tenantKey, HASH_REPEAT_DELETE, { refCount: 2 });
+    const here = await seedImage(workspace.tenantKey, workspace.eventId, assetId, {
+      sequence: 1,
+      status: "done",
+      uploadedByUserId: workspace.organizer.userId,
+    });
+    const there = await seedImage(workspace.tenantKey, otherEventId, assetId, {
+      sequence: 1,
+      status: "done",
+      uploadedByUserId: workspace.organizer.userId,
+    });
+    await setCounters(workspace.eventId, {
+      imageCount: 1,
+      processedImageCount: 1,
+      failedImageCount: 0,
+      attendeeCount: 0,
+      matchCount: 0,
+      storageBytes: ORIGINAL_BYTES,
+    });
+    await setCounters(otherEventId, {
+      imageCount: 1,
+      processedImageCount: 1,
+      failedImageCount: 0,
+      attendeeCount: 0,
+      matchCount: 0,
+      storageBytes: ORIGINAL_BYTES,
+    });
+    const otherEvent: Workspace = { ...workspace, eventId: otherEventId };
+
+    // Act — the first call removes event A's reference to the shared asset.
+    const first = await deleteImage(
+      deleteRequest(imagePath(workspace, here.toHexString()), workspace.organizer.cookie)
+    );
+
+    // Assert — one reference left, so the baseline the repeat must preserve is
+    // stated here rather than inferred.
+    expect(first.status).toBe(204);
+    const afterFirst = await readStoredAsset(assetId);
+    if (afterFirst === null) {
+      throw new Error("expected the shared asset to outlive one of its two references");
+    }
+    expect(afterFirst.refCount).toBe(1);
+    const softDeletedAt = (await readImage(here))?.deletedAt;
+    if (!(softDeletedAt instanceof Date)) {
+      throw new Error("expected the first delete to soft-delete the join row");
+    }
+    expect(await readCounters(workspace.eventId)).toMatchObject({
+      imageCount: 0,
+      storageBytes: 0,
+    });
+    expect(await readStorageMeter(workspace.tenantKey)).toBe(ORIGINAL_BYTES);
+
+    // Act — the double-submit: the very same image, deleted a second time.
+    const second = await deleteImage(
+      deleteRequest(imagePath(workspace, here.toHexString()), workspace.organizer.cookie)
+    );
+
+    // Assert — the uniform not-found (§0.4), never a second release.
+    expect(second.status).toBe(404);
+    expect((await errorOf(second)).code).toBe("not_found");
+
+    // The shared asset keeps the one live reference the first call left.
+    const afterSecond = await readStoredAsset(assetId);
+    if (afterSecond === null) {
+      throw new Error("expected the shared asset to survive the repeat delete");
+    }
+    expect(afterSecond.refCount).toBe(1);
+    expect(await app.db.collection(COLLECTIONS.mediaAssets).countDocuments({ _id: assetId })).toBe(
+      1
+    );
+    expect(afterSecond.storage).toEqual(afterFirst.storage);
+    expect(afterSecond.derivatives).toEqual(afterFirst.derivatives);
+
+    // The soft-delete stamp is the first call's: the repeat does not rewrite it.
+    expect((await readImage(here))?.deletedAt).toEqual(softDeletedAt);
+
+    // Event A's counters are exactly what the first call left, not one lower.
+    expect(await readCounters(workspace.eventId)).toMatchObject({
+      imageCount: 0,
+      storageBytes: 0,
+    });
+
+    // The tenant's meter still holds one image's bytes, not zero.
+    expect(await readStorageMeter(workspace.tenantKey)).toBe(ORIGINAL_BYTES);
+
+    // The other event still lists the image that points at the shared asset.
+    const stillServed = await listImages(
+      getRequest(imagesPath(otherEvent), workspace.organizer.cookie)
+    );
+    const stillServedAnswer = (await body(stillServed)) as unknown as ImageListAnswer;
+    expect(stillServed.status).toBe(200);
+    expect(stillServedAnswer.data.map((item) => item.id)).toEqual([there.toHexString()]);
+
+    // And event A's grid stays empty, so the repeat resurrected nothing.
+    const hereAgain = await listImages(
+      getRequest(imagesPath(workspace), workspace.organizer.cookie)
+    );
+    expect(((await body(hereAgain)) as unknown as ImageListAnswer).data).toEqual([]);
   });
 });
 
