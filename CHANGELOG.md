@@ -1,3 +1,9 @@
+## [1.57.8](https://github.com/yahodu/openpic-webapp/compare/v1.57.7...v1.57.8) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 peel marker tokens until the Consumers line stabilizes ([#514](https://github.com/yahodu/openpic-webapp/issues/514)) ([4a8fe73](https://github.com/yahodu/openpic-webapp/commit/4a8fe730d5399e363b1e4cfbbe9bf7e4270767f3))
+
 ## [1.57.7](https://github.com/yahodu/openpic-webapp/compare/v1.57.6...v1.57.7) (2026-11-12)
 
 ### Bug Fixes
