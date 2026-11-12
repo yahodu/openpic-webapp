@@ -134,3 +134,78 @@ range is touched.
   the pre-existing `requireHandler` namespace read at line 212).
 - `prettier --check` clean on the spec, this ADR and the ledger; the ADR-numbering guard
   stays green.
+
+## Round-1 review (artifact lens)
+
+**Verdict: APPROVED WITH FINDINGS.** This is the review of card `t_12cd55aa` and PR #437. It
+read the branch head `4264b0a` cold from the diff, before the handoff narrative, so every count
+below is the reviewer's own measurement rather than a transcription. The spec change is
+additive: `git diff --numstat 8588010 4264b0a` over
+`apps/web/src/test/integration/event-images-management.test.ts` answers `312` / `0` — 6 new
+cases in 3 new `describe` blocks (R1, R2, R3) — and no delivered case is edited or weakened.
+
+**No section of this record is retracted.** §Context, §Decision (R1/R2/R3), §Assumptions
+(A1–A4), §Out of scope, §Number allocation and §Evidence all stand as written. This sign-off
+consumes **no** ADR number and leaves `docs/adr/README.md` byte-identical, so the lane's
+`Next free` cell stays where the follow-up pins left it.
+
+### The reviewed bytes are what shipped
+
+`git diff --stat 4264b0a 9c431f7` is **empty**, so every line cited here is a line on the lane
+trunk. `gh pr view 437` answers `MERGED` with `mergeCommit` `9c431f7`
+(2026-11-12T02:40:34Z), and `9c431f7` is the tip of
+`OP-127-task-event-images-management-green`: for downstream readers the GREEN branch tip is
+**no longer `8588010`**, it is this squash.
+
+### Gates — measured at `9c431f7`, not transcribed
+
+| Gate                | Measurement                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------- |
+| Focused integration | `vitest run --project integration …/event-images-management.test.ts` → **26 passed (26)**         |
+| Full integration    | `vitest run --project integration` → **103 files / 1007 passed**, exit 0                          |
+| ADR guard           | `vitest run --project unit …/adr-numbering.test.ts` → **29 passed (29)**, no duplicate `ADR-NNNN` |
+| Types               | `tsc -p apps/web/tsconfig.json --noEmit` → exit **0**                                             |
+| Formatting          | `prettier --check` clean on the spec, this ADR and the ledger                                     |
+
+### Load-bearing — re-probed in a detached probe worktree at the same SHA
+
+Each mutation below was applied in a throwaway worktree at `9c431f7`, the focused spec was run,
+and the file was restored with `git checkout --` (`git status --short` clean afterwards). The
+collateral count is printed beside each failure so a later reader can tell attributability from
+noise: an attributable probe fails the case it names, and the pass count shows what else the
+mutation left alone.
+
+| Probe | Mutation                                                           | Observed failure                                                 | Collateral    |
+| ----- | ------------------------------------------------------------------ | ---------------------------------------------------------------- | ------------- |
+| R1    | `filters.ts`: the 24-hex guard before the id cast disabled         | `AssertionError: expected 500 to be 422`                         | 1 failed / 25 |
+| R2    | `[imageId]/route.ts`: `$inc {refCount: -1}` → `$set {refCount: 0}` | `AssertionError: expected +0 to be 1`                            | 1 failed / 25 |
+| R3 a  | `images/route.ts`: `visibility` no longer passed into the builder  | the `?visibility=hidden` case **and** the composed disjoint case | 2 failed / 24 |
+| R3 b  | `filters.ts`: `status` and `visibility` chained as `else if`       | `AssertionError: expected [ { …(15) } ] to deeply equal []`      | 1 failed / 25 |
+
+R3 a's two failures are the point of the probe: the first is the plain filter, the second the
+`?status=done&visibility=hidden` negative control that would otherwise pass a last-one-wins
+implementation. That is why the pin is wired, not merely present in the builder's unit test.
+
+### Findings
+
+| #      | Severity | Finding                                                                                                                                                                                                                                                                                                                                                 | Route              |
+| ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| **F1** | Low      | `DELETE` idempotency is unpinned. The handler's lookup is `{ _id, eventId, deletedAt: null }` (`[imageId]/route.ts:150`), so a repeat `DELETE` answers `404`; removing that predicate leaves the whole file **26/26 green**. A double submit that decrements a **shared** asset's `refCount` again and releases the meter twice is therefore invisible. | TEST `t_a642b7ca`  |
+| **F2** | Info     | The arrange comment at spec line 1470 ("one image, so the same route can answer 200 for a valid filter") sits inside the malformed case, which never asserts a `200`. Harmless as written; recorded so a reader does not mistake it for a claim the case proves.                                                                                        | recorded here only |
+| **F3** | Info     | `readStoredAsset` (spec line 706) sits beside `readAsset` (line 685). Its own docblock justifies it — it reads the raw row so `storage` and `derivatives` can be deep-compared — so the pair is not duplication to collapse.                                                                                                                            | recorded here only |
+| **F4** | Info     | The stacked posture is correct: `origin/main` (`ced39b6` at the time of writing) carries **0** files under `apps/web/src/server/images/` and none of the three OP-127 specs, so a pins branch off `main` could not import. A4 stands, and this branch must fold into the lane rather than `main`.                                                       | recorded here only |
+
+F1 is routed to the TEST card `t_a642b7ca` and, deliberately, to its **PR number** rather than
+an ADR number: a follow-up ADR may renumber while its PR is open, and a stale number in a frozen
+record is worse than a card id. No Critical or High finding: the delivery adds no route, no
+authorization surface and no user input, and the spec's only new network call is the same
+in-process route harness the delivered cases already use.
+
+### Post-review status
+
+The F1 pin exists as card `t_a642b7ca` on PR #439 (branch
+`OP-127-task-delete-idempotency-pins`, head `715756b`), open at the time of writing and stacked
+on this lane's base; that card's own ADR is the authority for what the pin asserts, so this
+sign-off names the routing and stops there. F2, F3 and F4 are recorded here only — no card,
+because none of them can change behaviour and a pin or a rewrite for any of them would freeze
+prose, not contract.
