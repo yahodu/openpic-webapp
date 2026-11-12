@@ -89,8 +89,7 @@ export function buildEventImageListFilter(params: EventImageListParams): EventIm
     };
   }
 
-  const sort: Readonly<Record<string, 1 | -1>> = { sequence: -1, _id: -1 };
-  const ascending = params.sort === "sequence_asc";
+  const direction = params.sort === "sequence_asc" ? 1 : -1;
   const cursor = params.cursor ?? null;
 
   if (cursor !== null) {
@@ -99,11 +98,12 @@ export function buildEventImageListFilter(params: EventImageListParams): EventIm
     }
     const sequence = Number(cursor.c);
     const id = new ObjectId(cursor.i);
+    const comparison = direction === 1 ? "$gt" : "$lt";
     filter.$or = [
-      { sequence: { [ascending ? "$gt" : "$lt"]: sequence } },
-      { sequence, _id: { [ascending ? "$gt" : "$lt"]: id } },
+      { sequence: { [comparison]: sequence } },
+      { sequence, _id: { [comparison]: id } },
     ];
   }
 
-  return ascending ? { filter, sort: { sequence: 1, _id: 1 } } : { filter, sort };
+  return { filter, sort: { sequence: direction, _id: direction } };
 }

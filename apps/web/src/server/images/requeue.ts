@@ -20,7 +20,7 @@ export interface RequeueImagesInput {
   readonly tenantKey: string;
   readonly eventId: ObjectId;
   readonly rows: readonly RequeueImageRow[];
-  /** The request instant (the clock is injected, `services/**`-style: no `Date.now()`). */
+  /** The request instant; this module never reads the clock itself. */
   readonly now: Date;
   /** The face space the pipeline runs in (`platformSettings.face.activeSpaceKey`). */
   readonly spaceKey: string;
