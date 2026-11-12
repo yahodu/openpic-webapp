@@ -246,6 +246,38 @@ const accountSchema = z.object({
   deletionGraceDays: z.number().int().positive(),
 });
 
+/**
+ * `selfie` — the attendee selfie tunables (contract §6.1/§6.3, ADR-0784 §3).
+ *
+ * `attemptsAllowed` is the **fallback** budget the landing page advertises: the
+ * per-plan gate is `selfies.per_attendee` (§14.1), and this value answers for a
+ * tenant whose active plan row does not gate the key.
+ */
+const selfieSchema = z.object({
+  attemptsAllowed: z.number().int().positive(),
+});
+
+/**
+ * `legal` — the current policy documents the attendee surface must name
+ * (contract §6.1/§6.2, ADR-0784 §3).
+ *
+ * A version and its URL move together, so consent evidence recorded against
+ * `biometricPolicyVersion` always resolves to the document it described.
+ */
+const legalSchema = z.object({
+  biometricPolicyVersion: z.string().min(1),
+  biometricPolicyUrl: z.url(),
+});
+
+/** The documented `selfie` defaults — what a tenant with no gated plan gets. */
+const SELFIE_SETTINGS_DEFAULTS: z.input<typeof selfieSchema> = { attemptsAllowed: 3 };
+
+/** The current biometric policy the attendee surface names (contract §6.1). */
+const LEGAL_SETTINGS_DEFAULTS: z.input<typeof legalSchema> = {
+  biometricPolicyVersion: "biometric-2026-03",
+  biometricPolicyUrl: "https://openpic.in/legal/biometric/2026-03",
+};
+
 /** The full `platformSettings` singleton document (schema §20.4). */
 export const platformSettingsSchema = z.object({
   _id: z.literal(SINGLETON_ID),
@@ -256,6 +288,9 @@ export const platformSettingsSchema = z.object({
   upload: uploadSchema,
   notifications: notificationsSchema,
   account: accountSchema,
+  // Defaulted so a singleton seeded before these sections existed still parses.
+  selfie: selfieSchema.default(SELFIE_SETTINGS_DEFAULTS),
+  legal: legalSchema.default(LEGAL_SETTINGS_DEFAULTS),
   updatedAt: z.string(),
   updatedByUserId: z.string().nullable(),
 });
@@ -327,6 +362,8 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettingsValues = {
   account: {
     deletionGraceDays: 14,
   },
+  selfie: { ...SELFIE_SETTINGS_DEFAULTS },
+  legal: { ...LEGAL_SETTINGS_DEFAULTS },
 };
 
 /** A cached document and the instant its TTL elapses. */
