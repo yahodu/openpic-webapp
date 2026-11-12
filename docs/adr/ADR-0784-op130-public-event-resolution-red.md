@@ -2,14 +2,15 @@
 
 - **Status:** Accepted (RED / executable contract)
 - **Amended in place:** the round-1 review follow-up (`t_629f08dc`, findings
-  F1–F3) — the pins and figures below are the amended record; **no new ADR
+  F1–F3) and the round-2 residual of F1 (`t_fa0ba940`, the same-tenant sibling
+  scope) — the pins and figures below are the amended record; **no new ADR
   number** is minted (the ledger cell stays `0785` and the index is unchanged
   apart from the prose case count).
 - **Consumers:** the OP-130 RED specs —
   `apps/web/src/test/unit/public-event-format.test.ts` (U1, 10 cases),
   `apps/web/src/test/unit/public-event-state.test.ts` (U2, 17 cases),
   `apps/web/src/test/integration/public-event-resolution.test.ts` (I1–I5 + the
-  §0.11 class pin, 35 cases) and `apps/web/e2e/public-event-resolution.spec.ts` (E1)
+  §0.11 class pin, 36 cases) and `apps/web/e2e/public-event-resolution.spec.ts` (E1)
 - **Lane:** OP-130 (epic Attendee Surface), a dependent ticket of OP-129. The
   number is taken **above every in-flight reservation** of the shared attendee
   block per CONVENTIONS §11 rule B: `0769`/`0770` are landed on this branch,
@@ -149,11 +150,14 @@ slugs that cannot collide with a seeded one.
   credential and for a fresh anonymous session, `true` once a profile row exists,
   and `canClaimByLogin` is `true` for an anonymous session (claiming keeps the
   profile; schema §15.3). The event scope is pinned **adversarially**, not only
-  by the positive case: one session holding a profile on event **A** answers
-  `hasProfile: true` on **A**'s page and `hasProfile: false` on event **B**'s
-  page, so a lookup that forgets the `eventId` predicate answers "you are
-  already in this event" to an attendee who scanned a different QR and fails the
-  pin (review finding F1).
+  by the positive case, and twice: one session holding a profile on event **A**
+  answers `hasProfile: true` on **A**'s page and `hasProfile: false` on a
+  **cross-tenant** event **B**'s page (so a lookup that forgets every predicate
+  fails), and — the sharper pin — `false` on a **same-tenant sibling** event's
+  page (so a lookup scoped by `tenantId` instead of `eventId` fails). Two events
+  in one tenant is the ordinary case — one organizer, several weddings — and
+  the tenant scope would tell an attendee who scanned a different QR "you are
+  already in this event" (review findings F1 round 1 and its residual, `t_fa0ba940`).
 
 ### 4. What the pins refuse to observe
 
@@ -227,7 +231,7 @@ imageCount` over the event's cached counters — \"nothing is still waiting\".
 - **Type-correct:** with two throwaway stubs (the pure module and a near-fix route
   handler) `npx tsc -p apps/web/tsconfig.json --noEmit` exited `0`.
 - **Satisfiable:** against those stubs the unit project ran **27 passed (27)** and
-  the integration spec **35 passed (35)** on a real `MongoMemoryReplSet`.
+  the integration spec **36 passed (36)** on a real `MongoMemoryReplSet`.
 - **The pins bite** (each mutation assertion-level, every stub restored by `sha256`
   before deletion; these counts are stub-dependent and were re-measured at this head
   against the stubs described here):
@@ -252,6 +256,15 @@ imageCount` over the event's cached counters — \"nothing is still waiting\".
     - dropping the `eventId` predicate from the profile lookup → **1 failed |
       34 passed (35)**: only `I2: a profile on another event does not show
 hasProfile true on this event's page` (`expected true to be false`);
+    - substituting `tenantId: event.tenantId` for `eventId: event._id.toHexString()`
+      in the profile lookup → **1 failed | 35 passed (36)**: only `I2: a profile on
+a sibling event in the same tenant does not show hasProfile true here`
+      (`expected true to be false`). This is the pin the round-1 follow-up lacked:
+      the earlier `seedPublishedEvent`-seeded foreign event lived in its **own**
+      tenant, so the tenant scope answered `false` there and all 35 pins stayed
+      green (review finding F1, residual `t_fa0ba940`). The `eventId`-scoped stub
+      is green on all 36, so the pin discriminates the two scopes in both
+      directions;
     - adding `eventName` + `eventId` to the `access_link_revoked` `details` →
       **1 failed | 34 passed (35)**: only `I5: a rotated slug's refusal body
 carries no event content`;

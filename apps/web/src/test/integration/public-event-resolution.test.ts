@@ -59,7 +59,8 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *     it) and `event.logoUrl` is the `thumbnail` derivative signed by
  *     `@/server/media/signer`, or `null` when the event has no logo;
  *   - `session.hasProfile` reports whether the caller already has an
- *     `attendee_event_profiles` row for **this** event.
+ *     `attendee_event_profiles` row for **this** event — never one on a
+ *     sibling event that happens to share the tenant.
  *
  * ## Assumptions (ADR-0784 §Assumptions)
  *
@@ -835,6 +836,44 @@ describe("GET /api/v1/p/events/{slug} — the session hint (contract §6.1)", ()
     // profile on another event cannot answer `true` here.
     expect(otherSession.hasProfile).toBe(false);
     expect(otherSession).toMatchObject({ kind: "anonymous", canClaimByLogin: true });
+  });
+
+  it("I2: a profile on a sibling event in the same tenant does not show hasProfile true here", async () => {
+    // One organizer, two weddings: both events live in the *same* tenant, which
+    // is the ordinary case. The profile belongs to the event the session was
+    // created for, so a lookup filtered on `tenantId` instead of `eventId`
+    // answers "you are already in this event" to an attendee who scanned the
+    // other QR. The cross-tenant case above cannot see that bug — it is the
+    // residual of the same review finding (ADR-0784 §3, F1).
+    const organizer = await seedOwner("op130-anon-profile-sibling");
+    const first = await seedEvent({
+      tenantKey: organizer.tenantId.toHexString(),
+      ownerUserId: organizer.user.userId.toHexString(),
+      name: "Rahul & Priya's Wedding",
+    });
+    const sibling = await seedEvent({
+      tenantKey: organizer.tenantId.toHexString(),
+      ownerUserId: organizer.user.userId.toHexString(),
+      name: "Rahul & Priya's Reception",
+    });
+    const cookie = await createSessionCookie(first.slug);
+    const token = cookie.slice(cookie.indexOf("=") + 1);
+    await seedProfile({
+      tenantKey: organizer.tenantId.toHexString(),
+      eventId: first.id,
+      sessionId: await sessionIdForToken(token),
+    });
+
+    const firstPage = await fetchPublicEvent(first.slug, cookie);
+    const siblingPage = await fetchPublicEvent(sibling.slug, cookie);
+
+    const firstSession = objectAt(firstPage, "session");
+    const siblingSession = objectAt(siblingPage, "session");
+    expect(firstSession).toMatchObject({ kind: "anonymous", hasProfile: true });
+    // The evidential line: both events share one tenant, so only a lookup scoped
+    // by *this* event's id can answer `false` here.
+    expect(siblingSession.hasProfile).toBe(false);
+    expect(siblingSession).toMatchObject({ kind: "anonymous", canClaimByLogin: true });
   });
 
   it("I2: a lapsed session cookie still renders the page (§6.1 has no 401)", async () => {
