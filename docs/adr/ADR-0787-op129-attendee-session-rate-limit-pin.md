@@ -7,18 +7,18 @@
 - **Lane:** OP-129 (epic Attendee Identity). Reserved range `0780`–`0798`; see
   §Number allocation — this record takes `0787` (minted as `0782`, renumbered by
   card `t_f4da0ad2`), not the cell's `0771`.
-- **Supersedes:** nothing. **Amends:** [ADR-0770](ADR-0770-op129-anonymous-attendee-sessions-green.md)
+- **Supersedes:** nothing. **Amends:** [ADR-0781](ADR-0781-op129-anonymous-attendee-sessions-green.md)
   §4 (its deferred rate-limit item), by pinning the class and its policy.
 
 ## Context
 
 Contract §1.5 declares `POST /api/v1/p/attendee-sessions` as **public, 60 / hour / IP**.
-The shipped route (ADR-0770) has no rate-limit stage, so an unauthenticated caller can mint
+The shipped route (ADR-0781) has no rate-limit stage, so an unauthenticated caller can mint
 `attendeeSessions` rows without limit — one row per call, each with a 30-day TTL, each a
 bearer credential to someone's photos. The round-1 review of the GREEN raised this as
 finding **F1 (High)**.
 
-ADR-0770 §4 deferred the limit because the executable class table had no row for it, and
+ADR-0781 §4 deferred the limit because the executable class table had no row for it, and
 `classes.test.ts` pins `Object.keys(RATE_LIMIT_CLASSES)` to **exactly** the contract §0.11
 class list. A class therefore cannot be added to the route alone: the contract table, the
 executable table, the failure policy and the route stage are one change.

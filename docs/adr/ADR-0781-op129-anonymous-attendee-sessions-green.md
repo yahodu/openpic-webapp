@@ -223,13 +223,17 @@ apps/web/src/test/integration/attendee-sessions.test.ts` → **3 failed | 15
 
 **Numbering.** The card carried no `Consumes:` line and states that a test-only
 change mints none, so no number was taken and `docs/adr/README.md` is untouched:
-the lane's `Next free` stays `0782`. Flag for the allocator: `0782` is currently
-claimed twice **in flight** (`ADR-0782-op129-attendee-session-edge-pins.md` on
-`OP-129-task-attendee-session-edge-pins`, PR #449, and
-`ADR-0782-op129-attendee-session-rate-limit-pin.md` on
-`OP-129-task-attendee-session-rate-limit-pins`, PR #451), and `0783`/`0784`/`0786`
-are also taken by unmerged lane branches; the next card in this lane must be
-allocated above the highest of them, not off the `Next free` cell.
+at this record's cut the lane's `Next free` cell read `0782`. Flag for the
+allocator: `0782` was then claimed twice **in flight**
+(`ADR-0782-op129-attendee-session-edge-pins.md` on
+`OP-129-task-attendee-session-edge-pins`, PR #449, and the rate-limit pin, minted
+as `0782` and renumbered to
+`ADR-0787-op129-attendee-session-rate-limit-pin.md` — see ADR-0787 §Number
+allocation), and `0783`/`0784`/`0786` were also held by unmerged lane branches;
+the next card in this lane had to be allocated above the highest of them, not off
+the `Next free` cell. The flag was honoured: the pin took `0787`, the edge-pins
+record kept `0782`, and the lane cell now reads `Next free = 0788`, with `0786`
+and `0787` landed.
 
 **Open question handed to the GREEN (`t_297eae5e`).** `eventSlugsFor` now must
 decide what a bound event with **several** active links reports. This pin only

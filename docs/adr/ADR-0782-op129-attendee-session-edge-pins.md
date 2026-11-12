@@ -2,7 +2,7 @@
 
 - **Status:** Accepted · **Date:** 2026-11-12
 - **Card:** OP-129 round-1 review follow-up TEST (`t_a377ab74`) · **Branch:** `OP-129-task-attendee-session-edge-pins` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_a377ab74`
-- **Relates to:** [ADR-0769](ADR-0769-op129-anonymous-attendee-sessions-red.md) (the RED contract), [ADR-0770](ADR-0770-op129-anonymous-attendee-sessions-green.md) (the GREEN whose `eventIdsFor()` / `eventSlugsFor()` / resolver are pinned here), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation), ADR-0780/ADR-0781 (the same two records after the ledger repair)
+- **Relates to:** [ADR-0780](ADR-0780-op129-anonymous-attendee-sessions-red.md) (the RED contract), [ADR-0781](ADR-0781-op129-anonymous-attendee-sessions-green.md) (the GREEN whose `eventIdsFor()` / `eventSlugsFor()` / resolver are pinned here), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §1.5 (`POST /p/attendee-sessions`, `GET /p/attendee-sessions/current`) · §0.2 (`attendee` label, cookie **or** header) · **Schema:** §13.5, §15.1
 
 ## Context
@@ -26,7 +26,7 @@ them a behaviour the shipped code already has (or, for F3/F4, a behaviour the sh
   **stale** `op_att` cookie shadows a valid `X-Attendee-Session` header, although §0.2 says cookie
   **or** header.
 - **F5** — the `attendee` label admits a **user** principal (`evaluateAuth`), and `current` then
-  answers `401 authentication_required` because §1.5 defines only the anonymous body. ADR-0770 §4
+  answers `401 authentication_required` because §1.5 defines only the anonymous body. ADR-0781 §4
   records the behaviour; nothing pinned it.
 
 This card is **test-only**: two specs extended, no production file, no fixture, no existing case
@@ -134,7 +134,7 @@ absence is not vacuous). Mutation evidence in §Evidence: making `evaluateAuth` 
 - **Pin F5 by status/code only.** Rejected: identical to a guard refusal, so the case would pass on
   a regression that stops admitting users to the `attendee` label.
 - **Pin F4's expired-cookie case with `toEqual({recreateUrl: "/p"})`.** Rejected: the value is
-  ADR-0770's and already pinned by I4 as a leading-slash string; repeating the literal here would
+  ADR-0781's and already pinned by I4 as a leading-slash string; repeating the literal here would
   freeze a second copy of the same decision.
 
 ## Consequences
@@ -149,7 +149,7 @@ absence is not vacuous). Mutation evidence in §Evidence: making `evaluateAuth` 
   through a real collection.
 - F3's block relies on `startTestApp` rebinding the process singletons, so **new** cases must be
   added _inside_ that block (or before it), never between it and the file's end.
-- ADR-0770 §4's statement "a signed-in user gets `401 authentication_required`" is now executable
+- ADR-0781 §4's statement "a signed-in user gets `401 authentication_required`" is now executable
   and its open half (user projection) is recorded above rather than implied.
 
 ## Evidence
