@@ -1,3 +1,9 @@
+## [1.57.9](https://github.com/yahodu/openpic-webapp/compare/v1.57.8...v1.57.9) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 accept one trailing colon-suffix annotation on a path token ([#519](https://github.com/yahodu/openpic-webapp/issues/519)) ([8b6abe2](https://github.com/yahodu/openpic-webapp/commit/8b6abe2d146afb1fba174a2ba2a3d7308c3f741a)), closes [#506](https://github.com/yahodu/openpic-webapp/issues/506) [#516](https://github.com/yahodu/openpic-webapp/issues/516)
+
 ## [1.57.8](https://github.com/yahodu/openpic-webapp/compare/v1.57.7...v1.57.8) (2026-11-12)
 
 ### Bug Fixes
