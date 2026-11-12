@@ -141,6 +141,12 @@ const HASH_BULK_FAILED_TWO = hashFor("bulk-failed-two");
 const HASH_BULK_DONE = hashFor("bulk-done");
 const HASH_BULK_QUEUED = hashFor("bulk-queued");
 const HASH_BULK_OTHER_EVENT = hashFor("bulk-other-event");
+const HASH_UPLOADER_ONE = hashFor("uploader-one");
+const HASH_UPLOADER_TWO = hashFor("uploader-two");
+const HASH_SHARED_ASSET = hashFor("shared-asset");
+const HASH_FILTER_DONE = hashFor("filter-done");
+const HASH_FILTER_FAILED = hashFor("filter-failed");
+const HASH_FILTER_HIDDEN = hashFor("filter-hidden");
 
 /** The stored originals' byte count and the thumbnail derivative's. */
 const ORIGINAL_BYTES = 8_421_310;
@@ -680,6 +686,27 @@ async function readAsset(assetId: ObjectId): Promise<AssetRow | null> {
   return (await app.db
     .collection(COLLECTIONS.mediaAssets)
     .findOne({ _id: assetId })) as AssetRow | null;
+}
+
+/**
+ * The whole stored `media_assets` row, for the fields a delete must never touch.
+ *
+ * `readAsset` reads only what the listing needs; a shared-asset delete has to be
+ * proven to leave `storage` and `derivatives` byte-identical (OP-127 R2).
+ */
+interface StoredAssetRow {
+  readonly _id: ObjectId;
+  readonly refCount: number;
+  readonly status: string;
+  readonly storage: Record<string, unknown>;
+  readonly derivatives: Record<string, unknown>;
+}
+
+/** Read the whole stored asset document (§16.1). */
+async function readStoredAsset(assetId: ObjectId): Promise<StoredAssetRow | null> {
+  return (await app.db
+    .collection(COLLECTIONS.mediaAssets)
+    .findOne({ _id: assetId })) as StoredAssetRow | null;
 }
 
 /** Read one profile's cached `matchCount`. */
@@ -1435,5 +1462,290 @@ describe("the image surface's admission ladder (X1–X3)", () => {
     expect((await errorOf(remove)).code).toBe("forbidden");
     expect((await readImage(image.imageId))?.visibility).toBe("visible");
     expect((await readImage(image.imageId))?.deletedAt ?? null).toBeNull();
+  });
+});
+
+describe("GET …/images?uploadedBy= — the filter is validated before its id is cast (R1)", () => {
+  it("R1: a malformed uploadedBy is refused 422 validation_failed, never a 500", async () => {
+    // Arrange — one image, so the same route can answer 200 for a valid filter.
+    const workspace = await seedWorkspace("op127-uploadedby-malformed");
+    await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_UPLOADER_ONE, {
+      sequence: 1,
+      status: "done",
+      uploadedByUserId: workspace.organizer.userId,
+    });
+
+    // Act — a value no `new ObjectId(...)` accepts.
+    const response = await listImages(
+      getRequest(`${imagesPath(workspace)}?uploadedBy=not-a-hex-id`, workspace.organizer.cookie)
+    );
+    const error = await errorOf(response);
+
+    // Assert — client-controlled garbage is a validation failure (ADR-0762 F7),
+    // not a driver error surfaced as `500`.
+    expect(response.status).toBe(422);
+    expect(error.code).toBe("validation_failed");
+  });
+
+  it("R1: a well-formed 24-hex uploadedBy still narrows the page to that uploader", async () => {
+    // Arrange — two uploaders, one image each.
+    const workspace = await seedWorkspace("op127-uploadedby-hex");
+    const otherUploader = new ObjectId();
+    const mine = await seedImageWithAsset(
+      workspace.tenantKey,
+      workspace.eventId,
+      HASH_UPLOADER_ONE,
+      {
+        sequence: 1,
+        status: "done",
+        uploadedByUserId: workspace.organizer.userId,
+      }
+    );
+    await seedImageWithAsset(workspace.tenantKey, workspace.eventId, HASH_UPLOADER_TWO, {
+      sequence: 2,
+      status: "done",
+      uploadedByUserId: otherUploader,
+    });
+
+    // Act
+    const response = await listImages(
+      getRequest(
+        `${imagesPath(workspace)}?uploadedBy=${workspace.organizer.userId.toHexString()}`,
+        workspace.organizer.cookie
+      )
+    );
+    const answer = (await body(response)) as unknown as ImageListAnswer;
+
+    // Assert — the guard narrows, it does not refuse everything.
+    expect(response.status).toBe(200);
+    expect(answer.data.map((item) => item.id)).toEqual([mine.imageId.toHexString()]);
+    expect(answer.data.map((item) => item.uploadedByUserId)).toEqual([
+      workspace.organizer.userId.toHexString(),
+    ]);
+  });
+});
+
+describe("DELETE …/images/{imageId} — one reference of a shared asset (R2)", () => {
+  it("R2: deleting one event's reference leaves refCount 1 and keeps the asset for the other event", async () => {
+    // Arrange — one stored asset (refCount 2) referenced by two events of one
+    // tenant, with the plan and meter I3 seeds so the release is not vacuous.
+    const workspace = await seedWorkspace("op127-shared-asset");
+    const otherEventId = await seedEvent(workspace.tenantKey, workspace.organizer.userId, {
+      name: "Another Wedding",
+    });
+    await seedRoomyPlan(workspace.tenantKey);
+    await seedStorageMeter(workspace.tenantKey, ORIGINAL_BYTES * 2);
+    const assetId = await seedAsset(workspace.tenantKey, HASH_SHARED_ASSET, { refCount: 2 });
+    const here = await seedImage(workspace.tenantKey, workspace.eventId, assetId, {
+      sequence: 1,
+      status: "done",
+      uploadedByUserId: workspace.organizer.userId,
+    });
+    const there = await seedImage(workspace.tenantKey, otherEventId, assetId, {
+      sequence: 1,
+      status: "done",
+      uploadedByUserId: workspace.organizer.userId,
+    });
+    await setCounters(workspace.eventId, {
+      imageCount: 1,
+      processedImageCount: 1,
+      failedImageCount: 0,
+      attendeeCount: 0,
+      matchCount: 0,
+      storageBytes: ORIGINAL_BYTES,
+    });
+    await setCounters(otherEventId, {
+      imageCount: 1,
+      processedImageCount: 1,
+      failedImageCount: 0,
+      attendeeCount: 0,
+      matchCount: 0,
+      storageBytes: ORIGINAL_BYTES,
+    });
+    const before = await readStoredAsset(assetId);
+    if (before === null) {
+      throw new Error("expected the seeded shared asset to exist");
+    }
+    const otherEvent: Workspace = { ...workspace, eventId: otherEventId };
+
+    // Act — remove the first event's reference only.
+    const response = await deleteImage(
+      deleteRequest(imagePath(workspace, here.toHexString()), workspace.organizer.cookie)
+    );
+
+    // Assert — the count follows the reference that left, never a blind zero.
+    expect(response.status).toBe(204);
+    const afterFirst = await readStoredAsset(assetId);
+    if (afterFirst === null) {
+      throw new Error("expected the shared asset to outlive one of its two references");
+    }
+    expect(afterFirst.refCount).toBe(1);
+
+    // The row survives with everything the other event still needs.
+    expect(afterFirst.storage).toEqual(before.storage);
+    expect(afterFirst.derivatives).toEqual(before.derivatives);
+    expect(afterFirst.status).toBe(before.status);
+
+    // The other event's grid still serves the image that points at it.
+    const stillServed = await listImages(
+      getRequest(imagesPath(otherEvent), workspace.organizer.cookie)
+    );
+    const stillServedAnswer = (await body(stillServed)) as unknown as ImageListAnswer;
+    expect(stillServed.status).toBe(200);
+    expect(stillServedAnswer.data.map((item) => item.id)).toEqual([there.toHexString()]);
+
+    // One of the two held bytes left the tenant's meter.
+    expect(await readStorageMeter(workspace.tenantKey)).toBe(ORIGINAL_BYTES);
+
+    // Act — the last reference goes too.
+    const lastReference = await deleteImage(
+      deleteRequest(imagePath(otherEvent, there.toHexString()), workspace.organizer.cookie)
+    );
+
+    // Assert — zero references, but the purge is a job (ADR-0762 D5), so the row stays.
+    expect(lastReference.status).toBe(204);
+    const afterSecond = await readStoredAsset(assetId);
+    if (afterSecond === null) {
+      throw new Error("expected the asset row to outlive its last reference");
+    }
+    expect(afterSecond.refCount).toBe(0);
+    expect(afterSecond.storage).toEqual(before.storage);
+    expect(afterSecond.derivatives).toEqual(before.derivatives);
+    expect(await app.db.collection(COLLECTIONS.mediaAssets).countDocuments({ _id: assetId })).toBe(
+      1
+    );
+    expect(await readStorageMeter(workspace.tenantKey)).toBe(0);
+  });
+});
+
+describe("GET …/images — the query string narrows the page (R3)", () => {
+  /** Two visible images of different status, plus one hidden queued original. */
+  interface FilterFixture {
+    readonly workspace: Workspace;
+    readonly done: ObjectId;
+    readonly failed: ObjectId;
+    readonly hidden: ObjectId;
+  }
+
+  /** Seed the three images each R3 case reads, with counters that agree. */
+  async function seedFilterFixture(prefix: string): Promise<FilterFixture> {
+    const workspace = await seedWorkspace(prefix);
+    const done = await seedImageWithAsset(
+      workspace.tenantKey,
+      workspace.eventId,
+      HASH_FILTER_DONE,
+      {
+        sequence: 1,
+        status: "done",
+        visibility: "visible",
+        uploadedByUserId: workspace.organizer.userId,
+      }
+    );
+    const failed = await seedImageWithAsset(
+      workspace.tenantKey,
+      workspace.eventId,
+      HASH_FILTER_FAILED,
+      {
+        sequence: 2,
+        status: "failed",
+        visibility: "visible",
+        uploadedByUserId: workspace.organizer.userId,
+      }
+    );
+    const hidden = await seedImageWithAsset(
+      workspace.tenantKey,
+      workspace.eventId,
+      HASH_FILTER_HIDDEN,
+      {
+        sequence: 3,
+        status: "queued",
+        visibility: "hidden",
+        uploadedByUserId: workspace.organizer.userId,
+      }
+    );
+    await setCounters(workspace.eventId, {
+      imageCount: 3,
+      processedImageCount: 1,
+      failedImageCount: 1,
+      attendeeCount: 0,
+      matchCount: 0,
+      storageBytes: ORIGINAL_BYTES * 3,
+    });
+    return { workspace, done: done.imageId, failed: failed.imageId, hidden: hidden.imageId };
+  }
+
+  it("R3: ?visibility=hidden lists exactly the hidden image, while no filter lists all three", async () => {
+    // Arrange
+    const fixture = await seedFilterFixture("op127-filter-visibility");
+
+    // Act
+    const unfiltered = await listImages(
+      getRequest(imagesPath(fixture.workspace), fixture.workspace.organizer.cookie)
+    );
+    const hiddenOnly = await listImages(
+      getRequest(
+        `${imagesPath(fixture.workspace)}?visibility=hidden`,
+        fixture.workspace.organizer.cookie
+      )
+    );
+    const unfilteredAnswer = (await body(unfiltered)) as unknown as ImageListAnswer;
+    const hiddenAnswer = (await body(hiddenOnly)) as unknown as ImageListAnswer;
+
+    // Assert — hide is not delete, so the unfiltered grid still carries all three…
+    expect(unfiltered.status).toBe(200);
+    expect(unfilteredAnswer.data.map((item) => item.id)).toEqual([
+      fixture.hidden.toHexString(),
+      fixture.failed.toHexString(),
+      fixture.done.toHexString(),
+    ]);
+    // …and the filter is applied at the route, not merely baked into the builder.
+    expect(hiddenOnly.status).toBe(200);
+    expect(hiddenAnswer.data.map((item) => item.id)).toEqual([fixture.hidden.toHexString()]);
+  });
+
+  it("R3: ?status=failed lists exactly the failed image", async () => {
+    // Arrange
+    const fixture = await seedFilterFixture("op127-filter-status");
+
+    // Act
+    const response = await listImages(
+      getRequest(
+        `${imagesPath(fixture.workspace)}?status=failed`,
+        fixture.workspace.organizer.cookie
+      )
+    );
+    const answer = (await body(response)) as unknown as ImageListAnswer;
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(answer.data.map((item) => item.id)).toEqual([fixture.failed.toHexString()]);
+  });
+
+  it("R3: two filters narrow the page together rather than last-one-wins", async () => {
+    // Arrange
+    const fixture = await seedFilterFixture("op127-filter-composed");
+
+    // Act — `hidden` is queued and `done` is visible, so each clause alone
+    // selects a different image while their conjunction selects one and none.
+    const matching = await listImages(
+      getRequest(
+        `${imagesPath(fixture.workspace)}?status=queued&visibility=hidden`,
+        fixture.workspace.organizer.cookie
+      )
+    );
+    const disjoint = await listImages(
+      getRequest(
+        `${imagesPath(fixture.workspace)}?status=done&visibility=hidden`,
+        fixture.workspace.organizer.cookie
+      )
+    );
+    const matchingAnswer = (await body(matching)) as unknown as ImageListAnswer;
+    const disjointAnswer = (await body(disjoint)) as unknown as ImageListAnswer;
+
+    // Assert — both clauses are applied at once (§4.4).
+    expect(matching.status).toBe(200);
+    expect(matchingAnswer.data.map((item) => item.id)).toEqual([fixture.hidden.toHexString()]);
+    expect(disjoint.status).toBe(200);
+    expect(disjointAnswer.data).toEqual([]);
   });
 });
