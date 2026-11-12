@@ -241,11 +241,29 @@ pointed at pre-rename file names while every guard stayed green.
   link _and_ on a repair, which coupled every docs fix to this file. The repair
   retargeted all 16 and retired the list to `{ ok: true, issues: [] }` over 292
   records and 881 links; the case keeps its non-vacuity bounds (`>= 250`
-  records, `>= 800` links), so a silently narrowed sweep still cannot pass. Two
+  records, `>= 800` links) and the two census floors recorded next. Two
   targets had no live record to point at — `ADR-0360`/`ADR-0361`, the OP-104
   lane's records, which exist only on the unmerged
   `OP-104-task-entitlements-usage-endpoints` branch — and are named as prose
   there.
+- **The census floors, with headroom (2026-11-12, card `t_0fb1fa25`).** The
+  real-tree case pins **two** floors and never an equality: the link floor
+  `checkedLinks >= 860` — about 2.4% below the 881 census at the retirement —
+  and the population floor `scannedRecords >= 292`, the record population
+  itself. The pair exists because each value alone binds the wrong thing. A
+  prose repair that replaces a link with its record's name is legitimate and
+  lowers the link count: the F2 repair (`t_bd371d4d`) drops exactly two links,
+  881 → 879, so a floor pinned at the census reddens a _repair_ — the coupling
+  the ratchet's retirement removed, one direction over. A link floor low enough
+  to leave that repair room cannot, however, see a **record-sweep narrowing**:
+  reading 280 of the 292 records still counts 866 links, above `>= 860`, while
+  the population floor fails
+  (`expected 280 to be greater than or equal to 292`). Records are frozen and
+  never deleted, so 292 fails only on a deletion or on a narrowed read, never on
+  a mint — which is why the pair, and not one tuned number, is the form the
+  guard takes. The `>= 250` / `>= 800` bounds stay as the contract's own floor
+  (a near-empty sweep); they are not the narrowing guard and cannot be, since
+  any narrowing that leaves 866 links is far above both.
 
 ### 8. The source-reference resolution invariant (iv) (2026-11-12, finding F6-b)
 
