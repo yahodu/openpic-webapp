@@ -1,3 +1,9 @@
+## [1.57.7](https://github.com/yahodu/openpic-webapp/compare/v1.57.6...v1.57.7) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 accept colon-bearing path tokens in the Consumers guard ([#506](https://github.com/yahodu/openpic-webapp/issues/506)) ([9e1bc2d](https://github.com/yahodu/openpic-webapp/commit/9e1bc2db12f2b358ae3fb7460b1e87d230be0afb))
+
 ## [1.57.6](https://github.com/yahodu/openpic-webapp/compare/v1.57.5...v1.57.6) (2026-11-12)
 
 ### Bug Fixes
