@@ -320,3 +320,10 @@ more index on a write path, while a unique **partial** replacement must keep the
 accepts either, because it asserts the plan and the semantics, not the index
 name. `tsc --noEmit` exits `0`, ESLint reports 0 errors and 0 warnings, and
 Prettier is clean on the spec.
+
+**CI on the draft (`#473`).** `lint`, `unit_test`, `audit`, `audit-dev`,
+`secret-scan`, `validate-branch-name`, `validate-pr-title` and CodeQL pass. `ci`
+(the integration job) and `test_coverage` fail with **exactly** the two
+assertions above and nothing else: `Test Files 1 failed | 106 passed (107)` and
+`Test Files 1 failed | 268 passed (269)`. Every other spec in the repo is green
+on this head, so the RED cannot be read as collateral damage.
