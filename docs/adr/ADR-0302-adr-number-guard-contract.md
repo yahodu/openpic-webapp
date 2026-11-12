@@ -264,6 +264,18 @@ pointed at pre-rename file names while every guard stayed green.
   guard takes. The `>= 250` / `>= 800` bounds stay as the contract's own floor
   (a near-empty sweep); they are not the narrowing guard and cannot be, since
   any narrowing that leaves 866 links is far above both.
+- **Resolution is not correctness (2026-11-12, review of card `t_bd371d4d`).**
+  Invariant (vi) proves **resolution only**: a retarget that names a live record
+  of the cited number is green even when that record decides a different thing,
+  and the failure is silent by construction, because the sweep has no notion of
+  subject. A repair therefore retargets to **the record the sentence means**;
+  when no record on `main` decides the thing, name the gap in prose — the shape
+  the OP-104 pointers `ADR-0360`/`ADR-0361` use — rather than pointing at a
+  record that merely mentions the noun. Two measured instances: the F2 repair
+  (`ADR-0560`/`ADR-0561:5`, `ADR-0540` is the branding-upload RED) and the F1
+  site (`ADR-0600:5`, `ADR-0040` is the OP-89 identity-hooks RED and mentions
+  `event_organizers` zero times; fix card `t_130572f1`). No mechanical check
+  closes this class, so it stays a review obligation.
 
 ### 8. The source-reference resolution invariant (iv) (2026-11-12, finding F6-b)
 

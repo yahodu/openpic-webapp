@@ -235,7 +235,8 @@ allocated before the policy (`≤ 0145`) are frozen history and are never moved.
 - **The guard.** `pnpm test:unit` fails on a duplicate `ADR-NNNN` prefix or a
   malformed `ADR-*.md` name
   (`apps/web/src/test/unit/adr-*.test.ts` — the guard is one spec per invariant,
-  see ADR-0302 §1 and §10). It is the mechanical backstop
+  see ADR-0302 (`## Decision`, the six-row invariant table) and §10). It is the
+  mechanical backstop
   for the rule above and a required pre-merge check; `docs/adr/README.md` and any
   other non-`ADR-*.md` file are ignored.
 - **Out of scope of the guard, by decision.** The guard does not check that a new
