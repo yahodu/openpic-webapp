@@ -342,6 +342,17 @@ its own consumers, so participation is **declared per record, never inferred**.
   arm then verifies the colon-free sibling `…/uploads/…` while the file the
   record actually named is reported as a mismatch — a wrong file in both
   directions at once, which is the failure the widening removed.
+- **Literal first, annotation second.** A `Consumers:` path or `@/…` specifier
+  token whose written form names a swept file is read exactly as written; only a
+  token that names **no** swept file is re-read with **one** trailing `:<suffix>`
+  stripped. The suffix may contain a dot, so `…/route.ts:D1`,
+  `…/route.ts:D1.2` and `…/route.ts:4.2` all name `…/route.ts`, and a second `:`
+  is left alone. The order is load-bearing: a blind trim rewrites the directory
+  token `…/uploads:link` to `…/uploads`, the colon-free sibling's directory, so
+  the colon route and its decoy would both verify — the wrong-file failure above,
+  reintroduced. Read the other way round, a benign annotation the guard cannot
+  tell from a path keeps its citation verified instead of turning it into a
+  named failure.
 - **Duplicate numbers.** A citation is declared when _any_ record with that
   number declares, and verified when any of them identifies the citing file;
   reporting the duplicate stays §1's job.
@@ -349,10 +360,11 @@ its own consumers, so participation is **declared per record, never inferred**.
   the same per-line exemption, a reference whose record is missing counted in
   `danglingReferences` and left to §8, so
   `accuracy.checkedReferences + accuracy.danglingReferences === existence.checkedReferences`.
-- **Measured at the head this section is appended to (2026-11-12).** 1250 checked
-  references, 174 exempt, 0 dangling; 16 records declare the field, 149 citations
-  are verified, 1101 are `unlisted-consumer`, and `consumer-mismatch` and
-  `consumers-malformed` are both 0.
+- **No census snapshot is published here.** The counts move with every record
+  added, and a figure a reader cannot re-derive from a named commit is worse than
+  no figure, so measure them yourself at the commit under review with the guard's
+  own exports — `checkRepositoryAdrReferences`, `checkRepositoryAdrConsumers` and
+  `checkRepositoryAdrLinks`.
 - **Executable contract:** `apps/web/src/test/unit/adr-numbering.test.ts`.
 
 ## Consequences
