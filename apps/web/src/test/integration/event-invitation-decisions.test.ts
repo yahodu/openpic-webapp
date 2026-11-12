@@ -19,6 +19,13 @@ import { DELETE as revokeInvitation } from "@/app/api/v1/tenants/[tenantId]/even
 import { DELETE as removeMember } from "@/app/api/v1/tenants/[tenantId]/events/[eventId]/members/[userId]/route";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
+import {
+  createLogger,
+  getLogger,
+  memoryTransport,
+  setLogger,
+  type MemoryTransport,
+} from "@/server/logging";
 import { runNotificationFanOut } from "@/server/notifications/fan-out";
 import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
 import {
@@ -1660,6 +1667,120 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} �
     );
     expect(removed?.status).toBe("removed");
     expect((await storedInvitation(invitationId))?.status).toBe("revoked");
+  });
+
+  it("P1: a re-invited member is notified again by the second removal", async () => {
+    // Arrange — an accepted co-organizer, removed once.
+    const invitee = await signInVerified(makeIdentity("op121-p1-repeat-invitee"));
+    const { fixture } = await acceptedMember("op121-p1-repeat", invitee);
+    const firstRemoval = await removeMember(
+      removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+    );
+    expect(firstRemoval.status).toBe(204);
+
+    // The re-invite an organizer sends after a removal: a fresh invitation for
+    // the same user, accepted by the same invitee. The accept arm restores the
+    // seat (`status: "active"`, `revokedAt: null`), so the second removal is a
+    // real removal and not a replay of the first.
+    const secondInvitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
+    const accept = await acceptInApp(inAppDecision(invitee.cookie, secondInvitationId, "accept"));
+    expect(accept.status).toBe(200);
+
+    // Act — the second removal, for the seat the second invitation granted.
+    const secondRemoval = await removeMember(
+      removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+    );
+
+    // Assert — the second removal is a removal in its own right: it answers
+    // `204` and notifies both parties again. Remembering the member instead of
+    // the removal (a constant `dedupeKey`, or a "has this member been notified"
+    // check) collapses the repeat: measured, the constant `dedupeKey` answers
+    // `500` here and a skip-if-already-notified guard leaves both counts at 1,
+    // silently dropping the second, real notification pair.
+    expect(secondRemoval.status).toBe(204);
+    expect(await outboxRows("collab.member.removed")).toHaveLength(2);
+    expect(await outboxRows("collab.member.removed.ack")).toHaveLength(2);
+
+    const removed = (await eventMembers(fixture)).find(
+      (row) => row.userId === invitee.userId.toHexString()
+    );
+    expect(removed?.status).toBe("removed");
+    expect(removed?.revokedAt).toBeInstanceOf(Date);
+    expect((await storedInvitation(secondInvitationId))?.status).toBe("revoked");
+  });
+
+  it("P2: a sequential retry of an already-removed member answers 204 and notifies nobody again", async () => {
+    // Decision t_df7d6c3b makes the removal genuinely idempotent (§0.7: an
+    // already-terminal transition is success, `404` is reserved for a resource
+    // that is not there), so the late retry answers `204` — not the `404
+    // not_found` the shipped route returns today.
+    const invitee = await signInVerified(makeIdentity("op121-p2-retry-invitee"));
+    const { fixture, invitationId } = await acceptedMember("op121-p2-retry", invitee);
+
+    const first = await removeMember(
+      removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+    );
+    expect(first.status).toBe(204);
+
+    // Act — the retry that arrives after the first removal committed, so it
+    // fails the pre-transaction `revokedAt: null` lookup (unlike the
+    // concurrent pair, which both pass it).
+    const second = await removeMember(
+      removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+    );
+
+    // Assert — the same answer as the first call, and no second notification
+    // pair: an already-removed member is not notified about a removal that
+    // already happened.
+    expect(second.status).toBe(204);
+    expect(await outboxRows("collab.member.removed")).toHaveLength(1);
+    expect(await outboxRows("collab.member.removed.ack")).toHaveLength(1);
+
+    const removed = (await eventMembers(fixture)).find(
+      (row) => row.userId === invitee.userId.toHexString()
+    );
+    expect(removed?.status).toBe("removed");
+    expect((await storedInvitation(invitationId))?.status).toBe("revoked");
+  });
+
+  it("P3: a double removal writes exactly one `event member removed` log line", async () => {
+    // Arrange — capture every entry the port writes (`auth-guards.test.ts`
+    // and `media-signed-urls.test.ts` I7c install their sink the same way).
+    const previous = getLogger();
+    const sink: MemoryTransport = memoryTransport();
+    setLogger(
+      createLogger({ level: "info", transports: [sink], service: "openpic-web", env: "test" })
+    );
+
+    try {
+      const invitee = await signInVerified(makeIdentity("op121-p3-log-invitee"));
+      const { fixture } = await acceptedMember("op121-p3-log", invitee);
+
+      // Act — the same double click the F1 pin races: both calls pass the
+      // pre-transaction lookup, so the loser reaches the log call too.
+      const [first, second] = await Promise.all([
+        removeMember(
+          removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+        ),
+        removeMember(
+          removeMemberRequest(fixture.workspace.organizer.cookie, fixture, invitee.userId)
+        ),
+      ]);
+
+      // Arrange guard, not a new contract: the `204`/`204` pairing is the F1
+      // pin's. Here it proves both calls reached the log call site, so the
+      // count below cannot pass by one call answering before the transaction.
+      expect([first.status, second.status]).toEqual([204, 204]);
+
+      // Assert — one removal, one line: the winner's. The loser performed no
+      // removal, so a line from it reports a removal that never happened.
+      const removalLines = sink.entries.filter((entry) => entry.msg === "event member removed");
+      expect(removalLines).toHaveLength(1);
+      expect(removalLines.at(0)?.level).toBe("info");
+      expect(removalLines.at(0)?.event).toBe("collab.member.removed");
+    } finally {
+      setLogger(previous);
+    }
   });
 });
 
