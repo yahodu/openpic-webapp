@@ -1,3 +1,9 @@
+## [1.57.1](https://github.com/yahodu/openpic-webapp/compare/v1.57.0...v1.57.1) (2026-11-12)
+
+### Bug Fixes
+
+- **collaboration:** OP-121 pair the member-removal and reject writes atomically ([#483](https://github.com/yahodu/openpic-webapp/issues/483)) ([0013c8c](https://github.com/yahodu/openpic-webapp/commit/0013c8c0b65f4227535b741f953df9b8b00fc390))
+
 ## [1.57.0](https://github.com/yahodu/openpic-webapp/compare/v1.56.0...v1.57.0) (2026-11-12)
 
 ### Features
