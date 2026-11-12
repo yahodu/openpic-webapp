@@ -395,3 +395,43 @@ rendezvous — the retry-line gate is the rendezvous, and it fails loudly rather
 
 **Nothing in the sections above is retracted.** No earlier decision of this record is re-pinned, and no
 production code changes come with this amendment.
+
+## Review sign-off (round 1 — 2026-11-12)
+
+**Verdict: APPROVED WITH FINDINGS.** Reviewed head `8ac8d7d` → squash `e2a4806`, PR #528 `MERGED` on
+2026-11-12T20:44:20Z. Nothing in the sections above — not the round-1 land sign-off, not the follow-up
+GREEN sign-off, not the concurrent-removal Amendment and not the deterministic-pin Amendment after it —
+is retracted.
+
+**Shipped-bytes proof.** `git diff 8ac8d7d e2a4806` differs only in
+`apps/web/src/test/unit/adr-numbering.test.ts` (PR #527, which landed between the cut and the merge), and
+it is **empty** for the three PR paths: the member-removal route, this record and `docs/adr/README.md`.
+The checks re-listed on the pushed head are **14/14 pass**, including `ci` (6m29s) and `test_coverage`
+(2m36s), the two jobs that had been red.
+
+**Execution on the merged tree** (throwaway worktree at `e2a4806`, per-package `node_modules`
+symlinked): `event-invitation-decisions` **48/48**, with `tenant-members` **65/65 twice in a row**; the
+two concurrency cases alone **12/12** green over 6 serial iterations each; the unit project **162 files /
+2772 passed | 3 skipped**; `prettier --check` clean on the three changed files.
+
+**The repair measured in both directions.** A deterministic probe (a rival `withTransaction` takes the
+row lock, the route's `DELETE` fires 40 ms later, the rival releases at 250 ms) reproduces the flake's
+exact failure mode: the pre-fix head `daf054a` answers **500 `internal_error`** and the shipped head
+`e2a4806` answers **204** with an empty body.
+
+**Finding M-1 (Medium), routed to card `t_a29a9e7c`.** The new retry-limit branch had no committed
+deterministic pin: with the `.catch` disabled in a probe worktree the focused spec stayed **48/48 green
+across 3 runs**, because `F1` and `P3` reach the branch only when the race actually spends the loser's
+retry budget, which is exactly when the flake fires. The follow-up supplies that pin — a rival-transaction
+rendezvous, both arms, mutation-proved — landed as squash `103290f` (PR #530) and is recorded in the
+second Amendment above. The follow-up is cited by card id only; no ADR number is guessed for it.
+
+**Info-only items, no card.** (a) The 1 s wait ceiling is fixed, not the winner's own duration, so a
+removal transaction longer than that still answers `500`; the Amendment and the route's `shortcut:`
+comment record it, and a recurrence stays diagnosable from the `http.error` line. (b) The "no ADR number
+minted" rationale quotes the record-link census as an exact equality — the figures `checkedLinks: 881` and
+`scannedRecords: 292` — which is accurate on this tree; PR #525 was still open at review time and has
+since landed as `bfabad4`, turning that equality into a floor, so the quoted figures read as a
+measurement of the landing commit rather than as a live pin. (c) `rivalRemovalCommitted`'s
+`memberId: unknown` could be `ObjectId`, and the value is only passed to `findOne`, so it is harmless.
+None of these changes the decision.
