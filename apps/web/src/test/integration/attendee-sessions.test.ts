@@ -18,7 +18,7 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
 /**
  * Integration / contract — anonymous attendee sessions and the attendee auth
  * resolver (OP-129 I1–I5, contract §1.5 + §0.2 `attendee` label + §0.15,
- * schema §13.5, ADR-0768).
+ * schema §13.5, ADR-0780).
  *
  * **Why this exists.** An attendee must be able to upload a selfie without an
  * account (the epic's user story). The session that enables it is a **bearer
@@ -46,7 +46,7 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *     UTC with millisecond precision and a `Z` (contract §0.13);
  *   - `Set-Cookie: op_att=<raw token>; Path=/; HttpOnly; SameSite=Lax;
  *     Max-Age=<retention.attendeeSessionDays in seconds>` — `Secure` is added
- *     only on a TLS deployment (U2, ADR-0768 §Assumptions);
+ *     only on a TLS deployment (U2, ADR-0780 §Assumptions);
  *   - the stored `attendeeSessions` row carries `tokenHash = sha256(token)`,
  *     `claimedByUserId: null`, `claimedAt: null`, `eventIds: []` when no slug is
  *     given, `deviceFingerprint` hashes and `expireAt = createdAt + TTL`
@@ -61,9 +61,9 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *     `details.recreateUrl` (contract §1.5 + Appendix A);
  *   - a missing/unknown token is `401 authentication_required` — a distinct
  *     code, so a client can tell "your 30 days are up, re-create" from "you sent
- *     nothing" (ADR-0768 §Decision 3).
+ *     nothing" (ADR-0780 §Decision 3).
  *
- * ## Assumptions (ADR-0768 §Assumptions)
+ * ## Assumptions (ADR-0780 §Assumptions)
  *
  * - The routes are `/api/v1/p/attendee-sessions[/current]` exactly as contract
  *   §1.5 spells them, and are driven here by invoking the exported handlers

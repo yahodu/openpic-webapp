@@ -4,7 +4,7 @@ import { ATTENDEE_COOKIE_NAME, buildAttendeeSessionCookie } from "@/server/atten
 
 /**
  * Unit contract — the `op_att` session cookie builder (OP-129 U2, contract
- * §1.5, ADR-0768).
+ * §1.5, ADR-0780).
  *
  * **Why this exists.** The anonymous attendee session rides a cookie, and the
  * cookie's attribute set *is* the security posture: `HttpOnly` keeps the bearer
@@ -32,7 +32,7 @@ import { ATTENDEE_COOKIE_NAME, buildAttendeeSessionCookie } from "@/server/atten
  * `buildCookieOptions` does for the Better Auth cookie, `@/server/auth/cookies`)
  * and the TTL from `platformSettings`.
  *
- * ## Assumptions (ADR-0768 §Assumptions)
+ * ## Assumptions (ADR-0780 §Assumptions)
  *
  * - `secure` is an explicit input rather than an absolute. Contract §1.5's
  *   example shows `Secure` unconditionally, which a browser on a plain-HTTP

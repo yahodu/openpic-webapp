@@ -5,7 +5,7 @@ import { E2E_BASE_URL } from "./ports";
 
 /**
  * E1 — an anonymous attendee session over the real deployed surface (OP-129,
- * contract §1.5, ADR-0768).
+ * contract §1.5, ADR-0780).
  *
  * The integration suite drives the two handlers in-process, so it never passes
  * the Next middleware and never exercises a real cookie jar. This spec proves
