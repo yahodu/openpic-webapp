@@ -27,7 +27,10 @@ import { tenantStage } from "@/server/tenancy/route-stage";
  * row gets `status: "removed"` **and** `revokedAt` (the admission seam filters
  * on `revokedAt: null`, so one without the other would leave the removed member
  * admitted), and the invitation that granted the seat moves to `revoked` so the
- * row cannot be accepted again. Those two writes and the two
+ * row cannot be accepted again. Requiring `revokedAt: null` in the removal's
+ * predicate is safe for a member who is removed and later re-invited: the
+ * accept arm writes `status: "active"` and `revokedAt: null` back onto the
+ * same row, so the next removal matches it again. Those two writes and the two
  * `collab.member.removed` / `.ack` emits run in one transaction, so a failed
  * removal moves neither row and stays replayable. The removed member and the
  * organizer are both notified, and the answer is `204` with no body.
