@@ -2011,6 +2011,7 @@ The attendee landing page. Must render fully from this one call.
   "event": {
     "id": "6702ff...",
     "name": "Rahul & Priya's Wedding",
+    "description": "Reception on the lawn, dinner at 8",
     "startAt": "...",
     "endAt": "...",
     "displayTimeZone": "Asia/Kolkata",
@@ -4171,6 +4172,9 @@ export interface PublicEvent {
   event: {
     id: Id;
     name: string;
+    // The landing page renders the description; the create route stores "" for
+    // an event that has none (§4.1).
+    description: string;
     startAt: IsoDateTime;
     endAt: IsoDateTime;
     displayTimeZone: IanaTimeZone;

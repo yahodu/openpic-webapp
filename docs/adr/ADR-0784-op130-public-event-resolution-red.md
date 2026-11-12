@@ -305,3 +305,25 @@ access_link_revoked` with a message the frontend shows verbatim, and the
 4. The purge tombstone question in §5 — if the platform ever wants a distinguishable
    `410 event_gone` for a purged event, it needs a schema decision, not a route
    one.
+
+## Review (round 1, artifact lens)
+
+- **Verdict:** APPROVED WITH FINDINGS. The reviewer re-ran the honest RED, wrote
+  an independent near-fix (a pure module plus a route, both throwaway and
+  deleted), and confirmed the pins are satisfiable exactly as written.
+- **Independent satisfiability:** the reviewer's own stub answered unit **27/27**
+  and integration **32/32** at the time of that review; after the follow-up pins
+  below the same stub shape answered **36/36**.
+- **Pin gaps, all routed to the TEST card `t_629f08dc`:** F1 (Medium) —
+  `session.hasProfile` was not pinned to _this_ event, so an unscoped lookup
+  passed; F2 (Low) — only the `draft` refusal body was asserted content-free, so
+  `eventName`/`eventId` could be added to the `event_gone` and
+  `access_link_revoked` details; F3 (Low) — two §Evidence figures did not
+  reproduce (`5 failed | 26 passed (31)` and `11 failed | 16 passed (27)`).
+- **F1 residual (`t_fa0ba940`):** the F1 pin's foreign event was seeded with its
+  own tenant, so a `tenantId`-scoped lookup still passed; the same-tenant sibling
+  case closed it, and this ADR's §3 and §Evidence were amended in place.
+- **Landing:** the implementation, the two contract corrections
+  (`EVENT_ERROR_CODES`/`EVENT_ERROR_TRANSPORT` gaining `event_gone`, and
+  `description` in contract §6.1's appendix) and the open questions above are
+  recorded in [ADR-0785](ADR-0785-op130-public-event-resolution-green.md).
