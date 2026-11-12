@@ -19,6 +19,12 @@ export const COLLECTIONS = {
   eventOrganizers: "event_organizers",
   eventImages: "event_images",
   attendeeEventProfiles: "attendee_event_profiles",
+  /**
+   * Anonymous attendee sessions (schema §13.5): the `op_att` token's SHA-256,
+   * the device fingerprint and the TTL. App-owned identity, so it follows the
+   * `userProfiles` naming rather than the snake_case domain block (ADR-0781).
+   */
+  attendeeSessions: "attendeeSessions",
   subscriptions: "subscriptions",
   /**
    * The append-only billing ledger (schema §14.4). One row per money movement,
