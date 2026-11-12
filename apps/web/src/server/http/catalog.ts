@@ -4,6 +4,7 @@ import type {
   AuthErrorCode,
   BillingErrorCode,
   CollaborationErrorCode,
+  ConsentErrorCode,
   EntitlementErrorCode,
   ErrorCode,
   EventErrorCode,
@@ -394,6 +395,35 @@ export const EVENT_ERROR_TRANSPORT: Readonly<Record<EventErrorCode, ErrorCatalog
 };
 
 /**
+ * Transport for the biometric-consent codes (contract §6.2/§6.3, Appendix A.7).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the event and
+ * collaboration rows: that table stays the exact base Appendix A copy.
+ * `consent_required` (`412`) is the gate every selfie endpoint calls and carries
+ * the three details the client needs to re-render the policy;
+ * `policy_version_stale` (`422`) refuses a grant naming a retired policy version;
+ * `age_confirmation_required` (`422`) refuses a grant whose age confirmation is
+ * missing or false (OP-131, ADR-0790).
+ */
+export const CONSENT_ERROR_TRANSPORT: Readonly<Record<ConsentErrorCode, ErrorCatalogEntry>> = {
+  consent_required: {
+    status: 412,
+    retryable: false,
+    message: "Biometric consent is required before this action.",
+  },
+  policy_version_stale: {
+    status: 422,
+    retryable: false,
+    message: "The biometric policy has changed. Please review the current version.",
+  },
+  age_confirmation_required: {
+    status: 422,
+    retryable: false,
+    message: "You must confirm you are old enough to give this consent.",
+  },
+};
+
+/**
  * Transport for the billing-checkout codes (contract §3.3, Appendix A.2/A.4).
  *
  * Kept out of {@link ERROR_CATALOG} for the same reason as the tenancy and
@@ -584,6 +614,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...MEDIA_ERROR_TRANSPORT,
   ...EVENT_ERROR_TRANSPORT,
   ...COLLABORATION_ERROR_TRANSPORT,
+  ...CONSENT_ERROR_TRANSPORT,
 };
 
 /**

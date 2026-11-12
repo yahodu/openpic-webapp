@@ -211,6 +211,29 @@ export const EVENT_ERROR_CODES = [
 export type EventErrorCode = (typeof EVENT_ERROR_CODES)[number];
 
 /**
+ * Biometric-consent codes (contract §6.2/§6.3, Appendix A.7).
+ *
+ * `consent_required` (`412`, `{ purpose, requiredPolicyVersion, policyUrl }`)
+ * is the gate every selfie endpoint calls; `policy_version_stale` (`422`,
+ * `{ currentPolicyVersion, policyUrl }`) refuses a grant naming a policy the
+ * platform no longer serves; `age_confirmation_required` (`422`) refuses a grant
+ * whose age confirmation is missing or false. Like the event and collaboration
+ * rows they are contract catalogue codes that are **not** members of
+ * {@link ERROR_CODES}, which the server error catalogue pins to exactly the base
+ * Appendix A table; they are appended to the client-facing enum
+ * ({@link API_ERROR_CODES}) and transported from their own table (OP-131,
+ * ADR-0790). Append-only, like every other code.
+ */
+export const CONSENT_ERROR_CODES = [
+  "consent_required",
+  "policy_version_stale",
+  "age_confirmation_required",
+] as const;
+
+/** A member of the closed {@link CONSENT_ERROR_CODES} set. */
+export type ConsentErrorCode = (typeof CONSENT_ERROR_CODES)[number];
+
+/**
  * Billing-checkout codes (contract §3.3, Appendix A.2/A.4).
  *
  * The seven refusals `POST /tenants/{tenantId}/billing/{checkout,upgrade,downgrade}`
@@ -385,6 +408,7 @@ export const API_ERROR_CODES = [
   ...MEDIA_ERROR_CODES,
   ...EVENT_ERROR_CODES,
   ...COLLABORATION_ERROR_CODES,
+  ...CONSENT_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -408,7 +432,8 @@ export type AppErrorCode =
   | BillingErrorCode
   | MediaErrorCode
   | EventErrorCode
-  | CollaborationErrorCode;
+  | CollaborationErrorCode
+  | ConsentErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
