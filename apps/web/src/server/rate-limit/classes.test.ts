@@ -21,13 +21,16 @@ import {
  * Every class and every rule is pinned exactly (not presence-only) so a class
  * can neither gain, lose nor drift a limit without failing this suite.
  *
- * `attendee.session` is the OP-129 follow-up row (finding F1, ADR-0787). It is
- * absent from the production union, so the class list and the two policy arrays
- * are typed `readonly string[]` rather than `readonly RateLimitClass[]`: naming a
- * class the union does not have would force a cast that becomes
- * `@typescript-eslint/no-unnecessary-type-assertion` the moment the GREEN widens
- * the union. Once the member exists the arrays may be retyped without changing a
- * single assertion.
+ * `attendee.session` is the OP-129 follow-up row (finding F1, ADR-0787) and it is
+ * part of the production union: ADR-0786 added the member, so the class table
+ * (`RATE_LIMIT_CLASSES`, `Readonly<Record<RateLimitClass, readonly RateLimitRule[]>>`)
+ * and the two policy sets (`FAIL_CLOSED_CLASSES` and `RATE_LIMIT_BYPASS_CLASSES`,
+ * both `ReadonlySet<RateLimitClass>`) are typed on it, and naming the row needs no
+ * cast. What stops drift is the exact pin, not the row's presence: the lane rule is
+ * asserted with `toEqual` as `{ scope: "ip", limit: 60, windowSeconds: 3600 }` and
+ * the fail-closed membership is asserted class by class, so the row can neither
+ * gain, lose nor drift a limit — nor flip its failure policy — without failing this
+ * suite.
  */
 
 const CONTRACT_CLASSES: readonly string[] = [

@@ -147,8 +147,10 @@ All commands run in `/root/openpic/openpic-webapp/.worktrees/t_4f95a931` on
    `resolveClientIp` + `getTrustedClientIpHeader()` pair the route's `deviceFingerprint()`
    already uses (ADR-0024). Where `TRUSTED_CLIENT_IP_HEADER` is set, a forged
    `x-forwarded-for` cannot choose its bucket; where it is unset, the dev/e2e fallback to the
-   first hop applies. This ADR does not change that model and no pin asserts a spoofing
-   defence.
+   first hop applies. This ADR did not change that model, and the spoofing defence is now
+   **pinned** by `apps/web/src/server/rate-limit/stage.test.ts` (added later, in `a4be0d3`,
+   PR #468): with the trusted header set, a forged `x-forwarded-for` cannot choose the bucket,
+   and a different-trusted-IP control proves the key does move.
 2. **`Retry-After` equals `RateLimit-Reset`.** Both are `result.resetSeconds` by
    construction (`rateLimitHeaders`), and the pin asserts the equality plus an upper bound of
    one class window (3600 s) rather than an exact value, which would depend on wall-clock
@@ -176,7 +178,10 @@ All commands run in `/root/openpic/openpic-webapp/.worktrees/t_4f95a931` on
 - No e2e pin. The limit is a server-side counter and the Playwright journey (E1) creates one
   session; a 61-request browser loop would add minutes to CI for no new signal.
 - No `eventSlug` interaction, no `lastSeenAt` write, no change to the `current` route.
-- No spoofing pin for `x-forwarded-for` (see Assumption 1).
+
+> **Amended after minting (card `t_4eefc65c`, `a4be0d3`, PR #468):** the `x-forwarded-for`
+> spoofing pin this section listed as out of scope now exists in `stage.test.ts` — a record is
+> amended by a later card without being renumbered (see Assumption 1).
 
 ## Number allocation
 
