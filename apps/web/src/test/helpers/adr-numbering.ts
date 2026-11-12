@@ -61,8 +61,9 @@ import { join, posix, relative, sep } from "node:path";
  * field is hard-checked against every file that cites it, and a record without
  * one is counted as `unlisted-consumer` so the debt stays visible. A token is
  * read as written when that form names a swept file; only a token naming none is
- * re-read with one trailing `:<suffix>` annotation stripped, because
- * `…/uploads:link` is a real directory name (finding F-C3). See
+ * re-read with one trailing `:<suffix>` annotation stripped, where the suffix may
+ * contain a dot (`:D1.2`), because `…/uploads:link` is a real directory name
+ * (finding F-C3). See
  * {@link checkSourceAdrConsumers} and {@link checkRepositoryAdrConsumers}.
  *
  * @see docs/CONVENTIONS.md §11 (ADR numbering)
@@ -899,9 +900,13 @@ function trimPathToken(token: string): string {
   return token.replace(/[.,;:]+$/, "").replace(/:\d+$/, "");
 }
 
-/** Strip one trailing `:<suffix>` annotation, e.g. `x.ts:D1` -> `x.ts`. */
+/**
+ * Strip one trailing `:<suffix>` annotation, e.g. `x.ts:D1` -> `x.ts`. The
+ * suffix may contain a dot, so a section pointer (`x.ts:D1.2`) strips too; a
+ * second `:` is left alone.
+ */
 function stripTrailingAnnotation(token: string): string {
-  return token.replace(/:[A-Za-z0-9_-]+$/, "");
+  return token.replace(/:[A-Za-z0-9_.-]+$/, "");
 }
 
 /** The last segment of a path, after POSIX normalization. */
