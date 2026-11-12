@@ -3,7 +3,7 @@
 - **Status:** Accepted (characterization pin; **no production change**, no new contract)
 - **Card:** OP-129 round-1 review follow-up TEST — finding F3 (`t_296d24bd`) · **Branch:** `OP-129-task-attendee-credentials-precedence-pin` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_a909e641`
 - **Consumers:** `apps/web/src/test/integration/attendee-sessions.test.ts` only
-- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0769`–`0788`; the base's cell read `Next free = 0784` (stale), the sweep found `0782` (edge pins), `0783` (resolver default), `0784`/`0785` (OP-130 public-event lane), `0786` (rate-limit GREEN) and `0787` (rate-limit record, renumbered in flight by `t_f4da0ad2`) already taken — this record takes `0788`, the cell advances to `0789`.
+- **Lane:** OP-129 (epic Attendee Identity). Reserved range `0780`–`0798` (re-cut from the lane's first pool draw, which overlapped the OP-126 uploads lane; recorded in `docs/adr/README.md`); the base's cell read `Next free = 0784` (stale), the sweep found `0782` (edge pins), `0783` (resolver default), `0784`/`0785` (OP-130 public-event lane), `0786` (rate-limit GREEN) and `0787` (rate-limit record, renumbered in flight by `t_f4da0ad2`) already taken — this record takes `0788`, the cell advances to `0789`, and `0789`–`0798` remain free for this lane.
 - **Relates to:** [ADR-0770](ADR-0770-op129-anonymous-attendee-sessions-green.md) (the resolver), [ADR-0782](ADR-0782-op129-attendee-session-edge-pins.md) (the F4 fall-through pins), [ADR-0783](ADR-0783-op129-attendee-resolver-default.md) (decides the cookie-first order this record pins)
 - **Contract:** §0.2 (`attendee` label — cookie **or** header) · §1.5 (`GET /p/attendee-sessions/current`) · §0.15 (a raw token is returned by its issuance only)
 
@@ -75,9 +75,11 @@ Rejected alternatives:
 - A future refactor that reverses the credential order, or that reorders `attendeeTokenFrom`, now
   breaks one named case with a self-explaining message instead of silently changing which session a
   browser reports.
-- The lane's reserved range `0769`–`0788` is **exhausted** by this record. The allocator's
-  `unallocated (future lanes)` row already reads `0789`+, so the next OP-129 card must draw a new block
-  from the pool rather than continue this range; the merge of this branch and the in-flight
+- This record is the highest **consumed** number in the lane's reserved range `0780`–`0798`, so the
+  lane's cell now reads `0789` and **`0789`–`0798` remain free for OP-129**. ADR-0300 §10 makes a
+  reserved range exclusive **including its unconsumed gaps**, so the next OP-129 card continues this
+  range and must **not** draw a fresh block from the allocator's `unallocated (future lanes)` pool
+  (whose head `0799`+ belongs to lanes that own no range); the merge of this branch and the in-flight
   `t_f4da0ad2` repair reconciles the cell as a union keeping the highest value (`0789`).
 - `docs/adr/README.md` remains the shared-ledger hotspot: the lane row, the cell and the pool row merge
   as a union keeping the highest value.
