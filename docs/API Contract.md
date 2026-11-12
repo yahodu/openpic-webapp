@@ -4096,8 +4096,12 @@ export type ProcessingStatus = "queued" | "processing" | "done" | "failed" | "sk
 export interface EventImage {
   id: Id;
   sequence: number;
-  thumbnailUrl: string;
-  thumbnailUrlExpiresAt: IsoDateTime;
+  /**
+   * Null until the thumbnail derivative exists: a just-completed upload is
+   * listed (and rendered as a reserved grid cell) before the pipeline runs.
+   */
+  thumbnailUrl: string | null;
+  thumbnailUrlExpiresAt: IsoDateTime | null;
   width: number;
   height: number;
   orientation: number;
