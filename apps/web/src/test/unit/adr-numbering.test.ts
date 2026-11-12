@@ -3752,6 +3752,26 @@ describe("checkAdrRecordLinks — a link target must resolve to a record file", 
  * **counted** in `checkedLinks`: `ok: true` alone passes on a rule that
  * silently skips the shape, which is exactly the defect these pins close.
  *
+ * **All three markdown title styles are peeled, and pinned.** `linkTarget`
+ * strips the angle brackets and then takes the first whitespace-separated
+ * token, so a `"title"`, a `'title'` and a `(title)` all leave the leaf behind.
+ * The five title-style rows below lock that for every style, bare and
+ * angle-bracketed, plus the combined shape `](<ADR-….md> "title")` that crosses
+ * both axes. Those rows are **characterisation**: they pass on the trunk today,
+ * and they exist so a future "tighten the peel" refactor (e.g. an explicit
+ * `/\s+["'(].*$/` strip) cannot silently drop a style with nothing going red.
+ *
+ * A title's own `)` closes the capture — `](x.md (title))` is read as
+ * `x.md (title` — which is why the parenthesised-title rows still report the
+ * leaf. That is **not** the out-of-scope case of a *target* containing `(` or
+ * `)`: the leaf predicate still rejects such a target, and nothing here widens
+ * it.
+ *
+ * The helper's `MARKDOWN_LINK_TEXT_PATTERN` TSDoc still claims
+ * `shortcut: only a double-quoted title is peeled; widen if a record ever uses
+ * 'title' or (title)`, which these rows contradict. That comment is helper
+ * code, so its correction is a separate behaviour-free card, not a test change.
+ *
  * **OUT of scope — stated here, and pinned as out of scope, never left
  * unstated.**
  *
@@ -3765,10 +3785,6 @@ describe("checkAdrRecordLinks — a link target must resolve to a record file", 
  *   are not inline `](…)` targets and are not read. Pinned below.
  * - bare autolinks — `<ADR-….md>` — are not inline `](…)` targets and are not
  *   read. Pinned below.
- * - the combined shape `](<ADR-….md> "title")` is legal markdown but
- *   deliberately **not** pinned: it crosses the two in-scope axes, the trunk
- *   carries none, and pinning it would widen the GREEN's scope past the two
- *   shapes the review named.
  *
  * **Everything else stays exactly as delivered,** and the remaining rows
  * characterise it rather than change it: `docs/adr/ADR-*.md` records only (never
@@ -3778,11 +3794,13 @@ describe("checkAdrRecordLinks — a link target must resolve to a record file", 
  * occurrence sorted by file/line/target, and `#fragment` is stripped for
  * resolution and kept in the report.
  *
- * **Posture.** This block is RED-by-design: the titled and angle-bracket cases
- * fail on the branch that carries them, and the GREEN card `t_b9d8a27f` turns
- * them green while carrying this file unchanged. Every other row is green in
- * both states, so a fix that reads the new shapes by loosening the leaf
- * predicate (case, suffix, path separator) reddens one of them.
+ * **Posture.** The titled and angle-bracket rows were RED-by-design on the
+ * branch that carried them, and the GREEN card `t_b9d8a27f` turned them green.
+ * The title-style and combined-shape rows were added afterwards as
+ * **characterisation** of the shipped peel, so they are green on arrival and
+ * need no GREEN of their own. Every other row is green in both states, so a fix
+ * that reads the shapes by loosening the leaf predicate (case, suffix, path
+ * separator) reddens one of them.
  */
 
 /** A leaf no `docs/adr` file carries: a read target must report as dangling. */
@@ -3946,6 +3964,143 @@ describe("checkAdrRecordLinks — link-target shapes", () => {
           file: `docs/adr/${fixture0302Guard}`,
           line: 1,
           target: `${fixtureMissingLeaf}#decision`,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads a single-quoted title and reports the target with the title removed", () => {
+    // Arrange — the peel takes the first whitespace-separated token, so every
+    // markdown title style leaves the leaf; this row locks the single-quoted one.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** [the decision](ADR-0700-missing.md 'the record')", // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert — read, and reported as written minus the title.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: fixtureMissingLeaf,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads a parenthesised title and reports the target with the title removed", () => {
+    // Arrange — the title's own `)` closes the capture, so the reported target
+    // is still the leaf and the stray `(` never reaches it.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** [the decision](ADR-0700-missing.md (the record))", // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: fixtureMissingLeaf,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads the combined angle-bracket and double-quoted title shape and reports the leaf", () => {
+    // Arrange — both in-scope axes at once: bracketed target plus a title.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        '- **Amends:** [the decision](<ADR-0700-missing.md> "the record")', // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert — neither the brackets nor the title reaches the report.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: fixtureMissingLeaf,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads an angle-bracket target with a single-quoted title and reports the leaf", () => {
+    // Arrange — the bracket peel must not depend on which quote the title uses.
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** [the decision](<ADR-0700-missing.md> 'the record')", // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: fixtureMissingLeaf,
+        },
+      ],
+      checkedLinks: 1,
+      scannedRecords: 1,
+    });
+  });
+
+  it("reads an angle-bracket target with a parenthesised title and reports the leaf", () => {
+    // Arrange
+    const records: AdrRecordLinkFileText[] = [
+      adrRecordFile(fixture0302Guard, [
+        "- **Amends:** [the decision](<ADR-0700-missing.md> (the record))", // adr-fixture: no such docs/adr file
+      ]),
+    ];
+
+    // Act
+    const result = checkAdrRecordLinks(records, [fixture0302Guard]);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: danglingLinkCode,
+          file: `docs/adr/${fixture0302Guard}`,
+          line: 1,
+          target: fixtureMissingLeaf,
         },
       ],
       checkedLinks: 1,
