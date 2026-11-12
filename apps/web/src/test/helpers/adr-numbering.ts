@@ -827,15 +827,14 @@ const CONSUMERS_FIELD_PATTERN = /^-\s+\*\*Consumers:\*\*/;
  * must open the line and, unless the line is a heading, carry its colon.
  */
 function isMalformedConsumersField(line: string): boolean {
-  const trimmed = line.trim();
-  if (/^#{1,6}[ \t]+\*{0,2}Consumers\b/.test(trimmed)) {
-    return true;
-  }
-
-  let body = trimmed;
+  let body = line.trim();
   while (body.startsWith(">")) {
     body = body.slice(1).trimStart(); // one blockquote level
   }
+  if (/^#{1,6}[ \t]+\*{0,2}Consumers\b/.test(body)) {
+    return true; // after the peel, so a quoted heading cannot go silent
+  }
+
   body = body.replace(/^(?:\d+[.)]|[-*+])[ \t]+/, "").replace(/^[*_]+/, "");
   return /^Consumers[*_]{0,3}\s*:/.test(body);
 }
