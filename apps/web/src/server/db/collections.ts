@@ -114,6 +114,19 @@ export const COLLECTIONS = {
    * (ADR-0642).
    */
   analyticsDaily: "analyticsDaily",
+  /**
+   * Biometric consent records (schema §15.4). One row per grant, carrying the
+   * policy version, the document digest and the hashed evidence; a withdrawal
+   * stamps `withdrawnAt` rather than deleting, because the record of consent is
+   * the evidence (OP-131, ADR-0789).
+   */
+  consents: "consents",
+  /**
+   * Attendee selfies (schema §16.4). The row carries the face vector, the
+   * liveness and quality verdicts and the `profileId` a withdrawal deletes by
+   * (OP-131, ADR-0790).
+   */
+  selfies: "selfies",
 } as const;
 
 /** The name of any registered collection. */
