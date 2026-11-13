@@ -53,11 +53,17 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
  * `401`, details `{ recreateUrl }`): an anonymous attendee token whose session
  * lapsed is a distinct failure from a missing one, so the client can tell "your
  * 30 days are up, re-create" from "you sent nothing" (ADR-0781).
+ *
+ * OP-134 appends `session_claimed_by_other_user` (contract §6.7, `409`): a
+ * second account presenting an `op_att` token whose data subject's photos are
+ * already claimed must be refused by name, never silently accepted — the code
+ * exists in no Appendix A row, so this lane owns its transport (ADR-0812).
  */
 export const AUTH_ERROR_CODES = [
   "authentication_required",
   "session_expired",
   "attendee_session_expired",
+  "session_claimed_by_other_user",
   "account_incomplete",
   "admin_2fa_required",
   "account_banned",
