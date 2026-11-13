@@ -838,3 +838,140 @@ describe("when the same selfie is confirmed by a burst of four requests", () => 
     }
   );
 });
+
+/* ─── §15.3: `firstMatchNotifiedAt` is stamped once, by the first delivery ─── */
+
+/**
+ * The §15.3 `firstMatchNotifiedAt` watermark, as these cases read it.
+ *
+ * `ProfileRow` above declares only the fields the earlier cases read, and the
+ * helper module `../helpers/selfie-flow.ts` is frozen, so the one extra field is
+ * named here rather than widening either of them.
+ */
+interface WatermarkRow {
+  readonly firstMatchNotifiedAt?: Date | null;
+}
+
+/**
+ * The profile's §15.3 watermark, normalised to `null` while nothing has been
+ * delivered.
+ *
+ * @returns The stamp, or `null` before the first delivery.
+ */
+async function firstMatchNotifiedStamp(): Promise<Date | null> {
+  const row = (await profileRow()) as unknown as WatermarkRow;
+  return row.firstMatchNotifiedAt ?? null;
+}
+
+/**
+ * The stamp the first delivery wrote, refusing `null` in one place so a deleted
+ * stamp is reported as a missing stamp rather than as a mismatched date.
+ *
+ * @returns The §15.3 watermark the first delivery committed.
+ */
+async function firstDeliveryStamp(): Promise<Date> {
+  const stamped = await firstMatchNotifiedStamp();
+  if (stamped === null) {
+    throw new Error("expected the first delivery to stamp firstMatchNotifiedAt, received null");
+  }
+  return stamped;
+}
+
+describe("when a confirmation is the profile's first delivery", () => {
+  it("stamps firstMatchNotifiedAt with the confirmation's own instant", async () => {
+    const ready = await readyEvent("op132-f5-stamp");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+    const submitted = await submitOne(ready.event.slug, ready, "f5-stamp");
+    await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+
+    // The field is a delivery watermark, not a submit-time one: both profile
+    // creation sites leave it `null` (schema §15.3, "fires exactly once"), so a
+    // value can only come from the delivery below.
+    expect(await firstMatchNotifiedStamp()).toBeNull();
+
+    // The card leaves the time assertion open; this file takes the real-clock
+    // bracket. The route reads the clock once and writes that one instant, so
+    // the stamp cannot precede the call and cannot follow the answer — a
+    // tolerance would only weaken an assertion that needs none.
+    const before = Date.now();
+    const confirmed = await confirm(ready.event.slug, submitted.selfieId, ready);
+    const after = Date.now();
+
+    // One delivery really happened: this is not the "nothing to publish" arm.
+    expect(confirmed.status).toBe("ready");
+    const delivered = await matchesNewRows();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.payload).toMatchObject({
+      eventId: eventContext.eventId,
+      count: FIRST_RUN_MATCHES,
+    });
+
+    const stamped = await firstDeliveryStamp();
+    expect(stamped).toBeInstanceOf(Date);
+    expect(stamped.getTime()).toBeGreaterThanOrEqual(before);
+    expect(stamped.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  it("leaves firstMatchNotifiedAt unset when the confirmation delivers nothing", async () => {
+    const ready = await readyEvent("op132-f5-nodelivery");
+    const submitted = await submitOne(ready.event.slug, ready, "f5-nodelivery");
+
+    // The I9b arm, pinned in `liveness-selfie-submit.test.ts` and used here as
+    // the starting point and not re-pinned: no worker run, so there is no
+    // embedding, nothing is published, and the watermark must stay unset.
+    const confirmed = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(confirmed.status).toBe("processing");
+    expect(await matchesNewRows()).toHaveLength(0);
+    expect(await firstMatchNotifiedStamp()).toBeNull();
+  });
+
+  it("keeps the first delivery's stamp when a later selfie is delivered", async () => {
+    const ready = await readyEvent("op132-f5-later");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+
+    const first = await submitOne(ready.event.slug, ready, "f5-later-a");
+    await runWorker(first, eventContext, FIRST_RUN_MATCHES);
+    const firstConfirm = await confirm(ready.event.slug, first.selfieId, ready);
+    expect(firstConfirm.status).toBe("ready");
+    const stamped = await firstDeliveryStamp();
+
+    const second = await submitOne(ready.event.slug, ready, "f5-later-b");
+    await runWorker(second, eventContext, SECOND_RUN_NEW_MATCHES);
+    const secondConfirm = await confirm(ready.event.slug, second.selfieId, ready);
+    expect(secondConfirm.status).toBe("ready");
+
+    // The second selfie IS a delivery — that is what makes this case
+    // discriminating: the outbox gains its own row...
+    const delivered = await matchesNewRows();
+    expect(delivered).toHaveLength(2);
+    expect(delivered[1]?.payload).toMatchObject({
+      eventId: eventContext.eventId,
+      count: SECOND_RUN_NEW_MATCHES,
+    });
+
+    // ...and the §15.3 watermark is still the FIRST delivery's instant: it
+    // records when the profile was first notified, not the latest notifying.
+    expect((await firstDeliveryStamp()).getTime()).toBe(stamped.getTime());
+  });
+
+  it("keeps the first delivery's stamp when the same selfie is confirmed again", async () => {
+    const ready = await readyEvent("op132-f5-repeat");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+
+    const submitted = await submitOne(ready.event.slug, ready, "f5-repeat");
+    await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+    const firstConfirm = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(firstConfirm.status).toBe("ready");
+    const stamped = await firstDeliveryStamp();
+
+    // One delivery per activation result: the repeat answers the same envelope
+    // and adds no outbox row, so there is nothing a re-stamp could record.
+    const repeated = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(repeated).toEqual(firstConfirm);
+    const delivered = await matchesNewRows();
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.payload).toMatchObject({ count: FIRST_RUN_MATCHES });
+
+    expect((await firstDeliveryStamp()).getTime()).toBe(stamped.getTime());
+  });
+});
