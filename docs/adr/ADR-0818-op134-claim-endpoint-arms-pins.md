@@ -11,7 +11,10 @@
 - **Amends:** nothing. **Amended by:** nothing yet.
 - **Consumes:** `0818` (both `Next free` cells advance to `0819`).
 - **Base:** `origin/main` `7021cdf`, which contains the OP-134 GREEN squash
-  `0d57e95` (tree `6afce2f5…`, identical to the reviewed head `967d928`).
+  `0d57e95` (tree `6afce2f5…`, identical to the reviewed head `967d928`); the
+  branch then merged `origin/main` `fdff81c` (the OP-132 retention gate
+  `442e01a` + release `1.63.1`) before the PR opened, and the four pins were
+  re-measured on that merged tree.
 - **Card:** `t_08232689` (parent `t_135c11ae`, OP-134 GREEN round-1 review,
   findings **F1** and **F2**).
 
@@ -156,10 +159,13 @@ and after.
 `0818`, drawn from the allocator's pool (`unallocated (future lanes)`) because
 the OP-129 attendee block `0780`–`0798` is exhausted. The sweep before minting
 covered `origin/main` (`0815`), every remote branch, and every
-`.worktrees/*/docs/adr`: `0813` is in flight (`OP-132-task-attendee-retention-gate-pins`),
-`0816` (`OP-132-task-concurrent-confirm-pin`) and `0817`
+`.worktrees/*/docs/adr`: `0813` was in flight
+(`OP-132-task-attendee-retention-gate-pins`, and it landed on the trunk as
+`442e01a` while this card ran), `0816`
+(`OP-132-task-concurrent-confirm-pin`) and `0817`
 (`OP-132-task-concurrent-confirm-green`) are in flight, so the first free number
-is `0818`. Both `Next free` cells advance to `0819`. If a merge takes `0818`
+is `0818` — still `0818` after the merge of `fdff81c`, whose trunk records end at
+`0815`. Both `Next free` cells advance to `0819`. If a merge takes `0818`
 first, this record is renumbered on the merge commit (ADR-0300 §10).
 
 ## Consequences
@@ -176,6 +182,13 @@ first, this record is renumbered on the merge commit (ADR-0300 §10).
   (`t_07786aa0`) carries this spec file into its own PR unchanged.
 - The `1_000 ms` park bound is part of the test, not a suite-wide timeout; it
   adds nothing to today's runtime (both claims reach the park in milliseconds).
+- **CI posture at `6ea3f0c`** (draft PR #573): `lint`, `unit_test`, `audit`,
+  `audit-dev`, `secret-scan`, `env-changes`, `CodeQL`, `validate-branch-name` and
+  `validate-pr-title` **pass**; `test_coverage` and `ci` **fail on the four new
+  cases only** (`Test Files 1 failed | 306 passed (307)`, every failing line
+  naming `attendee-claim-endpoint-arms.test.ts`). That is the intended RED
+  posture — the GREEN carries the spec into its own PR where those two jobs run
+  green.
 
 ## Alternatives rejected
 
