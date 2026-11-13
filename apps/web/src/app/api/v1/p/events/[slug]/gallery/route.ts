@@ -195,7 +195,12 @@ async function readRows(
   const images = (await tenant
     .collection(COLLECTIONS.eventImages)
     .find(
-      { _id: { $in: visibleMatches.map((match) => match.imageId) }, eventId, visibility: "visible", deletedAt: null },
+      {
+        _id: { $in: visibleMatches.map((match) => match.imageId) },
+        eventId,
+        visibility: "visible",
+        deletedAt: null,
+      },
       { projection: { _id: 1, assetId: 1, sequence: 1 } }
     )
     .toArray()) as unknown as ImageRow[];

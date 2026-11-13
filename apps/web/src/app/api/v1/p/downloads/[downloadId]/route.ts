@@ -55,10 +55,7 @@ export const GET = defineRoute({
     const subject = await subjectForRequest(db, ctx.request, ctx.principal);
 
     const job = await findDownloadJob(db, downloadId);
-    const owned =
-      job === null
-        ? null
-        : await callerProfileId(db, job, subjectFilter(subject));
+    const owned = job === null ? null : await callerProfileId(db, job, subjectFilter(subject));
     if (job === null || !ownsJob(job, owned)) {
       throw appError("not_found", { details: { resource: "download" } });
     }

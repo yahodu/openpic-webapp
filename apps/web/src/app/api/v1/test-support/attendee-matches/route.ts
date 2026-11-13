@@ -189,7 +189,10 @@ export async function POST(request: Request): Promise<Response> {
 
     const lastImage = (await tenant
       .collection(COLLECTIONS.eventImages)
-      .find({ eventId: event.eventId }, { projection: { sequence: 1 }, sort: { sequence: -1 }, limit: 1 })
+      .find(
+        { eventId: event.eventId },
+        { projection: { sequence: 1 }, sort: { sequence: -1 }, limit: 1 }
+      )
       .toArray()) as unknown as { readonly sequence?: number }[];
     const base = lastImage.at(0)?.sequence ?? 0;
 
@@ -212,15 +215,13 @@ export async function POST(request: Request): Promise<Response> {
       matchIds.push(seeded.matchId.toHexString());
     }
 
-    await tenant
-      .collection(COLLECTIONS.attendeeEventProfiles)
-      .updateOne(
-        { _id: profileId },
-        {
-          $inc: { matchCount: parsed.data.count },
-          $set: { status: "ready", lastMatchRunAt: now, updatedAt: now },
-        }
-      );
+    await tenant.collection(COLLECTIONS.attendeeEventProfiles).updateOne(
+      { _id: profileId },
+      {
+        $inc: { matchCount: parsed.data.count },
+        $set: { status: "ready", lastMatchRunAt: now, updatedAt: now },
+      }
+    );
 
     return Response.json({ imageIds, matchIds }, { status: 201 });
   } catch (error: unknown) {

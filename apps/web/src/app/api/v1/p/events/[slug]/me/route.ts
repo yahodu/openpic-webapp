@@ -250,7 +250,13 @@ export const GET = defineRoute({
     if (selfieRow !== null) {
       // Read-only verdict: `amount = 0` asks "how many are allowed", so a poll
       // can never consume an attendee's budget.
-      const entitlement = await checkEntitlement(event.tenantKey, SELFIE_ATTEMPTS_KEY, 0, {}, { db });
+      const entitlement = await checkEntitlement(
+        event.tenantKey,
+        SELFIE_ATTEMPTS_KEY,
+        0,
+        {},
+        { db }
+      );
       const budget = selfieAttemptBudget({
         used: attemptsUsed,
         allowed: entitlement.effectiveLimit ?? settings.selfie.attemptsAllowed,
