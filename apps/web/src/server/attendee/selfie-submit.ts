@@ -277,9 +277,12 @@ export async function insertQueuedSelfie(options: QueuedSelfieOptions): Promise<
         tenantId: options.tenantKey,
         contentHash: options.contentHash,
         kind: "selfie",
-        status: "stored",
         createdAt: options.now,
       },
+      // A re-submitted hash re-references the existing row (the `$inc`), and the
+      // bytes are back at the content-addressed key, so a finished purge must not
+      // stay on a row that now holds a live reference (ADR-0828 §1).
+      $set: { status: "stored", purgedAt: null },
       $inc: { refCount: 1 },
     },
     {
