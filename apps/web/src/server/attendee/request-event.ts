@@ -1,12 +1,16 @@
 import type { Db, ObjectId } from "mongodb";
 
+import { getAuth } from "@/server/auth";
+import { enforceAuth, resolvePrincipal } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { appError } from "@/server/http/errors";
 import type { HandlerContext } from "@/server/http/define-route";
-import { platformRepo } from "@/server/repos";
+import { platformRepo, tenantRepo } from "@/server/repos";
+import { systemClock } from "@/server/runtime/clock";
 
-import { requireConsent, type ConsentSubject } from "./consent-guard";
+import { requireConsent, subjectFilter, type ConsentSubject } from "./consent-guard";
+import type { ProfileStatus } from "./status-detail";
 import { subjectForRequest } from "./subject";
 
 /**
@@ -128,4 +132,86 @@ export async function requireAttendeeScope(
     subject,
   });
   return { db, slug, event, subject, consentId };
+}
+
+/**
+ * Resolve the `attendee` credential of one request (contract §0.2, Appendix A.1).
+ *
+ * The OP-133 read routes resolve the addressed event **before** the credential:
+ * an unknown slug answers `404` whatever the caller presented (§0.4), while a
+ * known slug without a credential answers `401`. That order cannot be expressed
+ * as a pipeline stage (the stage runs before the handler), so the guard's own
+ * pieces run here.
+ *
+ * @param ctx - The handler context, for the request and the route.
+ * @param db - The database the session resolvers read.
+ * @returns The data subject behind the request.
+ * @throws {AppError} `authentication_required` (401) and the account-state
+ *   refusals the `attendee` label applies.
+ */
+export async function requireAttendeeSubject(ctx: HandlerContext, db: Db): Promise<ConsentSubject> {
+  const principal = await resolvePrincipal(ctx.request, { auth: getAuth(), database: db });
+  enforceAuth("attendee", { principal, now: systemClock.now() }, ctx.request, ctx.route);
+  return subjectForRequest(
+    db,
+    ctx.request,
+    principal !== null && principal.kind === "user" ? principal.userId : undefined
+  );
+}
+
+/** A stored `attendeeEventProfiles` row, as the attendee read routes use it (§15.3). */
+export interface AttendeeProfileRow {
+  readonly _id: ObjectId;
+  readonly status: ProfileStatus;
+  readonly activeSelfieId: ObjectId | null;
+  readonly matchCount: number;
+  readonly lastMatchRunAt?: Date | null;
+  readonly lastSeenGalleryAt?: Date | null;
+  readonly subject: Record<string, unknown>;
+}
+
+/** One attendee read's scope: the event facts plus the caller's own profile. */
+export interface AttendeeProfileScope extends AttendeeScope {
+  readonly profile: AttendeeProfileRow;
+}
+
+/**
+ * Resolve the attendee's own `attendeeEventProfiles` row for the addressed
+ * event (OP-133, contract §6.4/§6.5/§6.6).
+ *
+ * Every attendee read is "about my profile in this event", and the profile is
+ * what the gallery, the poll and the hide/seen writes are keyed on, so the
+ * lookup lives next to the scope it belongs to.
+ *
+ * @param ctx - The handler context, for the request and the route.
+ * @param options - Where the slug sits in the path.
+ * @returns The scope plus the caller's profile row.
+ * @throws {AppError} `not_found` for no active access link or no profile,
+ *   `authentication_required` for no credential, and `consent_required` (412)
+ *   when the subject holds no consent in force for the addressed event.
+ */
+export async function requireAttendeeProfile(
+  ctx: HandlerContext,
+  options: AttendeeScopeOptions = {}
+): Promise<AttendeeProfileScope> {
+  const db = getDb();
+  const slug = slugFromRequest(ctx.request, options.slugFromEnd);
+  const event = await resolveEventBySlug(db, slug);
+  const subject = await requireAttendeeSubject(ctx, db);
+  const { consentId } = await requireConsent({
+    db,
+    tenantKey: event.tenantKey,
+    eventId: event.eventId,
+    subject,
+  });
+  const profile = (await tenantRepo(event.tenantKey, db)
+    .collection(COLLECTIONS.attendeeEventProfiles)
+    .findOne({
+      eventId: event.eventId,
+      ...subjectFilter(subject),
+    })) as AttendeeProfileRow | null;
+  if (profile === null) {
+    throw appError("not_found", { details: { resource: "profile" } });
+  }
+  return { db, slug, event, subject, consentId, profile };
 }

@@ -127,6 +127,13 @@ export const COLLECTIONS = {
    * (OP-131, ADR-0790).
    */
   selfies: "selfies",
+  /**
+   * Attendee download jobs (contract §6.6, OP-133). Addressed by their id alone
+   * — `GET /p/downloads/{id}` carries no event — so, like `attendeeSessions`,
+   * the row lives outside a tenant boundary; `tenantId` travels as data for the
+   * build worker (ADR-0794 §5).
+   */
+  downloadJobs: "downloadJobs",
 } as const;
 
 /** The name of any registered collection. */

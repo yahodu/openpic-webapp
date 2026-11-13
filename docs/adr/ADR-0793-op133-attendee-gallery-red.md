@@ -20,7 +20,7 @@
   **dependent** ticket of OP-132 and OP-113 and continues the shared attendee
   block per CONVENTIONS §11 rule B; a sweep of `origin`'s `docs/adr` finds no
   `ADR-0793`. This record takes `0793`; the ledger cell advances to `0794`.
-- **Amends:** nothing. **Amended by:** the OP-133 GREEN ADR.
+- **Amends:** nothing. **Amended by:** [ADR-0794](ADR-0794-op133-attendee-gallery-green.md) — the GREEN implementation record.
 - **Consumes:** `0793` (`Next free` advances to `0794`).
 - **Base:** `origin/main` `1857540`. (It was first cut from
   `origin/OP-132-task-liveness-selfie-red` `3eb7c7d`, the only branch that

@@ -70,7 +70,7 @@ the rejected alternatives are recorded in
 | OP-124 uploads lane                 | `0720`–`0739`                   | `0722`    |
 | OP-125 uploads lane                 | `0740`–`0759`                   | `0742`    |
 | OP-126 uploads lane                 | `0760`–`0779`                   | `0777`    |
-| OP-129 attendee identity lane       | `0780`–`0798`                   | `0794`    |
+| OP-129 attendee identity lane       | `0780`–`0798`                   | `0795`    |
 | unallocated (future lanes)          | `0799`+ (20 per lane, in order) | `0799`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -1000,3 +1000,5 @@ merge as a union keeping the highest value. No number outside `0780`–`0798` is
 touched._
 
 _The **OP-133** lane drew `0793` from the shared attendee block `0780`–`0798` and advanced the row's `Next free` cell to `0794` (card `t_c4547a82`, branch `OP-133-feature-attendee-gallery-red` cut from `origin/OP-132-task-liveness-selfie-red` `3eb7c7d`, because `main` carries neither `requireConsent` nor the selfie lane). [ADR-0793](ADR-0793-op133-attendee-gallery-red.md) records the ten silent points the card had to settle before a test could be written: the fourth poll-policy row, the display-vs-stored geometry, the two populated `statusDetail` states, the download filename inside the §5.7 preimage, `event_images.sequence` as the gallery's ordering key, the two hide semantics, the `similarity` ban, the anonymous preview allowance, the test-only matcher fixture the out-of-process e2e run needs, and `/me`'s extra `latestMatchCursor`. No number outside `0780`–`0798` is touched._
+
+_The **OP-133** lane then drew `0794` from the same block and advanced the row's `Next free` cell to `0795` (card `t_b285eecd`, branch `OP-133-feature-attendee-gallery-red` continuing from `3e09f5a`). [ADR-0794](ADR-0794-op133-attendee-gallery-green.md) is the implementation record: the venue-neutral poll table plus `eventIndexingComplete`, the displayed-vs-stored geometry, the two populated `statusDetail` states, the `sign({download})` binding and the `ceil`-rounded `exp` that makes a stated `expiresAt` a lower bound on the URL's life, `event_images.sequence` as the gallery's keyset ordering key with the two cursor kinds (`cursor` pages, `newerThan` filters), the two hide semantics and their two counts, the anonymous allowance as a total (not a page size), the platform-scope `downloadJobs` row whose id is never the authorization, the guarded test-only matcher fixture, the event-before-credential order that keeps `404` and `401` apart, the optional-body reader the two `{…?}` routes need, and the two `face_matches` indexes plus the `downloadJobs` TTL. One pin is **disputed, not edited**: `attendee-gallery.test.ts` I7 compares `keysOf(body)` (sorted) against an unsorted expected array, which no implementation can satisfy. No number outside `0780`–`0798` is touched._
