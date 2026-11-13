@@ -129,4 +129,16 @@ three runs in three by the review of `t_ed3785df`, and again at this branch cut,
   (`liveness-selfie-submit`, `selfie-reuse`, `selfie-reuse-attempt-cap`,
   `selfie-zero-match-and-reusable-pages`, `attendee-participation-status`).
 - The spec file is carried byte-identically from `1030322` (`git diff` touches no
-  test).
+  test), and so is the [ADR-0816](ADR-0816-op132-concurrent-confirm-publication.md)
+  record (`git diff 1030322 --` is empty for both).
+- **CI on the head `a9ec3f2`**: all 14 checks of PR #571 pass — `unit_test`,
+  `test_coverage` (the full unit + integration projects under the coverage
+  thresholds) and the aggregate `ci` (integration) among them.
+- **Local whole-suite caveat, measured rather than glossed.** The full
+  unit + integration run passed `4202` tests before the rebase onto `main`
+  `e322a92`; after it, two whole-suite runs on this loaded machine hit 5 s
+  timeouts in eight files that this change does not touch
+  (`notification-*`, `index-bootstrap`, `me-current-user`,
+  `me-notification-preferences`); all of them pass in isolation (`6 files / 53
+passed`), and CI's `test_coverage` run on the same head is clean. No failure
+  was in the confirm route, the spec, or any file this branch edits.
