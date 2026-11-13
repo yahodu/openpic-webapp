@@ -27,6 +27,14 @@
   do not require that field by name, only the count a client sees"). Neither
   record is edited; this one adds the pin they left owed.
 - **Consumes:** `0824`.
+- **Landed:** branch `OP-132-task-first-match-notified-pin`, reviewed head
+  `0da0ecc`; PR [#590](https://github.com/yahodu/openpic-webapp/pull/590) —
+  squash-merged to `main` as
+  `c62000f91e8e715eb70b2f652c501549a5b7def7`. The squash subject is
+  `test(attendee): OP-132 pin firstMatchNotifiedAt stamped once by the first delivery (#590)`.
+  Trees: `git rev-parse 0da0ecc^{tree}` = `c62000f^{tree}` =
+  `5b18f4ede894c560a31cddf2b84cba657c10e525`, so the bytes reviewed are the bytes
+  that ship. The lane branch was auto-deleted on merge.
 
 ## Context
 
@@ -52,8 +60,12 @@ the field.
 It was invisible: the review of `t_ed3785df` / PR #557 measured a throwaway tree
 at `e5af1ac` with the `:139` stamp spread deleted, and
 `vitest run --project integration selfie-confirm-publication liveness-selfie-submit`
-answered **2 files / 24 passed, 0 failed**. ADR-0806 §4 described the write;
-ADR-0805 deliberately did not pin it by name; no other spec reads it. That is a
+answered **2 files / 24 passed, 0 failed**. ADR-0806 §4 described the write, and
+ADR-0805 deliberately did not pin the write by name; the one spec that read the
+field pinned only the **absence** half
+(`apps/web/src/test/integration/selfie-zero-match-and-reusable-pages.test.ts:306`,
+`expect(after.firstMatchNotifiedAt ?? null).toBeNull()`, present at `5a0c8e0` and
+introduced in `bd3f8f6`) — nothing observed the stamp itself. That is a
 Low-severity coverage gap with a silent-regression shape, which is what this card
 closes.
 
@@ -75,7 +87,13 @@ no existing assertion or helper re-formatted.
    (the `processing` arm that `liveness-selfie-submit.test.ts` I9b pins). The
    answer is `status: "processing"`, the outbox stays empty, and the field stays
    `null`. Nothing new is pinned about the `processing` arm itself; it is the
-   starting point that makes the stamp's absence attributable.
+   starting point that makes the stamp's absence attributable. What this arm adds
+   is therefore not absence as such —
+   `selfie-zero-match-and-reusable-pages.test.ts:306` already pinned the absence
+   half on the zero-match arm — but the **`processing`** arm: the worker never
+   ran, so the stamp's absence is attributable to "no delivery was attempted"
+   rather than to "a delivery found no new matches". It is not redundant, but it
+   is not the first absence pin.
 3. **Arm 3 — a later delivery does not move it.** After arm 1, submit and
    confirm a second selfie whose worker run finds `SECOND_RUN_NEW_MATCHES` (2).
    The outbox gains its **own** row carrying `count: 2` — so this is a delivery,
