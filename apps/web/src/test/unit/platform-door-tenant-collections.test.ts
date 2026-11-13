@@ -53,7 +53,9 @@ import { describe, expect, it } from "vitest";
  * not move the counter; and an optional collection type argument
  * (`.collection<ReusableSelfieDocument>(...)`), closed by balancing `<`/`>` so a
  * **nested** argument is read whole (`.collection<Record<string, unknown>>(...)`,
- * `.collection<Pick<SelfieDocument, "_id">>(...)`). Because a chain is read
+ * `.collection<Pick<SelfieDocument, "_id">>(...)`), and a `=>` inside one belongs
+ * to an arrow-function type rather than closing the list
+ * (`.collection<Record<string, (id: string) => void>>(...)`). Because a chain is read
  * through a **four-line window** starting at the `platformRepo` token, one
  * offender yields exactly one violation, and the reported `line` is the line a
  * reader must open.
@@ -685,6 +687,25 @@ describe("findPlatformDoorViolations — the shapes the tenant-free door takes",
     ]);
   });
 
+  it("flags a collection type argument that holds an arrow-function type", () => {
+    // Arrange — the `>` of `=>` sits inside the type argument, so it must not end it.
+    const source =
+      "export const s = platformRepo(db).collection<Record<string, (id: string) => void>>(COLLECTIONS.selfies);";
+
+    // Act
+    const violations = findPlatformDoorViolations("apps/web/src/server/example.ts", source);
+
+    // Assert — one reach, reported at the door's line.
+    expect(violations).toEqual([
+      {
+        file: "apps/web/src/server/example.ts",
+        line: 1,
+        collection: "selfies",
+        snippet: source,
+      },
+    ]);
+  });
+
   it.each([
     ["a double-quoted string", 'pick("(")'],
     ["a single-quoted string", "pick('(')"],
@@ -778,8 +799,11 @@ describe("the tracked server tree never opens the tenant-free door on profiles o
     const files = trackedServerFiles();
 
     // Assert — a vacuous scan must fail: the listing is what makes the pin real,
-    // and naming one file rules out a listing that returns a single entry.
+    // and two anchors in different subtrees (`attendee/`, `db/`) rule out a
+    // listing that returns a single entry or only one subtree. No count is
+    // pinned, so ordinary tree growth cannot break the pin.
     expect(files).toContain("apps/web/src/server/attendee/claim.ts");
+    expect(files).toContain("apps/web/src/server/db/collections.ts");
     expect(files.filter((file) => file.startsWith("apps/web/src/server/repos/"))).toEqual([]);
     expect(files.filter((file) => !file.startsWith(`${SCANNED_ROOT}/`))).toEqual([]);
   });
