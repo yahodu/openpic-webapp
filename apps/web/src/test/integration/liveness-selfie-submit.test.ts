@@ -30,7 +30,12 @@ import {
   type UploadedSelfie,
   handlers,
 } from "../helpers/selfie-flow";
-import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-submit";
+import {
+  SELFIE_LOCATION_KEY,
+  SELFIE_RETENTION_DAYS,
+  selfieObjectKey,
+} from "@/server/attendee/selfie-submit";
+import { MS_PER_DAY } from "@/server/runtime/time";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
 
 /**
@@ -951,6 +956,188 @@ describe("when a confirmed selfie's consent is withdrawn", () => {
     expect(await app.db.collection(COLLECTIONS.faceMatches).countDocuments({})).toBe(0);
     await expect(
       storage.getObject(SELFIE_LOCATION_KEY, selfieObjectKey(hash))
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
+/* ───── G1: the retention window is a window, not merely a future instant ──── */
+
+/**
+ * G1 of the OP-132 round-1 F1 review (this card, `t_26ab6dd7`).
+ *
+ * The F1 case above pins that `expireAt` is after both `createdAt` and the wall
+ * clock. That is a *direction*, not a window: replacing the row's `expireAt`
+ * with `new Date(now.getTime() + 90 * 24 * 60 * 1000)` — a minutes-vs-days unit
+ * confusion, i.e. **90 minutes** — left the whole file green (measured on the
+ * fix branch `7d0d215`: `19 passed (19)`). The window is what schema §22 names,
+ * so the window is what this case pins.
+ *
+ * ## Contract expected of the implementation
+ *
+ * `expireAt − createdAt` is the §22 selfie retention window, which the module
+ * publishes as `SELFIE_RETENTION_DAYS`. The expectation is **derived from that
+ * export** (±1 s) rather than written into the assertion, so a legitimate change
+ * to the record's window keeps the pin true; the `366 d` ceiling bounds it even
+ * if the constant is edited. An event's own `retentionExpiresAt` may only
+ * *shorten* the selfie window (§22, "whichever comes first"), so this case
+ * clears it on the seeded event and measures the selfie's own window alone —
+ * otherwise the deadline would be the fixture's and the case could not tell the
+ * two apart.
+ */
+describe("when a selfie is queued on an event with no retention cap", () => {
+  it("carries the record's retention window, so a window measured in minutes is refused", async () => {
+    const ready = await readyEvent("op132-g1-window");
+    await app.db
+      .collection(COLLECTIONS.events)
+      .updateOne({ _id: ready.event.id }, { $set: { retentionExpiresAt: null } });
+
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "g1-window",
+    });
+
+    const selfie = await selfieById(submitted.selfieId);
+    const expireAt = selfie.expireAt;
+    if (!(expireAt instanceof Date)) {
+      throw new Error(
+        `expected the selfie row to carry an expireAt date, received ${String(expireAt)}`
+      );
+    }
+
+    const windowMs = expireAt.getTime() - selfie.createdAt.getTime();
+    const expectedWindowMs = SELFIE_RETENTION_DAYS * MS_PER_DAY;
+
+    expect(
+      windowMs,
+      `the queued selfie's retention window is ${String(windowMs)} ms ` +
+        `(${String(windowMs / MS_PER_DAY)} days); the record names ` +
+        `${String(SELFIE_RETENTION_DAYS)} days (${String(expectedWindowMs)} ms)`
+    ).toBeGreaterThanOrEqual(expectedWindowMs - 1000);
+    expect(windowMs).toBeLessThanOrEqual(expectedWindowMs + 1000);
+    // A window longer than a year is not the retention window §22 names.
+    expect(windowMs).toBeLessThanOrEqual(366 * MS_PER_DAY);
+  });
+});
+
+/* ─── G2: a withdrawal erases only the bytes nothing still references ─────── */
+
+/**
+ * G2 of the OP-132 round-1 F1 review (this card, `t_26ab6dd7`).
+ *
+ * The F1 erasure case withdraws the **only** attendee holding the bytes, so it
+ * cannot tell a reference-counted release from a delete that ignores the count:
+ * making `DELETE …/consent` delete the object for **every** referenced
+ * `mediaAssets` row (dropping the `refCount ≤ 0` guard) left `41 passed (41)`
+ * across `liveness-selfie-submit.test.ts` (19) and `biometric-consent.test.ts`
+ * (22), because no case in either file has two references to one asset.
+ *
+ * ## Contract expected of the implementation
+ *
+ * Two attendees who submit the same bytes share one `(tenantId, contentHash)`
+ * `mediaAssets` row at `refCount: 2` (§16.1). A withdrawal releases exactly the
+ * references its own profile holds, and the blob is purged **only once nothing
+ * references it** (§16.1 — OP-131's route comment: "the blob is purged once
+ * nothing references it"): after the first withdrawal the row is at
+ * `refCount: 1` and the object is still readable, and the second withdrawal is
+ * what makes `getObject` reject `not_found`.
+ *
+ * The pre-state is asserted, so the case cannot pass by measuring bytes that
+ * were never uploaded or a row that never reached two references.
+ */
+
+/** The stored `attendee_event_profiles` row for one id, failing loudly when absent. */
+async function profileById(profileId: string): Promise<ProfileRow> {
+  const row = (await app.db
+    .collection(COLLECTIONS.attendeeEventProfiles)
+    .findOne({ _id: new ObjectId(profileId) })) as unknown as ProfileRow | null;
+  if (row === null) {
+    throw new Error(`expected a stored attendee profile ${profileId}`);
+  }
+  return row;
+}
+
+describe("when two attendees hold one selfie's bytes and the first withdraws", () => {
+  it("keeps the object readable until the last reference is released", async () => {
+    const ready = await readyEvent("op132-g2-erasure");
+    const { hash } = makeSelfieBytes("g2-erasure");
+
+    const first = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "g2-erasure",
+    });
+
+    const otherIp = nextIp();
+    const other = await createAttendeeSession(app, otherIp);
+    await grantConsent(ready.event.slug, { cookie: other.cookie, ip: otherIp });
+    const second = await submitHappyPath(ready.event.slug, {
+      cookie: other.cookie,
+      ip: otherIp,
+      tag: "g2-erasure",
+    });
+
+    // Both selfies are ordinary confirmed ones: this case measures the
+    // withdrawal's reference accounting, not its handling of a queued row.
+    const firstProfile = await profileById(first.profileId);
+    await finishSelfieWorker(app, {
+      selfieId: first.selfieId,
+      profileId: first.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: firstProfile.subject,
+      matches: 1,
+    });
+    const firstConfirm = await confirmSelfie(ready.event.slug, first.selfieId, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(firstConfirm.status).toBe(200);
+
+    const secondProfile = await profileById(second.profileId);
+    await finishSelfieWorker(app, {
+      selfieId: second.selfieId,
+      profileId: second.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: secondProfile.subject,
+      matches: 1,
+    });
+    const secondConfirm = await confirmSelfie(ready.event.slug, second.selfieId, {
+      cookie: other.cookie,
+      ip: otherIp,
+    });
+    expect(secondConfirm.status).toBe(200);
+
+    // Pre-state: one asset row holding two references, and the bytes really
+    // stored under that hash.
+    const assetBefore = await assetByHash(hash);
+    expect(assetBefore?.refCount).toBe(2);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    // Act: the first attendee withdraws.
+    const firstWithdrawal = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+
+    // Assert: only its own reference is released, and the other still holds the
+    // blob, so the object must survive.
+    expect(firstWithdrawal.status).toBe(204);
+    expect((await assetByHash(hash))?.refCount).toBe(1);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+    expect(await app.db.collection("selfies").countDocuments({})).toBe(1);
+
+    // Act: the second — last — attendee withdraws.
+    const secondWithdrawal = await withdrawConsent(ready.event.slug, {
+      cookie: other.cookie,
+      ip: otherIp,
+    });
+
+    // Assert: nothing references the bytes any more, so they are purged.
+    expect(secondWithdrawal.status).toBe(204);
+    await expect(
+      getObjectStorage().getObject(SELFIE_LOCATION_KEY, selfieObjectKey(hash))
     ).rejects.toMatchObject({ code: "not_found" });
   });
 });
