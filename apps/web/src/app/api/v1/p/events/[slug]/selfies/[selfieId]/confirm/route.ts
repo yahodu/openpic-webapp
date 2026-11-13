@@ -16,7 +16,7 @@ import { withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
-import { tenantRepo } from "@/server/repos";
+import { tenantRepo, platformRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 
 /**
@@ -34,6 +34,13 @@ import { systemClock } from "@/server/runtime/clock";
  * One attempt stays one attempt: the row the submit created is activated, never
  * a second row (schema §15.3 has no counter), and the queue pointer already
  * exists — the confirm never enqueues a second job.
+ *
+ * The confirmation is also the **only publisher** (§7.6, ADR-0806): it announces
+ * the rows this selfie produced, once per selfie. No shipped path re-issues it
+ * after the worker finishes — the `200` body's `pollUrl` is a read-only
+ * `GET …/me` — so a worker result that lands after the activation is announced
+ * only by a second, client-initiated confirm. Who owns that publication is an
+ * open decision (ADR-0806 §1, card `t_b0bf2ff2`).
  */
 
 /** The §6.3 answer the confirm returns with `status: "ready"` once published. */
@@ -42,6 +49,8 @@ const confirmResponseSchema = SELFIE_ENVELOPE_SCHEMA;
 /** The `attendeeEventProfiles` fields the confirm reads (§15.3). */
 interface ProfileRow {
   readonly _id: ObjectId;
+  /** The §15.3 "fires exactly once" watermark; `null` until the first delivery. */
+  readonly firstMatchNotifiedAt?: Date | null;
 }
 
 /** The `selfies` fields the confirm reads (§16.4). */
@@ -70,7 +79,7 @@ export const POST = defineRoute({
 
     const profile = (await profiles.findOne(
       { eventId: event.eventId, ...subjectFilter(subject) },
-      { projection: { _id: 1 } }
+      { projection: { _id: 1, firstMatchNotifiedAt: 1 } }
     )) as ProfileRow | null;
     // Ownership is the same observable as absence: another subject's selfie id
     // never resolves (§6.3, reuse I5).
@@ -90,9 +99,27 @@ export const POST = defineRoute({
     // publishable. Without it the confirmation still activates the row, and the
     // eventual worker result is what the attendee polls for.
     const published = selfie.embedding !== undefined && selfie.embedding !== null;
-    const matched = published
-      ? await tenant.collection(COLLECTIONS.faceMatches).countDocuments({ profileId: profile._id })
+    const faceMatches = tenant.collection(COLLECTIONS.faceMatches);
+    const matched = published ? await faceMatches.countDocuments({ profileId: profile._id }) : 0;
+    // A delivery announces only the rows this selfie produced (§7.6 "additional
+    // matches later"), never the profile's total, so a second selfie does not
+    // re-announce the first's photos.
+    const newMatches = published
+      ? await faceMatches.countDocuments({ profileId: profile._id, selfieId })
       : 0;
+    // One delivery per activation result: `dedupeKey` names this selfie's
+    // announcement (§10.3.2) and an existing row is the record that it already
+    // happened. The row is read first because a colliding insert would abort the
+    // transaction below (E11000), not silently dedupe.
+    const dedupeKey = `attendee.matches.new:${event.eventId.toHexString()}:${profile._id.toHexString()}:${selfieId.toHexString()}`;
+    const willPublish =
+      newMatches > 0 &&
+      (await platformRepo(db)
+        .collection(COLLECTIONS.domainEvents)
+        .countDocuments({ dedupeKey }, { limit: 1 })) === 0;
+    // §15.3's watermark is stamped by the first delivery and never moved.
+    const firstDelivery =
+      profile.firstMatchNotifiedAt === undefined || profile.firstMatchNotifiedAt === null;
 
     await withTransaction(async (session) => {
       await selfies.updateMany(
@@ -109,19 +136,21 @@ export const POST = defineRoute({
             status: published ? "ready" : "processing",
             matchCount: matched,
             updatedAt: now,
+            ...(willPublish && firstDelivery ? { firstMatchNotifiedAt: now } : {}),
           },
         },
         { session }
       );
 
-      if (published && matched > 0) {
+      if (willPublish) {
         await emitDomainEvent(
           {
             eventKey: "attendee.matches.new",
             tenantId: event.tenantKey,
             actorRef: { kind: "attendee", id: profile._id.toHexString() },
             subjectRef: { kind: "event", id: event.eventId.toHexString() },
-            payload: { eventId: event.eventId.toHexString(), count: matched },
+            payload: { eventId: event.eventId.toHexString(), count: newMatches },
+            dedupeKey,
           },
           { db, session }
         );
