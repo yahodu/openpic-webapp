@@ -49,6 +49,19 @@ import { systemClock } from "@/server/runtime/clock";
 /** The §6.3 answer the confirm returns with `status: "ready"` once published. */
 const confirmResponseSchema = SELFIE_ENVELOPE_SCHEMA;
 
+/**
+ * The confirmation's transaction attempt budget (§6.3; ADR-0823).
+ *
+ * The §15.3 watermark and the outbox insert must commit as one unit, so a racer
+ * that loses the contending write is retried whole: a burst of `N` confirms for
+ * one selfie costs the unluckiest racer one attempt per rival commit (`N - 1`),
+ * and one spare absorbs an abort that produces no commit at all (two rivals
+ * aborting each other, which makes no progress). Five therefore covers the
+ * pinned burst of four; a wider storm still exhausts the budget and answers
+ * `500`, which is this budget's bound and not the endpoint's.
+ */
+const CONFIRM_MAX_ATTEMPTS = 5;
+
 /** The `attendeeEventProfiles` fields the confirm reads (§15.3). */
 interface ProfileRow {
   readonly _id: ObjectId;
@@ -121,47 +134,50 @@ export const POST = defineRoute({
     const firstDelivery =
       profile.firstMatchNotifiedAt === undefined || profile.firstMatchNotifiedAt === null;
 
-    await withTransaction(async (session) => {
-      const alreadyPublished =
-        newMatches > 0 &&
-        (await platformRepo(db)
-          .collection(COLLECTIONS.domainEvents)
-          .countDocuments({ dedupeKey }, { limit: 1, session })) > 0;
-      const willPublish = newMatches > 0 && !alreadyPublished;
-      await selfies.updateMany(
-        { profileId: profile._id, _id: { $ne: selfieId } },
-        { $set: { isActive: false } },
-        { session }
-      );
-      await selfies.updateOne({ _id: selfieId }, { $set: { isActive: true } }, { session });
-      await profiles.updateOne(
-        { _id: profile._id },
-        {
-          $set: {
-            activeSelfieId: selfieId,
-            status: published ? "ready" : "processing",
-            matchCount: matched,
-            updatedAt: now,
-            ...(willPublish && firstDelivery ? { firstMatchNotifiedAt: now } : {}),
-          },
-        },
-        { session }
-      );
-
-      if (willPublish) {
-        await emitDomainEvent(
-          {
-            eventKey: "attendee.matches.new",
-            tenantId: event.tenantKey,
-            actorRef: { kind: "attendee", id: profile._id.toHexString() },
-            subjectRef: { kind: "event", id: event.eventId.toHexString() },
-            payload: { eventId: event.eventId.toHexString(), count: newMatches },
-            dedupeKey,
-          },
-          { db, session }
+    await withTransaction(
+      async (session) => {
+        const alreadyPublished =
+          newMatches > 0 &&
+          (await platformRepo(db)
+            .collection(COLLECTIONS.domainEvents)
+            .countDocuments({ dedupeKey }, { limit: 1, session })) > 0;
+        const willPublish = newMatches > 0 && !alreadyPublished;
+        await selfies.updateMany(
+          { profileId: profile._id, _id: { $ne: selfieId } },
+          { $set: { isActive: false } },
+          { session }
         );
-      }
-    });
+        await selfies.updateOne({ _id: selfieId }, { $set: { isActive: true } }, { session });
+        await profiles.updateOne(
+          { _id: profile._id },
+          {
+            $set: {
+              activeSelfieId: selfieId,
+              status: published ? "ready" : "processing",
+              matchCount: matched,
+              updatedAt: now,
+              ...(willPublish && firstDelivery ? { firstMatchNotifiedAt: now } : {}),
+            },
+          },
+          { session }
+        );
+
+        if (willPublish) {
+          await emitDomainEvent(
+            {
+              eventKey: "attendee.matches.new",
+              tenantId: event.tenantKey,
+              actorRef: { kind: "attendee", id: profile._id.toHexString() },
+              subjectRef: { kind: "event", id: event.eventId.toHexString() },
+              payload: { eventId: event.eventId.toHexString(), count: newMatches },
+              dedupeKey,
+            },
+            { db, session }
+          );
+        }
+      },
+      { maxAttempts: CONFIRM_MAX_ATTEMPTS }
+    );
 
     const attempts = await selfieAttemptNumbers({
       db,
