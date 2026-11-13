@@ -1,3 +1,9 @@
+## [1.63.6](https://github.com/yahodu/openpic-webapp/compare/v1.63.5...v1.63.6) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 reset a reused asset's purge marker on submit ([#604](https://github.com/yahodu/openpic-webapp/issues/604)) ([76d3315](https://github.com/yahodu/openpic-webapp/commit/76d3315c3cd07aac602edfa705345fa35d6493a7))
+
 ## [1.63.5](https://github.com/yahodu/openpic-webapp/compare/v1.63.4...v1.63.5) (2026-11-13)
 
 ### Bug Fixes
