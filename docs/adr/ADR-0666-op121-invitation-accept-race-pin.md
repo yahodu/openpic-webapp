@@ -156,13 +156,15 @@ Measured on `origin/main` `a9c6d59` (worktree
   default (`index-bootstrap.test.ts` I6, `notification-otp-catalogue-fallback.test.ts`
   F2); both are green in isolation (`2 files / 11 passed`) and green in the next
   full run, so those were load flakes, not this change.
-- **CI on the PR head** (`test_coverage`, job `132147184617`): `Test Files 1
-failed | 308 passed (309)`, `Tests 1 failed | 4283 passed | 3 skipped (4287)`,
-  the only failure `I5` with `AssertionError: expected [ 200, 500 ] to deeply
-equal [ 200, 200 ]` and the same `TransactionRetryLimitError` frames; the `ci`
-  job's unit project is green (`178 files / 2938 passed | 3 skipped`) and its
-  integration project is `1 failed | 1345 passed (1346)`. So the pin reddens on
-  CI as well as locally, which is the property the case lacked.
+- **CI on the PR head**: `Test Files 1 failed | 308 passed (309)`, `Tests 1
+failed | 4283 passed | 3 skipped (4287)`, the only failure `I5` with
+  `AssertionError: expected [ 200, 500 ] to deeply equal [ 200, 200 ]` and the
+  same `TransactionRetryLimitError` frames (`test_coverage` job `132147184617`
+  on `20b3e68`, and identically `[500, 200]` in job `132150723455` on `79a7811`);
+  the `ci` job's unit project is green (`178 files / 2938 passed | 3 skipped`)
+  and its integration project is `1 failed | 1345 passed (1346)` (job
+  `132150722419`). So the pin reddens on CI as well as locally, which is the
+  property the case lacked.
 - **Grace path**: an armed latch with a single racer answers `200`.
 - **ADR number sweep.** Both `Next free` cells read `0666` (OP-120 invitations
   lane) and `0824` (`unallocated (future lanes)`). Every open PR head was
