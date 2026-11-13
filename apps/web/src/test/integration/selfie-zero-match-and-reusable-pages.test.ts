@@ -382,15 +382,10 @@ describe("when the subject holds more reusable selfies than a page", () => {
   it("lists the caller's own active selfies newest first across both tenants", async () => {
     const mine = await seedTenant(app, "op132-f7-mine");
     const otherTenant = await seedTenant(app, "op132-f7-other");
-    const mineTenant = mine.events[0];
-    const theirEvent = otherTenant.events[0];
-    if (mineTenant === undefined || theirEvent === undefined) {
-      throw new Error("expected both seeded tenants to publish an event");
-    }
 
     const rows = await seedReusablePopulation({
       userId: mine.owner.userId.toHexString(),
-      tenants: [mineTenant.id.toHexString(), theirEvent.id.toHexString()],
+      tenants: [mine.tenantKey, otherTenant.tenantKey],
     });
 
     // Two rows that must never appear, both newer than every active one: a
@@ -398,14 +393,14 @@ describe("when the subject holds more reusable selfies than a page", () => {
     // answer one of them first.
     const inactive = await seedSelfie({
       userId: mine.owner.userId.toHexString(),
-      tenantKey: mineTenant.id.toHexString(),
+      tenantKey: mine.tenantKey,
       at: new Date(NEWEST_AT + 120_000),
       tag: "reusable-inactive",
       active: false,
     });
     const stranger = await seedSelfie({
       userId: otherTenant.owner.userId.toHexString(),
-      tenantKey: theirEvent.id.toHexString(),
+      tenantKey: otherTenant.tenantKey,
       at: new Date(NEWEST_AT + 60_000),
       tag: "reusable-stranger",
       active: true,
@@ -441,10 +436,10 @@ describe("when the subject holds more reusable selfies than a page", () => {
 
     // ...and the listing reaches both tenants (the rows alternate).
     const firstTenant = new Set(
-      rows.filter((row) => row.tenantKey === mineTenant.id.toHexString()).map((row) => row.selfieId)
+      rows.filter((row) => row.tenantKey === mine.tenantKey).map((row) => row.selfieId)
     );
     const secondTenant = new Set(
-      rows.filter((row) => row.tenantKey === theirEvent.id.toHexString()).map((row) => row.selfieId)
+      rows.filter((row) => row.tenantKey === otherTenant.tenantKey).map((row) => row.selfieId)
     );
     expect(firstTenant.size).toBe(PER_TENANT);
     expect(secondTenant.size).toBe(PER_TENANT);
@@ -461,13 +456,9 @@ describe("when the subject holds more reusable selfies than a page", () => {
 
   it("caps the whitelisted read at the limit a caller passes", async () => {
     const subject = await seedTenant(app, "op132-f7-limit");
-    const [event] = subject.events;
-    if (event === undefined) {
-      throw new Error("expected one seeded event");
-    }
     const rows = await seedReusablePopulation({
       userId: subject.owner.userId.toHexString(),
-      tenants: [event.id.toHexString(), event.id.toHexString()],
+      tenants: [subject.tenantKey, subject.tenantKey],
     });
 
     // The bound the route could pass: the port already honours it, newest first.
