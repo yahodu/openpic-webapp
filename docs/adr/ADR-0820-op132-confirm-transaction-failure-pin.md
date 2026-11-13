@@ -13,9 +13,9 @@
   [ADR-0817](ADR-0817-op132-concurrent-confirm-reread.md) precedent. At this head
   **both `Next free` cells read `0818`**, while `0818`
   (`ADR-0818-op134-claim-endpoint-arms-pins.md`, PR #573) and `0819`
-  (`ADR-0819-…`, PR #574) are in flight; no ref and no `.worktrees/*/docs/adr`
-  carries `0820`, so this record draws **`0820`** and both cells advance to
-  `0821`.
+  (`ADR-0819-op134-my-events-gallery-url-pin.md`, PR #574) are in flight; no ref
+  and no `.worktrees/*/docs/adr` carries `0820`, so this record draws **`0820`**
+  and both cells advance to `0821`.
 - **Consumes:** `0820`.
 - **Relates to:** [ADR-0805](ADR-0805-op132-confirm-publication-pins.md),
   [ADR-0808](ADR-0808-op132-late-match-publication-ownership.md),
