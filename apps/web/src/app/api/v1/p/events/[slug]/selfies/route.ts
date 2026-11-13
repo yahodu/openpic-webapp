@@ -2,7 +2,7 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { attendeeRateLimitStage } from "@/server/attendee/attendee-rate-limit";
-import { requireAttendeeScope } from "@/server/attendee/request-event";
+import { requireAttendeeScope, requireRetentionOpen } from "@/server/attendee/request-event";
 import { subjectFilter } from "@/server/attendee/consent-guard";
 import {
   decideLivenessChallenge,
@@ -103,8 +103,12 @@ export const POST = defineRoute({
   handler: async (ctx) => {
     const { db, slug, event, subject } = await requireAttendeeScope(ctx);
 
-    const { hash, challengeId, livenessEvidence } = ctx.body;
+    // §6.3: the window is checked before the object, the challenge and the
+    // budget, so an expired event writes, charges and mints nothing.
     const now = systemClock.now();
+    requireRetentionOpen(event, now);
+
+    const { hash, challengeId, livenessEvidence } = ctx.body;
 
     // §6.3: the object the client uploaded must be there before anything is
     // charged against the attendee's budget. The port's `not_found` is reshaped

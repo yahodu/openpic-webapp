@@ -619,6 +619,11 @@ export const SELFIE_ERROR_TRANSPORT: Readonly<Record<SelfieErrorCode, ErrorCatal
     retryable: false,
     message: "The liveness challenge is expired, already used, or bound to other evidence.",
   },
+  gallery_expired: {
+    status: 410,
+    retryable: false,
+    message: "This event's gallery has expired.",
+  },
 };
 
 /**

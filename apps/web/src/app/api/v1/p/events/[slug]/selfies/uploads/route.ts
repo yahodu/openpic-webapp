@@ -1,13 +1,14 @@
 import { z } from "zod";
 
 import { attendeeRateLimitStage } from "@/server/attendee/attendee-rate-limit";
-import { requireAttendeeScope } from "@/server/attendee/request-event";
+import { requireAttendeeScope, requireRetentionOpen } from "@/server/attendee/request-event";
 import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-submit";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
+import { systemClock } from "@/server/runtime/clock";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
 import { PRESIGN_TTL_SECONDS } from "@/server/uploads/single-put";
@@ -53,7 +54,11 @@ export const POST = defineRoute({
     requireAuth("attendee", { auth: getAuth(), database: getDb() })(ctx, request),
   rateLimitIdentity: attendeeRateLimitStage("selfie.submit"),
   handler: async (ctx) => {
-    const { db, slug } = await requireAttendeeScope(ctx, { slugFromEnd: 3 });
+    const { db, slug, event } = await requireAttendeeScope(ctx, { slugFromEnd: 3 });
+
+    // §6.3: the retention window is checked before the declared size, so an
+    // expired event answers `410` rather than `413` when both apply.
+    requireRetentionOpen(event, systemClock.now());
 
     const settings = await getPlatformSettings({ db });
     const { hash, size, mimeType } = ctx.body;
