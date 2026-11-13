@@ -1,3 +1,9 @@
+## [1.63.4](https://github.com/yahodu/openpic-webapp/compare/v1.63.3...v1.63.4) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 budget the confirm's transaction for a burst of four ([#581](https://github.com/yahodu/openpic-webapp/issues/581)) ([659c0ed](https://github.com/yahodu/openpic-webapp/commit/659c0edda96365f4f319f2590d3684d76e78a6a2)), closes [574/#575](https://github.com/574/openpic-webapp/issues/575)
+
 ## [1.63.3](https://github.com/yahodu/openpic-webapp/compare/v1.63.2...v1.63.3) (2026-11-13)
 
 ### Bug Fixes
