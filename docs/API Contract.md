@@ -2122,6 +2122,8 @@ Auth `attendee` · Rate `liveness.challenge` · Precondition: consent granted
 
 `412 consent_required` with `details.requiredPolicyVersion` if consent is missing.
 
+`410 gallery_expired` with `details.expiredAt` once the event's `retentionExpiresAt` has elapsed; no challenge is issued.
+
 ### `POST /api/v1/p/events/{slug}/selfies/uploads`
 
 Auth `attendee` · Rate `selfie.submit`
@@ -2129,6 +2131,8 @@ Auth `attendee` · Rate `selfie.submit`
 `{ "hash": "b4c7e9...", "size": 2140000, "mimeType": "image/jpeg" }`
 
 `201` → same presign envelope as §5.3 (`method`, `url`, `headers`, `expiresAt`, `confirmUrl`). Selfies are always single-PUT.
+
+`410 gallery_expired` with `details.expiredAt` once `retentionExpiresAt` has elapsed — no upload URL is minted.
 
 A declared `size` above `platformSettings.upload.maxFileBytes` → `413 file_too_large` (`details.maxBytes`, `details.actualBytes`).
 
@@ -2146,7 +2150,7 @@ Auth `attendee` · **Idempotency required** · Rate `selfie.submit` · Entitleme
 
 `hash` is the lowercase 64-hex SHA-256 of the bytes already PUT to the single-PUT presign of `…/selfies/uploads`; the object is addressed by nothing else, so the body carries **no upload-session id**. `livenessEvidence` echoes the challenge's `nonce` and carries at least one per-frame hash. Unknown properties are ignored; a body without `livenessEvidence` is `422 validation_failed`.
 
-Server: verifies the object, verifies the liveness challenge is the caller's, unexpired and unused (and that the evidence echoes its nonce), creates/updates `attendeeEventProfiles`, inserts `selfies` with `processing.status: "queued"`, `processing.priority: "high"` (PRD: attendee selfies are high priority), enqueues to `q:selfie`.
+Server: verifies the object, verifies the liveness challenge is the caller's, unexpired and unused (and that the evidence echoes its nonce), creates/updates `attendeeEventProfiles` (creating with `subject.kind: "anonymous"` or `"user"`), inserts `selfies` with `processing.status: "queued"`, `processing.priority: "high"` (PRD: attendee selfies are high priority), enqueues to `q:selfie`.
 
 `202` →
 
@@ -2171,6 +2175,9 @@ Failure paths:
 | Challenge expired, spent, not the caller's, or nonce mismatch | `409 liveness_challenge_invalid` (`details.reason` `expired` \| `already_used` \| `mismatch`) |
 | Selfie attempts exhausted                                     | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`)                          |
 | Object being purged after a withdrawal                        | `409 conflict` (`details.reason: "selfie_purged"`)                                            |
+| Gallery retention elapsed                                     | `410 gallery_expired` (`details: { expiredAt }`)                                              |
+
+The retention check runs after consent and before the object, liveness and budget checks, so a refusal writes nothing — no `selfies` row, no `q:selfie` pointer, no attempt charged, the challenge stays unspent; bytes the client already PUT are the purge lane's business (ADR-0796/0798), not this gate's.
 
 The **outcome** of detection/liveness is asynchronous (`attendee.selfie.accepted` / `attendee.selfie.rejected`, notification §4.8) and observed through §6.4. `attendee.selfie.rejected` emails only when the attendee is identified **and** has failed twice consecutively.
 
@@ -2196,7 +2203,7 @@ The second step of the two-step submission, and **the only publisher that ships 
 }
 ```
 
-`status` is `ready` once the worker's embedding is on the row; before that the row still activates, the answer is `200` with `status: "processing"`, and nothing is published. A repeat confirmation answers the same `200` and emits nothing further — the dedupe key admits one `attendee.matches.new` per selfie. `GET …/me` (§6.4) is read-only, so a `face_matches` row that arrives after the activation is announced by no shipped endpoint; ADR-0808 owns that publication.
+`status` is `ready` once the worker's embedding is on the row; before that the row still activates, the answer is `200` with `status: "processing"`, and nothing is published. A repeat confirmation answers the same `200` and emits nothing further — the dedupe key admits one `attendee.matches.new` per selfie. `GET …/me` (§6.4) is read-only, so a `face_matches` row that arrives after the activation is announced by no shipped endpoint; ADR-0808 owns that publication. The confirm is **not** gated by retention: after the instant it still answers its `200` envelope, and its row's erasure belongs to the purge.
 
 | Condition                                           | Response                                       |
 | --------------------------------------------------- | ---------------------------------------------- |
@@ -2239,13 +2246,14 @@ For a well-formed body, precedence is fixed: consent **for the addressed event**
 
 Failure paths:
 
-| Condition                                     | Response                                                             |
-| --------------------------------------------- | -------------------------------------------------------------------- |
-| Consent missing for the addressed event       | `412 consent_required`                                               |
-| `selfieId` not 24 hex                         | `422 validation_failed`                                              |
-| Source selfie foreign, unknown or withdrawn   | `404 not_found` (`details.resource: "selfie"`)                       |
-| Selfie attempts exhausted                     | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`) |
-| Source object being purged after a withdrawal | `409 conflict` (`details.reason: "selfie_purged"`)                   |
+| Condition                                     | Response                                                                    |
+| --------------------------------------------- | --------------------------------------------------------------------------- |
+| Consent missing for the addressed event       | `412 consent_required`                                                      |
+| `selfieId` not 24 hex                         | `422 validation_failed`                                                     |
+| Source selfie foreign, unknown or withdrawn   | `404 not_found` (`details.resource: "selfie"`)                              |
+| Selfie attempts exhausted                     | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`)        |
+| Source object being purged after a withdrawal | `409 conflict` (`details.reason: "selfie_purged"`)                          |
+| Retention elapsed for the addressed event     | `410 gallery_expired` (`details: { expiredAt }`), nothing minted or charged |
 
 ## 6.4 Participation status (polling)
 
