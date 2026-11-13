@@ -95,6 +95,7 @@ export const POST = defineRoute({
         subject,
         contentHash,
         now,
+        retentionExpiresAt: event.retentionExpiresAt,
         session,
       });
       return { selfieId, profileId };

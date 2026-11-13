@@ -1,3 +1,9 @@
+## [1.60.0](https://github.com/yahodu/openpic-webapp/compare/v1.59.0...v1.60.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-132 give the selfie an asset row, an expiry and a purge path ([#546](https://github.com/yahodu/openpic-webapp/issues/546)) ([90110ee](https://github.com/yahodu/openpic-webapp/commit/90110eeebbe4276922685c3135f75b9a35dfc95f)), closes [#543](https://github.com/yahodu/openpic-webapp/issues/543) [#545](https://github.com/yahodu/openpic-webapp/issues/545)
+
 ## [1.59.0](https://github.com/yahodu/openpic-webapp/compare/v1.58.0...v1.59.0) (2026-11-13)
 
 ### Features

@@ -13,6 +13,7 @@ import {
   slugFromRequest,
   type ResolvedEvent,
 } from "@/server/attendee/request-event";
+import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-submit";
 import { subjectForRequest } from "@/server/attendee/subject";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
@@ -27,6 +28,7 @@ import { tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { sha256Hex } from "@/server/runtime/crypto";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
+import { getObjectStorage } from "@/server/storage/get-object-storage";
 
 /**
  * `POST` / `DELETE /api/v1/p/events/{slug}/consent` — biometric consent grant
@@ -100,6 +102,12 @@ interface SelfieRow {
   readonly _id: ObjectId;
   readonly assetId?: ObjectId | null;
   readonly embedding?: unknown;
+}
+
+/** A stored `mediaAssets` row, as the withdrawal releases and purges it (§16.1). */
+interface MediaAssetRow {
+  readonly contentHash: string;
+  readonly refCount?: number;
 }
 
 /** A stored `attendeeEventProfiles` row, as the grant links it (schema §15.3). */
@@ -284,18 +292,42 @@ export const DELETE = defineRoute({
       const embeddings = rows.filter(
         (row) => row.embedding !== undefined && row.embedding !== null
       ).length;
-      const assetIds = [...new Set(rows.flatMap((row) => (row.assetId ? [row.assetId] : [])))];
+      // Every selfie drops exactly the reference it held (§16.1), counted per
+      // row: two attempts with the same bytes are two references to one asset.
+      const references = new Map<string, { readonly id: ObjectId; count: number }>();
+      for (const row of rows) {
+        if (row.assetId) {
+          const key = row.assetId.toHexString();
+          const held = references.get(key);
+          if (held === undefined) {
+            references.set(key, { id: row.assetId, count: 1 });
+          } else {
+            held.count += 1;
+          }
+        }
+      }
 
       const [deletedSelfies, deletedMatches] = await Promise.all([
         selfies.deleteMany({ profileId: profile._id }),
         tenant.collection(COLLECTIONS.faceMatches).deleteMany({ profileId: profile._id }),
       ]);
-      if (assetIds.length > 0) {
-        // The blob is purged once nothing references it (schema §16.1), so the
-        // withdrawal only drops the references the deleted selfies held.
-        await tenant
-          .collection(COLLECTIONS.mediaAssets)
-          .updateMany({ _id: { $in: assetIds }, refCount: { $gt: 0 } }, { $inc: { refCount: -1 } });
+      if (references.size > 0) {
+        // The blob is purged once nothing references it (schema §16.1): the
+        // withdrawal drops the references and deletes the object the row now
+        // owns. The key is derived from the content hash — the asset row's
+        // `storage` slot may be absent (ADR-0796).
+        const assets = tenant.collection(COLLECTIONS.mediaAssets);
+        const storage = getObjectStorage();
+        for (const { id, count } of references.values()) {
+          const asset = (await assets.findOneAndUpdate(
+            { _id: id, refCount: { $gt: 0 } },
+            { $inc: { refCount: -count } },
+            { returnDocument: "after", projection: { contentHash: 1, refCount: 1 } }
+          )) as MediaAssetRow | null;
+          if (asset !== null && (asset.refCount ?? 0) <= 0) {
+            await storage.deleteObject(SELFIE_LOCATION_KEY, selfieObjectKey(asset.contentHash));
+          }
+        }
       }
 
       await tenant.collection(COLLECTIONS.consents).updateMany(
