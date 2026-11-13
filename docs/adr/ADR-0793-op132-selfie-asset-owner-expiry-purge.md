@@ -122,6 +122,14 @@ delete on a conditional `status: "purged"` write instead.
 - The window is 90 days and the event cap can only shorten it; the pin does not
   bound the duration (`t_26ab6dd7` adds that pin), so a future change of the
   constant is a one-line edit.
+- **Known limit, not pinned:** the tenant-wide `(tenantId, contentHash)` unique
+  index does not include `kind`, so an organizer uploading bytes that an attendee
+  already submitted as a selfie resolves to the **selfie** row, which has no
+  `storage` slot, and `uploads/complete-upload.ts` reads `existingAsset.storage`
+  unguarded. Same-hash collisions between a probe image and an event image were
+  impossible before this record (no `kind: "selfie"` rows existed); they are now
+  possible but no case covers them. Routing a pin to the Test Author is the
+  correct next step rather than a speculative guard here.
 
 ## Alternatives
 
