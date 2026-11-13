@@ -1,3 +1,9 @@
+## [1.63.0](https://github.com/yahodu/openpic-webapp/compare/v1.62.1...v1.63.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-134 claim an anonymous session and read my events ([#565](https://github.com/yahodu/openpic-webapp/issues/565)) ([0d57e95](https://github.com/yahodu/openpic-webapp/commit/0d57e95d908d41cf5ef86c14dc4d4fe819e12cde))
+
 ## [1.62.1](https://github.com/yahodu/openpic-webapp/compare/v1.62.0...v1.62.1) (2026-11-13)
 
 ### Bug Fixes
