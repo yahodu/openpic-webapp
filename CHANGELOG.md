@@ -1,3 +1,9 @@
+## [1.59.0](https://github.com/yahodu/openpic-webapp/compare/v1.58.0...v1.59.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-131 implement biometric consent grant and withdrawal ([#541](https://github.com/yahodu/openpic-webapp/issues/541)) ([3e69b30](https://github.com/yahodu/openpic-webapp/commit/3e69b30d3147b3a13db1d933ea6f79adbcde691f))
+
 ## [1.58.0](https://github.com/yahodu/openpic-webapp/compare/v1.57.11...v1.58.0) (2026-11-12)
 
 ### Features
