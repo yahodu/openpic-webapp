@@ -234,3 +234,124 @@ broken fixture, and no case passes vacuously.
    3587)"** — the row number for `gallery_expired` is Appendix A.7's, not 3587's.
    The GREEN should widen that sentence rather than copy it; this record does not
    prescribe the wording.
+
+## Review sign-off (OP-132 GREEN t_4503b5cf, round 1 — artifact + execution lens)
+
+**Verdict: APPROVED WITH FINDINGS.** The delivery is PR #569, reviewed at head
+`1088911` and merged as the squash `442e01a`; nothing was re-merged for this
+sign-off. The lens was the artifact **and** the execution: every count below is
+the reviewer's own run rather than a transcription of the implementer's handoff,
+and both mutation probes were re-run at the trunk this append lands on.
+
+**No section of this record is retracted.** §Context, §Decision, the
+not-gated list, §Rejected alternatives, §Consequences, the evidence table and
+§Assumptions stand as written. The items at the end are follow-ups and
+observations, not corrections.
+
+### The reviewed bytes are what shipped
+
+`git diff --stat 1088911 442e01a` is **empty**: the squash kept the branch tree,
+so a suite run on the branch applies to the trunk verbatim. The two pins and this
+record are unchanged across the whole chain — measured as blob identity, which is
+strictly stronger than a three-dot diff:
+
+- `apps/web/src/test/unit/retention-gate.test.ts` — `df23c73…` at the RED head
+  `5a2b014`, the GREEN head `1088911`, the squash `442e01a` and the trunk
+  `9633f5f`;
+- `apps/web/src/test/integration/attendee-retention-gate.test.ts` — `56fee94…` at
+  the same four commits;
+- `docs/adr/ADR-0813-op132-attendee-retention-gate.md` — `dbeb696…` at all four,
+  i.e. the GREEN did not edit the record it satisfies.
+
+The seven production blobs the GREEN touched are identical at `442e01a` and at
+`9633f5f` as well, so every measurement below holds for both trees.
+
+### Re-measured at the trunk
+
+- the pins: unit **8 passed (8)**, integration **12 passed (12)**;
+- the five ADR guards (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`,
+  `adr-source-references`, `adr-consumers`): **5 files, 218 passed (218)**, with
+  `adr-numbering` alone at **29 passed (29)**;
+- `tsc -p apps/web/tsconfig.json --noEmit`: exit `0`;
+- `prettier --check` on this record: clean;
+- `eslint` on the seven touched production files: **0 errors**, one
+  `security/detect-object-injection` warning at `catalog.ts:658` — the
+  pre-existing `TRANSPORT[code]` sink, at line `653` of the base blob, so the
+  delivery adds **no** new warning;
+- CI on the head: **15/15 checks**, the aggregate `ci`, `test_coverage` and
+  `secret-scan` included.
+
+The full suites were run at the squash `442e01a`: `unit` **178 files, 2938 passed
+| 3 skipped**; `integration --maxWorkers=4` **128 files, 1321 passed**. Recorded
+honestly: a **first** full integration run reported **3 failures** that did not
+reproduce on the re-run at the same worker count (the runs share one mongod, so
+the first was load-induced); the clean run exited `0`.
+
+### The guard rails are pinned, not assumed
+
+Two mutation probes, each in a throwaway worktree that was removed afterwards and
+each re-run here at `9633f5f`, with the tree restored byte-identically (`git
+status` empty) after it:
+
+- **All four route gates removed** → `8 failed | 4 passed (12)`: exactly W1–W4 and
+  P1–P4 redden with `expected 201/202/404/413/409/403 to be 410`, while the four
+  controls C1–C4 stay green. Every route call is load-bearing, and no case rides
+  another route's gate.
+- **The gate moved inside `requireAttendeeScope`** → `1 failed | 11 passed (12)`:
+  only C4 reddens, with `expected 410 to be 200`. The "never in the shared scope
+  helper" constraint of §Decision is pinned, not merely stated.
+
+### Honesty checks
+
+`git diff --name-status 442e01a^ 442e01a` is **11 paths**: seven modified
+production files (the four write routes, `request-event.ts`, `catalog.ts`,
+`packages/contracts/src/errors.ts`), **two added** specs, the added record and
+`docs/adr/README.md`. No existing test, helper, fixture or mock was touched, and
+the added production lines carry no `NODE_ENV`, `process.env`, `console.`,
+`ts-ignore`, `.only`, `eslint-disable` or hardcoded fixture value.
+
+### Post-review status
+
+The routing below is stated as at review time and names the commits that landed
+since, so nothing reads as "open" that the trunk says is closed.
+
+- **Low, routed, landed — the read surface.** The un-pinned half of §Decision
+  (`GET …/gallery`, `GET …/me`, the image reads staying ungated) went to TEST card
+  `t_3dccf581`, whose R1–R4 pack landed as PR #576 (squash `c5ea610`).
+  `requireAttendeeProfile` (`request-event.ts:239-263`) still carries no retention
+  check, which is why that pack was green on its first run.
+- **Low, routed, landed — the downloads pair.** TEST card `t_86e8986e` added R5/R6
+  and landed as PR #580 (squash `9633f5f`). One premise of the review is corrected
+  here: the **POST** `…/events/{slug}/downloads` route _does_ call
+  `requireAttendeeProfile`
+  (`apps/web/src/app/api/v1/p/events/[slug]/downloads/route.ts:54`); only the
+  **GET** `…/downloads/{downloadId}` resolves through `requireAuth` and
+  `callerProfileId`/`ownsJob`
+  (`apps/web/src/app/api/v1/p/downloads/[downloadId]/route.ts:50-59`). Both arms
+  are pinned now.
+- **Low, routed, still open — the contract's `unhide`.** `docs/API Contract.md:2359`
+  documents `POST …/matches/{matchId}/hide` · `…/unhide`, but only the `hide`
+  route exists, and [ADR-0793](ADR-0793-op133-attendee-gallery-red.md):230 and
+  [ADR-0794](ADR-0794-op133-attendee-gallery-green.md):283 record `unhide` as
+  deliberately out of scope — so the documented pair answers `404` on its second
+  member. Orchestrator decision card `t_75db3204` owns the correction.
+  §"Explicitly not gated" keeps its `hide/unhide` wording: it names the surface the
+  contract lists, and this record is not retracted for a contract defect.
+- **Info, no card — the `/me` key count.**
+  `apps/web/src/app/api/v1/p/events/[slug]/me/route.ts:86` says "§6.4's fourteen
+  keys plus the client's `latestMatchCursor`", while the body answers **fourteen**
+  keys: §6.4's sample body carries **thirteen**, and the route adds
+  `latestMatchCursor` (`me/route.ts:112`). The follow-up spec's comment states the
+  correct arithmetic (`attendee-retention-read-surface.test.ts:127`); the route's
+  own comment and the OP-133 record's §10 keep the two-off phrasing. Documentation
+  only — no number is minted and the contract is not edited here.
+- **Info, no card — one predicate, two copies.** The inclusive `now >= deadline`
+  comparison now exists twice: `retentionElapsed` here
+  (`request-event.ts:181`) and inline in `resolvePublicEventOutcome`
+  (`public-event.ts:95-96`). Both are `null`-safe and inclusive today, so a dedupe
+  would be a deliberate, pin-backed change rather than a tidy-up.
+- **Info, no card — the ledger snapshot.** Both `Next free` cells read `0818`
+  while the record that number belongs to is in flight on
+  `OP-134-task-claim-endpoint-arms-pins`, whose branch sets the cells to `0819`;
+  that branch's merge advances the snapshot. This append touches neither cell and
+  consumes no number.
