@@ -3,20 +3,18 @@ import { z } from "zod";
 
 import { requireAttendeeScope } from "@/server/attendee/request-event";
 import { subjectFilter } from "@/server/attendee/consent-guard";
+import { attendeeRateLimitStage } from "@/server/attendee/attendee-rate-limit";
 import { selfieAttemptBudget } from "@/server/attendee/selfie-attempts";
 import {
   SELFIE_ENVELOPE_SCHEMA,
+  chargeSelfieAttempt,
   enqueueSelfie,
-  insertQueuedSelfie,
-  selfieAttemptNumbers,
   selfieEnvelope,
-  upsertProcessingProfile,
 } from "@/server/attendee/selfie-submit";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
-import { withTransaction } from "@/server/db/transaction";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { tenantRepo } from "@/server/repos";
@@ -38,7 +36,13 @@ import { systemClock } from "@/server/runtime/clock";
  *   3. the source selfie still exists (a withdrawal deleted it for good).
  *
  * The new row belongs to the calling subject on this event; the bytes are
- * re-processed by the worker rather than carried across as a vector.
+ * re-processed by the worker rather than carried across as a vector. A reuse is
+ * an **attempt** of `selfies.per_attendee`, the §14.1 hard cap: it is charged
+ * through the same `chargeSelfieAttempt` critical section as a submit, so a spent
+ * budget refuses with the same `403 plan_limit_exceeded` and mints nothing
+ * (ADR-0804). Reuse is a selfie write, so it mounts the same post-auth
+ * attendee-keyed `selfie.submit` class as `POST …/selfies`, the class every
+ * selfie endpoint in this lane already declares.
  */
 
 /** The §6.3 reuse body. */
@@ -61,6 +65,7 @@ export const POST = defineRoute({
   response: reuseResponseSchema,
   auth: (ctx, request) =>
     requireAuth("attendee", { auth: getAuth(), database: getDb() })(ctx, request),
+  rateLimitIdentity: attendeeRateLimitStage("selfie.submit"),
   handler: async (ctx) => {
     const { db, slug, event, subject } = await requireAttendeeScope(ctx);
 
@@ -78,27 +83,14 @@ export const POST = defineRoute({
 
     const now = systemClock.now();
     const contentHash = source.contentHash;
-    const reused = await withTransaction(async (session) => {
-      const profileId = await upsertProcessingProfile({
-        db,
-        tenantKey: event.tenantKey,
-        eventId: event.eventId,
-        subject,
-        now,
-        session,
-      });
-      const selfieId = await insertQueuedSelfie({
-        db,
-        tenantKey: event.tenantKey,
-        eventId: event.eventId,
-        profileId,
-        subject,
-        contentHash,
-        now,
-        retentionExpiresAt: event.retentionExpiresAt,
-        session,
-      });
-      return { selfieId, profileId };
+    const reused = await chargeSelfieAttempt({
+      db,
+      tenantKey: event.tenantKey,
+      eventId: event.eventId,
+      subject,
+      contentHash,
+      now,
+      retentionExpiresAt: event.retentionExpiresAt,
     });
 
     await enqueueSelfie({
@@ -109,12 +101,6 @@ export const POST = defineRoute({
       traceId: ctx.requestId,
     });
 
-    const attempts = await selfieAttemptNumbers({
-      db,
-      tenantKey: event.tenantKey,
-      profileId: reused.profileId,
-    });
-
     return {
       status: 202,
       body: selfieEnvelope({
@@ -122,7 +108,10 @@ export const POST = defineRoute({
         profileId: reused.profileId,
         slug,
         status: "processing",
-        budget: selfieAttemptBudget(attempts),
+        budget: selfieAttemptBudget({
+          used: reused.attempts.used + 1,
+          allowed: reused.attempts.allowed,
+        }),
       }),
     };
   },
