@@ -40,33 +40,42 @@ The route had three separate defects behind that list:
 
 ## Decision
 
-### 1. The confirmation is the only publisher; a late result's publisher is OPEN
+### 1. The confirmation is the only publisher **in this repo**; the pipeline owns the late result (ADR-0808)
 
-The worker does **not** publish, because the pin forbids it: after the worker
-writes the embedding and the matches for an already-active row,
-`matchesNewRows()` is still empty, so a worker-side publisher would fail case 3
-of `selfie-confirm-publication`. Nothing else in the shipped app emits
-`attendee.matches.new` either — the confirm route is the only emitter in `apps/`
-— and the confirm's own `200` body points the client at
-`pollUrl: /api/v1/p/events/{slug}/me`, which is **read-only**: `GET …/me` never
-emits a domain event, and contract §6.4 calls it the single polling endpoint. So
-no shipped path re-issues the confirm after the worker finishes.
+The confirmation is the only emitter of `attendee.matches.new` that ships at
+this head: a grep over `apps/` and `packages/` finds the catalogue entry and
+`…/confirm/route.ts` and nothing else, and the confirm's own `200` body points
+the client at `pollUrl: /api/v1/p/events/{slug}/me`, a **read-only** `GET`
+(contract §6.4, "the single polling endpoint") that never emits a domain event.
+A worker result that lands after the activation is therefore announced only by a
+second, client-initiated confirm, and no shipped client-facing text asks for one.
 
-**Recorded as a gap, not as solved:** item 3 of the GREEN card ("a late worker
-result publishes without the client calling confirm again") is **not
-delivered**. A late worker result is announced only by a second,
-self-initiated confirm, and nothing asks the client to send one. A single
-confirm that arrives after the worker is still enough on its own — case 3 proves
-that, and `status`/`matchCount` are correct from that confirm on.
+**The pin does not forbid a worker-side publisher.** Case 3 reads
+`matchesNewRows()` after `runWorker`, but `runWorker` → `finishSelfieWorker`
+(`apps/web/src/test/helpers/selfie-flow.ts:638`) writes the embedding and the
+match rows with raw driver calls on `app.db`; no production code runs between
+those writes and the read, so the assertion cannot fail whatever a future
+publisher does. It observed an absence, it did not constrain one — corrected in
+ADR-0808 §2.
 
-Who publishes a worker result that lands after the confirm is an **open
-decision**, routed to `t_b0bf2ff2` (orchestrator): (a) the pipeline publishes at
-the match-insert seam, with case 3's emptiness assertion revised; (b) the client
-re-confirms as the documented recovery, with a contract amendment and a
-client-side POST the poll cannot send; or (c) the confirmation stays the only
-publisher and the contract records the gap as a known limit. This record does
-not pre-empt that choice. **The DOCS card `t_a1fbb7a7` must not write a
-poll-driven re-confirm sentence** unless (b) is chosen.
+**The late result belongs to the pipeline** (`t_b0bf2ff2`, ADR-0808): the worker
+runs the match, and its publication transport is the internal endpoint
+`POST /api/v1/internal/domain-events` (OP-135 §1, `dedupeKey` honoured), with
+the profile projection written by `POST /api/v1/internal/worker/report` (OP-135
+§3) and the incremental run enqueued by `pipeline-sweep` step 4 (OP-136 §2).
+Neither endpoint ships yet — `apps/web/src/app/api/v1/internal/` holds only
+`cron/` — so this is the owner, not a delivered path.
+
+**Both publishers share one identity per activation result**,
+`attendee.matches.new:<eventId>:<profileId>:<selfieId>`: the confirm reads that
+`dedupeKey` before it emits, so whichever publisher writes first, exactly one
+row exists and the second is a no-op (pinned by case (i) of
+`selfie-confirm-publication`). A later **arrival** for an already-announced
+selfie is a different delivery and needs a key that carries the run; that key
+belongs to the pipeline's incremental run (ADR-0808 §3).
+
+**The DOCS card `t_a1fbb7a7` must not write a poll-driven re-confirm sentence**
+— decision (a), not (b) (ADR-0808 §4).
 
 ### 2. The delivery counts the rows **this selfie** produced
 
@@ -135,10 +144,13 @@ published still answers `processing`.
   selfie, so a _re-run_ of the worker for an already-announced selfie (a new
   event photo matched later against the same selfie) cannot re-announce through
   the confirmation — the key already exists. Those arrivals belong to the
-  pipeline's own `attendee.matches.new`/`attendee.matches.ready` path (§15.3),
-  which is out of this route's scope. `shortcut:` in code terms: one delivery
-  per activation result; revisit if the pipeline is expected to leave later
-  arrivals to the confirmation.
+  pipeline's own `attendee.matches.new` path (worker
+  `POST /api/v1/internal/domain-events`, OP-135 §1; incremental run
+  `pipeline-sweep` step 4, OP-136 §2), which **does not ship yet** — nothing in
+  `apps/` emits them. `t_b0bf2ff2` (ADR-0808) assigns that publication to the
+  pipeline; the confirmation's per-selfie key cannot announce a later arrival.
+  `shortcut:` in code terms: one delivery per activation result; revisit if the
+  pipeline is expected to leave later arrivals to the confirmation.
 - The outbox is read once per confirm that has new matches (one indexed lookup
   on `domain_events_dedupe_unique`); a confirm with nothing new does not query
   it.
