@@ -40,21 +40,33 @@ The route had three separate defects behind that list:
 
 ## Decision
 
-### 1. The confirmation is the only publisher, and it is the recovery path
+### 1. The confirmation is the only publisher; a late result's publisher is OPEN
 
-The worker does **not** publish. The pin asserts it: after the worker writes the
-embedding and the matches for an already-active row,
-`matchesNewRows()` is still empty, and the **next confirm** answers
-`status: "ready"` with the right `matchCount` and emits exactly one row. That is
-the reading the pin records in its own comment — §6.4's client polls, and the
-poll re-issues the confirmation — so a worker-side publisher is not implemented
-(implementing one would fail the pin), and a single confirm that arrives after
-the worker is still enough by itself.
+The worker does **not** publish, because the pin forbids it: after the worker
+writes the embedding and the matches for an already-active row,
+`matchesNewRows()` is still empty, so a worker-side publisher would fail case 3
+of `selfie-confirm-publication`. Nothing else in the shipped app emits
+`attendee.matches.new` either — the confirm route is the only emitter in `apps/`
+— and the confirm's own `200` body points the client at
+`pollUrl: /api/v1/p/events/{slug}/me`, which is **read-only**: `GET …/me` never
+emits a domain event, and contract §6.4 calls it the single polling endpoint. So
+no shipped path re-issues the confirm after the worker finishes.
 
-The card left the ownership open if it needed a product decision; the pins
-settled it mechanically, so no question is escalated. The contract owes the
-sentence that makes the poll-driven re-confirm the documented recovery —
-**the DOCS card `t_a1fbb7a7` owns §6.3/§6.4** and should say so.
+**Recorded as a gap, not as solved:** item 3 of the GREEN card ("a late worker
+result publishes without the client calling confirm again") is **not
+delivered**. A late worker result is announced only by a second,
+self-initiated confirm, and nothing asks the client to send one. A single
+confirm that arrives after the worker is still enough on its own — case 3 proves
+that, and `status`/`matchCount` are correct from that confirm on.
+
+Who publishes a worker result that lands after the confirm is an **open
+decision**, routed to `t_b0bf2ff2` (orchestrator): (a) the pipeline publishes at
+the match-insert seam, with case 3's emptiness assertion revised; (b) the client
+re-confirms as the documented recovery, with a contract amendment and a
+client-side POST the poll cannot send; or (c) the confirmation stays the only
+publisher and the contract records the gap as a known limit. This record does
+not pre-empt that choice. **The DOCS card `t_a1fbb7a7` must not write a
+poll-driven re-confirm sentence** unless (b) is chosen.
 
 ### 2. The delivery counts the rows **this selfie** produced
 
@@ -110,7 +122,15 @@ published still answers `processing`.
   nothing — the state arm the pin measures.
 - Two selfies on one profile produce two deliveries whose counts add up to
   `matchCount` (3 + 2 = 5 in the pin).
-- A late worker result publishes on the next confirm, once.
+- A late worker result publishes on the next confirm, once — but nothing
+  shipped issues that confirm (§1; open on `t_b0bf2ff2`).
+- **The dedupe record ages out with the outbox:** the row's
+  `expireAt = occurredAt + retention.domainEventDays` (default 180), so a
+  re-confirm after the row has been purged emits a second
+  `attendee.matches.new` for the same selfie. `firstMatchNotifiedAt` is
+  profile-level and does not cover a later selfie, so it cannot serve as the
+  backstop. `shortcut:` outbox-lifetime idempotency; revisit if a permanent
+  delivery ledger is ever needed.
 - **Known limit, recorded deliberately:** the delivery's identity is the
   selfie, so a _re-run_ of the worker for an already-announced selfie (a new
   event photo matched later against the same selfie) cannot re-announce through
