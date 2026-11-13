@@ -4,8 +4,10 @@
 - **Consumers:** `apps/web/src/server/attendee/selfie-submit.ts`,
   `apps/web/src/server/attendee/request-event.ts`,
   `apps/web/src/app/api/v1/p/events/[slug]/selfies/route.ts`,
-  `apps/web/src/app/api/v1/p/events/[slug]/selfies:reuse/route.ts` and
-  `apps/web/src/app/api/v1/p/events/[slug]/consent/route.ts`.
+  `apps/web/src/app/api/v1/p/events/[slug]/selfies:reuse/route.ts`,
+  `apps/web/src/app/api/v1/p/events/[slug]/consent/route.ts` and
+  `apps/web/src/test/integration/liveness-selfie-submit.test.ts` (the F1 pins and,
+  from ADR-0797, the F-A2 pins).
 - **Lane:** the shared attendee block `0780`–`0798` (row
   `OP-129 attendee identity lane`), `Next free` read as `0796` at the renumber
   on `OP-132-task-selfie-asset-erasure` (`51c42f9`). This record first took

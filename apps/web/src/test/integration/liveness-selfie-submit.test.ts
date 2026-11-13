@@ -954,3 +954,259 @@ describe("when a confirmed selfie's consent is withdrawn", () => {
     ).rejects.toMatchObject({ code: "not_found" });
   });
 });
+
+/* ────── P1/P2: a failed purge, and a purge that races a live reference ───── */
+
+/**
+ * F-A2 of the OP-132 round-2 review (this card, `t_c146a82e`), the gap
+ * ADR-0796 §Consequences records as "Known gap, routed". The withdrawal deletes
+ * the `selfies` and `faceMatches` rows **before** it releases the references and
+ * deletes the blob, so a transient object-store failure destroys the only
+ * pointer to the object and the retry reports a completed erasure.
+ *
+ * ## What the pins require
+ *
+ * - **P1 — no orphan across a retry.** After a withdrawal whose `deleteObject`
+ *   failed once and a second withdrawal against a healthy port, the bytes are
+ *   either gone, or the `mediaAssets` row is a durable purge candidate
+ *   (`refCount: 0` **and** `status: "purged"`/`purgedAt`) a sweep can act on.
+ *   Which branch the fix takes is the GREEN's decision (ADR-0797 §Open
+ *   questions): the case pins the *invariant*, never the shape. The retry keeps
+ *   the withdrawal's own contract — `204` plus `X-Deleted-Counts` — and its
+ *   counts are deliberately read as a format, not as fixed numbers, because
+ *   they state what *that attempt* deleted: a rollback-based fix retries with
+ *   the rows still in place (`selfies=1`), a purge-candidate fix finds them
+ *   already deleted (`selfies=0`). Both are complete erasures.
+ * - **P2 — a release must not purge bytes a live reference just took back**
+ *   (ADR-0796 §3 `shortcut:`). The reference release and the object delete are
+ *   two calls, so a submit that re-references the hash in between loses its
+ *   blob. The second attendee's submit is driven from *inside* the
+ *   `deleteObject` stub — the only deterministic seam for that window — and the
+ *   case pins the invariant that survives it: **a reference must not outlive its
+ *   object**. It does *not* pin "the bytes stay readable", because inside the
+ *   delete the withdrawal has already committed to the purge: no implementation
+ *   can un-ask that call, so the only satisfiable answers are "the purge is
+ *   skipped" (bytes readable) or "the second submit is deflected" (not `202`).
+ *   Pinning only the readable branch would be a pin no correct fix can pass;
+ *   pinning only the deflection would hide the orphan. ADR-0797 §Decision
+ *   records that reasoning and leaves *how* the losing submit is answered to
+ *   the GREEN.
+ *
+ * ## Not pinned here
+ *
+ * - The **status of the surviving `refCount: 0` row** after a *successful*
+ *   purge. §16.1 carries both `stored` and `purged`, and ADR-0796 §3 keeps the
+ *   row on purpose (the OP-131 case pins it surviving), so whether it moves to
+ *   `purged`/`purgedAt` is the GREEN's record to make, not this card's to
+ *   assert: P1 accepts the marker as a second branch but nothing requires it.
+ * - **Two concurrent submits of one hash.** The same-hash upsert resolves
+ *   through the `(tenantId, contentHash)` unique index, so a `Promise.all` of
+ *   two submits lands in the driver's `WriteConflict`/`E11000` path with no
+ *   synchronous seam to interleave at; a spec built on that ordering is flaky
+ *   by construction and would redden a correct implementation. P2 pins the same
+ *   mediaAssets accounting with a deterministic interleaving instead.
+ */
+
+/** A stored `mediaAssets` row, with the §16.1 purge slots these cases read. */
+interface PurgeLedgerRow {
+  readonly _id: ObjectId;
+  readonly kind: string;
+  readonly contentHash: string;
+  readonly refCount?: number;
+  readonly status?: string;
+  readonly purgedAt?: Date | null;
+}
+
+/** The stored `mediaAssets` row for one content hash, or `null` when absent. */
+async function assetByHash(contentHash: string): Promise<PurgeLedgerRow | null> {
+  const row = await app.db.collection(COLLECTIONS.mediaAssets).findOne({ contentHash });
+  return row as unknown as PurgeLedgerRow | null;
+}
+
+/**
+ * Whether the selfie's bytes are still readable through the storage port.
+ *
+ * @param contentHash - The lowercase 64-hex SHA-256 of the selfie bytes.
+ * @returns `true` while `getObject` answers bytes, `false` once it refuses
+ *   `not_found` — the port's own absent-object answer, so the case measures the
+ *   stored object itself.
+ */
+async function selfieBytesReadable(contentHash: string): Promise<boolean> {
+  try {
+    const bytes = await getObjectStorage().getObject(
+      SELFIE_LOCATION_KEY,
+      selfieObjectKey(contentHash)
+    );
+    return bytes.byteLength > 0;
+  } catch (error: unknown) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "not_found"
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Whether the row durably records that its object still has to be purged.
+ *
+ * Two shapes satisfy it — the §16.1 terminal `status: "purged"` and its
+ * `purgedAt` stamp — and both are readable without the `selfies` rows the
+ * withdrawal already deleted, which is what makes them a candidate a sweep can
+ * act on.
+ *
+ * @param row - The asset row for the hash, or `null` when there is none.
+ * @returns `true` when the row is a zero-reference purge candidate.
+ */
+function recordsPendingPurge(row: PurgeLedgerRow | null): boolean {
+  if (row === null) {
+    return false;
+  }
+  return (row.refCount ?? -1) === 0 && (row.status === "purged" || row.purgedAt instanceof Date);
+}
+
+describe("when the object store fails the purge during a withdrawal", () => {
+  it("leaves no orphaned selfie object behind once the withdrawal is retried", async () => {
+    // Arrange: a confirmed selfie whose bytes are really in the store.
+    const ready = await readyEvent("op132-p1-purge");
+    const { hash } = makeSelfieBytes("p1-purge");
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "p1-purge",
+    });
+    const profile = await profileRow();
+    await finishSelfieWorker(app, {
+      selfieId: submitted.selfieId,
+      profileId: submitted.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: profile.subject,
+      matches: 2,
+    });
+    const confirmed = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(confirmed.status).toBe(200);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    // Act: one transient object-store failure, then a retry on a healthy port.
+    const storage = getObjectStorage();
+    const deleteSpy = vi
+      .spyOn(storage, "deleteObject")
+      .mockRejectedValueOnce(new Error("object store unavailable"));
+    const first = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    deleteSpy.mockRestore();
+    const retry = await withdrawConsent(ready.event.slug, { cookie: ready.cookie, ip: ready.ip });
+
+    // Assert: the retry still answers the withdrawal's own contract …
+    expect(retry.status).toBe(204);
+    expect(retry.headers.get("x-deleted-counts")).toMatch(
+      /^selfies=\d+;embeddings=\d+;matches=\d+$/
+    );
+
+    // … and the object is not orphaned: the retry purged it, or the asset row
+    // is a purge candidate a sweep can act on.
+    const bytesReadable = await selfieBytesReadable(hash);
+    const asset = await assetByHash(hash);
+    const pendingPurge = recordsPendingPurge(asset);
+    expect(
+      bytesReadable && !pendingPurge,
+      `the withdrawal retry orphaned the selfie object: ${SELFIE_LOCATION_KEY}/${selfieObjectKey(hash)} ` +
+        `${bytesReadable ? "is still readable" : "is gone"} and the mediaAssets row ` +
+        `${JSON.stringify(asset)} records ${pendingPurge ? "a pending purge" : "no pending purge"} ` +
+        `(the first attempt answered ${String(first.status)}, the retry ${String(retry.status)})`
+    ).toBe(false);
+  });
+});
+
+describe("when another attendee re-references the same bytes during a withdrawal", () => {
+  it("leaves no reference pointing at bytes the purge deleted", async () => {
+    // Arrange: attendee A's confirmed selfie, and a second attendee on the same
+    // event who has consented and holds a challenge.
+    const ready = await readyEvent("op132-p2-race");
+    const bytes = makeSelfieBytes("p2-race");
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "p2-race",
+    });
+    const profile = await profileRow();
+    await finishSelfieWorker(app, {
+      selfieId: submitted.selfieId,
+      profileId: submitted.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: profile.subject,
+      matches: 1,
+    });
+    const confirmed = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(confirmed.status).toBe(200);
+    expect(await selfieBytesReadable(bytes.hash)).toBe(true);
+
+    const otherIp = nextIp();
+    const other = await createAttendeeSession(app, otherIp);
+    await grantConsent(ready.event.slug, { cookie: other.cookie, ip: otherIp });
+    const otherChallenge = await issueChallenge(ready.event.slug, {
+      cookie: other.cookie,
+      ip: otherIp,
+    });
+
+    // Act: the second attendee's submit of the very same bytes lands in the
+    // window between the first attendee's reference release and the delete.
+    const storage = getObjectStorage();
+    const deleteThroughPort = storage.deleteObject.bind(storage);
+    let interleaved = false;
+    let otherSubmitStatus = 0;
+    const deleteSpy = vi
+      .spyOn(storage, "deleteObject")
+      .mockImplementation(async (locationKey, objectKey) => {
+        const taken = await submitSelfie(ready.event.slug, {
+          cookie: other.cookie,
+          ip: otherIp,
+          // The bytes are already stored under this hash — A's own upload — so
+          // the submit's `headObject` check passes with no second PUT.
+          body: submitBody({ hash: bytes.hash }, otherChallenge),
+        });
+        interleaved = true;
+        otherSubmitStatus = taken.status;
+        return deleteThroughPort(locationKey, objectKey);
+      });
+
+    const response = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    deleteSpy.mockRestore();
+
+    // Assert: the withdrawal completed and really reached the object delete, so
+    // the window the second submit interleaved into was open.
+    expect(response.status).toBe(204);
+    expect(
+      interleaved,
+      "the withdrawal never called the object delete, so this case opened no race window"
+    ).toBe(true);
+
+    // … and it left no reference dangling: a submit that was answered `202`
+    // must still find its bytes, so the purge must either be refused or skipped.
+    const stillReadable = await selfieBytesReadable(bytes.hash);
+    const secondHoldsReference = otherSubmitStatus === 202;
+    expect(
+      secondHoldsReference && !stillReadable,
+      `the withdrawal purged ${SELFIE_LOCATION_KEY}/${selfieObjectKey(bytes.hash)} although the ` +
+        `second attendee's submit (answered ${String(otherSubmitStatus)}) had taken a reference ` +
+        `to those bytes: a reference must not outlive its object`
+    ).toBe(false);
+  });
+});
