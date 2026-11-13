@@ -183,3 +183,47 @@ and neither pin is satisfied by the other.
   only new test-side code is the `softDeleteImage` helper in the media spec,
   which exists so the "the row was live" guard cannot be forgotten by one of the
   two cases.
+
+## Review sign-off (round 2)
+
+**Verdict: APPROVED WITH FINDINGS (Low ×2).** Review card `t_51dc681b` (execution lens),
+reviewed head `0720d2e`, squash `a4ba605`, squash tree
+`a526bbb148b8dd35675ca2b1e94e9c5c5cb41ce8`. That tree is **byte-identical** to the reviewed
+head (`git diff 0720d2e a4ba605` is empty), so every suite and count measured on the branch
+applies to the trunk verbatim. §1–§4 and §Consequences stand as written: nothing above is
+retracted, §4's three mutation probes are not rewritten, and the fourth is recorded under L1
+here. Follow-ups are cited by card id.
+
+### Gates, measured at the reviewed head and therefore on the trunk
+
+- focused, both specs: **29 passed (29)**.
+- the five ADR guards (`adr-numbering`, `adr-lane-ranges`, `adr-source-references`,
+  `adr-consumers`, `adr-record-links`): **218 passed (218)**, re-run at `a4ba605` for this
+  sign-off.
+- full `vitest run --project unit --project integration`: **291 files, 4168 passed, 3 skipped
+  (4171)**, exit 0.
+- `gh pr checks 551` on `0720d2e`: **14/14**, the `ci` job including `pnpm test:e2e`.
+- diff scope: exactly four paths (the two specs, this record, `docs/adr/README.md`) and **no
+  production file**.
+
+### Round-1 findings, closed with their measurement
+
+- **C1 — the double-minted `0800`.** Closed by the renumber to `0802` after PR #552/#553
+  (`13bb8f5`) froze `0800`/`0801` on the trunk. The merged tree holds **307** ADR files and
+  the duplicate sweep over their numbers is **empty**, so no other record carries this one.
+- **L1 — the `null` tile is pinned by its pathname, not by `.not.toBeNull()`.** Fixed in §3
+  and proved by a **fourth** mutation, which §4 does not list: `kind: "thumbnail"` to
+  `"original"` in `selfiePreviewUrl` gives **3 failed, 10 passed (13)**, the purged-asset
+  case failing at `expected '/o/28602d70…' to be '/t/28602d70…'`. The probe belongs to §4's
+  set and is recorded here rather than rewritten into the landed section, so the reviewed
+  text of §4 stays as it shipped.
+
+### Erratum — a pre-renumber name survives in two live documents
+
+`docs/adr/README.md`'s OP-132 prose block and `ADR-0801` line 123 both still name
+`ADR-0800-op133-soft-deleted-image-and-null-preview-pins.md`, the file name this record
+carried before the renumber. The README sentence is repointed to
+[ADR-0802](ADR-0802-op133-soft-deleted-image-and-null-preview-pins.md) by card `t_5440d99c`.
+The frozen `ADR-0801` body is **deliberately not edited**: it records what that lane saw at
+its own head, and rewriting it would falsify its own ledger finding. Read this erratum as the
+resolution of that name, not as an unowned defect.
