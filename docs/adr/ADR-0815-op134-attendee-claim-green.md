@@ -11,7 +11,11 @@
   `apps/web/src/app/api/v1/me/attendee-sessions:claim/route.ts` and
   `apps/web/src/app/api/v1/me/events/route.ts` — plus the executable contract
   it makes true
-  ([ADR-0814](ADR-0814-op134-attendee-claim-red.md)).
+  ([ADR-0814](ADR-0814-op134-attendee-claim-red.md)); and, from the round-1
+  review's follow-up, `apps/web/src/test/integration/attendee-claim-endpoint-arms.test.ts`
+  (`t_08232689`, I8 ×3, I9), which cites this record for the two §6.7 arms it
+  pins and records its decisions in
+  [ADR-0818](ADR-0818-op134-claim-endpoint-arms-pins.md).
 - **Amends:** nothing. **Amended by:** nothing yet.
 - **Consumes:** `0815` (`Next free` advances to `0816`).
 - **Base:** `origin/main` `f9a0f27` + the RED pin pack `fcaf0d7`.
