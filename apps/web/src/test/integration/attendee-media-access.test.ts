@@ -8,7 +8,9 @@ import {
   galleryHandlers,
   mediaSigner,
   seedAnonymousGallery,
+  seedIdentifiedGallery,
   seedImage,
+  seedMatch,
   seedOriginalsPlan,
 } from "../helpers/attendee-gallery-flow";
 import { startTestApp, type TestApp } from "../helpers/authed-app";
@@ -57,6 +59,12 @@ import {
 
 /** The `originals.download` lifetime §6.6 states. */
 const ORIGINAL_TTL_SECONDS = 900;
+
+/** The `preview` lifetime §5.6 states (strictly between an original and a thumbnail). */
+const PREVIEW_TTL_SECONDS = 2 * 60 * 60;
+
+/** The three keys §6.6 gives the preview-url answer, sorted. */
+const PREVIEW_URL_KEYS = ["expiresAt", "ttlSeconds", "url"];
 
 /** The download job's poll cadence (§6.6). */
 const DOWNLOAD_POLL_MS = 3000;
@@ -320,5 +328,137 @@ describe("when a request carries no attendee credential", () => {
     const status = await downloadStatus(new ObjectId().toHexString());
     expect(status.status).toBe(401);
     expect((await errorBody(status)).code).toBe("authentication_required");
+  });
+});
+
+/* ────────── F1: the preview-url success path and its three refusals ──────── */
+
+/**
+ * The preview is the **middle** derivative (§5.6): identified callers only, two
+ * hours long, and it never addresses the original's bytes. It also carries no
+ * `originals.download` gate of its own — only the original does — so the plan
+ * refusal is pinned where it actually lives, on the gated route.
+ */
+describe("when an identified attendee asks for a preview", () => {
+  it("answers 201 with a two-hour signed URL that addresses the preview, never the original", async () => {
+    const world = await seedIdentifiedGallery(app, "op133-f1-ok", { matches: 1 });
+    const image = world.images.at(0);
+    if (image === undefined) {
+      throw new Error("expected a seeded image");
+    }
+
+    const before = Date.now();
+    const response = await requestPreview(world.event.slug, image.imageId.toHexString(), {
+      cookie: world.cookie,
+    });
+    const body = await bodyOf(response, 201, "POST preview-url");
+
+    expect(keysOf(body)).toEqual(PREVIEW_URL_KEYS);
+    expect(body.ttlSeconds).toBe(PREVIEW_TTL_SECONDS);
+
+    const url = new URL(String(body.url));
+    // §5.7: preview sits on `/p/`; `/o/` is the original's path.
+    expect(url.pathname).toBe(`/p/${image.contentHash}.jpg`);
+    const exp = Number(url.searchParams.get("exp"));
+    expect(Number.isInteger(exp)).toBe(true);
+    expect(exp * 1000).toBeGreaterThan(Date.now());
+    expect(url.searchParams.get("sig")).not.toBeNull();
+    expect(mediaSigner().verify(String(body.url))).toBe(true);
+
+    const expiresAt = Date.parse(String(body.expiresAt));
+    expect(expiresAt).toBeGreaterThanOrEqual(before + PREVIEW_TTL_SECONDS * 1000);
+    expect(expiresAt).toBeLessThanOrEqual(Date.now() + PREVIEW_TTL_SECONDS * 1000);
+  });
+
+  it("grants the preview but still refuses the original when the plan withholds originals", async () => {
+    const world = await seedIdentifiedGallery(app, "op133-f1-plan", { matches: 1 });
+    await seedOriginalsPlan(app, world.tenantKey, false);
+    const image = world.images.at(0);
+    if (image === undefined) {
+      throw new Error("expected a seeded image");
+    }
+    const imageId = image.imageId.toHexString();
+
+    const preview = await bodyOf(
+      await requestPreview(world.event.slug, imageId, { cookie: world.cookie }),
+      201,
+      "POST preview-url without originals.download"
+    );
+    expect(new URL(String(preview.url)).pathname).toBe(`/p/${image.contentHash}.jpg`);
+
+    // The entitlement gates the original only (§14.1, §6.6).
+    const original = await requestOriginal(world.event.slug, imageId, { cookie: world.cookie });
+    expect(original.status).toBe(403);
+    expect((await errorBody(original)).code).toBe("feature_not_available");
+  });
+
+  it("answers 403 forbidden for a visible image the attendee is not matched in", async () => {
+    const world = await seedIdentifiedGallery(app, "op133-f1-unmatched", { matches: 0 });
+    const image = await seedImage(
+      app,
+      { tenantKey: world.tenantKey, eventId: world.event.id },
+      { sequence: 1 }
+    );
+
+    const response = await requestPreview(world.event.slug, image.imageId.toHexString(), {
+      cookie: world.cookie,
+    });
+
+    expect(response.status).toBe(403);
+    expect((await errorBody(response)).code).toBe("forbidden");
+  });
+
+  it("answers 403 forbidden for an image the organizer hid, even though the attendee is in it", async () => {
+    const world = await seedIdentifiedGallery(app, "op133-f1-hidden", { matches: 0 });
+    const image = await seedImage(
+      app,
+      { tenantKey: world.tenantKey, eventId: world.event.id },
+      { sequence: 1, visibility: "hidden" }
+    );
+    await seedMatch(
+      app,
+      {
+        tenantKey: world.tenantKey,
+        eventId: world.event.id,
+        profileId: world.profileId,
+        subject: world.subject,
+      },
+      { imageId: image.imageId }
+    );
+
+    const response = await requestPreview(world.event.slug, image.imageId.toHexString(), {
+      cookie: world.cookie,
+    });
+
+    expect(response.status).toBe(403);
+    expect((await errorBody(response)).code).toBe("forbidden");
+  });
+
+  it("answers 404 for an image id that names no image of this event", async () => {
+    const world = await seedIdentifiedGallery(app, "op133-f1-unknown", { matches: 1 });
+
+    const response = await requestPreview(world.event.slug, new ObjectId().toHexString(), {
+      cookie: world.cookie,
+    });
+
+    expect(response.status).toBe(404);
+    expect((await errorBody(response)).code).toBe("not_found");
+  });
+
+  it("answers 403 identified_only to an anonymous attendee session", async () => {
+    const world = await seedAnonymousGallery(app, "op133-f1-anon", { matches: 1 });
+    const image = world.images.at(0);
+    if (image === undefined) {
+      throw new Error("expected a seeded image");
+    }
+
+    const response = await requestPreview(world.event.slug, image.imageId.toHexString(), {
+      cookie: world.cookie,
+    });
+
+    expect(response.status).toBe(403);
+    const error = await errorBody(response);
+    expect(error.code).toBe("forbidden");
+    expect(error.details?.reason).toBe("identified_only");
   });
 });
