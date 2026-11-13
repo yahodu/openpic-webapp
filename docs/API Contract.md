@@ -291,24 +291,24 @@ All other `PATCH` endpoints are last-write-wins and do not require `If-Match`.
 
 Enforced in `middleware.ts` via Upstash Ratelimit (sliding window). Keyed as documented; the stricter of the listed limits applies.
 
-| Class                | Endpoints                                                       | Limit                                                                                                                          |
-| -------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `auth.otp`           | Better Auth OTP send                                            | **5 / hour / contact**, 15 / hour / IP — aligns with the `auth.otp.*` throttle in notification §4.1                            |
-| `auth.verify`        | OTP verify                                                      | 10 / 10 min / contact, then exponential lockout → `auth.suspicious.blocked`                                                    |
-| `read.hot`           | `GET /me/notifications/unread-count`, `GET /p/events/{slug}/me` | 60 / min / principal                                                                                                           |
-| `read.normal`        | all other `GET`                                                 | 300 / min / principal                                                                                                          |
-| `write.normal`       | all other `POST`/`PATCH`/`DELETE`                               | 60 / min / principal                                                                                                           |
-| `upload.resolve`     | `POST /uploads/batch-resolve`                                   | 60 / min / user, max 500 hashes per call                                                                                       |
-| `upload.sign`        | `GET .../multipart/{id}/{partNumber}`                           | **900 / min / user** — deliberately high; Uppy signs every part and re-signs on retry                                          |
-| `upload.complete`    | multipart complete, single params                               | 600 / min / user                                                                                                               |
-| `attendee.session`   | `POST /p/attendee-sessions`                                     | **60 / hour / IP** — the endpoint is public, so the bucket is the client IP alone (no principal or contact exists)             |
-| `selfie.submit`      | `POST /p/events/{slug}/selfies`                                 | 6 / hour / attendee-session, 20 / hour / IP. Independent of the `selfies.per_attendee` entitlement (3), which is the hard cap. |
-| `liveness.challenge` | `POST /p/events/{slug}/liveness/challenges`                     | 12 / hour / attendee-session                                                                                                   |
-| `public.gallery`     | `/p/**` reads                                                   | 120 / min / attendee-session, 600 / min / IP                                                                                   |
-| `media.sign`         | `POST /media/signed-urls`                                       | 120 / min / principal, max 200 items per call                                                                                  |
-| `admin`              | `/admin/**`                                                     | 300 / min / admin                                                                                                              |
-| `webhook`            | `/webhooks/**`                                                  | **not rate limited**; protected by signature verification + `providerWebhookEvents` unique index                               |
-| `internal`           | `/internal/**`                                                  | 600 / min / secret                                                                                                             |
+| Class                | Endpoints                                                                                                       | Limit                                                                                                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth.otp`           | Better Auth OTP send                                                                                            | **5 / hour / contact**, 15 / hour / IP — aligns with the `auth.otp.*` throttle in notification §4.1                                                                       |
+| `auth.verify`        | OTP verify                                                                                                      | 10 / 10 min / contact, then exponential lockout → `auth.suspicious.blocked`                                                                                               |
+| `read.hot`           | `GET /me/notifications/unread-count`, `GET /p/events/{slug}/me`                                                 | 60 / min / principal                                                                                                                                                      |
+| `read.normal`        | all other `GET`                                                                                                 | 300 / min / principal                                                                                                                                                     |
+| `write.normal`       | all other `POST`/`PATCH`/`DELETE`                                                                               | 60 / min / principal                                                                                                                                                      |
+| `upload.resolve`     | `POST /uploads/batch-resolve`                                                                                   | 60 / min / user, max 500 hashes per call                                                                                                                                  |
+| `upload.sign`        | `GET .../multipart/{id}/{partNumber}`                                                                           | **900 / min / user** — deliberately high; Uppy signs every part and re-signs on retry                                                                                     |
+| `upload.complete`    | multipart complete, single params                                                                               | 600 / min / user                                                                                                                                                          |
+| `attendee.session`   | `POST /p/attendee-sessions`                                                                                     | **60 / hour / IP** — the endpoint is public, so the bucket is the client IP alone (no principal or contact exists)                                                        |
+| `selfie.submit`      | `POST /p/events/{slug}/selfies`, `POST /p/events/{slug}/selfies/uploads`, `POST /p/events/{slug}/selfies:reuse` | 6 / hour / attendee-session, 20 / hour / IP. Independent of the `selfies.per_attendee` entitlement (3), which is the hard cap; a reuse is charged as one of its attempts. |
+| `liveness.challenge` | `POST /p/events/{slug}/liveness/challenges`                                                                     | 12 / hour / attendee-session                                                                                                                                              |
+| `public.gallery`     | `/p/**` reads                                                                                                   | 120 / min / attendee-session, 600 / min / IP                                                                                                                              |
+| `media.sign`         | `POST /media/signed-urls`                                                                                       | 120 / min / principal, max 200 items per call                                                                                                                             |
+| `admin`              | `/admin/**`                                                                                                     | 300 / min / admin                                                                                                                                                         |
+| `webhook`            | `/webhooks/**`                                                                                                  | **not rate limited**; protected by signature verification + `providerWebhookEvents` unique index                                                                          |
+| `internal`           | `/internal/**`                                                                                                  | 600 / min / secret                                                                                                                                                        |
 
 Response on limit:
 
@@ -2113,9 +2113,12 @@ Auth `attendee` · Rate `liveness.challenge` · Precondition: consent granted
   "challengeId": "6706bb...",
   "challengeKind": "gesture",
   "spec": { "sequence": ["look_left", "blink", "look_center"], "timeoutMs": 15000 },
+  "nonce": "9f2c41d7b6e0...",
   "expiresAt": "2026-09-25T09:20:00.000Z"
 }
 ```
+
+`nonce` is 32 lowercase hex characters and is the only thing that binds the challenge to its evidence: the submit must echo it in `livenessEvidence.nonce` (compared case-insensitively), and a challenge the caller does not hold is a `mismatch`. A challenge is **single-use** — the submit that presents it spends it — and it lives **60 seconds** from issue, `expiresAt` being that inclusive deadline.
 
 `412 consent_required` with `details.requiredPolicyVersion` if consent is missing.
 
@@ -2127,20 +2130,23 @@ Auth `attendee` · Rate `selfie.submit`
 
 `201` → same presign envelope as §5.3 (`method`, `url`, `headers`, `expiresAt`, `confirmUrl`). Selfies are always single-PUT.
 
+A declared `size` above `platformSettings.upload.maxFileBytes` → `413 file_too_large` (`details.maxBytes`, `details.actualBytes`).
+
 ### `POST /api/v1/p/events/{slug}/selfies`
 
 Auth `attendee` · **Idempotency required** · Rate `selfie.submit` · Entitlements `selfies.per_attendee`
 
 ```json
 {
-  "uploadSessionId": "6706cc...",
   "hash": "b4c7e9...",
   "challengeId": "6706bb...",
-  "livenessFrameHashes": ["...", "...", "..."]
+  "livenessEvidence": { "nonce": "9f2c41d7b6e0...", "frameHashes": ["...", "...", "..."] }
 }
 ```
 
-Server: verifies the object, verifies the liveness challenge is unexpired and unused, creates/updates `attendeeEventProfiles` (creating with `subject.kind: "anonymous"` or `"user"`), inserts `selfies` with `processing.status: "queued"`, `processing.priority: "high"` (PRD: attendee selfies are high priority), enqueues to `q:selfie`.
+`hash` is the lowercase 64-hex SHA-256 of the bytes already PUT to the single-PUT presign of `…/selfies/uploads`; the object is addressed by nothing else, so the body carries **no upload-session id**. `livenessEvidence` echoes the challenge's `nonce` and carries at least one per-frame hash. Unknown properties are ignored; a body without `livenessEvidence` is `422 validation_failed`.
+
+Server: verifies the object, verifies the liveness challenge is the caller's, unexpired and unused (and that the evidence echoes its nonce), creates/updates `attendeeEventProfiles`, inserts `selfies` with `processing.status: "queued"`, `processing.priority: "high"` (PRD: attendee selfies are high priority), enqueues to `q:selfie`.
 
 `202` →
 
@@ -2158,19 +2164,48 @@ Server: verifies the object, verifies the liveness challenge is unexpired and un
 
 Failure paths:
 
-| Condition                         | Response                                                             |
-| --------------------------------- | -------------------------------------------------------------------- |
-| Consent missing                   | `412 consent_required`                                               |
-| Liveness challenge expired/reused | `409 liveness_challenge_invalid`                                     |
-| Selfie attempts exhausted         | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`) |
-| Upload window / gallery closed    | `409 gallery_closed`                                                 |
-| File too large                    | `413 file_too_large`                                                 |
+| Condition                                                     | Response                                                                                      |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Consent missing                                               | `412 consent_required`                                                                        |
+| Object absent from storage                                    | `404 not_found`                                                                               |
+| Challenge expired, spent, not the caller's, or nonce mismatch | `409 liveness_challenge_invalid` (`details.reason` `expired` \| `already_used` \| `mismatch`) |
+| Selfie attempts exhausted                                     | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`)                          |
+| Object being purged after a withdrawal                        | `409 conflict` (`details.reason: "selfie_purged"`)                                            |
 
 The **outcome** of detection/liveness is asynchronous (`attendee.selfie.accepted` / `attendee.selfie.rejected`, notification §4.8) and observed through §6.4. `attendee.selfie.rejected` emails only when the attendee is identified **and** has failed twice consecutively.
 
+**Submission is two-step.** A submit only queues an attempt: the `selfies` row is `queued` and inactive, the profile stays `processing`, `activeSelfieId` is not moved, `matchCount` is not updated and no notification is emitted. Until the confirmation below, the selfie is invisible, uncounted and unnotified.
+
+### `POST /api/v1/p/events/{slug}/selfies/{selfieId}/confirm`
+
+Auth `attendee` · Precondition: consent granted · No body
+
+The second step of the two-step submission, and **the only publisher that ships today**. It activates the addressed row (`isActive: true`, the profile's other selfies deactivated, `activeSelfieId` set), writes `attendeeEventProfiles.status` and `matchCount` (the profile's `faceMatches` count once the embedding is on the row, `0` before), and emits one `attendee.matches.new` for the selfie when it produced at least one row — `payload.count` is the number of rows **that selfie** produced, not the profile's `matchCount`, and the outbox row is deduped on `attendee.matches.new:{eventId}:{profileId}:{selfieId}`.
+
+`200` → the same seven-key envelope as the submit above:
+
+```json
+{
+  "selfieId": "6706dd...",
+  "profileId": "6706ee...",
+  "status": "ready",
+  "pollUrl": "/api/v1/p/events/k7m2xq9p/me",
+  "pollIntervalMs": 2000,
+  "attemptsUsed": 1,
+  "attemptsRemaining": 2
+}
+```
+
+`status` is `ready` once the worker's embedding is on the row; before that the row still activates, the answer is `200` with `status: "processing"`, and nothing is published. A repeat confirmation answers the same `200` and emits nothing further — the dedupe key admits one `attendee.matches.new` per selfie. `GET …/me` (§6.4) is read-only, so a `face_matches` row that arrives after the activation is announced by no shipped endpoint; ADR-0808 owns that publication.
+
+| Condition                                           | Response                                       |
+| --------------------------------------------------- | ---------------------------------------------- |
+| Consent missing                                     | `412 consent_required`                         |
+| `selfieId` malformed, unknown, or another subject's | `404 not_found` (`details.resource: "selfie"`) |
+
 ### `GET /api/v1/p/selfies/reusable?cursor=&limit=`
 
-Auth `user` (identified only) — the PRD's "reuse a previous selfie".
+Auth `user` (identified only) · Rate `read.normal` (§0.11's `GET` catch-all) — the PRD's "reuse a previous selfie".
 
 Request: `?cursor=<opaque>&limit=<1..100>` (§0.8). Default `limit` **40**, maximum **100**; a value above 100 is clamped. An unparseable or foreign `cursor` → `400 invalid_cursor`; a non-integer or `< 1` `limit` → `422 validation_failed`.
 
@@ -2190,7 +2225,27 @@ Request: `?cursor=<opaque>&limit=<1..100>` (§0.8). Default `limit` **40**, maxi
 
 Sorted `createdAt` **desc**, `_id` desc as the tiebreak — keyset pagination, so a page boundary never repeats or skips a row that shares a `createdAt`. `nextCursor` is `null` when `hasMore` is `false`. There is **no `page.total`**: §0.8 forbids a total that would need an aggregation. A client that previews only the newest selfies may ignore `page`; a client that lists every reusable selfie must follow `nextCursor` until it is `null`. (ADR-0810.)
 
-Returns **crops/previews only**, never the embedding. Reuse: `POST /p/events/{slug}/selfies:reuse` with `{ "selfieId": "..." }` → `202`, same envelope as above, skipping upload and liveness.
+Returns **crops/previews only**, never the embedding. Only an activated selfie is listed.
+
+### `POST /api/v1/p/events/{slug}/selfies:reuse`
+
+Auth `attendee` · Rate `selfie.submit` · Entitlements `selfies.per_attendee` · Precondition: consent granted for the addressed event
+
+`{ "selfieId": "6706dd..." }` — one of the caller's active selfies from the listing above. Upload and liveness are skipped.
+
+For a well-formed body, precedence is fixed: consent **for the addressed event** first (a reuse without it is `412` even when the source selfie does not exist), then ownership of the source selfie, then that the source still exists.
+
+`202` → the same seven-key envelope as the submit above, `status: "processing"`. The reuse creates this event's profile and its own unconfirmed selfie row, so **the confirmation above is still required** before anything is published.
+
+Failure paths:
+
+| Condition                                     | Response                                                             |
+| --------------------------------------------- | -------------------------------------------------------------------- |
+| Consent missing for the addressed event       | `412 consent_required`                                               |
+| `selfieId` not 24 hex                         | `422 validation_failed`                                              |
+| Source selfie foreign, unknown or withdrawn   | `404 not_found` (`details.resource: "selfie"`)                       |
+| Selfie attempts exhausted                     | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`) |
+| Source object being purged after a withdrawal | `409 conflict` (`details.reason: "selfie_purged"`)                   |
 
 ## 6.4 Participation status (polling)
 
@@ -3590,7 +3645,6 @@ Every `error.code` in v1. **Clients branch on `code` only.** Codes are append-on
 | `policy_version_stale`          | 422    | no        | `{ currentPolicyVersion, policyUrl }`               |
 | `age_confirmation_required`     | 422    | no        | —                                                   |
 | `liveness_challenge_invalid`    | 409    | no        | `{ reason: "expired"\|"already_used"\|"mismatch" }` |
-| `gallery_closed`                | 409    | no        | `{ closedAt }`                                      |
 | `gallery_expired`               | 410    | no        | `{ expiredAt }`                                     |
 | `download_expired`              | 410    | no        | `{ rerequestUrl }`                                  |
 | `session_claimed_by_other_user` | 409    | no        | —                                                   |
@@ -3736,7 +3790,6 @@ export type ErrorCode =
   | "policy_version_stale"
   | "age_confirmation_required"
   | "liveness_challenge_invalid"
-  | "gallery_closed"
   | "gallery_expired"
   | "download_expired"
   | "session_claimed_by_other_user"
