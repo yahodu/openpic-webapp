@@ -1,3 +1,9 @@
+## [1.61.3](https://github.com/yahodu/openpic-webapp/compare/v1.61.2...v1.61.3) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 charge reuse against the attempt cap and close the submit TOCTOU ([#554](https://github.com/yahodu/openpic-webapp/issues/554)) ([982608f](https://github.com/yahodu/openpic-webapp/commit/982608f3a74ea17046cd03b094b99068736e4a4f))
+
 ## [1.61.2](https://github.com/yahodu/openpic-webapp/compare/v1.61.1...v1.61.2) (2026-11-13)
 
 ### Bug Fixes
