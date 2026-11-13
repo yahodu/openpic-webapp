@@ -1,11 +1,11 @@
 import { ObjectId, type ClientSession, type Db } from "mongodb";
 
 import { COLLECTIONS } from "@/server/db/collections";
-import { withTransaction } from "@/server/db/transaction";
+import { isTransactionRetryLimitError, withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
-import { platformRepo } from "@/server/repos";
+import { platformRepo, type RepositoryCollection } from "@/server/repos";
 import { decideTerminalOutcome } from "./invitation-decision";
 import { hexId, type InvitationDecisionBody, type InvitationRow } from "./invitation-dto";
 
@@ -50,6 +50,55 @@ export interface DecisionInvitationRow extends InvitationRow {
 
 /** How many times a lost race is re-read before giving up. */
 const RACE_ATTEMPTS = 3;
+
+/**
+ * How long a loser of the decision race waits for the winner's commit, in ms.
+ *
+ * shortcut: a fixed ceiling, not the winner's own duration; a decision
+ * transaction taking longer than this answers `500` as before. Upgrade to a
+ * shared per-invitation decision lock if a bounded wait proves too short.
+ */
+const RIVAL_COMMIT_TIMEOUT_MS = 1_000;
+
+/** Poll interval while waiting for the winner's committed decision, in ms. */
+const RIVAL_COMMIT_POLL_MS = 25;
+
+/** Resolve after `ms`, for the bounded wait below. */
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
+ * Wait, bounded, for a concurrent decision on the same invitation to commit.
+ *
+ * Two accepts of one invitation collide on the same document inside their
+ * transactions. The loser's bounded retry budget is spent **before** the winner
+ * commits (measured: three attempts inside the winner's open transaction), so
+ * the row still reads `pending` at that moment and a single re-read would
+ * answer `500`. Poll until the winner's commit is visible instead (ADR-0667,
+ * the shape ADR-0664 §Amendment gave the concurrent member removal).
+ *
+ * @param invitations - The `invitations` collection.
+ * @param invitationId - The invitation both callers decided.
+ * @returns `true` once the invitation is terminal, `false` when the wait ran
+ *   out without it.
+ */
+async function rivalDecisionCommitted(
+  invitations: RepositoryCollection,
+  invitationId: ObjectId
+): Promise<boolean> {
+  for (let waited = 0; waited <= RIVAL_COMMIT_TIMEOUT_MS; waited += RIVAL_COMMIT_POLL_MS) {
+    const row = (await invitations.findOne({
+      _id: invitationId,
+    })) as DecisionInvitationRow | null;
+    if (row !== null && row.status !== "pending") {
+      return true;
+    }
+    await sleep(RIVAL_COMMIT_POLL_MS);
+  }
+  return false;
+}
 
 /** The status one terminal transition writes. */
 function terminalStatus(decision: InvitationDecision): "accepted" | "rejected" {
@@ -255,6 +304,8 @@ function answerTerminal(
  * @param invitationId - The invitation's `_id`.
  * @returns The decision body (`alreadyResolved` names a replay).
  * @throws `410` for a revoked or expired invitation.
+ * @throws The original failure when a lost race finds no settled invitation
+ *   within the bounded wait ({@link rivalDecisionCommitted}).
  */
 export async function decideInvitation(
   ctx: DecisionContext,
@@ -263,7 +314,24 @@ export async function decideInvitation(
   const invitations = platformRepo(ctx.db).collection(COLLECTIONS.invitations);
 
   for (let attempt = 0; attempt < RACE_ATTEMPTS; attempt += 1) {
-    if (await transition(ctx, invitationId)) {
+    let performed: boolean;
+    try {
+      performed = await transition(ctx, invitationId);
+    } catch (error) {
+      // Losing the race can spend the whole retry budget while the winner's
+      // transaction is still open. Nothing of the loser's attempt was written,
+      // so wait for the winner's commit and answer the same settled body it
+      // answers (§0.7); a race nobody settled stays the original `500`.
+      if (
+        !isTransactionRetryLimitError(error) ||
+        !(await rivalDecisionCommitted(invitations, invitationId))
+      ) {
+        throw error;
+      }
+      performed = false;
+    }
+
+    if (performed) {
       const row = (await invitations.findOne({
         _id: invitationId,
       })) as DecisionInvitationRow | null;

@@ -127,7 +127,141 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   decision path but is not part of this card's surface (it does not exist on
  *   the trunk), so "the in-app action returns 410" is pinned on
  *   `POST /me/invitations/{id}/accept` — the endpoint that owns the transition.
+ * - **I-A6** — the concurrent accept pair is fired through `Promise.all` **and**
+ *   held at the transaction boundary (`invitationRaceGate`), because `Promise.all`
+ *   alone leaves the interleaving to the event loop: the second request's
+ *   admission reads take milliseconds, so by the time it opens its transaction
+ *   the first has usually committed and the pair measures nothing (green on
+ *   every isolated run of the file, ADR-0666). The latch is a measurement device, not
+ *   a requirement on the implementation: a route that serialises the pair never
+ *   brings the second racer to the boundary, and the first is released by the
+ *   grace expiry instead of being parked forever.
  */
+
+/* ────────────────────────────── the race gate ───────────────────────────── */
+
+/** How many accepts the one concurrent case fires at the same instant. */
+const CONCURRENT_ACCEPTS = 2;
+
+/**
+ * How long a racer waits for its rival at the transaction boundary before a
+ * serialising implementation is let through.
+ *
+ * The gate exists to make the case deterministic, not to require a particular
+ * fix: an implementation that serialises the two accepts before their
+ * transactions never brings the second racer to this line, so the first is
+ * released by the expiry instead of being parked forever.
+ */
+const INVITATION_RACE_GRACE_MS = 250;
+
+/**
+ * How long the winning racer's transaction is held open **after** its writes
+ * and **before** it commits, once its rival has met it at the boundary.
+ *
+ * Meeting at the boundary alone is not enough: measured on the trunk, the loser
+ * spends its whole retry budget in ~5 ms and then reads the row the winner has
+ * already committed, so it answers `200` by luck — 3/3 green. A peer whose
+ * commit lands a little later (a loaded database, majority write concern) is
+ * what turned the same pair into `[200, 500]` on CI, and no fixed retry budget
+ * can bound a peer that is slower still. Holding the winner's commit for a time
+ * that is far longer than any budget can spend (each attempt is one round trip)
+ * makes the pair's outcome a property of the contract instead of the clock: the
+ * loser must answer from the settled invitation, never from a spent budget.
+ *
+ * The hold is bounded and modest, so a fix that waits for the settled row
+ * (the bounded-wait shape this file's member-removal cases already use) still
+ * answers within its own ceiling.
+ */
+const INVITATION_RIVAL_HOLD_MS = 100;
+
+/**
+ * A bounded latch on the decision's transaction boundary.
+ *
+ * `Promise.all` alone leaves the interleaving to the event loop, and this case
+ * was measured passing on the defect when the two requests happened to run one
+ * after the other — a time-based stagger is not a pin (ADR-0666). Every racer
+ * passes this gate **after** the decision's admission and **before** its
+ * transaction opens, so both requests take their contention window together;
+ * the racers that met are then held past their writes, so one of them commits
+ * after the other has spent its retry budget.
+ *
+ * The latch is armed only by the concurrent case; every other transaction in
+ * this file passes through it untouched, and a lone racer is released by the
+ * grace expiry without being held.
+ */
+const invitationRaceGate = vi.hoisted(() => {
+  let armed = false;
+  let arrivals = 0;
+  let expected = 0;
+  let released: Promise<void> = Promise.resolve();
+  let release = (): void => undefined;
+
+  return {
+    /**
+     * Close the gate for `count` racers.
+     *
+     * @param count - How many racers must arrive before either proceeds.
+     */
+    close(count: number): void {
+      armed = true;
+      arrivals = 0;
+      expected = count;
+      released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+    /**
+     * Wait at the gate until every racer has arrived, or the grace expires.
+     *
+     * @param graceMs - The longest a lone racer is held.
+     * @returns `true` when a rival arrived within the grace, so this racer's
+     *   transaction must be held open before it commits.
+     */
+    async arrive(graceMs: number): Promise<boolean> {
+      if (!armed) {
+        return false;
+      }
+      arrivals += 1;
+      if (arrivals >= expected) {
+        armed = false;
+        release();
+        return true;
+      }
+      let expired = false;
+      const expiry = setTimeout(() => {
+        expired = true;
+        release();
+      }, graceMs);
+      await released;
+      clearTimeout(expiry);
+      armed = false;
+      return !expired;
+    },
+  };
+});
+
+vi.mock("@/server/db/transaction", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/db/transaction")>();
+  return {
+    ...actual,
+    withTransaction: async <T>(
+      fn: (session: ClientSession) => Promise<T>,
+      options?: Parameters<typeof actual.withTransaction>[1]
+    ): Promise<T> => {
+      const met = await invitationRaceGate.arrive(INVITATION_RACE_GRACE_MS);
+      const body = async (session: ClientSession): Promise<T> => {
+        const result = await fn(session);
+        if (met) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, INVITATION_RIVAL_HOLD_MS);
+          });
+        }
+        return result;
+      };
+      return actual.withTransaction(body, options);
+    },
+  };
+});
 
 /** The five keys every §2.3 decision body carries. */
 const DECISION_REQUIRED_KEYS = ["alreadyResolved", "id", "resolvedAt", "resolvedVia", "status"];
@@ -1149,6 +1283,11 @@ describe("concurrent decisions", () => {
     const fixture = await seedEvent("op121-i5");
     const invitee = await signInVerified(makeIdentity("op121-i5-invitee"));
     const invitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
+
+    // Both accepts are held at their transaction boundary until the other
+    // arrives (bounded by the grace), so the pair contends for the same row
+    // instead of leaving the interleaving to the event loop (ADR-0666).
+    invitationRaceGate.close(CONCURRENT_ACCEPTS);
 
     const [first, second] = await Promise.all([
       acceptInApp(inAppDecision(invitee.cookie, invitationId, "accept")),
