@@ -91,6 +91,9 @@ const SELFIE_202_KEYS = [
   "status",
 ];
 
+/** The default attempt budget (§6.1 fallback, `settings.selfie.attemptsAllowed`). */
+const ATTEMPTS_ALLOWED = 3;
+
 /** Any key or value that would leak the biometric vector or a raw score. */
 const VECTOR_LEAK = /embedding|vector|similarity/i;
 
@@ -363,7 +366,7 @@ describe("when the upload window closed an hour ago", () => {
     expect(keysOf(body)).toEqual(SELFIE_202_KEYS);
     expect(body.status).toBe("processing");
     expect(body.attemptsUsed).toBe(1);
-    expect(body.attemptsRemaining).toBe(2);
+    expect(body.attemptsRemaining).toBe(ATTEMPTS_ALLOWED - 1);
     expect(await selfieCountFor(event.id)).toBe(1);
   });
 
