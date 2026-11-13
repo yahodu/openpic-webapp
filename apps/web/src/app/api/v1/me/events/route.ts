@@ -87,7 +87,8 @@ export const GET = defineRoute({
           startAt: item.startAt === null ? null : item.startAt.toISOString(),
           displayTimeZone: item.displayTimeZone,
           slug: item.slug,
-          galleryUrl: `/e/${item.slug}/gallery`,
+          // No active access link means no gallery address: the claim's same answer.
+          galleryUrl: item.slug === "" ? "" : `/e/${item.slug}/gallery`,
           // `events` has no cover-asset pointer yet; a null is the honest answer.
           coverThumbnailUrl: null,
           matchCount: item.matchCount,
