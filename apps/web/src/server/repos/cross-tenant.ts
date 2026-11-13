@@ -1,7 +1,9 @@
-import { ObjectId, type Db } from "mongodb";
+import { ObjectId, type Db, type Document } from "mongodb";
 
 import { COLLECTIONS } from "../db/collections";
 import { getDb } from "../db/mongo";
+import { type Cursor } from "../http/cursor";
+import { appError } from "../http/errors";
 
 import { toDto } from "./dto";
 
@@ -57,6 +59,12 @@ export interface CrossTenantPage {
   readonly offset?: number;
 }
 
+/** Offset/limit plus a keyset cursor, for the reads that page on §0.8's rules. */
+export interface CrossTenantCursorPage extends CrossTenantPage {
+  /** The decoded cursor from the previous page, or absent for the first page. */
+  readonly cursor?: Cursor;
+}
+
 /** One page of a cross-tenant read. */
 export interface AttendeeProfilePage {
   readonly items: AttendeeProfileDto[];
@@ -75,6 +83,9 @@ export interface ReusableSelfie {
 export interface ReusableSelfiePage {
   readonly items: ReusableSelfie[];
 }
+
+/** A 24-hex ObjectId, the only accepted `_id` tiebreaker in a cursor. */
+const OBJECT_ID_HEX = /^[0-9a-f]{24}$/i;
 
 /** The stored half of a selfie the reusable listing projects (§16.4). */
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
@@ -128,13 +139,13 @@ export interface CrossTenantReads {
    * the quality verdict and **never** the face vector (§6.3, §0.15).
    *
    * @param userId - The data subject's user id (the caller).
-   * @param page - Offset/limit pagination; offset defaults to 0.
+   * @param page - Offset/limit pagination plus the previous page's cursor.
    * @param db - The database handle; defaults to the shared client.
    * @returns The page of reusable selfies, newest first.
    */
   findReusableSelfiesBySubjectUser(
     userId: string,
-    page?: CrossTenantPage,
+    page?: CrossTenantCursorPage,
     db?: Db
   ): Promise<ReusableSelfiePage>;
 
@@ -181,16 +192,41 @@ async function findAttendeeProfilesBySubjectUser(
 }
 
 /**
+ * The keyset filter that follows `cursor` on a `createdAt`-desc list (§0.8).
+ *
+ * The strict `$or` on the compound `(createdAt, _id)` key is what keeps a row
+ * that shares an instant with the last one of the previous page from being
+ * skipped; both halves are revived to their stored BSON types, because a string
+ * `_id` compares unequal to every `ObjectId`.
+ *
+ * @param cursor - The decoded cursor, or `null` on the first page.
+ * @returns The filter fragment, or the empty filter.
+ * @throws {AppError} `invalid_cursor` (400) when a half is not a stored type.
+ */
+function reusableKeysetFilter(cursor: Cursor | null): Document {
+  if (cursor === null) {
+    return {};
+  }
+  const at = new Date(cursor.c);
+  if (Number.isNaN(at.getTime()) || !OBJECT_ID_HEX.test(cursor.i)) {
+    throw appError("invalid_cursor");
+  }
+  return {
+    $or: [{ createdAt: { $lt: at } }, { createdAt: at, _id: { $lt: new ObjectId(cursor.i) } }],
+  };
+}
+
+/**
  * The caller's reusable selfies, newest first (contract §6.3, schema §16.4).
  *
  * @param userId - The data subject's user id (hex).
- * @param page - Offset/limit pagination; offset defaults to 0.
+ * @param page - Offset/limit pagination plus the previous page's cursor.
  * @param db - The database handle; defaults to the shared client.
  * @returns The page, projected to what the listing may expose.
  */
 async function findReusableSelfiesBySubjectUser(
   userId: string,
-  page: CrossTenantPage = {},
+  page: CrossTenantCursorPage = {},
   db: Db = getDb()
 ): Promise<ReusableSelfiePage> {
   const offset = page.offset ?? 0;
@@ -198,10 +234,14 @@ async function findReusableSelfiesBySubjectUser(
   let cursor = db
     .collection<ReusableSelfieDocument>(COLLECTIONS.selfies)
     .find(
-      { "subject.userId": subjectUserValue(userId), isActive: true },
+      {
+        "subject.userId": subjectUserValue(userId),
+        isActive: true,
+        ...reusableKeysetFilter(page.cursor ?? null),
+      },
       { projection: { _id: 1, createdAt: 1, contentHash: 1, quality: 1 } }
     )
-    .sort({ createdAt: -1 });
+    .sort({ createdAt: -1, _id: -1 });
 
   if (offset > 0) {
     cursor = cursor.skip(offset);
