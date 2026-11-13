@@ -46,7 +46,7 @@ import { bodyOf, keysOf, nextIp, requestFor } from "../helpers/selfie-flow";
  * | R3 | `POST /api/v1/p/events/{slug}/images/{imageId}/original-url` | `201 {url, expiresAt, ttlSeconds}`, `ttlSeconds: 900` |
  * | R4 | `GET …/me` **and** `GET …/gallery` on an event with `retentionExpiresAt: null` | `200` with `galleryExpiresAt: null` |
  * | R5 | `POST /api/v1/p/events/{slug}/downloads` | `202 {downloadId, status: "queued", pollUrl, pollIntervalMs: 3000}` (§6.6) |
- * | R6 | `GET /api/v1/p/downloads/{downloadId}` for the job R5 queued | `200` with the eight §6.6 status keys, `url` and `expiresAt` null while queued |
+ * | R6 | `GET /api/v1/p/downloads/{downloadId}` for a queued job | `200` with the eight §6.6 status keys, `url` and `expiresAt` null while queued |
  *
  * §6.5's own `410 gallery_expired` is scoped to "`retentionExpiresAt` has passed
  * **and the purge has run**", so it belongs to the purge lane's own records and
