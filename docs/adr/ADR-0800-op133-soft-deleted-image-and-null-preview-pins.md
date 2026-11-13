@@ -139,6 +139,14 @@ and neither pin is satisfied by the other.
   run is **16 passed (16)**. `attendee-participation-status.test.ts` 11 → 13;
   focused **13 passed (13)**. Both files together: **29 passed (29)** on the
   branch cut (`origin/main` `55e665a`).
+- **Full suite + coverage.** `TMPDIR=/root/tmp-mongo npx vitest run --project unit
+  --project integration --coverage` on this branch: **290 files, 4162 passed |
+  3 skipped (4165), exit 0**, statements `92.57 %`, branches `81.09 %`,
+  functions `96.99 %`, lines `92.74 %` — every configured bar met, none relaxed.
+  A first run of the same command hit two `5000ms` timeouts in
+  `subscription-read.test.ts` and `tenant-members.test.ts` (unrelated files, no
+  shared code with this pack); both pass in isolation (`30 passed (30)`), which
+  is the notification-timeout flake recorded as F3 on card `t_2c32cef3`.
 - **What the F1 pin does not cover.** It pins the **route-level read** — the
   predicate as observed through `preview-url` and `original-url` — not the
   projection or the update path that stamps `deletedAt`; the organizer's delete
