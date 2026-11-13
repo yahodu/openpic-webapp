@@ -10,6 +10,7 @@ import { getAppEnv } from "@/server/config/env";
 import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
+import { optionalJsonBody } from "@/server/http/optional-json-body";
 
 /**
  * `POST /api/v1/me/attendee-sessions:claim` — link an anonymous attendee
@@ -72,7 +73,6 @@ function missingSessionToken(): Error {
 
 export const POST = defineRoute({
   route: "/api/v1/me/attendee-sessions:claim",
-  body: claimBodySchema,
   response: claimResponseSchema,
   auth: (ctx, request) => requireAuth("user", { auth: getAuth(), database: getDb() })(ctx, request),
   handler: async (ctx) => {
@@ -82,7 +82,11 @@ export const POST = defineRoute({
       throw appError("internal_error");
     }
 
-    const token = ctx.body.sessionToken ?? attendeeTokenFrom(ctx.request);
+    // §6.7's body is optional — the cookie is the usual source, so the stream
+    // is read here rather than declared as `body:`, which would answer a
+    // bodyless request `415`.
+    const body = await optionalJsonBody(ctx.request, claimBodySchema);
+    const token = body?.sessionToken ?? attendeeTokenFrom(ctx.request);
     if (token === null || token === "") {
       throw missingSessionToken();
     }
