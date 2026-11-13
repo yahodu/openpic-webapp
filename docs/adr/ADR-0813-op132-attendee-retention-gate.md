@@ -329,14 +329,17 @@ since, so nothing reads as "open" that the trunk says is closed.
   `callerProfileId`/`ownsJob`
   (`apps/web/src/app/api/v1/p/downloads/[downloadId]/route.ts:50-59`). Both arms
   are pinned now.
-- **Low, routed, still open — the contract's `unhide`.** `docs/API Contract.md:2359`
+- **Low, routed — the contract's `unhide` (decided).** `docs/API Contract.md:2359`
   documents `POST …/matches/{matchId}/hide` · `…/unhide`, but only the `hide`
   route exists, and [ADR-0793](ADR-0793-op133-attendee-gallery-red.md):230 and
   [ADR-0794](ADR-0794-op133-attendee-gallery-green.md):283 record `unhide` as
   deliberately out of scope — so the documented pair answers `404` on its second
-  member. Orchestrator decision card `t_75db3204` owns the correction.
-  §"Explicitly not gated" keeps its `hide/unhide` wording: it names the surface the
-  contract lists, and this record is not retracted for a contract defect.
+  member. Decision card `t_75db3204` has settled it: §6.5 will document `hide`
+  only, `unhide` is **not shipped and will not be built**, with child cards
+  `t_f7de81f3` (contract amendment) and `t_447590bb` (verification).
+  §"Explicitly not gated" keeps its `hide/unhide` wording: after the amendment
+  that phrase is **inert for `unhide`** — there is no route to gate — not false,
+  and this record is not retracted for a contract defect.
 - **Info, no card — the `/me` key count.**
   `apps/web/src/app/api/v1/p/events/[slug]/me/route.ts:86` says "§6.4's fourteen
   keys plus the client's `latestMatchCursor`", while the body answers **fourteen**
