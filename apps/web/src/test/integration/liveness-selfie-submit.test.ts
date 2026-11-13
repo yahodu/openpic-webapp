@@ -25,10 +25,13 @@ import {
   submitHappyPath,
   submitSelfie,
   uploadSelfie,
+  withdrawConsent,
   type SeededEvent,
   type UploadedSelfie,
   handlers,
 } from "../helpers/selfie-flow";
+import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-submit";
+import { getObjectStorage } from "@/server/storage/get-object-storage";
 
 /**
  * Integration / contract — liveness challenge, selfie submit, the attempt
@@ -801,5 +804,153 @@ describe("the confirmation route", () => {
     expect(response.status).toBe(401);
     const profile = await profileRow();
     expect(profile.activeSelfieId).toBeNull();
+  });
+});
+
+/* ────────── F1: the object's owner row, its retention and its erasure ────── */
+
+/**
+ * F1 of the OP-132 round-1 review (card `t_dd9cbd7c`). The selfie's bytes are
+ * biometric data, so a submit must leave an owner row that the erasure path can
+ * follow, a retention deadline the TTL sweep can act on, and — once the attendee
+ * withdraws consent — no readable object at all.
+ *
+ * ## Contract expected of the implementation
+ *
+ * - `POST …/selfies` creates **one** `mediaAssets` row for the uploaded content
+ *   hash (schema §15.2 `kind: "selfie"`, §16.1 `refCount`), and stores its id on
+ *   the `selfies` row's `assetId` (§16.4 "The image") instead of `null`.
+ * - The same `selfies` row carries an `expireAt` (§16.4 TTL field) in the future
+ *   from the moment it is queued — retention is not a property of confirmation.
+ * - `DELETE …/consent` (OP-131) deletes the `selfies` and `faceMatches` rows,
+ *   reports them in `X-Deleted-Counts`, **and** removes the bytes from storage,
+ *   so `getObject` at the selfie's own location/object key rejects `not_found`.
+ *   The object is read back through `getObjectStorage()` — the memoized port the
+ *   submit route wrote through — so the case measures the stored object itself,
+ *   not a row that claims to describe it.
+ */
+
+/** A stored `mediaAssets` row, as these cases read it (schema §16.1). */
+interface MediaAssetRow {
+  readonly _id: ObjectId;
+  readonly kind: string;
+  readonly contentHash: string;
+  readonly refCount?: number;
+}
+
+/** The stored `selfies` fields these cases read (schema §16.4). */
+interface AccountedSelfieRow {
+  readonly contentHash: string;
+  readonly assetId?: ObjectId | null;
+  readonly expireAt?: Date | null;
+  readonly createdAt: Date;
+  readonly processing: { readonly status: string };
+}
+
+/** The one stored `selfies` row for `selfieId`, failing loudly when absent. */
+async function selfieById(selfieId: string): Promise<AccountedSelfieRow> {
+  const row = (await app.db
+    .collection("selfies")
+    .findOne({ _id: new ObjectId(selfieId) })) as unknown as AccountedSelfieRow | null;
+  if (row === null) {
+    throw new Error(`expected a stored selfie ${selfieId}`);
+  }
+  return row;
+}
+
+describe("when a selfie's bytes are submitted", () => {
+  it("records one mediaAssets row of kind selfie with refCount 1 and points the selfie at it", async () => {
+    const ready = await readyEvent("op132-f1-asset");
+    const { hash } = makeSelfieBytes("f1-asset");
+
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "f1-asset",
+    });
+
+    const assets = (await app.db
+      .collection(COLLECTIONS.mediaAssets)
+      .find({ kind: "selfie" })
+      .toArray()) as unknown as MediaAssetRow[];
+    expect(assets).toHaveLength(1);
+    const [asset] = assets;
+    if (asset === undefined) {
+      throw new Error("expected one mediaAssets row of kind selfie");
+    }
+    expect(asset.contentHash).toBe(hash);
+    expect(asset.refCount).toBe(1);
+
+    const selfie = await selfieById(submitted.selfieId);
+    expect(selfie.contentHash).toBe(hash);
+    expect(selfie.assetId).toEqual(asset._id);
+  });
+
+  it("stamps the queued selfie row with an expireAt after its createdAt", async () => {
+    const ready = await readyEvent("op132-f1-expiry");
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "f1-expiry",
+    });
+
+    // No confirmation in this case: the deadline is a property of the row.
+    const selfie = await selfieById(submitted.selfieId);
+    expect(selfie.processing.status).toBe("queued");
+
+    const expireAt = selfie.expireAt;
+    expect(expireAt).toBeInstanceOf(Date);
+    if (!(expireAt instanceof Date)) {
+      throw new Error(
+        `expected the selfie row to carry an expireAt date, received ${String(expireAt)}`
+      );
+    }
+    expect(expireAt.getTime()).toBeGreaterThan(selfie.createdAt.getTime());
+    expect(expireAt.getTime()).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("when a confirmed selfie's consent is withdrawn", () => {
+  it("erases the stored bytes along with the rows and reports the counts", async () => {
+    const ready = await readyEvent("op132-f1-erasure");
+    const { hash } = makeSelfieBytes("f1-erasure");
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "f1-erasure",
+    });
+    const profile = await profileRow();
+    await finishSelfieWorker(app, {
+      selfieId: submitted.selfieId,
+      profileId: submitted.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: profile.subject,
+      matches: 2,
+    });
+    const confirmed = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(confirmed.status).toBe(200);
+
+    // The object is really stored before the withdrawal, so the case cannot
+    // pass by measuring bytes that were never uploaded.
+    const storage = getObjectStorage();
+    const storedBefore = await storage.getObject(SELFIE_LOCATION_KEY, selfieObjectKey(hash));
+    expect(storedBefore.byteLength).toBeGreaterThan(0);
+
+    const response = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("x-deleted-counts")).toBe("selfies=1;embeddings=1;matches=2");
+    expect(await app.db.collection("selfies").countDocuments({})).toBe(0);
+    expect(await app.db.collection(COLLECTIONS.faceMatches).countDocuments({})).toBe(0);
+    await expect(
+      storage.getObject(SELFIE_LOCATION_KEY, selfieObjectKey(hash))
+    ).rejects.toMatchObject({ code: "not_found" });
   });
 });
