@@ -1,3 +1,9 @@
+## [1.61.2](https://github.com/yahodu/openpic-webapp/compare/v1.61.1...v1.61.2) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 enforce the selfies TTL index and the kind-aware asset dedupe ([#553](https://github.com/yahodu/openpic-webapp/issues/553)) ([13bb8f5](https://github.com/yahodu/openpic-webapp/commit/13bb8f5c04085ad5aa45b66a4a54179359a677c0))
+
 ## [1.61.1](https://github.com/yahodu/openpic-webapp/compare/v1.61.0...v1.61.1) (2026-11-13)
 
 ### Bug Fixes
