@@ -109,7 +109,7 @@ export const POST = defineRoute({
     // §6.3: the object the client uploaded must be there before anything is
     // charged against the attendee's budget. The port's `not_found` is reshaped
     // here so the refusal names the resource, as the confirm route does for the
-    // same selfie (ADR-0807); any other throw is a real failure and stays one.
+    // same selfie; any other throw is a real failure and stays one.
     try {
       await getObjectStorage().headObject(SELFIE_LOCATION_KEY, selfieObjectKey(hash));
     } catch (error) {
