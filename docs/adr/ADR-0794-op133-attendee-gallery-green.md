@@ -36,7 +36,8 @@
   the ledger cell advances to `0795`.
 - **Amends:** [ADR-0793](ADR-0793-op133-attendee-gallery-red.md) — its ten
   decisions (§1–§10) are implemented as written; §11–§17 below record what the
-  implementation itself had to decide, and §18 records one disputed pin.
+  implementation itself had to decide, and §18 records the one pin that was
+  unsatisfiable as written and how it was corrected.
 - **Consumes:** `0794`.
 
 ## Context
@@ -44,8 +45,9 @@
 ADR-0793 fixed the executable contract for OP-133 and handed the GREEN its own
 questions: the shape of the cursor, where the anonymous allowance lives, how the
 e2e seeder may write, and what `/me` answers beyond §6.4. This record states what
-the implementation chose, the one test pin it believes is unsatisfiable, and the
-work it deliberately left to later cards.
+the implementation chose, how the one test pin that was unsatisfiable as written
+was corrected by the Test Author (§18), and the work it deliberately left to
+later cards.
 
 ## Decision
 
@@ -216,7 +218,7 @@ banned keys and for the seeded raw score as a substring). The hide route logs
 `match.hidden` with the match id and the optional reason, and the seen route logs
 nothing.
 
-### 18. One pin is disputed: I7's key-order assertion is unsatisfiable
+### 18. One pin was unsatisfiable: I7's key-order assertion, corrected by sorting
 
 `attendee-gallery.test.ts` (I7) asserts
 
@@ -234,11 +236,32 @@ line: the two arrays differ only in the position of `loginUrl`, which is fixed b
 implementation (ten items, `truncatedForAnonymous: true`, `loginUrl` starting
 with `/`, `nextCursor: null`, `hasMore: false`, `matchCount: 20`).
 
-Proposed correction for the Test Author: sort the expected array, i.e.
-`expect(keysOf(body)).toEqual([...BODY_KEYS, "loginUrl", "truncatedForAnonymous"].sort())`,
-or compare sets (`expect(keysOf(body)).toEqual(expect.arrayContaining(...))` plus
-a length check). The GREEN does **not** edit the pin; it is reported, not
-papered over.
+The GREEN correctly refused to edit the pin: Prime Directive 1 makes a test edit
+the Test Author's call, and reporting beats papering over. The Test Author then
+corrected the expectation itself on the lane branch
+(`OP-133-feature-attendee-gallery-main`, `cf00f6e`, PR #547) — the expected side
+is sorted, so both sides are in `keysOf`'s order:
+
+```ts
+expect(keysOf(body)).toEqual([...BODY_KEYS, "loginUrl", "truncatedForAnonymous"].sort());
+```
+
+The set-comparison alternative (`expect.arrayContaining` plus a length check) was
+rejected: it states in two assertions what one `toEqual` states, and it
+expresses "at least these keys" where the pin's intent is "exactly these five".
+Sorting corrects the literal, not the contract — no status code, key or value
+moved, and the five value assertions above the line were already green.
+
+Sorting does not soften the pin. Mutation probes run against the commit: adding a
+phantom key to the expected array and removing `loginUrl` from it each turn I7 red
+again (`1 failed | 9 passed`, `expected [ 'data', 'loginUrl', 'page', …(2) ] to
+deeply equal …`). The assertion therefore still fails loudly for an extra key and
+for a missing key; it was never a superset check.
+
+Verification after the correction: the file is 10/10, and the CI-equivalent run
+(`vitest run --project unit --project integration --coverage`) is 4144 passed,
+3 skipped (the pre-existing `skipIf(!LIVE_REQUESTED)` Cashfree live-sandbox
+suite, unrelated), 0 failed, branches 80.88 % against the 80 % threshold.
 
 ## Consequences
 
@@ -250,8 +273,11 @@ papered over.
   `downloadJobs`; `crossTenantReads` gains `findFaceMatchById` (the hide route's
   id-only lookup) and `request-event.ts` gains `requireAttendeeSubject` /
   `requireAttendeeProfile`.
-- **Still red, by dispute:** `attendee-gallery.test.ts` I7's key-order line (§18).
-  It is the only red in the pack; it is unsatisfiable as written.
+- **Corrected, not open:** `attendee-gallery.test.ts` I7's key-order line (§18).
+  It was the only red in the pack and unsatisfiable as written; the Test Author
+  sorted the expected side (`cf00f6e`), which restores the exact-five-key intent
+  and keeps the pin red for a phantom or a missing key. No other pin changed and
+  no production code changed with it.
 - **Out of scope, not silently dropped:** `gallery_expired` and `download_expired`
   (no catalogue code, no purge yet — I10/I13 pin pagination and the watermark
   instead), `unhide` (the RED pins ownership through `hide`; a second route would
