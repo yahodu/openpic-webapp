@@ -1,3 +1,9 @@
+## [1.63.5](https://github.com/yahodu/openpic-webapp/compare/v1.63.4...v1.63.5) (2026-11-13)
+
+### Bug Fixes
+
+- **collaboration:** OP-121 answer simultaneous invitation accepts from the settled invitation ([#597](https://github.com/yahodu/openpic-webapp/issues/597)) ([e8a1fd3](https://github.com/yahodu/openpic-webapp/commit/e8a1fd3f8135d510c9eb844b29ccb2ec9f055ed6))
+
 ## [1.63.4](https://github.com/yahodu/openpic-webapp/compare/v1.63.3...v1.63.4) (2026-11-13)
 
 ### Bug Fixes
