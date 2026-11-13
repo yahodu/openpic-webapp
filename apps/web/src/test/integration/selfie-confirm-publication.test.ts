@@ -1,4 +1,4 @@
-import { ObjectId, type ClientSession } from "mongodb";
+import { Collection, ObjectId, type ClientSession } from "mongodb";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-submit";
@@ -13,6 +13,7 @@ import {
   bodyOf,
   confirmSelfie,
   createAttendeeSession,
+  errorBody,
   finishSelfieWorker,
   grantConsent,
   issueChallenge,
@@ -75,6 +76,13 @@ import {
  *   because there the second call reads the row the first one already committed
  *   (ADR-0816; measured on the cut as `[200,500]`, the loser `500 internal_error`
  *   /`TransactionRetryLimitError`).
+ * - **A failing transaction is a `500`, never a masked `200`.** With the
+ *   activation write itself failing (a driver error, not the outbox's
+ *   duplicate-key collision) the confirmation answers `500 internal_error` and
+ *   activates and announces nothing — the direction every case above is blind
+ *   to, because a `catch` that swallows the abort leaves them all green while a
+ *   genuine DB failure is answered `200 status: "ready"` for a selfie that was
+ *   never activated (ADR-0820).
  *
  * ## Assumptions (recorded in ADR-0805)
  *
@@ -248,6 +256,8 @@ interface ProfileRow {
   readonly status: string;
   readonly activeSelfieId: ObjectId | null;
   readonly matchCount: number;
+  /** §15.3's "fires exactly once" watermark; `null` until the first delivery. */
+  readonly firstMatchNotifiedAt?: Date | null;
 }
 
 /** A stored `domainEvents` row, as these cases read it (§7.7). */
@@ -711,5 +721,180 @@ describe("when the same selfie is confirmed twice at the same instant", () => {
 
     // §6.4's cached total, once.
     expect((await profileRow()).matchCount).toBe(FIRST_RUN_MATCHES);
+  });
+});
+
+/* ── F3.5: a genuine transaction failure is a 500, never a masked 200 ─────── */
+
+/**
+ * The driver's own `Collection#updateOne`, resolved **once at module load**,
+ * before any case installs a spy.
+ *
+ * Resolving it inside the stub would find the spy itself and recurse (the
+ * `billing-checkout.test.ts:177` precedent).
+ */
+const driverUpdateOne = ((): typeof Collection.prototype.updateOne => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "updateOne");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("expected Collection.prototype.updateOne to be a function");
+  }
+  return descriptor.value as typeof Collection.prototype.updateOne;
+})();
+
+/**
+ * One field of a driver operand, without widening the operand's type.
+ *
+ * @param document - The filter, update or options object a driver call received.
+ * @param key - The field to read.
+ * @returns The field's value, or `undefined` when the operand does not carry it.
+ */
+function fieldOf(document: unknown, key: string): unknown {
+  return document !== null && typeof document === "object" ? Reflect.get(document, key) : undefined;
+}
+
+/**
+ * The `$set` operand of an update document.
+ *
+ * @param update - The driver's `update` argument.
+ * @returns The `$set` document, or `undefined` for a pipeline update.
+ */
+function setOf(update: unknown): unknown {
+  return Array.isArray(update) ? undefined : fieldOf(update, "$set");
+}
+
+/** One write the confirmation asked of `attendeeEventProfiles`, as the spy saw it. */
+interface ProfileWrite {
+  /** The profile the write addressed, so the case cannot pass on another row. */
+  readonly profileId: string;
+  /** The `status` the write would have stored — the activation itself. */
+  readonly askedStatus: unknown;
+  /** True when the write carried a session, i.e. ran inside the transaction. */
+  readonly inSession: boolean;
+}
+
+/**
+ * True when the stored selfie is the profile's active one (§16.4).
+ *
+ * @param selfieId - The selfie the case submitted, as the `202` named it.
+ * @returns `isActive === true` for that row.
+ */
+async function selfieIsActive(selfieId: string): Promise<boolean> {
+  const row = (await app.db
+    .collection(COLLECTIONS.selfies)
+    .findOne({ _id: new ObjectId(selfieId) })) as unknown as { readonly isActive?: boolean } | null;
+  return row?.isActive === true;
+}
+
+/**
+ * The confirmation's transaction body, with one write failing.
+ *
+ * **Why this case exists.** Every case above is green under a `catch` that
+ * swallows the abort and continues: the pair case, the dry-run and the four
+ * ADR-0805 cases were measured `5 passed (5)` with the confirm's
+ * `withTransaction` wrapped in a degenerate `try { … } catch { return undefined }`.
+ * That leaves a genuine transaction failure — a real DB error, not the outbox's
+ * duplicate-key collision the retry path exists for — answered
+ * `200 status: "ready"` with no activation write, no watermark and no
+ * notification: a silent failure dressed as success, where the attendee reads a
+ * ready selfie that was never activated.
+ *
+ * The seam is the transaction's **own** write: the `attendeeEventProfiles`
+ * update that sets `activeSelfieId`/`status`/`matchCount` fails with a driver
+ * `not primary` (`code: 91`, which carries no `TransientTransactionError`
+ * label, so the wrapper does not retry it), the transaction aborts and the
+ * route must answer the app-wide `500 internal_error` (§0.12). The dedupe
+ * `countDocuments` is deliberately **not** stubbed, so the case cannot pass by
+ * making the dedupe read fail instead.
+ *
+ * **Nothing may be activated.** The row is exactly as the submit left it
+ * (`processing`, `activeSelfieId: null`, `firstMatchNotifiedAt: null`,
+ * `matchCount: 0`), the selfie stays inactive and no `attendee.matches.new`
+ * row exists. The recorded write proves the transaction really opened and
+ * reached this profile's activation (the case cannot pass on a path that never
+ * entered the transaction), and the healthy retry at the end proves the fixture
+ * was a happy path that the injected failure — not a broken setup — turned into
+ * the `500`.
+ */
+describe("when the confirmation's transaction fails for a reason that is not a duplicate-key collision", () => {
+  it("answers 500 internal_error and activates and announces nothing", async () => {
+    const ready = await readyEvent("op132-f3-txfail");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+    const submitted = await submitOne(ready.event.slug, ready, "f3-txfail");
+    await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+
+    // The worker's result is on the row, so this confirmation WOULD publish and
+    // set `ready`: the fixture is the happy path the cases above confirm.
+    const before = await profileRow();
+    expect(before.status).toBe("processing");
+    expect(before.activeSelfieId).toBeNull();
+    expect(before.firstMatchNotifiedAt ?? null).toBeNull();
+    expect(await matchesNewRows()).toHaveLength(0);
+
+    // The activation write fails, and it fails for a reason that is NOT the
+    // outbox's duplicate-key collision: a driver error on the profile update.
+    const failure = Object.assign(new Error("not primary"), { code: 91 });
+    const profileWrites: ProfileWrite[] = [];
+    const writeSpy = vi.spyOn(Collection.prototype, "updateOne").mockImplementation(function (
+      this: Collection,
+      filter,
+      update,
+      options
+    ) {
+      if (this.collectionName === COLLECTIONS.attendeeEventProfiles) {
+        profileWrites.push({
+          profileId: String(fieldOf(filter, "_id")),
+          askedStatus: fieldOf(setOf(update), "status"),
+          inSession: fieldOf(options, "session") !== undefined,
+        });
+        return Promise.reject(failure);
+      }
+      return driverUpdateOne.call(this, filter, update, options);
+    });
+
+    let response: Response;
+    try {
+      response = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+        cookie: ready.cookie,
+        ip: ready.ip,
+      });
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    // Non-vacuity: the transaction opened and reached THIS profile's activation
+    // write, under its session, asking for `ready`. A route that answered `500`
+    // before the transaction — or one that never entered it — fails here.
+    expect(profileWrites).toEqual([
+      { profileId: submitted.profileId, askedStatus: "ready", inSession: true },
+    ]);
+
+    // §0.12: a throw that is not an `AppError` is the app-wide 500. A `200`
+    // here is a silent failure with a success envelope: `status: "ready"` for a
+    // selfie that no write activated.
+    expect(response.status).toBe(500);
+    const error = await errorBody(response);
+    expect(error.code).toBe("internal_error");
+
+    // Nothing was activated: the §15.3 row is exactly as the submit left it,
+    // the watermark never fired, the selfie is still not the active one and
+    // nothing was announced (§7.6/§7.7).
+    const after = await profileRow();
+    expect(after.status).toBe("processing");
+    expect(after.activeSelfieId).toBeNull();
+    expect(after.firstMatchNotifiedAt ?? null).toBeNull();
+    expect(after.matchCount).toBe(0);
+    expect(await selfieIsActive(submitted.selfieId)).toBe(false);
+    expect(await matchesNewRows()).toHaveLength(0);
+
+    // The `500` is the injected failure, not a broken fixture: the same request
+    // with a healthy seam answers the documented `200` and publishes once, so
+    // the API can be retried (there is no `Idempotency-Key` state left behind
+    // by a `5xx`).
+    const retried = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(keysOf(retried)).toEqual(CONFIRM_KEYS);
+    expect(retried.status).toBe("ready");
+    expect(retried.selfieId).toBe(submitted.selfieId);
+    expect((await profileRow()).status).toBe("ready");
+    expect(await matchesNewRows()).toHaveLength(1);
   });
 });
