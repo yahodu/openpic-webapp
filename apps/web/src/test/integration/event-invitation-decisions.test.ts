@@ -2465,3 +2465,82 @@ describe("DELETE /api/v1/tenants/{tenantId}/events/{eventId}/members/{userId} �
     }
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* The accept route's wait-expiry arm (F1)                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A competing write on the invitation that is **not** a decision: it holds the
+ * document's lock the loser needs and leaves `status` pending.
+ *
+ * @param invitationId - The invitation the route will try to decide.
+ * @param session - The rival transaction's session.
+ */
+async function nonDecisionWrite(invitationId: ObjectId, session: ClientSession): Promise<void> {
+  await app.db
+    .collection(COLLECTIONS.invitations)
+    .updateOne({ _id: invitationId }, { $set: { updatedAt: new Date() } }, { session });
+}
+
+describe("POST /api/v1/me/invitations/{invitationId}/accept — the exhausted rival wait (F1)", () => {
+  it("E1: answers 500 internal_error when the loser's spent retry budget finds no committed decision", async () => {
+    const logs = captureLogs();
+    try {
+      // Arrange — an invitation, and a rival transaction that holds its
+      // document lock with a write that is not a decision.
+      const fixture = await seedEvent("op121-e1-unsettled");
+      const invitee = await signInVerified(makeIdentity("op121-e1-unsettled-invitee"));
+      const invitationId = await invite(fixture, userInvite(invitee.userId.toHexString()));
+      const invitationRowId = new ObjectId(invitationId);
+
+      const locked = latch();
+      const release = latch();
+      const rival = holdRivalTransaction((session) => nonDecisionWrite(invitationRowId, session), {
+        locked,
+        release,
+      });
+
+      // The rival holds the invitation's write lock from here on, so the
+      // route's transaction can only conflict — it cannot win the row.
+      await locked.wait;
+
+      // Act — the route's own accept, deliberately not awaited.
+      const pending = acceptInApp(inAppDecision(invitee.cookie, invitationId, "accept"));
+
+      // Let the loser spend all three attempts, give the last one its conflict
+      // round-trip, then commit the rival's non-decision write while the loser
+      // is inside its bounded wait for a decision that never comes.
+      await waitForTransactionRetries(logs.sink, 2);
+      await pause(150);
+      release.open();
+
+      const [response] = await Promise.all([pending, rival]);
+
+      // Assert — nothing was decided, so the honest answer is the original
+      // failure: neither the `200` of a settled decision nor the `409` of the
+      // live-row fall-through.
+      expect(response.status).toBe(500);
+      expect((await errorOf(response)).code).toBe("internal_error");
+
+      // Arrange guard, not a new contract: the loser really spent the whole
+      // three-attempt budget (two retry lines) instead of winning the row.
+      expect(logs.sink.entries.filter(isRetryLine)).toHaveLength(2);
+
+      // The loser wrote nothing: no membership row, the invitation still
+      // pending, no accept emitted and no settled-decision log line.
+      expect(
+        (await eventMembers(fixture)).find((row) => row.userId === invitee.userId.toHexString())
+      ).toBeUndefined();
+      expect((await storedInvitation(invitationId))?.status).toBe("pending");
+      expect(await outboxRows("collab.invite.accepted")).toHaveLength(0);
+      expect(
+        logs.sink.entries.filter(
+          (entry) => entry.event === "invitation.resolved" && entry.alreadyResolved === true
+        )
+      ).toHaveLength(0);
+    } finally {
+      logs.restore();
+    }
+  });
+});
