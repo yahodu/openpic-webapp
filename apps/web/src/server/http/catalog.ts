@@ -13,6 +13,7 @@ import type {
   NotificationErrorCode,
   PipelineErrorCode,
   RequestShapeErrorCode,
+  SelfieErrorCode,
   TenancyErrorCode,
 } from "@openpic/contracts";
 
@@ -597,6 +598,23 @@ export const COLLABORATION_ERROR_TRANSPORT: Readonly<
 };
 
 /**
+ * Transport for the selfie / liveness codes (contract §6.3, Appendix A row 3587).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the consent and event
+ * rows: that table stays the exact base Appendix A copy. `liveness_challenge_invalid`
+ * (`409`, non-retryable) carries the single reason the presented challenge is not
+ * usable — `expired`, `already_used` or `mismatch` — so the client knows whether
+ * to re-issue a challenge or resend the right evidence (OP-132, ADR-0792).
+ */
+export const SELFIE_ERROR_TRANSPORT: Readonly<Record<SelfieErrorCode, ErrorCatalogEntry>> = {
+  liveness_challenge_invalid: {
+    status: 409,
+    retryable: false,
+    message: "The liveness challenge is expired, already used, or bound to other evidence.",
+  },
+};
+
+/**
  * Every client-facing code's transport: Appendix A first, then the pipeline,
  * auth, request-shape, internal, account, notification and tenancy tables.
  */
@@ -615,6 +633,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...EVENT_ERROR_TRANSPORT,
   ...COLLABORATION_ERROR_TRANSPORT,
   ...CONSENT_ERROR_TRANSPORT,
+  ...SELFIE_ERROR_TRANSPORT,
 };
 
 /**

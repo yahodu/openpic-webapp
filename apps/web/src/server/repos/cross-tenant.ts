@@ -1,4 +1,4 @@
-import type { Db } from "mongodb";
+import { ObjectId, type Db } from "mongodb";
 
 import { COLLECTIONS } from "../db/collections";
 import { getDb } from "../db/mongo";
@@ -62,7 +62,48 @@ export interface AttendeeProfilePage {
   readonly items: AttendeeProfileDto[];
 }
 
-/** The cross-tenant read surface (the whitelist). */
+/** One reusable selfie of the calling subject (schema §16.4). */
+export interface ReusableSelfie {
+  readonly id: string;
+  readonly createdAt: Date;
+  /** The content hash the preview URL is signed over — never the vector. */
+  readonly contentHash: string;
+  readonly quality: { readonly accepted: boolean };
+}
+
+/** One page of reusable selfies. */
+export interface ReusableSelfiePage {
+  readonly items: ReusableSelfie[];
+}
+
+/** The stored half of a selfie the reusable listing projects (§16.4). */
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+type ReusableSelfieDocument = {
+  readonly _id: ObjectId;
+  readonly createdAt: Date;
+  readonly contentHash: string;
+  readonly quality?: { readonly accepted?: boolean };
+};
+
+/**
+ * The `subject.userId` predicate for one data subject.
+ *
+ * Schema §10.3 stores the id as an `ObjectId`, while the OP-77 suites seeded the
+ * projection with string ids; matching both keeps the one whitelisted read
+ * correct for the real stored shape without breaking the fixture shape.
+ *
+ * @param userId - The data subject's user id (hex or the fixture's string).
+ * @returns A filter value matching either representation.
+ */
+function subjectUserValue(
+  userId: string
+): ObjectId | string | { readonly $in: (ObjectId | string)[] } {
+  return ObjectId.isValid(userId) ? { $in: [userId, new ObjectId(userId)] } : userId;
+}
+
+/**
+ * The cross-tenant read surface (the whitelist).
+ */
 export interface CrossTenantReads {
   /**
    * Return every attendee-event profile whose `subject.userId` is `userId`,
@@ -78,6 +119,24 @@ export interface CrossTenantReads {
     page?: CrossTenantPage,
     db?: Db
   ): Promise<AttendeeProfilePage>;
+
+  /**
+   * Return the calling subject's reusable selfies across all tenants.
+   *
+   * A selfie is reusable once it is the profile's active one, so the filter is
+   * `subject.userId` + `isActive`; the projection carries the content hash and
+   * the quality verdict and **never** the face vector (§6.3, §0.15).
+   *
+   * @param userId - The data subject's user id (the caller).
+   * @param page - Offset/limit pagination; offset defaults to 0.
+   * @param db - The database handle; defaults to the shared client.
+   * @returns The page of reusable selfies, newest first.
+   */
+  findReusableSelfiesBySubjectUser(
+    userId: string,
+    page?: CrossTenantPage,
+    db?: Db
+  ): Promise<ReusableSelfiePage>;
 }
 
 async function findAttendeeProfilesBySubjectUser(
@@ -89,7 +148,7 @@ async function findAttendeeProfilesBySubjectUser(
 
   let cursor = db
     .collection<AttendeeProfileDocument>(COLLECTIONS.attendeeEventProfiles)
-    .find({ "subject.userId": userId })
+    .find({ "subject.userId": subjectUserValue(userId) })
     .sort({ _id: 1 });
 
   if (offset > 0) {
@@ -108,7 +167,49 @@ async function findAttendeeProfilesBySubjectUser(
   return { items };
 }
 
+/**
+ * The caller's reusable selfies, newest first (contract §6.3, schema §16.4).
+ *
+ * @param userId - The data subject's user id (hex).
+ * @param page - Offset/limit pagination; offset defaults to 0.
+ * @param db - The database handle; defaults to the shared client.
+ * @returns The page, projected to what the listing may expose.
+ */
+async function findReusableSelfiesBySubjectUser(
+  userId: string,
+  page: CrossTenantPage = {},
+  db: Db = getDb()
+): Promise<ReusableSelfiePage> {
+  const offset = page.offset ?? 0;
+
+  let cursor = db
+    .collection<ReusableSelfieDocument>(COLLECTIONS.selfies)
+    .find(
+      { "subject.userId": subjectUserValue(userId), isActive: true },
+      { projection: { _id: 1, createdAt: 1, contentHash: 1, quality: 1 } }
+    )
+    .sort({ createdAt: -1 });
+
+  if (offset > 0) {
+    cursor = cursor.skip(offset);
+  }
+  if (page.limit !== undefined && page.limit > 0) {
+    cursor = cursor.limit(page.limit);
+  }
+
+  const docs = await cursor.toArray();
+  return {
+    items: docs.map((doc) => ({
+      id: String(doc._id),
+      createdAt: doc.createdAt,
+      contentHash: doc.contentHash,
+      quality: { accepted: doc.quality?.accepted === true },
+    })),
+  };
+}
+
 /** The whitelisted cross-tenant reads. Import nothing else to cross a tenant. */
 export const crossTenantReads: CrossTenantReads = {
   findAttendeeProfilesBySubjectUser,
+  findReusableSelfiesBySubjectUser,
 };

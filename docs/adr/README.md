@@ -70,7 +70,7 @@ the rejected alternatives are recorded in
 | OP-124 uploads lane                 | `0720`–`0739`                   | `0722`    |
 | OP-125 uploads lane                 | `0740`–`0759`                   | `0742`    |
 | OP-126 uploads lane                 | `0760`–`0779`                   | `0777`    |
-| OP-129 attendee identity lane       | `0780`–`0798`                   | `0791`    |
+| OP-129 attendee identity lane       | `0780`–`0798`                   | `0793`    |
 | unallocated (future lanes)          | `0799`+ (20 per lane, in order) | `0799`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -405,6 +405,8 @@ _The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-card-serializati
 | [0788](ADR-0788-op129-attendee-credential-precedence-pin.md) | OP-129 round-1 review follow-up (test-only): **F3** the credential **order** pinned where it is load-bearing — a valid `op_att` cookie and a valid `X-Attendee-Session` header naming two _different_ sessions on one request answer `200` with the **cookie's** `id`, `kind: "anonymous"`, the cookie's `expiresAt` and neither raw token in the body; the four neighbouring cases (`I2`/`I3` single-credential, the stale-cookie fall-through, the lapsed-cookie `401`) are all blind to the order, so a header-first implementation passed them all — a throwaway-worktree mutation that prefers the header when both rows are live reddens **exactly** this case (`expected '…5b52' to be '…5b51'`, 1 failed \| 18 passed) and the shipped resolver is byte-identical; characterisation, so it passes on first run and needs no GREEN | Accepted |
 | [0789](ADR-0789-op131-biometric-consent-red.md) | OP-131 RED: biometric consent grant and withdrawal — `buildConsentEvidence` (separate salted SHA-256 `ipHash`/`uaHash`, `method: "checkbox"`, a `parseLocale` locale, never a raw IP or user agent) and `formatDeletedCounts` (`selfies=n;embeddings=n;matches=n`, zeros spelled `0`, round-trippable), pinned through `POST`/`DELETE /p/events/:slug/consent` (the six-key `201`, a deterministic `sha256:` `policyDocumentHash` across two attendees, the `consentId`-linked profile, `422 policy_version_stale` and `422 age_confirmation_required` with **no** write, and a `204` + `X-Deleted-Counts` that leaves zero selfie/match rows and a released media `refCount`) plus `requireConsent` (`412 consent_required` with the Appendix A.7 `purpose`/`requiredPolicyVersion`/`policyUrl` details for a missing, a withdrawn and a stale-version grant) | Accepted |
 | [0790](ADR-0790-op131-biometric-consent-green.md) | OP-131 GREEN: the consent contract implemented and the six ADR-0789 open questions answered — `buildConsentEvidence` on two independent `hashFingerprint` calls (the session-fingerprint scheme and deployment salt, never a raw IP or user agent) and `formatDeletedCounts` from a template literal; `POST /p/events/:slug/consent` on the `attendee` label + `write.normal`, a literal `purpose`/`granted: true` body with `ageConfirmed` optional, the contract-order refusals (`422 policy_version_stale` then `422 age_confirmation_required`, neither writing), a `sha256:` `policyDocumentHash` over the version+URL pair (the settings document carries no body to hash — the upgrade trigger is recorded), a read-then-write profile link that keeps a `ready` profile's `activeSelfieId`/`matchCount` and restarts only a `withdrawn` one, and a **second grant inserting a second row** (the guard reads the latest); `DELETE` scoped by `profileId`, counting only the selfies that carried an `embedding`, `refCount - 1` under a `> 0` guard with the blob left to the sweep, every live consent stamped `withdrawnAt` and the profile `withdrawn`, answering `204` + the driver's own `deletedCount`s, and **idempotent** (`204` with zeros when nothing is left, so a client can always retry); `requireConsent` reads the current policy then the latest non-withdrawn row at that version, so a withdrawal and a retired version are refused structurally; `CONSENT_ERROR_CODES` + `CONSENT_ERROR_TRANSPORT` appended (`consent_required` 412, `policy_version_stale` 422, `age_confirmation_required` 422 — not `ERROR_CATALOG`), `consents`/`selfies` registered in `COLLECTIONS`, and contract §6.2/A.7 given the `ageConfirmed` field and its row | Accepted |
+| [0791](ADR-0791-op132-liveness-selfie-red.md) | OP-132 RED: liveness challenge, selfie submit/confirm, the attempt budget and reuse — two pure modules (`createLivenessChallenge`/`decideLivenessChallenge` with an injectable RNG, a 3-gesture/15 s spec, a 60 s life and a 32-hex evidence-binding `nonce`; `selfieAttemptBudget` clamping the remainder at 0 and echoing `used` verbatim) and six routes pinned at the observable level: `POST …/liveness/challenges` (six keys, `412 consent_required` with the A.7 details), `POST …/selfies/uploads` (the five-key single-PUT envelope, `413 file_too_large`), `POST …/selfies` (seven-key `202` with `pollUrl`/`pollIntervalMs: 2000`/`attempts`, `processing.{status:"queued", priority:"high", queueRef:{queueKey:"q:selfie", provider:"memory"}}`, one §10.4 envelope at submit time, `409 already_used`/`mismatch`, `403 plan_limit_exceeded` on the fourth attempt with a second attendee keeping their own budget, `422` for missing evidence, `412 consent_required` before the object is looked at), `POST …/selfies/{selfieId}/confirm` (`200` + `status: "ready"` once the worker's embedding is on the row, `isActive`/`activeSelfieId`/`matchCount` only then, exactly one `attendee.matches.new`), `GET /p/selfies/reusable` (signed previews, no embedding, `401` for an anonymous session) and `POST …/selfies:reuse` (`202`, cross-event consent `412`, a foreign id `404`, a withdrawn id `404`); the colon verb is mapped to a nested segment because Next cannot express `[selfieId]:confirm`; 27 unit + 25 integration + 1 e2e cases, three mutations each reddening exactly one named case, and the e2e reaches its own `201` assertion through the real HTTP surface | Accepted (RED / executable contract) |
+| [0792](ADR-0792-op132-liveness-selfie-green.md) | OP-132 GREEN: the liveness/selfie contract implemented and ADR-0791's six open questions answered — `createLivenessChallenge`/`decideLivenessChallenge` (injectable RNG, 3 gestures from a 4-member vocabulary, 15 s budget, 60 s life, a 32-hex `crypto` nonce, precedence `already_used` → `expired` → `mismatch`, inclusive deadline, case-insensitive nonce) and `selfieAttemptBudget` (remainder clamped at 0); the challenge stored as a **capped five-element list** on `attendeeEventProfiles` (no collection) spent by one conditional `usedAt: null` update inside the submit transaction, so a replay loses the write; `POST …/selfies` in the contract order (consent → `headObject` → challenge → budget) then one transaction (profile upsert `processing`, a `queued`/`high` `selfies` row keyed by `selfies/<sha256>`, the challenge's `usedAt`) and the `q:selfie` §10.4 pointer after the commit; `POST …/selfies/{selfieId}/confirm` the only publisher (`isActive`, `activeSelfieId`, `matchCount`, `status: "ready"` and the single `attendee.matches.new`), gated on the worker's `embedding` so a pre-worker confirm only activates the row; `…/selfies:reuse` resolving consent for the addressed event, the source selfie by own subject and `isActive` (a foreign or withdrawn id `404`), and re-processing the bytes instead of copying a vector; `GET /p/selfies/reusable` as `crossTenantReads.findReusableSelfiesBySubjectUser`, which now matches `subject.userId` as an `ObjectId` **or** a string (schema §10.3 stores the id; the OP-77 fixtures seeded strings) and projects id/`createdAt`/`contentHash`/quality only; the attendee-scoped rate classes declared as the post-auth `rateLimitIdentity` stage keyed on the server-resolved session (an anonymous caller publishes no principal, so the `op_att` session is re-resolved); `SELFIE_ERROR_CODES` + `SELFIE_ERROR_TRANSPORT` for `liveness_challenge_invalid` (409, `{reason}`) and the consent route's event/subject helpers moved to `request-event.ts`/`subject.ts`; out of scope by the RED's own evidence rule: `liveness_failed`, the frame verifier, the TTL purge, `gallery_closed`, replay and `GET /me/events` | Accepted |
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
@@ -956,3 +958,42 @@ unedited — unit **13/13** and **7/7**, integration **22/22** on a real
 remains the shared-ledger hotspot: this row, the `0790`/`0791` cell and the pool
 cell merge as a union keeping the highest value. No number outside `0780`–`0798`
 is touched._
+
+_The **OP-132** lane's `Next free` cell advanced from `0791` to `0793` (card
+`t_3b8151c3`, OP-132 GREEN — liveness challenge, selfie submit/confirm/reuse and
+the attempt budget; branch `OP-132-task-liveness-selfie-green`, worktree
+`/root/openpic/openpic-webapp/.worktrees/t_edad86b6`, based on the RED branch
+`OP-132-task-liveness-selfie-red` `b257470` because neither the OP-131 consent
+work nor the RED pins are on `origin/main` yet).
+[ADR-0792](ADR-0792-op132-liveness-selfie-green.md) implements ADR-0791 and
+answers its six open questions. The challenge lives on the profile as a capped
+five-element list (a re-issue must not invalidate a challenge still on screen,
+which is I12's mismatch case), is spent by one conditional `usedAt: null` update
+**inside** the submit transaction, and is bound to the evidence by its nonce. The
+submit keeps the contract's order (consent → object → challenge → budget), writes
+the profile, the `queued`/`high` selfie and the challenge in one transaction, and
+publishes the `q:selfie` pointer only after the commit, so a broker failure leaves
+the row for the sweep. Confirmation is the one publisher of
+`isActive`/`activeSelfieId`/`matchCount`/`status: "ready"` and the one emitter of
+`attendee.matches.new` — gated on the worker's `embedding`, so a confirm before
+the worker only activates the row (I9b) and never enqueues a second job (I7).
+Reuse resolves the addressed event's consent first, then the source selfie by own
+subject and `isActive`, and re-processes the bytes rather than carrying a vector
+between events. The reusable listing is the second whitelisted cross-tenant read
+and now matches `subject.userId` as an `ObjectId` **or** a string, because schema
+§10.3 stores the id while the OP-77 fixtures seeded strings — I13 is the first
+lane whose rows are written by real code and read back through the whitelist. The
+attendee-scoped rate classes (`selfie.submit`, `liveness.challenge`) are declared
+as the post-auth `rateLimitIdentity` stage keyed on the server-resolved session
+(an anonymous caller publishes no `ctx.principal`, so the `op_att` session is
+re-resolved: one indexed lookup, and the classes stay fail-closed).
+`SELFIE_ERROR_CODES` + `SELFIE_ERROR_TRANSPORT` append `liveness_challenge_invalid`
+(409, `{reason}`), and the consent route's slug/subject helpers moved to
+`request-event.ts`/`subject.ts` so the six new routes share them. Out of scope by
+the RED's own evidence rule, and recorded as such: `liveness_failed` and the
+frame verifier (card §6), the `unconfirmedTtlMinutes` purge (a sweep), `409
+gallery_closed` (no case, so no transport is added for a code nothing emits),
+idempotency *replay* and `GET /me/events` (OP-134). `docs/adr/README.md` remains
+the shared-ledger hotspot: this row, the `0792`/`0793` cell and the pool cell
+merge as a union keeping the highest value. No number outside `0780`–`0798` is
+touched._
