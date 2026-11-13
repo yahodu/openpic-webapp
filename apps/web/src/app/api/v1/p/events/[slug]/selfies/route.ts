@@ -2,12 +2,16 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { attendeeRateLimitStage } from "@/server/attendee/attendee-rate-limit";
-import { requireConsent, subjectFilter } from "@/server/attendee/consent-guard";
-import { decideLivenessChallenge } from "@/server/attendee/liveness-challenge";
-import { resolveEventBySlug, slugFromRequest } from "@/server/attendee/request-event";
+import { requireAttendeeScope } from "@/server/attendee/request-event";
+import { subjectFilter } from "@/server/attendee/consent-guard";
+import {
+  decideLivenessChallenge,
+  type LivenessChallengeFailureReason,
+} from "@/server/attendee/liveness-challenge";
 import { selfieAttemptBudget } from "@/server/attendee/selfie-attempts";
 import {
   SELFIE_ATTEMPTS_KEY,
+  SELFIE_ENVELOPE_SCHEMA,
   SELFIE_LOCATION_KEY,
   enqueueSelfie,
   insertQueuedSelfie,
@@ -16,7 +20,6 @@ import {
   selfieObjectKey,
   upsertProcessingProfile,
 } from "@/server/attendee/selfie-submit";
-import { subjectForRequest } from "@/server/attendee/subject";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
@@ -66,17 +69,6 @@ const submitBodySchema = z.object({
   }),
 });
 
-/** The §6.3 answer, also returned by the confirm route. */
-const submitResponseSchema = z.object({
-  selfieId: z.string(),
-  profileId: z.string(),
-  status: z.enum(["processing", "ready"]),
-  pollUrl: z.string(),
-  pollIntervalMs: z.number(),
-  attemptsUsed: z.number(),
-  attemptsRemaining: z.number(),
-});
-
 /** A stored challenge element of the caller's profile (schema §15.3). */
 interface StoredChallengeRow {
   readonly challengeId?: unknown;
@@ -97,29 +89,20 @@ interface SubmitProfileRow {
  * @param reason - Why the presented challenge is not usable.
  * @returns The error `appError` builds the transport for.
  */
-function livenessChallengeInvalid(reason: "expired" | "already_used" | "mismatch"): Error {
+function livenessChallengeInvalid(reason: LivenessChallengeFailureReason): Error {
   return appError("liveness_challenge_invalid", { details: { reason } });
 }
 
 export const POST = defineRoute({
   route: "/api/v1/p/events/:slug/selfies",
   body: submitBodySchema,
-  response: submitResponseSchema,
+  response: SELFIE_ENVELOPE_SCHEMA,
   auth: (ctx, request) =>
     requireAuth("attendee", { auth: getAuth(), database: getDb() })(ctx, request),
   rateLimitIdentity: attendeeRateLimitStage("selfie.submit"),
   idempotency: idempotencyStage({ store: mongoIdempotencyStore(), required: true }),
   handler: async (ctx) => {
-    const db = getDb();
-    const slug = slugFromRequest(ctx.request);
-    const event = await resolveEventBySlug(db, slug);
-    const subject = await subjectForRequest(db, ctx.request, ctx.principal);
-    await requireConsent({
-      db,
-      tenantKey: event.tenantKey,
-      eventId: event.eventId,
-      subject,
-    });
+    const { db, slug, event, subject } = await requireAttendeeScope(ctx);
 
     const { hash, challengeId, livenessEvidence } = ctx.body;
     const now = systemClock.now();

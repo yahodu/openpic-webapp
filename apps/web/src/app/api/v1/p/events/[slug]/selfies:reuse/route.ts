@@ -1,17 +1,17 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 
-import { requireConsent, subjectFilter } from "@/server/attendee/consent-guard";
-import { resolveEventBySlug, slugFromRequest } from "@/server/attendee/request-event";
+import { requireAttendeeScope } from "@/server/attendee/request-event";
+import { subjectFilter } from "@/server/attendee/consent-guard";
 import { selfieAttemptBudget } from "@/server/attendee/selfie-attempts";
 import {
+  SELFIE_ENVELOPE_SCHEMA,
   enqueueSelfie,
   insertQueuedSelfie,
   selfieAttemptNumbers,
   selfieEnvelope,
   upsertProcessingProfile,
 } from "@/server/attendee/selfie-submit";
-import { subjectForRequest } from "@/server/attendee/subject";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
@@ -47,15 +47,7 @@ const reuseBodySchema = z.object({
 });
 
 /** The §6.3 answer — the same seven keys as a submit. */
-const reuseResponseSchema = z.object({
-  selfieId: z.string(),
-  profileId: z.string(),
-  status: z.enum(["processing", "ready"]),
-  pollUrl: z.string(),
-  pollIntervalMs: z.number(),
-  attemptsUsed: z.number(),
-  attemptsRemaining: z.number(),
-});
+const reuseResponseSchema = SELFIE_ENVELOPE_SCHEMA;
 
 /** The source `selfies` fields the reuse reads (§16.4). */
 interface SourceSelfieRow {
@@ -70,16 +62,7 @@ export const POST = defineRoute({
   auth: (ctx, request) =>
     requireAuth("attendee", { auth: getAuth(), database: getDb() })(ctx, request),
   handler: async (ctx) => {
-    const db = getDb();
-    const slug = slugFromRequest(ctx.request);
-    const event = await resolveEventBySlug(db, slug);
-    const subject = await subjectForRequest(db, ctx.request, ctx.principal);
-    await requireConsent({
-      db,
-      tenantKey: event.tenantKey,
-      eventId: event.eventId,
-      subject,
-    });
+    const { db, slug, event, subject } = await requireAttendeeScope(ctx);
 
     const source = (await tenantRepo(event.tenantKey, db)
       .collection(COLLECTIONS.selfies)

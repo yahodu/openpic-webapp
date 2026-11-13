@@ -1,10 +1,8 @@
 import { z } from "zod";
 
 import { attendeeRateLimitStage } from "@/server/attendee/attendee-rate-limit";
-import { requireConsent } from "@/server/attendee/consent-guard";
-import { resolveEventBySlug, slugFromRequest } from "@/server/attendee/request-event";
+import { requireAttendeeScope } from "@/server/attendee/request-event";
 import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-submit";
-import { subjectForRequest } from "@/server/attendee/subject";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { getDb } from "@/server/db/mongo";
@@ -55,16 +53,7 @@ export const POST = defineRoute({
     requireAuth("attendee", { auth: getAuth(), database: getDb() })(ctx, request),
   rateLimitIdentity: attendeeRateLimitStage("selfie.submit"),
   handler: async (ctx) => {
-    const db = getDb();
-    const slug = slugFromRequest(ctx.request, 3);
-    const event = await resolveEventBySlug(db, slug);
-    const subject = await subjectForRequest(db, ctx.request, ctx.principal);
-    await requireConsent({
-      db,
-      tenantKey: event.tenantKey,
-      eventId: event.eventId,
-      subject,
-    });
+    const { db, slug } = await requireAttendeeScope(ctx, { slugFromEnd: 3 });
 
     const settings = await getPlatformSettings({ db });
     const { hash, size, mimeType } = ctx.body;

@@ -2,10 +2,9 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { attendeeRateLimitStage } from "@/server/attendee/attendee-rate-limit";
-import { requireConsent, subjectFilter } from "@/server/attendee/consent-guard";
+import { requireAttendeeScope } from "@/server/attendee/request-event";
+import { subjectFilter } from "@/server/attendee/consent-guard";
 import { createLivenessChallenge } from "@/server/attendee/liveness-challenge";
-import { resolveEventBySlug, slugFromRequest } from "@/server/attendee/request-event";
-import { subjectForRequest } from "@/server/attendee/subject";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
@@ -53,16 +52,7 @@ export const POST = defineRoute({
     requireAuth("attendee", { auth: getAuth(), database: getDb() })(ctx, request),
   rateLimitIdentity: attendeeRateLimitStage("liveness.challenge"),
   handler: async (ctx) => {
-    const db = getDb();
-    const slug = slugFromRequest(ctx.request, 3);
-    const event = await resolveEventBySlug(db, slug);
-    const subject = await subjectForRequest(db, ctx.request, ctx.principal);
-    const { consentId } = await requireConsent({
-      db,
-      tenantKey: event.tenantKey,
-      eventId: event.eventId,
-      subject,
-    });
+    const { db, event, subject, consentId } = await requireAttendeeScope(ctx, { slugFromEnd: 3 });
 
     const now = systemClock.now();
     const challengeId = new ObjectId();

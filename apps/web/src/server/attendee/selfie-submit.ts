@@ -1,4 +1,5 @@
 import { ObjectId, type ClientSession, type Db } from "mongodb";
+import { z } from "zod";
 
 import { subjectFilter, type ConsentSubject } from "./consent-guard";
 import type { SelfieAttemptBudget } from "./selfie-attempts";
@@ -56,6 +57,23 @@ export interface SelfieEnvelope {
   readonly attemptsUsed: number;
   readonly attemptsRemaining: number;
 }
+
+/**
+ * The wire schema of {@link SelfieEnvelope}.
+ *
+ * Submit, confirm and reuse answer with the same seven keys, so the shape the
+ * response is serialized through is declared once: three copies could drift and
+ * silently strip a key from one of the three answers.
+ */
+export const SELFIE_ENVELOPE_SCHEMA = z.object({
+  selfieId: z.string(),
+  profileId: z.string(),
+  status: z.enum(["processing", "ready"]),
+  pollUrl: z.string(),
+  pollIntervalMs: z.number(),
+  attemptsUsed: z.number(),
+  attemptsRemaining: z.number(),
+});
 
 /**
  * Build the §6.3 answer.

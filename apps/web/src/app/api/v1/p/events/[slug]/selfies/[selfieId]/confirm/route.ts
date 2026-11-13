@@ -1,11 +1,13 @@
 import { ObjectId } from "mongodb";
-import { z } from "zod";
 
-import { requireConsent, subjectFilter } from "@/server/attendee/consent-guard";
-import { resolveEventBySlug, slugFromRequest } from "@/server/attendee/request-event";
+import { subjectFilter } from "@/server/attendee/consent-guard";
+import { pathSegmentFromRequest, requireAttendeeScope } from "@/server/attendee/request-event";
 import { selfieAttemptBudget } from "@/server/attendee/selfie-attempts";
-import { selfieAttemptNumbers, selfieEnvelope } from "@/server/attendee/selfie-submit";
-import { subjectForRequest } from "@/server/attendee/subject";
+import {
+  SELFIE_ENVELOPE_SCHEMA,
+  selfieAttemptNumbers,
+  selfieEnvelope,
+} from "@/server/attendee/selfie-submit";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
@@ -35,15 +37,7 @@ import { systemClock } from "@/server/runtime/clock";
  */
 
 /** The §6.3 answer the confirm returns with `status: "ready"` once published. */
-const confirmResponseSchema = z.object({
-  selfieId: z.string(),
-  profileId: z.string(),
-  status: z.enum(["processing", "ready"]),
-  pollUrl: z.string(),
-  pollIntervalMs: z.number(),
-  attemptsUsed: z.number(),
-  attemptsRemaining: z.number(),
-});
+const confirmResponseSchema = SELFIE_ENVELOPE_SCHEMA;
 
 /** The `attendeeEventProfiles` fields the confirm reads (§15.3). */
 interface ProfileRow {
@@ -56,30 +50,15 @@ interface SelfieRow {
   readonly embedding?: unknown;
 }
 
-/** The `{selfieId}` path segment — one before the trailing `confirm`. */
-function selfieIdFromRequest(request: Request): string {
-  const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
-  return segments.at(-2) ?? "";
-}
-
 export const POST = defineRoute({
   route: "/api/v1/p/events/:slug/selfies/:selfieId/confirm",
   response: confirmResponseSchema,
   auth: (ctx, request) =>
     requireAuth("attendee", { auth: getAuth(), database: getDb() })(ctx, request),
   handler: async (ctx) => {
-    const db = getDb();
-    const slug = slugFromRequest(ctx.request, 4);
-    const event = await resolveEventBySlug(db, slug);
-    const subject = await subjectForRequest(db, ctx.request, ctx.principal);
-    await requireConsent({
-      db,
-      tenantKey: event.tenantKey,
-      eventId: event.eventId,
-      subject,
-    });
+    const { db, slug, event, subject } = await requireAttendeeScope(ctx, { slugFromEnd: 4 });
 
-    const selfieIdHex = selfieIdFromRequest(ctx.request);
+    const selfieIdHex = pathSegmentFromRequest(ctx.request, 2);
     const selfieId = ObjectId.isValid(selfieIdHex) ? new ObjectId(selfieIdHex) : null;
     if (selfieId === null) {
       throw appError("not_found", { details: { resource: "selfie" } });
