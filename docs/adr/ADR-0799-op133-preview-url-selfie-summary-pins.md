@@ -1,23 +1,27 @@
-# ADR-0798 — OP-133 follow-up pins: the `preview-url` success path and the `/me` selfie summary
+# ADR-0799 — OP-133 follow-up pins: the `preview-url` success path and the `/me` selfie summary
 
 - **Status:** Accepted
 - **Consumers:** `apps/web/src/test/integration/attendee-media-access.test.ts`,
   `apps/web/src/test/integration/attendee-participation-status.test.ts`.
 - **Lane:** the shared attendee block `0780`–`0798` (row
-  `OP-129 attendee identity lane`), `Next free` read as `0798` at the branch cut
-  on `origin/main` `4cff381`. `git ls-tree -r --name-only origin/main -- docs/adr`
-  has no duplicate number; every open PR head (`ADR-0790`–`ADR-0797` in flight)
-  and every `.worktrees/*/docs/adr` holds no `ADR-0798`, so this record takes
-  `0798`. The cell advances to `0799`, which **exhausts** the block
-  (`0780`–`0798` are all minted or reserved), so the next attendee-lane card
-  draws a fresh block from the `unallocated (future lanes)` pool instead of
-  minting `0799` as if it still sat inside this one.
+  `OP-129 attendee identity lane`) was already fully minted or reserved at the
+  branch cut on `origin/main` `4cff381`. `git ls-tree -r --name-only origin/main`
+  holds `0780`–`0794` and `0796`; open PR heads hold `0790`–`0797`; and `0798`
+  was claimed **in flight** by the OP-132 failed-purge GREEN worktree
+  (`.worktrees/t_edad86b6/docs/adr/ADR-0798-op132-purge-before-delete-claim.md`,
+  minted `2026-11-13 04:04:44`, five minutes before this card's first commit at
+  `04:09:32`). This record therefore yields `0798` and draws `0799` — the head
+  of the `unallocated (future lanes)` pool and the first number unused on the
+  trunk, on every open PR head and in every worktree. The attendee cell and the
+  pool cell both advance to `0800`, so the next attendee-lane card takes a fresh
+  block from `0800` instead of minting into the exhausted `0780`–`0798` block.
+
 - **References:** [ADR-0793](ADR-0793-op133-attendee-gallery-red.md) §7 ("`preview-url`
   is pinned for the refusal only") and §10 (`/me`'s keys, which never named the
   `selfie` field); [ADR-0794](ADR-0794-op133-attendee-gallery-green.md) §13
   (identified-only, and **no** `originals.download` gate on a preview) and §18
   (the pin-correction precedent on card `t_c6d20dea`).
-- **Consumes:** `0798`.
+- **Consumes:** `0799`.
 
 ## Context
 
