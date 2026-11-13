@@ -37,7 +37,7 @@ import {
  * Integration / contract — the participation poll (`/me`), the seen watermark,
  * the `newerThan` cursor and the e2e match fixture
  * (OP-133 M1, I3, I13, I14; contract §6.4, §6.5; schema §15.3, §17.5;
- * ADR-0793 §1, §6, §9; ADR-0799 §4 the signed selfie tile; ADR-0800 §3 the two
+ * ADR-0793 §1, §6, §9; ADR-0799 §4 the signed selfie tile; ADR-0802 §3 the two
  * `previewUrl: null` arms).
  *
  * **Why this exists.** `/me` is the single polling endpoint of the whole
@@ -634,7 +634,11 @@ describe("when the poll projects the attendee's selfie", () => {
       throw new Error(`expected the stored selfie to reference a media asset`);
     }
     const before = await pollBody(world.event.slug, { cookie: world.cookie });
-    expect(before.body.selfie?.previewUrl).not.toBeNull();
+    // Pin the tile itself, not merely "not null": `.not.toBeNull()` also passes
+    // for `undefined`, so an envelope that omitted `previewUrl` would satisfy it.
+    expect(new URL(String(before.body.selfie?.previewUrl)).pathname).toBe(
+      `/t/${makeSelfieBytes("op133-f2-purged").hash}.webp`
+    );
 
     const purged = await app.db.collection(COLLECTIONS.mediaAssets).deleteOne({ _id: assetId });
     expect(purged.deletedCount).toBe(1);

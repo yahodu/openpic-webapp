@@ -30,7 +30,7 @@ import {
  * Integration / contract — originals, previews and download jobs: who may ask,
  * what a refusal says, and where the download job lives
  * (OP-133 I5, I6, I8, I9, I11; contract §6.6, §5.6, §0.4, §14.1; schema §16.1,
- * §18.1; ADR-0793 §4, §7; ADR-0799 the two success paths; ADR-0800 §1–§2 the
+ * §18.1; ADR-0793 §4, §7; ADR-0799 the two success paths; ADR-0802 §1–§2 the
  * soft-delete predicate).
  *
  * **Why this exists.** The gallery deliberately never carries an original: the
@@ -51,7 +51,7 @@ import {
  *   `originals.download` → `403 feature_not_available` (§14.1).
  * - An id that names a **soft-deleted** photo (`event_images.deletedAt`) is not
  *   a live image → `404 not_found`, on `original-url` and on `preview-url`
- *   alike, because both routes share `requireSignableImage` (ADR-0800 §1–§2).
+ *   alike, because both routes share `requireSignableImage` (ADR-0802 §1–§2).
  * - `POST …/images/{imageId}/preview-url` is for identified callers only.
  * - `POST /api/v1/p/events/{slug}/downloads` (idempotency required) → `202
  *   {downloadId, status: "queued", pollUrl, pollIntervalMs: 3000}` and one

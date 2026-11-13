@@ -1,20 +1,25 @@
-# ADR-0800 — OP-133 follow-up pins: a soft-deleted photo is unsignable, and `/me` reports a null selfie tile
+# ADR-0802 — OP-133 follow-up pins: a soft-deleted photo is unsignable, and `/me` reports a null selfie tile
 
 - **Status:** Accepted
 - **Consumers:** `apps/web/src/test/integration/attendee-media-access.test.ts`,
   `apps/web/src/test/integration/attendee-participation-status.test.ts`.
 - **Lane:** the shared attendee block `0780`–`0798` (row
-  `OP-129 attendee identity lane`) is **exhausted** at this branch cut on
-  `origin/main` `55e665a`: `git ls-tree -r --name-only origin/main -- docs/adr`
-  holds `0780`–`0794` and `0796`–`0799` (`0795` was never minted), and both the
-  attendee cell and the `unallocated (future lanes)` pool cell read `0800`. A
-  sweep of every open PR head (`gh pr list --state open --json headRefOid`, then
-  `git ls-tree -r --name-only <sha> -- docs/adr`) found no `ADR-07xx` above
-  `0794`, and `.worktrees/*/docs/adr/` holds no `ADR-0800-*` file anywhere —
-  the check the OP-133 pack under PR #549 needed after `0798` was lost to an
-  untracked record in a sibling worktree. This record therefore takes `0800`,
-  the first number unused on the trunk, on every open PR head and in every
-  worktree; the attendee cell and the pool cell both advance to `0801`.
+  `OP-129 attendee identity lane`) is **exhausted** on `origin/main` `9c5bbbb`:
+  `git ls-tree -r --name-only origin/main -- docs/adr` holds `0780`–`0794`,
+  `0796`–`0799` and then `0800`/`0801` (`0795` was never minted). This record's
+  **first cut took `0800`**, the then-first-free number, and that number was
+  minted **twice in flight**: the OP-132 selfie-dedupe lane had already taken
+  `0800` (its pins, PR #552) and `0801` (its GREEN, PR #553) from the same
+  `Next free` cell snapshot, so two trees each held an `ADR-0800-*` and
+  `checkAdrDirectory("docs/adr")` answered `{"code":"duplicate"}` as soon as
+  both records met in one tree — a trunk guard failure whichever PR landed
+  second. PR #553 squash-merged first (`13bb8f5`), freezing `0800`/`0801` on
+  the trunk, so this record **renumbers to `0802`**: the first number free above
+  the trunk's highest `0801`, re-swept immediately before the push over every
+  remote head (`git for-each-ref refs/remotes/origin`) and every
+  `.worktrees/*/docs/adr`, the check this pack needed after PR #549 lost `0798`
+  to an untracked record in a sibling worktree. Both the attendee cell and the
+  `unallocated (future lanes)` pool cell advance to `0803`.
 - **References:** [ADR-0799](ADR-0799-op133-preview-url-selfie-summary-pins.md)
   (the follow-up pin pack whose review raised **F1** and **F2** — its §3 pins the
   `preview-url` refusals and `404 not_found` for an id that names **no** image,
@@ -31,7 +36,7 @@
   [ADR-0798](ADR-0798-op132-purge-before-delete-claim.md) (the purge that claims
   and then deletes that row, so a live selfie whose asset is gone is a shape the
   pipeline itself can leave behind).
-- **Consumes:** `0800`.
+- **Consumes:** `0802`.
 
 ## Context
 
@@ -101,7 +106,9 @@ selfie **activated through the shipped submit → worker → confirm path** (the
 
 Each case first polls while the row is normal and asserts a signed
 `/t/{hash}.webp` pathname, so the `null` afterwards is the mutation's effect and
-not a fixture that never had an asset. Each then asserts `200` (a `500` fails
+not a fixture that never had an asset — the guard is that **pathname**, not
+`.not.toBeNull()`, which would also pass for an envelope that omitted
+`previewUrl` (review round 1, L1). Each then asserts `200` (a `500` fails
 `pollBody`'s own status check with the received body), the exact seven §6.4
 selfie keys (so `previewUrl` stays **present** as `null` rather than being
 omitted), `previewUrl: null`, and the unchanged `id`, `accepted`, `attemptsUsed`
@@ -131,8 +138,20 @@ and neither pin is satisfied by the other.
 
 ## Consequences
 
+- **Renumbered to `0802`, then merged with the trunk.** The first cut of this
+  record took `0800`; PR #553 landed `0800`/`0801` first (`13bb8f5`), so the
+  branch merged `origin/main` `9c5bbbb` and the only conflict —
+  `docs/adr/README.md` — was resolved as a **union**, not another renumber:
+  their rows `0800`/`0801`, then this row `[0802]`, both `Next free` cells
+  `0803`. Re-verified on the **merged tree**: the two specs **29 passed (29)**,
+  the five ADR guards **218 passed (218)**, `prettier --check` clean on all four
+  paths, `tsc -p apps/web/tsconfig.json --noEmit` exit 0. Both spec headers cite
+  `ADR-0802` now, not `ADR-0800`: `adr-consumers` resolves a cited number to the
+  record that must declare the citing file, so a stale citation reddens that
+  guard (measured — three `consumer-mismatch` findings against the OP-132
+  `ADR-0800` before the citation moved).
 - **No production change.** `git diff --name-only origin/main...HEAD` shows the
-  two spec files, this record and `docs/adr/README.md`. The three mutations above
+  two spec files, this record and `docs/adr/README.md`. The three mutations below
   were reverted byte-identically (`git status --short` holds only the two spec
   files between runs).
 - **Case counts.** `attendee-media-access.test.ts` 14 → 16; the file's focused

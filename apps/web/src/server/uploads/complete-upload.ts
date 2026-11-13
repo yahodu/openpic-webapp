@@ -163,7 +163,7 @@ export async function completeStoredUpload(
   ): Promise<CompletionOutcome | null> => {
     const options = txn === undefined ? {} : { session: txn };
     const asset = (await assets.findOne(
-      { contentHash: session.contentHash },
+      { contentHash: session.contentHash, kind: "event_image" },
       options
     )) as AssetRow | null;
     if (asset === null) {
@@ -203,8 +203,10 @@ export async function completeStoredUpload(
         { db }
       );
 
+      // Dedupe is kind-aware: a selfie's row for the same bytes carries no
+      // `storage` descriptor and is not this upload's asset (ADR-0801).
       const existingAsset = (await assets.findOne(
-        { contentHash: session.contentHash },
+        { contentHash: session.contentHash, kind: "event_image" },
         { session: txn }
       )) as AssetRow | null;
       let assetId: ObjectId;
