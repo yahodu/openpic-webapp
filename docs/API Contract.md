@@ -107,6 +107,7 @@ Five credential types. Every endpoint below declares exactly one **Auth** requir
 - Every handler under `/tenants/{tenantId}/` must (a) verify `tenantMembers` or `eventMembers` grants access, and (b) include `tenantId` in every Mongo filter. A nested resource whose stored `tenantId` ≠ path `tenantId` → **`404 not_found`** (never `403` — do not confirm existence across tenants).
 - Non-tenant-scoped namespaces: `/me/*` (user scope), `/p/*` (public/attendee), `/plans`, `/admin/*`, `/internal/*`, `/webhooks/*`, `/invitations/*`.
 - The **only** permitted cross-tenant read is `GET /api/v1/me/events` (§6.7), and it may only ever return rows whose `subject.userId` equals the caller.
+- The claim's re-point of an anonymous session's `attendeeEventProfiles` rows onto one account (§6.7) is the one deliberate cross-tenant **write**; it is whitelisted as `crossTenantWrites` in `apps/web/src/server/repos/cross-tenant.ts`, beside the `crossTenantReads` whitelist.
 
 ## 0.5 Response envelopes
 
@@ -2407,9 +2408,9 @@ Auth `attendee` + owner
 
 ### `POST /api/v1/me/attendee-sessions:claim`
 
-Auth `user` · Body `{ "sessionToken": "opat_9f2c..." }` (or omitted, reading the `op_att` cookie)
+Auth `user` · Body `{ "sessionToken": "opat_9f2c..." }` (or omitted — or sent empty — reading the `op_att` cookie)
 
-The PRD's _"she doesn't have to re-visit and re-upload"_. Re-points every `attendeeEventProfiles` row from `subject.kind: "anonymous"` to `subject.kind: "user"` in a **single atomic update per profile** (schema §15.3). **No data moves. No selfie re-upload. No reprocessing.**
+The PRD's _"she doesn't have to re-visit and re-upload"_. Re-points every `attendeeEventProfiles` row from `subject.kind: "anonymous"` to `subject.kind: "user"` in a **single atomic update per profile** (schema §15.3). **No data moves. No selfie re-upload. No reprocessing.** This re-point crosses tenants by construction: it is the one deliberate cross-tenant **write**, whitelisted as `crossTenantWrites` in `apps/web/src/server/repos/cross-tenant.ts` (§0.3).
 
 `200` →
 

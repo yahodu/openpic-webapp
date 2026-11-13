@@ -527,7 +527,7 @@ Secondary payoff: multi-seat workspaces, ownership transfer and agency accounts 
 
 The cost is that isolation becomes an application invariant. Three cheap mitigations:
 
-1. **Only a repository layer builds filters.** `repo(tenantId).collection(x)` injects `tenantId` into every filter and document. Direct `db.collection(...)` on tenant-scoped collections is blocked by a lint rule. The single whitelisted exception is "my events across tenants" for attendees (§10.3).
+1. **Only a repository layer builds filters.** `repo(tenantId).collection(x)` injects `tenantId` into every filter and document. Direct `db.collection(...)` on tenant-scoped collections is blocked by a lint rule. The single whitelisted read exception is "my events across tenants" for attendees, and the claim's re-point is the deliberate write exception (§10.3).
 2. **Index shape enforces it** (P3).
 3. **A nightly audit** counts documents whose `tenantId` doesn't resolve to a live tenant, or disagrees with the parent event's `tenantId`; alerts via `admin.abuse.flagged`.
 
@@ -543,7 +543,7 @@ An attendee is **not** a tenant member. They are a _data subject whose data live
 Two otherwise-awkward PRD requirements then fall out for free:
 
 - _"See all my events in my account"_ → query `attendeeEventProfiles` by `subject.userId` **across** tenants. The one legitimate cross-tenant read path; whitelisted in the repository layer and only ever returning the caller's own rows.
-- _Anonymous-then-login claim_ → the profile is created with `subject.kind: "anonymous"`, then atomically re-pointed to `subject.kind: "user"`. No data moves, no re-upload, no re-processing — exactly the PRD's "she doesn't have to re-visit and re-upload".
+- _Anonymous-then-login claim_ → the profile is created with `subject.kind: "anonymous"`, then atomically re-pointed to `subject.kind: "user"`. No data moves, no re-upload, no re-processing — exactly the PRD's "she doesn't have to re-visit and re-upload". This re-point is the one deliberate cross-tenant **write**; it is whitelisted as `crossTenantWrites` in `apps/web/src/server/repos/cross-tenant.ts`, beside the `crossTenantReads` whitelist (API contract §0.3).
 
 ```mermaid
 flowchart TB

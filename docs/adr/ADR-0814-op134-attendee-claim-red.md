@@ -11,7 +11,12 @@
   `apps/web/e2e/attendee-claim.spec.ts` (E1) and the shared fixture modules
   `apps/web/src/test/helpers/attendee-claim-flow.ts` and the extended
   `apps/web/src/test/helpers/authed-app.ts` (`signIn(identity, {headers})`) —
-  plus the gated GREEN card `t_135c11ae`, which must not edit any of them.
+  plus the gated GREEN card `t_135c11ae`, which must not edit any of them; the
+  follow-up TEST card `t_08232689` adds
+  `apps/web/src/test/integration/attendee-claim-endpoint-arms.test.ts`
+  (I8 ×3, I9 — 4 cases), which cites this record for the contract it observes
+  and records its own decisions in
+  [ADR-0818](ADR-0818-op134-claim-endpoint-arms-pins.md).
 - **Lane:** the shared attendee block `0780`–`0798` is **fully minted** (the
   ledger's `Next free` and the pool both read `0811` on `origin/main`
   `f9a0f27`, and `docs/adr` holds every number from `0780` to `0810` that the
