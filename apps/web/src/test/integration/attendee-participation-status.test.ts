@@ -1,3 +1,4 @@
+import { ObjectId } from "mongodb";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { COLLECTIONS } from "@/server/db/collections";
@@ -6,15 +7,31 @@ import { ensureIndexes } from "@/server/db/indexes";
 import {
   galleryHandlers,
   markProfileReady,
+  mediaSigner,
   readProfile,
   seedAnonymousGallery,
   seedImage,
   seedMatch,
+  singleProfileId,
   SEED_INSTANT,
 } from "../helpers/attendee-gallery-flow";
 import { startTestApp, type TestApp } from "../helpers/authed-app";
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
-import { bodyOf, errorBody, keysOf, nextIp, requestFor } from "../helpers/selfie-flow";
+import {
+  bodyOf,
+  confirmSelfie,
+  createAttendeeSession,
+  errorBody,
+  finishSelfieWorker,
+  grantConsent,
+  keysOf,
+  makeSelfieBytes,
+  nextIp,
+  requestFor,
+  seedTenant,
+  submitHappyPath,
+  type SeededEvent,
+} from "../helpers/selfie-flow";
 
 /**
  * Integration / contract — the participation poll (`/me`), the seen watermark,
@@ -84,13 +101,38 @@ interface NewerThanBody {
   readonly summary: { readonly newMatchCount: number };
 }
 
+/** The §6.4 selfie summary these cases read (schema §16.4). */
+interface SelfieSummary {
+  readonly id: string;
+  readonly accepted: boolean;
+  readonly previewUrl: string | null;
+  readonly liveness: { readonly required: boolean; readonly passed: boolean };
+  readonly quality: { readonly accepted: boolean; readonly rejectionReason: string | null };
+  readonly attemptsUsed: number;
+  readonly attemptsRemaining: number;
+}
+
+/** The seven keys §6.4 gives the selfie summary, sorted. */
+const SELFIE_KEYS = [
+  "accepted",
+  "attemptsRemaining",
+  "attemptsUsed",
+  "id",
+  "liveness",
+  "previewUrl",
+  "quality",
+];
+
+/** The default attempt budget (§6.1 fallback, `settings.selfie.attemptsAllowed`). */
+const ATTEMPTS_ALLOWED = 3;
+
 /** The §6.4 body. */
 interface ParticipationBody {
   readonly profileId: string;
   readonly subject: { readonly kind: string };
   readonly status: string;
   readonly statusDetail: unknown;
-  readonly selfie: unknown;
+  readonly selfie: SelfieSummary | null;
   readonly matchCount: number;
   readonly newMatchCount: number;
   readonly lastMatchRunAt: string | null;
@@ -439,5 +481,157 @@ describe("when the poll is asked about an event with no active link", () => {
 
     expect(response.status).toBe(404);
     expect((await errorBody(response)).code).toBe("not_found");
+  });
+});
+
+/* ──────────── F2: the selfie summary the poll projects (§6.4) ────────────── */
+
+/** The per-case selfie bytes tag, so the stored content hash is known here. */
+const SELFIE_TAG = "op133-f2-selfie";
+
+/** A consented attendee with no selfie yet, built through the shipped routes. */
+interface ConsentingAttendee {
+  readonly tenantKey: string;
+  readonly event: SeededEvent;
+  readonly cookie: string;
+  readonly profileId: ObjectId;
+  readonly subject: Record<string, unknown>;
+}
+
+/**
+ * Create an anonymous attendee and grant consent, leaving the profile exactly as
+ * the consent route stores it: `selfie_pending`, no selfie, no attempts used.
+ *
+ * @param prefix - The suite-local identity/slug prefix.
+ * @returns The handles the selfie-summary cases read.
+ */
+async function seedConsentingAttendee(prefix: string): Promise<ConsentingAttendee> {
+  const { tenantKey, events } = await seedTenant(app, prefix);
+  const event = events.at(0);
+  if (event === undefined) {
+    throw new Error("expected a seeded event");
+  }
+  const session = await createAttendeeSession(app, nextIp());
+  await grantConsent(event.slug, { cookie: session.cookie, ip: nextIp() });
+  const profileId = await singleProfileId(app);
+  const profile = await readProfile(app, profileId);
+  return { tenantKey, event, cookie: session.cookie, profileId, subject: profile.subject };
+}
+
+/**
+ * Submit, finish and confirm one selfie, so the profile has an **active** one.
+ *
+ * @param world - The consented attendee.
+ * @param options - The bytes tag and the matches the worker found.
+ * @returns The activated selfie's id.
+ */
+async function activateSelfie(
+  world: ConsentingAttendee,
+  options: { readonly tag: string; readonly matches: number }
+): Promise<string> {
+  const submitted = await submitHappyPath(world.event.slug, {
+    cookie: world.cookie,
+    ip: nextIp(),
+    tag: options.tag,
+  });
+  await finishSelfieWorker(app, {
+    selfieId: submitted.selfieId,
+    profileId: submitted.profileId,
+    eventId: world.event.id.toHexString(),
+    tenantKey: world.tenantKey,
+    subject: world.subject,
+    matches: options.matches,
+  });
+  const confirmed = await confirmSelfie(world.event.slug, submitted.selfieId, {
+    cookie: world.cookie,
+    ip: nextIp(),
+  });
+  if (confirmed.status !== 200) {
+    throw new Error(`expected 200 from the selfie confirm, received ${String(confirmed.status)}`);
+  }
+  return submitted.selfieId;
+}
+
+describe("when the poll projects the attendee's selfie", () => {
+  it("answers the seven §6.4 fields and a signed thumbnail URL that is not the original", async () => {
+    const world = await seedConsentingAttendee("op133-f2-selfie");
+    const selfieId = await activateSelfie(world, { tag: SELFIE_TAG, matches: 0 });
+
+    const { body } = await pollBody(world.event.slug, { cookie: world.cookie });
+    const selfie = body.selfie;
+    if (selfie === null) {
+      throw new Error(`expected a selfie summary, received null: ${JSON.stringify(body)}`);
+    }
+
+    expect(keysOf(selfie)).toEqual(SELFIE_KEYS);
+    expect(selfie.id).toBe(selfieId);
+    expect(selfie.accepted).toBe(true);
+    expect(selfie.liveness).toEqual({ required: true, passed: true });
+    expect(selfie.quality).toEqual({ accepted: true, rejectionReason: null });
+    expect(selfie.attemptsUsed).toBe(1);
+    expect(selfie.attemptsRemaining).toBe(ATTEMPTS_ALLOWED - 1);
+
+    // §5.7: the tile is the thumbnail (`/t/`), never the original (`/o/`).
+    const previewUrl = String(selfie.previewUrl);
+    const url = new URL(previewUrl);
+    expect(url.pathname).toBe(`/t/${makeSelfieBytes(SELFIE_TAG).hash}.webp`);
+    expect(Number(url.searchParams.get("exp")) * 1000).toBeGreaterThan(Date.now());
+    expect(url.searchParams.get("sig")).not.toBeNull();
+    expect(mediaSigner().verify(previewUrl)).toBe(true);
+  });
+
+  it("answers selfie: null with the no_selfie wire status before any submission", async () => {
+    const world = await seedConsentingAttendee("op133-f2-none");
+
+    const { body } = await pollBody(world.event.slug, { cookie: world.cookie });
+
+    expect(body.selfie).toBeNull();
+    expect(body.status).toBe("no_selfie");
+    expect((await readProfile(app, world.profileId)).activeSelfieId ?? null).toBeNull();
+  });
+
+  it("returns the same summary on every poll and never clears the New badges", async () => {
+    const world = await seedConsentingAttendee("op133-f2-stable");
+    const selfieId = await activateSelfie(world, { tag: "op133-f2-stable", matches: 0 });
+
+    for (const sequence of [1, 2]) {
+      const image = await seedImage(
+        app,
+        { tenantKey: world.tenantKey, eventId: world.event.id },
+        { sequence }
+      );
+      await seedMatch(
+        app,
+        {
+          tenantKey: world.tenantKey,
+          eventId: world.event.id,
+          profileId: world.profileId,
+          subject: world.subject,
+        },
+        { imageId: image.imageId }
+      );
+    }
+    await markProfileReady(app, world.profileId, { matchCount: 2, lastSeenGalleryAt: null });
+
+    const first = await pollBody(world.event.slug, { cookie: world.cookie });
+    const second = await pollBody(world.event.slug, { cookie: world.cookie });
+
+    expect(first.body.newMatchCount).toBe(2);
+    expect(second.body.newMatchCount).toBe(2);
+    expect(second.body.selfie?.id).toBe(selfieId);
+    expect(second.body.selfie?.attemptsUsed).toBe(1);
+    expect(second.body.selfie?.liveness).toEqual(first.body.selfie?.liveness);
+    expect(second.body.selfie?.quality).toEqual(first.body.selfie?.quality);
+    // A token may be re-minted across a second boundary; it always signs the same row.
+    expect(new URL(String(second.body.selfie?.previewUrl)).pathname).toBe(
+      new URL(String(first.body.selfie?.previewUrl)).pathname
+    );
+
+    // A poll is a read: no badge cleared and no attempt consumed.
+    expect(await app.db.collection(COLLECTIONS.faceMatches).countDocuments({ seenAt: null })).toBe(
+      2
+    );
+    expect(await app.db.collection(COLLECTIONS.selfies).countDocuments()).toBe(1);
+    expect((await readProfile(app, world.profileId)).lastSeenGalleryAt ?? null).toBeNull();
   });
 });
