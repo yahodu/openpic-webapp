@@ -2,7 +2,10 @@
 
 - **Status:** Accepted
 - **Consumers:** `apps/web/src/app/api/v1/p/events/[slug]/consent/route.ts` and
-  `apps/web/src/server/attendee/selfie-submit.ts`.
+  `apps/web/src/server/attendee/selfie-submit.ts`; pinned by §2's own arm in
+  `apps/web/src/test/integration/liveness-selfie-submit.test.ts` (added by
+  [ADR-0828](ADR-0828-op132-purged-asset-reuse-reset-pins.md); no decision here
+  is edited).
 - **Lane:** the shared attendee block `0780`–`0798` (row
   `OP-129 attendee identity lane`), of which this record is the last number.
   `Next free` re-read as `0798` at this branch's head (`4f0cfbd`, cut from
