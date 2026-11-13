@@ -28,7 +28,8 @@ import {
 /**
  * Integration / contract — the **swallowing** half of the submit's object
  * check (OP-132 review of `t_325903f6`, finding **F5-symmetric**, Low;
- * contract §6.2/§6.3; ADR-0807 §Decision 1; ADR-0812).
+ * contract §6.2/§6.3; ADR-0812 — whose §Context names the sibling record whose
+ * F5 pin this file extends).
  *
  * **Why this exists.** `getObjectStorage().headObject(...)` is one port method
  * that throws **two different error classes**, and the submit route only owns
@@ -42,7 +43,8 @@ import {
  *   status, or no answer at all (`code: "network" | "timeout" | "http"`). That
  *   is **our** outage, not the attendee's mistake.
  *
- * ADR-0807's F5 file pins the first class only. A route whose `catch` is
+ * The F5 pin shipped with that fix covers the first class only. A route whose
+ * `catch` is
  * over-broad — `catch { throw appError("not_found", …) }` — answers the second
  * class as a client-side `404 not_found` too, and a client that trusts the code
  * acts on "your upload did not arrive" by **uploading and submitting again**,
