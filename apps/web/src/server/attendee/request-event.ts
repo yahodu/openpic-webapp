@@ -25,6 +25,7 @@ import { subjectForRequest } from "./subject";
 interface EventRow {
   readonly _id: ObjectId;
   readonly tenantId: string;
+  readonly retentionExpiresAt?: Date | null;
 }
 
 /** The event one attendee call addresses. */
@@ -33,6 +34,8 @@ export interface ResolvedEvent {
   /** The event's tenant (hex, as the event row stores it). */
   readonly tenantKey: string;
   readonly eventId: ObjectId;
+  /** The event's own retention deadline, or `null` when the plan is unlimited. */
+  readonly retentionExpiresAt: Date | null;
 }
 
 /** A path segment's index counted from the end of the request path. */
@@ -72,12 +75,17 @@ export async function resolveEventBySlug(db: Db, slug: string): Promise<Resolved
           .collection(COLLECTIONS.events)
           .findOne(
             { accessLinks: { $elemMatch: { slug, active: true } } },
-            { projection: { _id: 1, tenantId: 1 } }
+            { projection: { _id: 1, tenantId: 1, retentionExpiresAt: 1 } }
           )) as EventRow | null);
   if (event === null) {
     throw appError("not_found", { details: { resource: "event" } });
   }
-  return { db, tenantKey: event.tenantId, eventId: event._id };
+  return {
+    db,
+    tenantKey: event.tenantId,
+    eventId: event._id,
+    retentionExpiresAt: event.retentionExpiresAt ?? null,
+  };
 }
 
 /** What one attendee request resolves to, in contract order. */

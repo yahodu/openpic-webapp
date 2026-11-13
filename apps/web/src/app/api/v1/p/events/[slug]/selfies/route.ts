@@ -168,6 +168,7 @@ export const POST = defineRoute({
         subject,
         contentHash: hash,
         now,
+        retentionExpiresAt: event.retentionExpiresAt,
         session,
       });
 

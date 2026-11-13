@@ -9,6 +9,7 @@ import type { Logger } from "@/server/logging";
 import { enqueueWork } from "@/server/queue/enqueue-work";
 import { getWorkQueue } from "@/server/queue/get-work-queue";
 import { tenantRepo } from "@/server/repos";
+import { addDays } from "@/server/runtime/time";
 import { checkEntitlement } from "@/server/services/entitlements";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
 import type { StorageLocationKey } from "@/server/storage/locations";
@@ -32,6 +33,33 @@ export const SELFIE_POLL_INTERVAL_MS = 2000;
 
 /** The §14.1 entitlement the attempt limit comes from. */
 export const SELFIE_ATTEMPTS_KEY = "selfies.per_attendee";
+
+/**
+ * The schema's selfie retention window, in days (schema §22).
+ *
+ * No `retention.*` setting names a selfie window, so the 90 days is the
+ * schema's own constant; the event's `retentionExpiresAt` can only shorten it.
+ */
+export const SELFIE_RETENTION_DAYS = 90;
+
+/**
+ * The `expireAt` a queued selfie carries (schema §16.4, §22).
+ *
+ * §22 keeps a selfie for `createdAt + 90 d` **or** the event's own retention,
+ * whichever comes first: the probe image has no value after its event is gone.
+ * Retention is a property of the row, not of confirmation, so a still-queued
+ * selfie already carries its deadline.
+ *
+ * @param createdAt - The instant the selfie was queued.
+ * @param eventRetentionExpiresAt - The event's `retentionExpiresAt`, or `null` when unlimited.
+ * @returns The earlier of the two deadlines.
+ */
+export function selfieExpireAt(createdAt: Date, eventRetentionExpiresAt: Date | null): Date {
+  const retention = addDays(createdAt, SELFIE_RETENTION_DAYS);
+  return eventRetentionExpiresAt !== null && eventRetentionExpiresAt < retention
+    ? eventRetentionExpiresAt
+    : retention;
+}
 
 /**
  * The content-addressed object key for one selfie (schema §16.1).
@@ -202,6 +230,8 @@ export interface QueuedSelfieOptions {
   readonly subject: ConsentSubject;
   readonly contentHash: string;
   readonly now: Date;
+  /** The event's own retention deadline, or `null` when the plan is unlimited. */
+  readonly retentionExpiresAt: Date | null;
   /** The caller's transaction, when the write must commit with its siblings. */
   readonly session?: ClientSession;
 }
@@ -211,43 +241,72 @@ export interface QueuedSelfieOptions {
  *
  * It starts `queued`/`high` with no embedding and is **not** active: §6.3's
  * two-step submission makes publication a property of the confirmation, not of
- * the row's arrival.
+ * the row's arrival. It carries its retention deadline and points at the
+ * `mediaAssets` row for its content hash — the owner row the erasure path
+ * follows to purge the bytes (§16.1, ADR-0793).
  *
  * @param options - The database, scope, owner, content hash and instant.
  * @returns The new selfie's id.
  */
 export async function insertQueuedSelfie(options: QueuedSelfieOptions): Promise<ObjectId> {
   const _id = new ObjectId();
-  await tenantRepo(options.tenantKey, options.db)
-    .collection(COLLECTIONS.selfies)
-    .insertOne(
-      {
-        _id,
-        eventId: options.eventId,
-        profileId: options.profileId,
-        subject: options.subject,
+  const tenant = tenantRepo(options.tenantKey, options.db);
+  // One asset row per (tenant, content hash): the unique index is the arbiter
+  // and `$inc` makes a re-submitted hash a second reference, not a second row.
+  const asset = (await tenant.collection(COLLECTIONS.mediaAssets).findOneAndUpdate(
+    { contentHash: options.contentHash },
+    {
+      $setOnInsert: {
+        _id: new ObjectId(),
+        tenantId: options.tenantKey,
         contentHash: options.contentHash,
-        assetId: null,
-        liveness: { required: true, challengeKind: "gesture" },
-        processing: {
-          status: "queued",
-          priority: "high",
-          attempts: 0,
-          maxAttempts: 5,
-          leaseExpiresAt: null,
-          workerId: null,
-          queuedAt: options.now,
-          startedAt: null,
-          finishedAt: null,
-          durationMs: null,
-          lastError: null,
-          queueRef: null,
-        },
-        isActive: false,
+        kind: "selfie",
+        status: "stored",
         createdAt: options.now,
       },
-      sessionOption(options.session)
-    );
+      $inc: { refCount: 1 },
+    },
+    {
+      upsert: true,
+      returnDocument: "after",
+      projection: { _id: 1 },
+      ...sessionOption(options.session),
+    }
+  )) as { readonly _id: ObjectId } | null;
+  if (asset === null) {
+    // An upsert with `returnDocument: "after"` always answers the document.
+    throw new Error("media asset upsert returned no document");
+  }
+
+  await tenant.collection(COLLECTIONS.selfies).insertOne(
+    {
+      _id,
+      eventId: options.eventId,
+      profileId: options.profileId,
+      subject: options.subject,
+      contentHash: options.contentHash,
+      assetId: asset._id,
+      liveness: { required: true, challengeKind: "gesture" },
+      processing: {
+        status: "queued",
+        priority: "high",
+        attempts: 0,
+        maxAttempts: 5,
+        leaseExpiresAt: null,
+        workerId: null,
+        queuedAt: options.now,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        lastError: null,
+        queueRef: null,
+      },
+      isActive: false,
+      createdAt: options.now,
+      expireAt: selfieExpireAt(options.now, options.retentionExpiresAt),
+    },
+    sessionOption(options.session)
+  );
   return _id;
 }
 
