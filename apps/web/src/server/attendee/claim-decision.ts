@@ -1,5 +1,5 @@
 /**
- * The claim decision table (OP-134, contract §6.7, schema §15.3; ADR-0814).
+ * The claim decision table (OP-134, contract §6.7, schema §15.3; ADR-0815).
  *
  * A claim answers one question per event the anonymous session touched: does
  * the caller already own a profile here?

@@ -8,7 +8,7 @@ import { E2E_BASE_URL } from "./ports";
 /**
  * E1 — the anonymous attendance becomes the account's own, over the deployed
  * HTTP surface (OP-134 E1; contract §6.7, §1.1 "session created", §6.2, §0.12;
- * schema §13.5, §15.3; ADR-0813).
+ * schema §13.5, §15.3; ADR-0814).
  *
  * The integration suites call the route handlers in-process and can install a
  * logger and a database handle. This spec proves the same journey through a real

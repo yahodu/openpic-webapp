@@ -16,7 +16,7 @@ import { nextIp, seedTenant, type SeededEvent } from "../helpers/selfie-flow";
 
 /**
  * Integration / contract — `GET /api/v1/me/events` (OP-134 I3; contract §6.7,
- * §0.4, Appendix C; schema §10.3, §15.3; ADR-0813).
+ * §0.4, Appendix C; schema §10.3, §15.3; ADR-0814).
  *
  * **Why this exists.** This is **the single whitelisted cross-tenant read** in
  * the whole product (§6.7, §0.4). Every other query is confined by
@@ -55,7 +55,7 @@ import { nextIp, seedTenant, type SeededEvent } from "../helpers/selfie-flow";
  *   and the claim's `claimed[].galleryUrl` carry.
  * - `expiringSoon` is `computeExpiringSoon({galleryExpiresAt, now})` (U1).
  *
- * ## Assumptions (recorded in ADR-0813)
+ * ## Assumptions (recorded in ADR-0814)
  *
  * - `coverThumbnailUrl` is `null` for an event with no uploaded images; §6.7
  *   shows a signed URL but names no cover-asset pointer on `events`, so a

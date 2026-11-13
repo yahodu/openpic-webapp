@@ -1,4 +1,4 @@
-# ADR-0814 — OP-134 GREEN: claim an anonymous session and the cross-tenant "my events" read
+# ADR-0815 — OP-134 GREEN: claim an anonymous session and the cross-tenant "my events" read
 
 - **Status:** Accepted (GREEN implementation record)
 - **Consumers:** the files that cite this record —
@@ -11,14 +11,14 @@
   `apps/web/src/app/api/v1/me/attendee-sessions:claim/route.ts` and
   `apps/web/src/app/api/v1/me/events/route.ts` — plus the executable contract
   it makes true
-  ([ADR-0813](ADR-0813-op134-attendee-claim-red.md)).
+  ([ADR-0814](ADR-0814-op134-attendee-claim-red.md)).
 - **Amends:** nothing. **Amended by:** nothing yet.
-- **Consumes:** `0814` (`Next free` advances to `0815`).
+- **Consumes:** `0815` (`Next free` advances to `0816`).
 - **Base:** `origin/main` `f9a0f27` + the RED pin pack `fcaf0d7`.
 
 ## Context
 
-[ADR-0813](ADR-0813-op134-attendee-claim-red.md) delivered twenty-one unit and
+[ADR-0814](ADR-0814-op134-attendee-claim-red.md) delivered twenty-one unit and
 seventeen integration cases as the executable contract for contract §6.7 and
 left the production modules absent. This record is the GREEN: the smallest
 honest implementation that makes those pins true, and the record of every
@@ -94,7 +94,7 @@ compound `(updatedAt, _id)` key, so §0.8's cursor neither skips nor repeats a
 row when two participations share an instant. The route pages with the shared
 `parsePageQuery`/`buildCursorPage` codec, so the default is `40`, the ceiling
 `100`, and a foreign cursor is `400 invalid_cursor` — §0.8's own answer, as
-ADR-0813 §9 chose (the gallery's `422` remains flagged, not copied).
+ADR-0814 §9 chose (the gallery's `422` remains flagged, not copied).
 
 The item is exactly the thirteen §6.7 keys. `coverThumbnailUrl` is `null`
 (`events` has no cover-asset pointer), `organizerDisplayName` is `tenants.name`,
@@ -132,10 +132,10 @@ not clear it.
   sign-in response is served and the account's list is non-empty immediately.
 - A user can hold two profiles for one event (the claimed one and the
   merged-away anonymous one). That is the schema's shape; the anonymous row is
-  inert and remains a candidate for the session-TTL sweep ADR-0813 §Consequences
+  inert and remains a candidate for the session-TTL sweep ADR-0814 §Consequences
   already names.
 - `GET /me/events` is the second caller of `@/server/http/cursor`, and the
-  gallery/§0.8 `invalid_cursor` divergence is still open (ADR-0813 §9).
+  gallery/§0.8 `invalid_cursor` divergence is still open (ADR-0814 §9).
 - A broken outbox fails the claim after the rows moved: the emission is direct
   rather than best-effort. The hook path already swallows and logs it, so a
   sign-in is never failed; the explicit route answers the outbox failure. No pin

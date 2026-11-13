@@ -57,7 +57,7 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
  * OP-134 appends `session_claimed_by_other_user` (contract §6.7, `409`): a
  * second account presenting an `op_att` token whose data subject's photos are
  * already claimed must be refused by name, never silently accepted — the code
- * exists in no Appendix A row, so this lane owns its transport (ADR-0814).
+ * exists in no Appendix A row, so this lane owns its transport (ADR-0815).
  */
 export const AUTH_ERROR_CODES = [
   "authentication_required",

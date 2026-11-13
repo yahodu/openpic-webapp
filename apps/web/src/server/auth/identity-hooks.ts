@@ -200,7 +200,7 @@ interface ResolvedDeps {
  *
  * A sign-in whose request still carries `op_att` claims that session for the
  * account that just signed in, so the attendee's photos are already in her
- * account before the sign-in response is served (OP-134, ADR-0814). The service
+ * account before the sign-in response is served (OP-134, ADR-0815). The service
  * logs its own `attendee.claimed` / `attendee.claim_conflict` records.
  */
 function defaultClaim(db: Db): ClaimAttendeeSession {

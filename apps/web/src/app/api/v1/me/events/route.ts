@@ -12,7 +12,7 @@ import { systemClock } from "@/server/runtime/clock";
 
 /**
  * `GET /api/v1/me/events` — the account's own events (OP-134, contract §6.7,
- * §0.4, §0.8; schema §10.3, §15.3; ADR-0814).
+ * §0.4, §0.8; schema §10.3, §15.3; ADR-0815).
  *
  * This is **the** single whitelisted cross-tenant read of the product: "all my
  * events" cannot be answered inside one tenant's boundary. The predicate that

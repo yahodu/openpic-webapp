@@ -37,7 +37,7 @@ import {
 
 /**
  * Integration / contract — claiming an anonymous attendee session (OP-134 I1,
- * I2, I4, I7; contract §6.7, §0.12; schema §13.5, §15.3; ADR-0813).
+ * I2, I4, I7; contract §6.7, §0.12; schema §13.5, §15.3; ADR-0814).
  *
  * **Why this exists.** §6.7 is the PRD's *"she doesn't have to re-visit and
  * re-upload"*. Its whole value is that a claim **moves no data**: the profile
@@ -81,7 +81,7 @@ import {
  *   key is already in `NOTIFICATION_TYPE_KEYS`, in-app only).
  * - `info` log `attendee.claimed` carrying the counts (green card §1).
  *
- * ## Assumptions (recorded in ADR-0813)
+ * ## Assumptions (recorded in ADR-0814)
  *
  * - `claimed[]` lists only events whose profile was **re-pointed**; an event the
  *   caller already owns is reported in `skipped[]` and nowhere else.
