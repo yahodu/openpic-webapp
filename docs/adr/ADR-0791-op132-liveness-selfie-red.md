@@ -4,7 +4,7 @@
 - **Consumers:** the OP-132 RED specs —
   `apps/web/src/test/unit/liveness-challenge.test.ts` (U1 + U3, 17 cases),
   `apps/web/src/test/unit/selfie-attempts.test.ts` (U2, 10 cases),
-  `apps/web/src/test/integration/liveness-selfie-submit.test.ts` (16 cases),
+  `apps/web/src/test/integration/liveness-selfie-submit.test.ts` (19 cases),
   `apps/web/src/test/integration/selfie-reuse.test.ts` (7 cases),
   `apps/web/src/test/integration/selfie-submit-user.test.ts` (2 cases),
   `apps/web/e2e/liveness-selfie.spec.ts` (E1) and the shared fixture module
@@ -16,7 +16,9 @@
   ticket of OP-131 and OP-122 and continues the shared attendee block per
   CONVENTIONS §11 rule B; a sweep of `origin`'s `docs/adr` finds no `ADR-0791`.
   This record takes `0791`; the ledger cell advances to `0792`.
-- **Amends:** nothing. **Amended by:** the OP-132 GREEN ADR.
+- **Amends:** nothing. **Amended by:** the OP-132 GREEN ADR, and amended **in
+  place** by the F1 follow-up card `t_dd9cbd7c` (review of `t_3b8151c3`,
+  PR #543): §6 and three integration cases below.
 - **Consumes:** `0791` (`Next free` advances to `0792`).
 - **Base:** the RED branch is cut from `origin/OP-131-task-biometric-consent-green`
   (`1298529`), not from `main`, because every selfie route mounts
@@ -110,6 +112,33 @@ no consent and must see `412` even though the selfie exists; I5's foreign selfie
 is `404` (never `403`) once the caller's own consent is valid; I15's withdrawn
 selfie is `404` after the consent is granted again.
 
+### 6. The selfie's object is owned, bounded and erasable (added by `t_dd9cbd7c`)
+
+F1 of the round-1 review: a submit stored the bytes at
+`originals/selfies/<sha256>` but wrote `assetId: null`, created no
+`mediaAssets` row and stamped no `expireAt`, so §16.1's refcount and the
+OP-131 withdrawal had nothing to act on and "delete my biometric data" left the
+probe image in storage forever. Three cases now pin the object's lifecycle, and
+they fix these decisions:
+
+- **One owner row per content hash.** A `202` leaves exactly one `mediaAssets`
+  row with `kind: "selfie"` (the §15.2 vocabulary), the submitted
+  `contentHash` and `refCount: 1`, and the stored `selfies` row's `assetId`
+  (§16.4 "The image") is that row's id. The `(tenantId, contentHash)` unique
+  index stays the arbiter of a repeat submit; the pins assert one row, never a
+  second.
+- **Retention is a property of the row, not of the confirmation.** A queued
+  (`processing.status: "queued"`) selfie already carries `expireAt` (§16.4's
+  TTL field) **after** its `createdAt` and in the future. The exact retention
+  window is deliberately **not** pinned here — the GREEN's record fixes which
+  setting supplies it — so a legitimate change of duration breaks no case.
+- **Withdrawal erases the bytes.** After submit + confirm, `DELETE …/consent`
+  must still answer `204` with `selfies=1;embeddings=1;matches=2`, leave zero
+  `selfies`/`faceMatches` rows, **and** make `getObject` at the selfie's own
+  location/object key reject `not_found` through `getObjectStorage()` — the
+  memoized port the submit route wrote through. A `refCount` decrement alone
+  is not enough: the probe recorded below measured that.
+
 ## The executable contract
 
 ### Pure modules
@@ -182,6 +211,25 @@ be 412`), the rest at their first fixture step (`expected 201 … received
   `apps/web/e2e/liveness-selfie.spec.ts:222`). That is the OP-93/ADR-0306
   "RED-by-design" evidence: the spec drives the shipped path, and the GREEN's PR
   is where it turns green.
+
+### Evidence measured for §6 (`t_dd9cbd7c`)
+
+- **Red list on the current tree** (base `3eb7c7d`): 3 failed | 16 passed.
+- **Red, asset accounting** — `expected [] to have a length of 1 but got +0`.
+- **Red, retention** — `expected undefined to be an instance of Date`.
+- **Red, erasure** — `promise resolved "Uint8Array[ … ]" instead of rejecting`:
+  the object was still readable after the withdrawal.
+- **Near-fix probe, pass A** (throwaway edit: one `mediaAssets` upsert with
+  `refCount: 1` + `assetId`, plus `expireAt`, in `insertQueuedSelfie`):
+  **1 failed | 18 passed** — the two accounting cases went green and the
+  erasure case stayed red at its `getObject` assertion.
+- **Near-fix probe, pass B** (pass A plus `deleteObject` for a
+  `mediaAssets` row that reached `refCount: 0` in the OP-131 `DELETE` handler):
+  **41 passed (41)** across this spec and `biometric-consent.test.ts`, i.e. the
+  pin is satisfiable without breaking the consent suite.
+- Both probes were deleted with `git checkout --` and re-hashed: the two
+  production files are byte-identical to `3eb7c7d` (sha256 verified), and
+  `git status --short` lists only the amended spec.
 
 ## Open questions handed to the GREEN
 
