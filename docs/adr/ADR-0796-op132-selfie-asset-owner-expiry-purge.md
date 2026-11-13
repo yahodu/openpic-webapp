@@ -127,6 +127,13 @@ delete on a conditional `status: "purged"` write instead.
 - The window is 90 days and the event cap can only shorten it; the pin does not
   bound the duration (`t_26ab6dd7` adds that pin), so a future change of the
   constant is a one-line edit.
+- **Known gap, routed (F-A2, High):** the withdrawal deletes the rows and _then_
+  purges the blob, so a transient `deleteObject` failure answers `500` with the
+  consent un-withdrawn; the retry then finds no `selfies` rows, derives no
+  references, answers `204` and leaves the object readable. Fixing that ordering
+  needs the pin the reviewer routed to `t_c146a82e` → `t_0f7341d7`; the pin this
+  record turns green reads the object back after the `204`, so the delete has to
+  stay on the withdrawal path.
 - **Known gap, routed:** `expireAt` is written on every queued selfie, but
   `apps/web/src/server/db/indexes.ts` carries **no** `selfies` index set, so the
   §16.4 `{expireAt: 1}` TTL does not exist yet — the deadline is inert until that
