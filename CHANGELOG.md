@@ -1,3 +1,9 @@
+## [1.61.1](https://github.com/yahodu/openpic-webapp/compare/v1.61.0...v1.61.1) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 make a failed selfie purge retryable ([#550](https://github.com/yahodu/openpic-webapp/issues/550)) ([4c31808](https://github.com/yahodu/openpic-webapp/commit/4c31808573359325d573a063112dbfde74ddcced))
+
 ## [1.61.0](https://github.com/yahodu/openpic-webapp/compare/v1.60.0...v1.61.0) (2026-11-13)
 
 ### Features

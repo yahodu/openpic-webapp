@@ -5,6 +5,7 @@ import { subjectFilter, type ConsentSubject } from "./consent-guard";
 import type { SelfieAttemptBudget } from "./selfie-attempts";
 
 import { COLLECTIONS } from "@/server/db/collections";
+import { appError } from "@/server/http/errors";
 import type { Logger } from "@/server/logging";
 import { enqueueWork } from "@/server/queue/enqueue-work";
 import { getWorkQueue } from "@/server/queue/get-work-queue";
@@ -251,6 +252,18 @@ export interface QueuedSelfieOptions {
 export async function insertQueuedSelfie(options: QueuedSelfieOptions): Promise<ObjectId> {
   const _id = new ObjectId();
   const tenant = tenantRepo(options.tenantKey, options.db);
+  // A withdrawal claims the asset row `purged` before it deletes the object
+  // (ADR-0798). Taking a reference in that window would outlive the bytes, so
+  // the claim is refused until the purge completes.
+  const claimed = await tenant
+    .collection(COLLECTIONS.mediaAssets)
+    .findOne(
+      { contentHash: options.contentHash, status: "purged", purgedAt: null },
+      { projection: { _id: 1 }, ...sessionOption(options.session) }
+    );
+  if (claimed !== null) {
+    throw appError("conflict", { details: { reason: "selfie_purged" } });
+  }
   // One asset row per (tenant, content hash): the unique index is the arbiter
   // and `$inc` makes a re-submitted hash a second reference, not a second row.
   const asset = (await tenant.collection(COLLECTIONS.mediaAssets).findOneAndUpdate(
