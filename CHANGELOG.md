@@ -1,3 +1,9 @@
+## [1.63.1](https://github.com/yahodu/openpic-webapp/compare/v1.63.0...v1.63.1) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 refuse the biometric write surface after retention ([#569](https://github.com/yahodu/openpic-webapp/issues/569)) ([442e01a](https://github.com/yahodu/openpic-webapp/commit/442e01a623753316e6520220c837bc8a759d0ced)), closes [#565](https://github.com/yahodu/openpic-webapp/issues/565) [#570](https://github.com/yahodu/openpic-webapp/issues/570)
+
 ## [1.63.0](https://github.com/yahodu/openpic-webapp/compare/v1.62.1...v1.63.0) (2026-11-13)
 
 ### Features
