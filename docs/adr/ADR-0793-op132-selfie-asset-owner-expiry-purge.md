@@ -122,6 +122,11 @@ delete on a conditional `status: "purged"` write instead.
 - The window is 90 days and the event cap can only shorten it; the pin does not
   bound the duration (`t_26ab6dd7` adds that pin), so a future change of the
   constant is a one-line edit.
+- **Known gap, routed:** `expireAt` is written on every queued selfie, but
+  `apps/web/src/server/db/indexes.ts` carries **no** `selfies` index set, so the
+  §16.4 `{expireAt: 1}` TTL does not exist yet — the deadline is inert until that
+  index is added. It is left out here because no case pins it and the index set is
+  the Test Author's to pin; reported in the handoff.
 - **Known limit, not pinned:** the tenant-wide `(tenantId, contentHash)` unique
   index does not include `kind`, so an organizer uploading bytes that an attendee
   already submitted as a selfie resolves to the **selfie** row, which has no
