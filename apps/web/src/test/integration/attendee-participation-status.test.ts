@@ -37,7 +37,8 @@ import {
  * Integration / contract — the participation poll (`/me`), the seen watermark,
  * the `newerThan` cursor and the e2e match fixture
  * (OP-133 M1, I3, I13, I14; contract §6.4, §6.5; schema §15.3, §17.5;
- * ADR-0793 §1, §6, §9).
+ * ADR-0793 §1, §6, §9; ADR-0799 §4 the signed selfie tile; ADR-0802 §3 the two
+ * `previewUrl: null` arms).
  *
  * **Why this exists.** `/me` is the single polling endpoint of the whole
  * attendee experience, and it is the only place that can tell a client *when*
@@ -578,6 +579,86 @@ describe("when the poll projects the attendee's selfie", () => {
     expect(Number(url.searchParams.get("exp")) * 1000).toBeGreaterThan(Date.now());
     expect(url.searchParams.get("sig")).not.toBeNull();
     expect(mediaSigner().verify(previewUrl)).toBe(true);
+  });
+
+  it("answers previewUrl: null when the stored selfie carries no asset id", async () => {
+    // Arrange — a real active selfie through the shipped submit → worker →
+    // confirm path, so the only change is the `assetId` the route reads.
+    const world = await seedConsentingAttendee("op133-f2-legacy");
+    const selfieId = await activateSelfie(world, { tag: "op133-f2-legacy", matches: 0 });
+
+    // The tile is signed while the row is normal, so a `null` below is the
+    // mutation's effect and not a fixture that never had an asset.
+    const before = await pollBody(world.event.slug, { cookie: world.cookie });
+    expect(new URL(String(before.body.selfie?.previewUrl)).pathname).toBe(
+      `/t/${makeSelfieBytes("op133-f2-legacy").hash}.webp`
+    );
+
+    // `SelfieRow.assetId` is typed `assetId?: ObjectId | null`: a legacy selfie
+    // written before §16.4 took an asset is exactly this shape.
+    const cleared = await app.db
+      .collection(COLLECTIONS.selfies)
+      .updateOne({ _id: new ObjectId(selfieId) }, { $set: { assetId: null } });
+    expect(cleared.modifiedCount).toBe(1);
+
+    // Act
+    const { status, body } = await pollBody(world.event.slug, { cookie: world.cookie });
+    const selfie = body.selfie;
+    if (selfie === null) {
+      throw new Error(`expected a selfie summary, received null: ${JSON.stringify(body)}`);
+    }
+
+    // Assert — a poll must not throw and must not answer 500; the summary keeps
+    // every §6.4 field and reports the missing tile as `null`, not by omitting
+    // the key.
+    expect(status).toBe(200);
+    expect(keysOf(selfie)).toEqual(SELFIE_KEYS);
+    expect(selfie.previewUrl).toBeNull();
+    expect(selfie.id).toBe(selfieId);
+    expect(selfie.accepted).toBe(true);
+    expect(selfie.attemptsUsed).toBe(1);
+    expect(selfie.attemptsRemaining).toBe(ATTEMPTS_ALLOWED - 1);
+  });
+
+  it("answers previewUrl: null when the selfie's media asset row is gone", async () => {
+    // Arrange — an active selfie whose `media_assets` row was purged (§16.1):
+    // the row the tile is signed from is missing while the selfie itself lives.
+    const world = await seedConsentingAttendee("op133-f2-purged");
+    const selfieId = await activateSelfie(world, { tag: "op133-f2-purged", matches: 0 });
+
+    const selfieRow = await app.db
+      .collection(COLLECTIONS.selfies)
+      .findOne({ _id: new ObjectId(selfieId) }, { projection: { assetId: 1 } });
+    const assetId: unknown = selfieRow?.assetId;
+    if (!(assetId instanceof ObjectId)) {
+      throw new Error(`expected the stored selfie to reference a media asset`);
+    }
+    const before = await pollBody(world.event.slug, { cookie: world.cookie });
+    // Pin the tile itself, not merely "not null": `.not.toBeNull()` also passes
+    // for `undefined`, so an envelope that omitted `previewUrl` would satisfy it.
+    expect(new URL(String(before.body.selfie?.previewUrl)).pathname).toBe(
+      `/t/${makeSelfieBytes("op133-f2-purged").hash}.webp`
+    );
+
+    const purged = await app.db.collection(COLLECTIONS.mediaAssets).deleteOne({ _id: assetId });
+    expect(purged.deletedCount).toBe(1);
+
+    // Act
+    const { status, body } = await pollBody(world.event.slug, { cookie: world.cookie });
+    const selfie = body.selfie;
+    if (selfie === null) {
+      throw new Error(`expected a selfie summary, received null: ${JSON.stringify(body)}`);
+    }
+
+    // Assert — the missing asset is a `null` tile, never a 500, and the rest of
+    // the summary is unchanged.
+    expect(status).toBe(200);
+    expect(keysOf(selfie)).toEqual(SELFIE_KEYS);
+    expect(selfie.previewUrl).toBeNull();
+    expect(selfie.id).toBe(selfieId);
+    expect(selfie.accepted).toBe(true);
+    expect(selfie.attemptsUsed).toBe(1);
+    expect(selfie.attemptsRemaining).toBe(ATTEMPTS_ALLOWED - 1);
   });
 
   it("answers selfie: null with the no_selfie wire status before any submission", async () => {
