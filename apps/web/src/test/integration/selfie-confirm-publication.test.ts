@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-submit";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
+import { emitDomainEvent } from "@/server/domain/domain-events";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
 
 import { startTestApp, type TestApp } from "../helpers/authed-app";
@@ -28,8 +29,9 @@ import {
  * Integration / contract — what
  * `POST …/selfies/{selfieId}/confirm` publishes, how many times, and with what
  * count (OP-132 review finding **F3**, Medium; contract §6.3/§6.4, §7.6/§7.7,
- * §10.3.2; schema §15.3, §16.4, §17.5; ADR-0805 — whose §Amends names the
- * lane's liveness-selfie RED and GREEN records this file extends).
+ * §10.3.2; schema §15.3, §16.4, §17.5; ADR-0805, revised by ADR-0808 — whose
+ * §Amends names the lane's liveness-selfie RED and GREEN records this file
+ * extends).
  *
  * **Why this exists.** The confirmation is the lane's only publisher, and on the
  * F3 tree it publishes on every call: it has no state guard and the
@@ -53,11 +55,19 @@ import {
  *   submit and confirm selfie B whose worker run adds 2 more: A's notification
  *   carries `count: 3`, B's carries `count: 2`, and the profile's cached
  *   `matchCount` — the §6.4 total — is 5.
- * - **A late worker result publishes exactly once.** Confirm before the worker
- *   has written anything (the I9b arm), then let the worker write the embedding
- *   and the matches for the already-active row: the next confirm answers
- *   `status: "ready"` with the right count and emits one notification, and a
- *   further confirm does not emit a second.
+ * - **One activation result is announced exactly once, whichever publisher
+ *   writes it.** Confirm before the worker has written anything (the I9b arm),
+ *   then let the worker write the embedding and the matches for the
+ *   already-active row, and then let the **pipeline** publish that result first
+ *   through the one shared writer, carrying the delivery identity
+ *   `attendee.matches.new:<eventId>:<profileId>:<selfieId>`. The confirmation
+ *   that follows answers `status: "ready"` with the right count and emits
+ *   **nothing**, because its `dedupeKey` names the same identity (ADR-0808 §3).
+ * - **The confirmation still publishes a late result itself when the pipeline
+ *   has not.** With no pipeline emit, the next confirm answers `status: "ready"`
+ *   with the right count and emits one notification, and a further confirm emits
+ *   nothing. That is the confirmation's own contract — not the designed
+ *   recovery and not a client instruction (ADR-0808 §1).
  *
  * ## Assumptions (recorded in ADR-0805)
  *
@@ -78,7 +88,10 @@ import {
  * - **The worker is simulated, not stubbed**, exactly as the OP-132 suite does
  *   it: `finishSelfieWorker` writes what the queue consumer writes (the vector,
  *   the quality verdict, `processing.status: "done"`, one `faceMatches` row per
- *   photo) and the confirm route is the only thing under test.
+ *   photo) and the confirm route is the only thing under test. It writes with
+ *   raw driver calls on `app.db`, so it publishes nothing: the shipped worker's
+ *   publication transport is `POST /api/v1/internal/domain-events` (ADR-0808
+ *   §2), which this tree does not ship.
  * - **The bytes are put through the storage port**, not through the presign
  *   route: `selfie.submit` allows six calls an hour per attendee and this file
  *   spends two submits in one case, so the presign calls (which share the
@@ -109,6 +122,23 @@ const FIRST_RUN_MATCHES = 3;
 
 /** How many *additional* photos the second selfie's worker run finds. */
 const SECOND_RUN_NEW_MATCHES = 2;
+
+/**
+ * The one delivery identity of an activation result (contract §10.3.2; ADR-0806
+ * §3, ADR-0808 §3).
+ *
+ * Both publishers mint it: the confirmation before it emits, and the worker's
+ * `POST /api/v1/internal/domain-events` when the pipeline announces the result.
+ * Whichever writes first, the other finds the row and becomes a no-op.
+ *
+ * @param eventId - The event the matches belong to.
+ * @param profileId - The attendee profile the delivery announces.
+ * @param selfieId - The selfie whose activation produced the rows.
+ * @returns The `dedupeKey` both publishers must carry.
+ */
+function activationDeliveryKey(eventId: string, profileId: string, selfieId: string): string {
+  return `${MATCHES_NEW_EVENT}:${eventId}:${profileId}:${selfieId}`;
+}
 
 /* ─────────────────────────────── row shapes ──────────────────────────────── */
 
@@ -409,27 +439,97 @@ describe("when a second selfie finds more photos than the first", () => {
   });
 });
 
-/* ──────── F3.3: a worker result that arrives late is still published ─────── */
+/* ── F3.3: one activation result, one delivery, whichever publisher writes ── */
 
 describe("when the worker's result arrives after the confirmation", () => {
-  it("publishes the late result on the next confirm, and still notifies only once", async () => {
+  it("announces the late result exactly once, whichever publisher writes first", async () => {
+    const ready = await readyEvent("op132-f3-late-pipeline");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+    const submitted = await submitOne(ready.event.slug, ready, "f3-late-pipeline");
+    const profileId = (await profileRow())._id.toHexString();
+
+    // The I9b arm (pinned in liveness-selfie-submit.test.ts, used here as the
+    // starting point and not re-pinned): the confirmation activates the row and
+    // there is nothing to publish yet.
+    const early = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(early.status).toBe("processing");
+    expect(early.profileId).toBe(profileId);
+    expect((await profileRow()).matchCount).toBe(0);
+    expect(await matchesNewRows()).toHaveLength(0);
+
+    // The worker's own writes, before any publisher: the embedding and the three
+    // matches land on the row that is already active. The unchanged outbox is an
+    // OBSERVATION, not a prohibition — `finishSelfieWorker` writes with raw driver
+    // calls, so no production code ran, and the shipped worker's publication is
+    // the internal endpoint (ADR-0808 §2).
+    await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+    expect(await matchesNewRows()).toHaveLength(0);
+
+    // The pipeline publishes first, through the one shared writer and with the
+    // identity every publisher of this activation result must carry.
+    const deliveryKey = activationDeliveryKey(eventContext.eventId, profileId, submitted.selfieId);
+    const emitted = await emitDomainEvent(
+      {
+        eventKey: MATCHES_NEW_EVENT,
+        tenantId: ready.tenantKey,
+        actorRef: { kind: "attendee", id: profileId },
+        subjectRef: { kind: "event", id: eventContext.eventId },
+        payload: { eventId: eventContext.eventId, count: FIRST_RUN_MATCHES },
+        dedupeKey: deliveryKey,
+      },
+      { db: app.db }
+    );
+    expect(emitted).toEqual({ deduped: false, id: expect.any(String) });
+    expect(await matchesNewRows()).toHaveLength(1);
+
+    // Now the confirmation: it answers the same result and publishes NOTHING,
+    // because its own `dedupeKey` names the delivery the pipeline already wrote.
+    // This is the pin — a divergent key shape in the confirm inserts a second row
+    // for one activation result (ADR-0808 §3).
+    const confirmed = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(keysOf(confirmed)).toEqual(CONFIRM_KEYS);
+    expect(confirmed.status).toBe("ready");
+    expect(confirmed.selfieId).toBe(submitted.selfieId);
+    expect((await profileRow()).matchCount).toBe(FIRST_RUN_MATCHES);
+
+    const published = await matchesNewRows();
+    expect(published).toHaveLength(1);
+    // The surviving row is the pipeline's own: the confirmation added no second
+    // delivery of the same activation result.
+    expect(published[0]?._id.toHexString()).toBe(emitted.id);
+    expect(published[0]?.payload).toMatchObject({
+      eventId: eventContext.eventId,
+      count: FIRST_RUN_MATCHES,
+    });
+
+    // A further confirm is a normal repeat: the same envelope, still one row.
+    const repeated = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(repeated).toEqual(confirmed);
+    expect(await matchesNewRows()).toHaveLength(1);
+  });
+});
+
+describe("when the pipeline stays silent about a late worker result", () => {
+  it("publishes the late result on the next confirm when the pipeline has not", async () => {
     const ready = await readyEvent("op132-f3-late");
     const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
     const submitted = await submitOne(ready.event.slug, ready, "f3-late");
 
-    // The I9b arm (already pinned in liveness-selfie-submit.test.ts): the
-    // confirmation activates the row, but there is nothing to publish yet.
+    // The I9b arm again: the confirmation activates the row, and there is nothing
+    // to publish yet.
     const early = await confirm(ready.event.slug, submitted.selfieId, ready);
     expect(early.status).toBe("processing");
     expect((await profileRow()).matchCount).toBe(0);
     expect(await matchesNewRows()).toHaveLength(0);
 
-    // The worker finishes on the row that is already active. Nothing has
-    // published it: no client-facing text asks the attendee to confirm again,
-    // so the recovery path is the confirm the client is already polling with.
+    // The worker finishes on the row that is already active and the pipeline
+    // emits nothing, so nothing has published this result yet.
     await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
     expect(await matchesNewRows()).toHaveLength(0);
 
+    // This is the confirmation's own contract (§6.3/§7.6), not the designed
+    // recovery and not a client instruction: the pipeline owns the late result
+    // (ADR-0808 §1), and a client is never told to confirm again.
     const recovered = await confirm(ready.event.slug, submitted.selfieId, ready);
     expect(keysOf(recovered)).toEqual(CONFIRM_KEYS);
     expect(recovered.status).toBe("ready");
