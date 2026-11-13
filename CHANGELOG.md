@@ -1,3 +1,9 @@
+## [1.62.1](https://github.com/yahodu/openpic-webapp/compare/v1.62.0...v1.62.1) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 name the selfie resource in the submit's object-miss refusal ([#561](https://github.com/yahodu/openpic-webapp/issues/561)) ([bd3f8f6](https://github.com/yahodu/openpic-webapp/commit/bd3f8f66b630ea45499691815c9e843a2f5292fd))
+
 ## [1.62.0](https://github.com/yahodu/openpic-webapp/compare/v1.61.4...v1.62.0) (2026-11-13)
 
 ### Features
