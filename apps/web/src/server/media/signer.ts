@@ -32,6 +32,13 @@ export interface SignMediaInput {
   readonly kind: MediaDerivativeKind;
   readonly contentHash: string;
   readonly ext: string;
+  /**
+   * The file name the browser saves the bytes as (§6.6). A download's name
+   * reaches the client through the media Worker's `Content-Disposition`, so it
+   * is part of the authorization surface: when present it is signed and
+   * percent-encoded into the URL (ADR-0794 §4).
+   */
+  readonly download?: string;
 }
 
 /** The §5.6 envelope a `sign` call returns. */
@@ -111,14 +118,27 @@ export function createMediaSigner(config: MediaSignerConfig): MediaSigner {
   /**
    * Compute the exact signature for a path/method/expiry under one secret.
    *
+   * A signed file name is appended as a fourth preimage line, so a URL minted
+   * without one and a URL minted with one can never share a signature (§6.6).
+   *
    * @param secret - The key to HMAC with.
    * @param method - The HTTP method in the preimage.
    * @param path - The URL pathname.
    * @param exp - The decimal `?exp=` value.
+   * @param download - The decoded file name, or `null` when there is none.
    * @returns The base64url HMAC-SHA256 signature.
    */
-  const signWith = (secret: string, method: string, path: string, exp: string): string =>
-    hmacSha256Base64Url(secret, `${method}\n${path}\n${exp}`);
+  const signWith = (
+    secret: string,
+    method: string,
+    path: string,
+    exp: string,
+    download: string | null
+  ): string =>
+    hmacSha256Base64Url(
+      secret,
+      download === null ? `${method}\n${path}\n${exp}` : `${method}\n${path}\n${exp}\n${download}`
+    );
 
   return {
     sign(input, ttlSeconds) {
@@ -132,10 +152,12 @@ export function createMediaSigner(config: MediaSignerConfig): MediaSigner {
       const exp = Math.floor(clock.now().getTime() / 1000) + ttl;
       const path = `/${segment}/${input.contentHash}.${input.ext}`;
       const expStr = String(exp);
-      const sig = signWith(currentSecret, DEFAULT_METHOD, path, expStr);
+      const download = input.download ?? null;
+      const sig = signWith(currentSecret, DEFAULT_METHOD, path, expStr, download);
+      const nameParam = download === null ? "" : `&download=${encodeURIComponent(download)}`;
 
       return {
-        url: `${BASE_URL}${path}?exp=${expStr}&sig=${sig}`,
+        url: `${BASE_URL}${path}?exp=${expStr}&sig=${sig}${nameParam}`,
         expiresAt: new Date(exp * 1000).toISOString(),
       };
     },
@@ -165,14 +187,17 @@ export function createMediaSigner(config: MediaSignerConfig): MediaSigner {
       }
 
       const path = parsed.pathname;
-      const expectedCurrent = signWith(currentSecret, method, path, expParam);
+      // Signature verifies the presented form: the decode of `?download=` is
+      // the exact string `sign` hashed, so a relabelled or stripped name fails.
+      const download = parsed.searchParams.get("download");
+      const expectedCurrent = signWith(currentSecret, method, path, expParam, download);
       const matchesProvided = timingSafeEqualStr(expectedCurrent, sigParam);
       if (matchesProvided) {
         return true;
       }
 
       if (previousSecret !== undefined) {
-        const expectedPrevious = signWith(previousSecret, method, path, expParam);
+        const expectedPrevious = signWith(previousSecret, method, path, expParam, download);
         return timingSafeEqualStr(expectedPrevious, sigParam);
       }
 

@@ -269,6 +269,22 @@ const legalSchema = z.object({
   biometricPolicyUrl: z.url(),
 });
 
+/**
+ * `attendee` — the attendee surface's platform tunables (contract §6.5;
+ * ADR-0794 §8).
+ *
+ * `anonymousPreviewLimit` is how many of their matches an attendee who has not
+ * signed in may see before the gallery asks them to log in.
+ */
+const attendeeSchema = z.object({
+  anonymousPreviewLimit: z.number().int().positive(),
+});
+
+/** The documented `attendee` defaults (§6.5). */
+const ATTENDEE_SETTINGS_DEFAULTS: z.input<typeof attendeeSchema> = {
+  anonymousPreviewLimit: 10,
+};
+
 /** The documented `selfie` defaults — what a tenant with no gated plan gets. */
 const SELFIE_SETTINGS_DEFAULTS: z.input<typeof selfieSchema> = { attemptsAllowed: 3 };
 
@@ -291,6 +307,7 @@ export const platformSettingsSchema = z.object({
   // Defaulted so a singleton seeded before these sections existed still parses.
   selfie: selfieSchema.default(SELFIE_SETTINGS_DEFAULTS),
   legal: legalSchema.default(LEGAL_SETTINGS_DEFAULTS),
+  attendee: attendeeSchema.default(ATTENDEE_SETTINGS_DEFAULTS),
   updatedAt: z.string(),
   updatedByUserId: z.string().nullable(),
 });
@@ -364,6 +381,7 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettingsValues = {
   },
   selfie: { ...SELFIE_SETTINGS_DEFAULTS },
   legal: { ...LEGAL_SETTINGS_DEFAULTS },
+  attendee: { ...ATTENDEE_SETTINGS_DEFAULTS },
 };
 
 /** A cached document and the instant its TTL elapses. */
