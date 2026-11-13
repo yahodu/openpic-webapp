@@ -178,9 +178,10 @@ taken, so this record draws **`0825`** — the next number above the highest
 in-flight reservation — and both cells advance to `0826`. No lane row is minted:
 the shared attendee block `0780`–`0798` was exhausted before this lane, so the
 number comes from the `unallocated (future lanes)` pool, the
-[ADR-0800](ADR-0800-op132-selfies-ttl-and-kind-dedupe-pins.md) precedent. When
-PR #590 lands it will set the cells from its own base and the merge keeps the
-**higher** cell, exactly as the earlier skips in this lane did.
+[ADR-0800](ADR-0800-op132-selfies-ttl-and-kind-dedupe-pins.md) precedent. PR #590
+has since landed on the trunk as `c62000f` — its own record advanced the cells to
+`0825` — so this merge keeps the **higher** cell at `0826`, exactly as the
+earlier skips in this lane did.
 
 ## Consequences
 
