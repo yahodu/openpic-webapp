@@ -7,6 +7,7 @@ import { ensureIndexes } from "@/server/db/indexes";
 import {
   galleryHandlers,
   mediaSigner,
+  SEED_INSTANT,
   seedAnonymousGallery,
   seedIdentifiedGallery,
   seedImage,
@@ -29,7 +30,8 @@ import {
  * Integration / contract — originals, previews and download jobs: who may ask,
  * what a refusal says, and where the download job lives
  * (OP-133 I5, I6, I8, I9, I11; contract §6.6, §5.6, §0.4, §14.1; schema §16.1,
- * §18.1; ADR-0793 §4, §7).
+ * §18.1; ADR-0793 §4, §7; ADR-0799 the two success paths; ADR-0802 §1–§2 the
+ * soft-delete predicate).
  *
  * **Why this exists.** The gallery deliberately never carries an original: the
  * bytes are requested on an explicit tap, with a 15-minute token, and only for
@@ -47,6 +49,9 @@ import {
  * - A visible image the caller is **not** matched in → `403 forbidden`; an id
  *   that names no live image of this event → `404 not_found`; a plan without
  *   `originals.download` → `403 feature_not_available` (§14.1).
+ * - An id that names a **soft-deleted** photo (`event_images.deletedAt`) is not
+ *   a live image → `404 not_found`, on `original-url` and on `preview-url`
+ *   alike, because both routes share `requireSignableImage` (ADR-0802 §1–§2).
  * - `POST …/images/{imageId}/preview-url` is for identified callers only.
  * - `POST /api/v1/p/events/{slug}/downloads` (idempotency required) → `202
  *   {downloadId, status: "queued", pollUrl, pollIntervalMs: 3000}` and one
@@ -171,6 +176,28 @@ async function downloadStatus(downloadId: string, cookie?: string): Promise<Resp
   );
 }
 
+/**
+ * Soft-delete one seeded image the way the organizer's delete does: the
+ * `event_images` row stays and only `deletedAt` is stamped (§16.3).
+ *
+ * The update is guarded on `deletedAt: null` and its match count is asserted by
+ * the caller, so a case can never read a `404` that came from a fixture which
+ * was never live in the first place.
+ *
+ * @param imageId - The seeded image to stamp.
+ */
+async function softDeleteImage(imageId: ObjectId): Promise<void> {
+  const deleted = await app.db
+    .collection(COLLECTIONS.eventImages)
+    .updateOne(
+      { _id: imageId, deletedAt: null },
+      { $set: { deletedAt: new Date(SEED_INSTANT.getTime() + 60_000) } }
+    );
+  if (deleted.matchedCount !== 1) {
+    throw new Error(`expected to soft-delete the live image ${imageId.toHexString()}`);
+  }
+}
+
 /* ──────────── I5: the original-url refusals, and the signed success ──────── */
 
 describe("when the attendee asks for an original", () => {
@@ -225,6 +252,30 @@ describe("when the attendee asks for an original", () => {
 
     expect(response.status).toBe(404);
     expect((await errorBody(response)).code).toBe("not_found");
+  });
+
+  it("answers 404 for a photo the organizer soft-deleted, even with originals granted", async () => {
+    // Arrange — the success fixture exactly, so the only difference from the
+    // `201` case above is the `deletedAt` stamp added below.
+    const world = await seedAnonymousGallery(app, "op133-i5-deleted", { matches: 1 });
+    await seedOriginalsPlan(app, world.tenantKey, true);
+    const image = world.images.at(0);
+    if (image === undefined) {
+      throw new Error("expected a seeded image");
+    }
+    await softDeleteImage(image.imageId);
+
+    // Act
+    const response = await requestOriginal(world.event.slug, image.imageId.toHexString(), {
+      cookie: world.cookie,
+    });
+    const body = (await response.json()) as Record<string, unknown>;
+
+    // Assert — §16.3: a deleted photo is not a signable image, and the refusal
+    // carries no URL at all (the body is the `error` envelope only).
+    expect(response.status).toBe(404);
+    expect(keysOf(body)).toEqual(["error"]);
+    expect((body.error as { readonly code?: string }).code).toBe("not_found");
   });
 
   it("answers 403 feature_not_available when the plan does not grant originals", async () => {
@@ -443,6 +494,32 @@ describe("when an identified attendee asks for a preview", () => {
 
     expect(response.status).toBe(404);
     expect((await errorBody(response)).code).toBe("not_found");
+  });
+
+  it("answers 404 for a photo the organizer soft-deleted, so no preview is ever signed", async () => {
+    // Arrange — the success fixture exactly (`op133-f1-ok` shape), so the one
+    // difference from the `201` case above is the `deletedAt` stamp: the image
+    // row is real and matched to the caller before it is deleted.
+    const world = await seedIdentifiedGallery(app, "op133-f1-deleted", { matches: 1 });
+    const image = world.images.at(0);
+    if (image === undefined) {
+      throw new Error("expected a seeded image");
+    }
+    await softDeleteImage(image.imageId);
+
+    // Act
+    const response = await requestPreview(world.event.slug, image.imageId.toHexString(), {
+      cookie: world.cookie,
+    });
+    const body = (await response.json()) as Record<string, unknown>;
+
+    // Assert — §16.3: the shared `requireSignableImage` lookup must not resolve
+    // a soft-deleted row, and the refusal carries no URL (the body is the
+    // `error` envelope only). Without the `deletedAt: null` predicate this
+    // answers `201` with a signed `/p/…` URL.
+    expect(response.status).toBe(404);
+    expect(keysOf(body)).toEqual(["error"]);
+    expect((body.error as { readonly code?: string }).code).toBe("not_found");
   });
 
   it("answers 403 identified_only to an anonymous attendee session", async () => {
