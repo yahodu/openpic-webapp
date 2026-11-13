@@ -2167,7 +2167,7 @@ Failure paths:
 | Condition                                                     | Response                                                                                      |
 | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | Consent missing                                               | `412 consent_required`                                                                        |
-| Object absent from storage                                    | `404 not_found`                                                                               |
+| Object absent from storage                                    | `404 not_found` (`details.resource: "selfie"`)                                                |
 | Challenge expired, spent, not the caller's, or nonce mismatch | `409 liveness_challenge_invalid` (`details.reason` `expired` \| `already_used` \| `mismatch`) |
 | Selfie attempts exhausted                                     | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`)                          |
 | Object being purged after a withdrawal                        | `409 conflict` (`details.reason: "selfie_purged"`)                                            |
