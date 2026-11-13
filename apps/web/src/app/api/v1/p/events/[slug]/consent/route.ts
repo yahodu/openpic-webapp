@@ -104,12 +104,6 @@ interface SelfieRow {
   readonly embedding?: unknown;
 }
 
-/** A stored `mediaAssets` row, as the withdrawal releases and purges it (§16.1). */
-interface MediaAssetRow {
-  readonly contentHash: string;
-  readonly refCount?: number;
-}
-
 /** A stored `attendeeEventProfiles` row, as the grant links it (schema §15.3). */
 interface ProfileRow {
   readonly _id: ObjectId;
@@ -307,28 +301,41 @@ export const DELETE = defineRoute({
         }
       }
 
+      // The blob is purged **before** the rows that point at it (ADR-0798): a
+      // failed delete must leave the selfies behind, or the retry has no pointer
+      // to follow and the object stays readable for good. The claim is atomic
+      // with the last release, so a submit racing the delete is refused instead
+      // of being handed a reference to bytes that are about to go.
+      if (references.size > 0) {
+        const assets = tenant.collection(COLLECTIONS.mediaAssets);
+        const storage = getObjectStorage();
+        for (const { id, count } of references.values()) {
+          // `<= count` also matches a row an earlier attempt already released
+          // (`refCount: 0`), which is what makes the retry re-attempt the purge.
+          const claimed = (await assets.findOneAndUpdate(
+            { _id: id, refCount: { $lte: count } },
+            { $set: { refCount: 0, status: "purged", purgedAt: null } },
+            { returnDocument: "after", projection: { contentHash: 1 } }
+          )) as { readonly contentHash: string } | null;
+          if (claimed === null) {
+            // Another profile still holds the object: release only this one.
+            await assets.updateOne(
+              { _id: id, refCount: { $gt: count } },
+              { $inc: { refCount: -count } }
+            );
+            continue;
+          }
+          // The key is derived from the content hash — the asset row's `storage`
+          // slot may be absent (ADR-0796).
+          await storage.deleteObject(SELFIE_LOCATION_KEY, selfieObjectKey(claimed.contentHash));
+          await assets.updateOne({ _id: id }, { $set: { purgedAt: now } });
+        }
+      }
+
       const [deletedSelfies, deletedMatches] = await Promise.all([
         selfies.deleteMany({ profileId: profile._id }),
         tenant.collection(COLLECTIONS.faceMatches).deleteMany({ profileId: profile._id }),
       ]);
-      if (references.size > 0) {
-        // The blob is purged once nothing references it (schema §16.1): the
-        // withdrawal drops the references and deletes the object the row now
-        // owns. The key is derived from the content hash — the asset row's
-        // `storage` slot may be absent (ADR-0796).
-        const assets = tenant.collection(COLLECTIONS.mediaAssets);
-        const storage = getObjectStorage();
-        for (const { id, count } of references.values()) {
-          const asset = (await assets.findOneAndUpdate(
-            { _id: id, refCount: { $gt: 0 } },
-            { $inc: { refCount: -count } },
-            { returnDocument: "after", projection: { contentHash: 1, refCount: 1 } }
-          )) as MediaAssetRow | null;
-          if (asset !== null && (asset.refCount ?? 0) <= 0) {
-            await storage.deleteObject(SELFIE_LOCATION_KEY, selfieObjectKey(asset.contentHash));
-          }
-        }
-      }
 
       await tenant.collection(COLLECTIONS.consents).updateMany(
         {
