@@ -3,8 +3,9 @@
  *
  * Everything that reaches a MongoDB collection from application code goes
  * through here: `tenantRepo` for tenant-scoped collections, `platformRepo` for
- * the deliberate platform-scope exceptions, and — the single whitelisted
- * cross-tenant read — `crossTenantReads`. Read paths project stored documents
+ * the deliberate platform-scope exceptions, `crossTenantReads` — the single
+ * whitelisted cross-tenant read — and `crossTenantWrites`, its sibling for the
+ * claim's deliberate cross-tenant write. Read paths project stored documents
  * with `toDto` so internal identifiers never escape.
  */
 
@@ -20,14 +21,17 @@ export type { PlatformRepository } from "./platform";
 export { toDto } from "./dto";
 export type { Dto, WithId } from "./dto";
 
-export { crossTenantReads } from "./cross-tenant";
+export { crossTenantReads, crossTenantWrites } from "./cross-tenant";
 export type {
   AttendeeEventItem,
   AttendeeEventPage,
   AttendeeProfileDto,
   AttendeeProfilePage,
   AttendeeProfileSubject,
+  ClaimProfileRow,
   CrossTenantPage,
   CrossTenantReads,
+  CrossTenantWrites,
   OwnedMatchRow,
+  RepointAttendeeProfileOptions,
 } from "./cross-tenant";

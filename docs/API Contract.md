@@ -2407,7 +2407,7 @@ Auth `attendee` + owner
 
 ### `POST /api/v1/me/attendee-sessions:claim`
 
-Auth `user` · Body `{ "sessionToken": "opat_9f2c..." }` (or omitted, reading the `op_att` cookie)
+Auth `user` · Body `{ "sessionToken": "opat_9f2c..." }` (or omitted — or sent empty — reading the `op_att` cookie)
 
 The PRD's _"she doesn't have to re-visit and re-upload"_. Re-points every `attendeeEventProfiles` row from `subject.kind: "anonymous"` to `subject.kind: "user"` in a **single atomic update per profile** (schema §15.3). **No data moves. No selfie re-upload. No reprocessing.**
 
