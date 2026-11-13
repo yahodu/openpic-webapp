@@ -15,7 +15,6 @@
   trunk, on every open PR head and in every worktree. The attendee cell and the
   pool cell both advance to `0800`, so the next attendee-lane card takes a fresh
   block from `0800` instead of minting into the exhausted `0780`–`0798` block.
-
 - **References:** [ADR-0793](ADR-0793-op133-attendee-gallery-red.md) §6 (the
   two hide semantics, whose `event_images.visibility` predicate the
   organizer-hide refusal pins) and its **Consequences** bullet "`preview-url` is
