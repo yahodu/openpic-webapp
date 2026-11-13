@@ -70,7 +70,7 @@ the rejected alternatives are recorded in
 | OP-124 uploads lane                 | `0720`–`0739`                   | `0722`    |
 | OP-125 uploads lane                 | `0740`–`0759`                   | `0742`    |
 | OP-126 uploads lane                 | `0760`–`0779`                   | `0777`    |
-| OP-129 attendee identity lane       | `0780`–`0798`                   | `0798`    |
+| OP-129 attendee identity lane       | `0780`–`0798`                   | `0799`    |
 | unallocated (future lanes)          | `0799`+ (20 per lane, in order) | `0799`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -410,6 +410,7 @@ _The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-card-serializati
 | [0793](ADR-0793-op133-attendee-gallery-red.md) | OP-133 RED: the attendee read surface pinned as an executable contract — a pure poll table (`2000`/`15000`/`60000`, `nextPollAfter` non-mutating), `displayGeometry` transposing EXIF `5`–`8` and rounding the ratio to four decimals, `resolveStatus` (`ready`+0 → `no_match`/`no_matches_yet`, four stable `failed` codes, everything else collapsed to `processing_failed`), and the optional `download` name bound into the §5.7 signature (byte-identical when absent); the gallery ordered by `event_images.sequence` desc (I1 makes `createdAt` run opposite, so a timestamp sort fails), `faceMatches.hiddenAt` excluded **and counted** vs `event_images.visibility: hidden` excluded **and not counted** (I1/I1b, the OP-127 follow-up), the twelve-key item with verified thumbnails and no `similarity`, the anonymous `attendee.anonymousPreviewLimit` truncation (default `10`, `truncatedForAnonymous` + `loginUrl`, comparator cursor `422`), 45-match pagination and a 6-item walk that survives two mid-flight inserts; `/me` as §6.4's fourteen keys plus `latestMatchCursor`, `GET` never clearing the badges, `seenAt` leaving later matches `isNew`, `?newerThan=` fetching only the new items; the media refusals (unmatched `403`, unknown `404`, plan gate `feature_not_available`, owner-only download job `404`) and the test-only `POST /api/v1/test-support/attendee-matches` fixture with its `404` outside `test`/`e2e`; E1 drives the whole journey over HTTP | Accepted |
 | [0794](ADR-0794-op133-attendee-gallery-green.md) | OP-133 GREEN: the attendee read surface implemented and ADR-0793's open questions answered — the venue-neutral poll table (`2000`/`15000`/`60000`) plus `eventIndexingComplete`, `displayGeometry` returning the displayed pair rather than the stored one, `resolveStatus` populating `statusDetail` for two states only, the download filename bound into the §5.7 preimage (the signature is byte-identical when no name is passed) and a `ceil`-rounded `exp` so a stated `expiresAt` is a lower bound on the URL's life; `event_images.sequence` as the gallery's keyset ordering key with two cursor kinds (`cursor` pages, `newerThan` filters — a `newerThan` cursor is not a `cursor`), the two hide semantics and their two counts (an attendee hide is counted, an image-visibility hide is not), the anonymous allowance as a **total** rather than a page size, the platform-scope `downloadJobs` row whose id is never the authorization, the guarded test-only matcher fixture, the event-before-credential order that keeps `404` and `401` apart, the optional-body reader the two `{…?}` routes need, and the two new `face_matches` indexes plus the `downloadJobs` TTL. One pin was unsatisfiable as written — I7 compared `keysOf(body)` (sorted) against an unsorted expected array — and was corrected by the Test Author (card `t_c6d20dea`) by sorting the expected side, keeping the assertion an exact five-key set | Accepted |
 | [0796](ADR-0796-op132-selfie-asset-owner-expiry-purge.md) | OP-132 GREEN (F1, High): the selfie's owner row, its retention deadline and the purge path — `insertQueuedSelfie` upserts **one** `mediaAssets` row per `(tenant, contentHash)` (`kind: "selfie"`, `status: "stored"`, `$setOnInsert` for the identity fields and `$inc: {refCount: 1}` so the unique index arbitrates a repeat submit or a reuse as a **second reference**) and stores its id on the `selfies` row's `assetId`; the queued row carries `expireAt = createdAt + 90 d` capped by the event's own `retentionExpiresAt` (schema §22 "whichever first", read off the event row `resolveEventBySlug` already loads — no `retention.*` setting names a selfie window, so 90 is `SELFIE_RETENTION_DAYS`); the asset row deliberately carries **no `storage`** sub-document because §16.1's `contentHash` _is_ the object key; `DELETE …/consent` now counts one reference **per deleted selfie row**, decrements under the same `refCount > 0` guard and, at `<= 0`, deletes `originals/selfies/<sha256>` **synchronously** (the pin reads the object back through `getObjectStorage()` after the `204`), deriving the key from the content hash — reading `asset.storage.objectKey` answers `500` on the OP-131 fixture, which has no `storage` slot (measured); the asset row itself survives at `refCount: 0`, as OP-131 pins | Accepted |
+| [0798](ADR-0798-op133-preview-url-selfie-summary-pins.md) | OP-133 follow-up (TEST): the two success paths PR #547 shipped unpinned. `POST …/images/{imageId}/preview-url` now pins its `201` answer — the three §6.6 keys, `ttlSeconds: 7200`, a `/p/{hash}.jpg` pathname (so a signature over the original's `/o/` segment fails), a future whole-second `exp`, a `sig` that **verifies** with the app's own signer and an `expiresAt` bracketing `now + ttlSeconds` — and, because ADR-0794 §13 gives a preview **no** `originals.download` gate, the plan refusal is pinned at its real home: one plan that withholds originals still grants the preview and still refuses the original `403 feature_not_available`. The three refusals `requireSignableImage` fixes in order are pinned too — unknown id `404 not_found`, visible-but-unmatched `403 forbidden`, an organizer-hidden image `403 forbidden` **even for a matched caller**, and the anonymous-session `403 forbidden {reason: "identified_only"}` that separates it from the no-credential `401`. `/me`'s `selfie` field is typed (it was `unknown`) and pinned from an **activated** selfie driven through the shipped submit → worker → confirm path: the exact seven-key summary, the budget at one attempt of three, a verified `/t/{hash}.webp` thumbnail that is never the original key, `selfie: null` with the `no_selfie` wire status before any submission, and two polls that return the same row without clearing a badge or spending an attempt. No production file is touched; five one-line mutations each redden exactly their case | Accepted |
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
@@ -1045,3 +1046,40 @@ unconditional delete of every referenced asset still passes). `docs/adr/README.m
 remains the shared-ledger hotspot: this row, the `0796`/`0797` cell and the pool
 cell merge as a union keeping the highest value. No number outside `0780`–`0798`
 is touched._
+
+_The **OP-133** lane's `Next free` cell advanced from `0798` to `0799`, which
+**exhausts** the shared attendee block `0780`–`0798` (card `t_2c32cef3`, OP-133
+follow-up TEST — finding F1 of the pin-correction card `t_c6d20dea`; branch
+`OP-133-task-preview-url-selfie-summary-pins`, worktree
+`/root/openpic/openpic-webapp/.worktrees/t_2c32cef3`, cut from the **current**
+`origin/main` `4cff381` rather than the deleted lane branch). A sweep at the
+branch cut found no duplicate number on `origin/main`, `ADR-0790`–`ADR-0797` in
+flight on the open PR heads and no `ADR-0798` in any worktree, so this record
+takes `0798`; because every number in the block is now minted or reserved, the
+next attendee-lane card must draw a fresh block from the `unallocated (future
+lanes)` pool instead of minting `0799` as if it still sat inside this one.
+[ADR-0798](ADR-0798-op133-preview-url-selfie-summary-pins.md) records a
+**characterisation** pack — both paths are live on the trunk, so the cases are
+green on their first run and no GREEN sibling exists. Two premises in the card
+did not survive contact with the shipped code and the pins follow the code:
+`preview-url` answers `201` (not `200`), and it passes **no** `entitlementKey`,
+so `feature_not_available` is unreachable on that route — exactly the
+[ADR-0794](ADR-0794-op133-attendee-gallery-green.md) §13 decision — which is why
+the plan refusal is pinned on the gated `original-url` route while the preview
+case pins the other half ("a plan without originals still grants a preview").
+The card pointed at ADR-0793 §1/§6; those sections are the poll table and the two
+hide semantics, and the sentences that actually record these two paths as out of
+the RED pack are ADR-0793 §7 ("`preview-url` is pinned for the refusal only") and
+ADR-0794 §13, while §6 (the `event_images.visibility` predicate) is what the
+organizer-hide refusal now pins. Evidence: `attendee-media-access.test.ts` 8 → 14
+cases and `attendee-participation-status.test.ts` 8 → 11, both green on the
+branch cut (14 passed / 11 passed); five one-line mutations of the shipped files
+redden exactly their own case (`"original"` instead of `"preview"` →
+`expected 900 to be 7200`; the `identified_only` guard removed → `expected 201 to
+be 403`; the `visibility === "hidden"` arm dropped → `expected 201 to be 403`;
+`/me`'s `selfie` projection forced to `null` → the summary case's own throw; the
+selfie tile signed as `"original"` → `expected '/o/…' to be '/t/…'`), each file
+restored byte-identically (`git status` shows the two specs, this record and this
+ledger only); `prettier --check`, `eslint` on both specs and `tsc -p
+apps/web/tsconfig.json --noEmit` are clean. No number outside `0780`–`0798` is
+touched._
