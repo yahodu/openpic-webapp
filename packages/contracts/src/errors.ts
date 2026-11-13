@@ -340,6 +340,22 @@ export const COLLABORATION_ERROR_CODES = [
 export type CollaborationErrorCode = (typeof COLLABORATION_ERROR_CODES)[number];
 
 /**
+ * Selfie / liveness codes (contract §6.3, Appendix A row 3587).
+ *
+ * `liveness_challenge_invalid` (`409`, `{ reason: "expired" | "already_used" |
+ * "mismatch" }`) refuses a submit whose liveness challenge is spent, expired, or
+ * bound to different evidence. Like the event, consent and collaboration rows it
+ * is a contract catalogue code that is **not** a member of {@link ERROR_CODES},
+ * which the server error catalogue pins to exactly the base Appendix A table, so
+ * it is appended to the client-facing enum ({@link API_ERROR_CODES}) and
+ * transported from its own table (OP-132, ADR-0792). Append-only.
+ */
+export const SELFIE_ERROR_CODES = ["liveness_challenge_invalid"] as const;
+
+/** A member of the closed {@link SELFIE_ERROR_CODES} set. */
+export type SelfieErrorCode = (typeof SELFIE_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -409,6 +425,7 @@ export const API_ERROR_CODES = [
   ...EVENT_ERROR_CODES,
   ...COLLABORATION_ERROR_CODES,
   ...CONSENT_ERROR_CODES,
+  ...SELFIE_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -433,7 +450,8 @@ export type AppErrorCode =
   | MediaErrorCode
   | EventErrorCode
   | CollaborationErrorCode
-  | ConsentErrorCode;
+  | ConsentErrorCode
+  | SelfieErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);
