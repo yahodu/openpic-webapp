@@ -75,6 +75,11 @@ import {
  *   because there the second call reads the row the first one already committed
  *   (ADR-0816; measured on the cut as `[200,500]`, the loser `500 internal_error`
  *   /`TransactionRetryLimitError`).
+ * - **A burst of four answers four `200`s and notifies once.** Four confirms for
+ *   one selfie fired at the same instant, each with its own `Idempotency-Key`,
+ *   all answer the seven-key `200` with the same `selfieId`, and exactly **one**
+ *   `attendee.matches.new` row exists — the width the pair above does not cover,
+ *   because the retry budget absorbs one collision and not three (ADR-0821).
  *
  * ## Assumptions (recorded in ADR-0805)
  *
@@ -712,4 +717,124 @@ describe("when the same selfie is confirmed twice at the same instant", () => {
     // §6.4's cached total, once.
     expect((await profileRow()).matchCount).toBe(FIRST_RUN_MATCHES);
   });
+});
+
+/* ── F3.5: a burst of four simultaneous confirms answer 200 four times ────── */
+
+/** How many confirms the burst fires at the same instant (the card's width). */
+const BURST_CONFIRMS = 4;
+
+/**
+ * How many fresh rounds of the burst this case runs.
+ *
+ * A single round is **not** a pin on this tree, and that was measured rather
+ * than assumed. Fifteen focused runs of the single-round shape against the cut
+ * (`origin/main` `553a92f`) answered `[200,200,200,200]` six times and
+ * `[200,200,200,500]` or `[200,200,500,500]` nine times: the loser's retry
+ * either reads the winner's committed outbox row and answers `200`, or spends
+ * its last attempt on the same collision. That is a race against the commit,
+ * not a property of the implementation, so a single-round case would report the
+ * defect as fixed on two runs in five.
+ *
+ * The contract assertion is therefore unchanged and repeated over fresh rounds
+ * — this repository's rule for race pins (`it.each`, a fresh database per run;
+ * ADR-0816 §Decision 1). Forty further round-samples measured the one-round red
+ * rate at ~48 %, so ten rounds leave roughly a 1-in-600 chance that a file run
+ * passes on the defect (ADR-0821 §Evidence), and an implementation that really
+ * answers four `200`s does so in every round.
+ */
+const BURST_ROUNDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+
+describe("when the same selfie is confirmed by a burst of four requests", () => {
+  it.each(BURST_ROUNDS)(
+    "answers 200 to all four and leaves one attendee.matches.new row (round %i)",
+    async (round) => {
+      const ready = await readyEvent(`op132-f3-burst-${String(round)}`);
+      const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+      const submitted = await submitOne(ready.event.slug, ready, `f3-burst-${String(round)}`);
+      await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+
+      // Four REQUESTS for one activation result, not one retried request: every
+      // call carries its own `Idempotency-Key` (the helper mints a fresh one),
+      // so the idempotency-key store cannot answer any of them. A burst is what
+      // a gallery page with several open tabs — or a client that retries twice
+      // on timeout — actually produces, and §6.3 promises the same seven-key
+      // envelope to every one of them.
+      //
+      // All four are walked to the transaction boundary together by the same
+      // bounded latch case 5 uses (`confirmRaceGate`), so the case measures the
+      // contended write rather than the event loop's mood.
+      confirmRaceGate.close(BURST_CONFIRMS);
+      const responses = await Promise.all([
+        confirmSelfie(ready.event.slug, submitted.selfieId, {
+          cookie: ready.cookie,
+          ip: ready.ip,
+        }),
+        confirmSelfie(ready.event.slug, submitted.selfieId, {
+          cookie: ready.cookie,
+          ip: ready.ip,
+        }),
+        confirmSelfie(ready.event.slug, submitted.selfieId, {
+          cookie: ready.cookie,
+          ip: ready.ip,
+        }),
+        confirmSelfie(ready.event.slug, submitted.selfieId, {
+          cookie: ready.cookie,
+          ip: ready.ip,
+        }),
+      ]);
+
+      expect(responses).toHaveLength(BURST_CONFIRMS);
+
+      // Which racer finishes first is the event loop's business, so the pin is
+      // order-independent: sorted, the burst is four `200`s. Any `5xx` here is
+      // an attendee reading a failure after their selfie did activate — the
+      // defect class ADR-0816 closed for the pair, at the width the retry
+      // budget no longer absorbs (ADR-0821 §Context).
+      const statuses = responses
+        .map((response) => response.status)
+        .sort((left, right) => left - right);
+      expect(
+        statuses,
+        `the four simultaneous confirms answered [${statuses.join(",")}]; all four must be 200`
+      ).toEqual([200, 200, 200, 200]);
+
+      const [bodyOne, bodyTwo, bodyThree, bodyFour] = await Promise.all(
+        responses.map(async (response) => (await response.json()) as Record<string, unknown>)
+      );
+      if (
+        bodyOne === undefined ||
+        bodyTwo === undefined ||
+        bodyThree === undefined ||
+        bodyFour === undefined
+      ) {
+        throw new Error(`expected four confirm bodies, received ${String(responses.length)}`);
+      }
+
+      // Every answer is the §6.3 envelope, and they are one result, not four
+      // different readings of the same activation.
+      expect(keysOf(bodyOne)).toEqual(CONFIRM_KEYS);
+      expect(keysOf(bodyTwo)).toEqual(CONFIRM_KEYS);
+      expect(keysOf(bodyThree)).toEqual(CONFIRM_KEYS);
+      expect(keysOf(bodyFour)).toEqual(CONFIRM_KEYS);
+      expect(bodyOne.selfieId).toBe(submitted.selfieId);
+      expect(bodyOne.status).toBe("ready");
+      expect(bodyTwo).toEqual(bodyOne);
+      expect(bodyThree).toEqual(bodyOne);
+      expect(bodyFour).toEqual(bodyOne);
+
+      // One announcement for one activation result, not one per racer (§7.7:
+      // every notification originates from a `domainEvents` row, so the row
+      // count is the notification count).
+      const notifications = await matchesNewRows();
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]?.payload).toMatchObject({
+        eventId: eventContext.eventId,
+        count: FIRST_RUN_MATCHES,
+      });
+
+      // §6.4's cached total, once.
+      expect((await profileRow()).matchCount).toBe(FIRST_RUN_MATCHES);
+    }
+  );
 });
