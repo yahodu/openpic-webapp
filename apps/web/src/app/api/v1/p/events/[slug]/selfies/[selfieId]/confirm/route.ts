@@ -42,8 +42,8 @@ import { systemClock } from "@/server/runtime/clock";
  * announced only by a second, client-initiated confirm. The settled owner of
  * that late result is the **pipeline**, not this route: the worker's
  * `POST /api/v1/internal/domain-events` with the same `dedupeKey` (OP-135 §1,
- * not shipped yet); the pre-read above is what keeps the two mutually
- * exclusive (ADR-0808 §1/§3).
+ * not shipped yet); the dedupe read inside the transaction below is what keeps
+ * the two mutually exclusive (ADR-0808 §1/§3).
  */
 
 /** The §6.3 answer the confirm returns with `status: "ready"` once published. */
@@ -112,19 +112,22 @@ export const POST = defineRoute({
       : 0;
     // One delivery per activation result: `dedupeKey` names this selfie's
     // announcement (§10.3.2) and an existing row is the record that it already
-    // happened. The row is read first because a colliding insert would abort the
-    // transaction below (E11000), not silently dedupe.
+    // happened. The lookup runs **inside** the transaction with its session
+    // (ADR-0817): a read taken before the transaction lets both racers of a
+    // double-tap see `0`, and the loser's insert then collides on the outbox's
+    // unique partial index and aborts its transaction.
     const dedupeKey = `attendee.matches.new:${event.eventId.toHexString()}:${profile._id.toHexString()}:${selfieId.toHexString()}`;
-    const willPublish =
-      newMatches > 0 &&
-      (await platformRepo(db)
-        .collection(COLLECTIONS.domainEvents)
-        .countDocuments({ dedupeKey }, { limit: 1 })) === 0;
     // §15.3's watermark is stamped by the first delivery and never moved.
     const firstDelivery =
       profile.firstMatchNotifiedAt === undefined || profile.firstMatchNotifiedAt === null;
 
     await withTransaction(async (session) => {
+      const alreadyPublished =
+        newMatches > 0 &&
+        (await platformRepo(db)
+          .collection(COLLECTIONS.domainEvents)
+          .countDocuments({ dedupeKey }, { limit: 1, session })) > 0;
+      const willPublish = newMatches > 0 && !alreadyPublished;
       await selfies.updateMany(
         { profileId: profile._id, _id: { $ne: selfieId } },
         { $set: { isActive: false } },
