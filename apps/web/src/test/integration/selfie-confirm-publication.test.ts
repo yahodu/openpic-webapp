@@ -1,4 +1,4 @@
-import { ObjectId } from "mongodb";
+import { ObjectId, type ClientSession } from "mongodb";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-submit";
@@ -31,7 +31,7 @@ import {
  * count (OP-132 review finding **F3**, Medium; contract §6.3/§6.4, §7.6/§7.7,
  * §10.3.2; schema §15.3, §16.4, §17.5; ADR-0805, revised by ADR-0808 — whose
  * §Amends names the lane's liveness-selfie RED and GREEN records this file
- * extends).
+ * extends; the concurrent case is ADR-0816).
  *
  * **Why this exists.** The confirmation is the lane's only publisher, and on the
  * F3 tree it publishes on every call: it has no state guard and the
@@ -68,13 +68,24 @@ import {
  *   with the right count and emits one notification, and a further confirm emits
  *   nothing. That is the confirmation's own contract — not the designed
  *   recovery and not a client instruction (ADR-0808 §1).
+ * - **A double-tap answers two `200`s and notifies once.** Two confirms fired at
+ *   the same instant, each with its own `Idempotency-Key`, both answer the
+ *   seven-key `200` with the same `selfieId` and produce exactly **one**
+ *   `attendee.matches.new` row — the pin the sequential repeat above cannot make,
+ *   because there the second call reads the row the first one already committed
+ *   (ADR-0816; measured on the cut as `[200,500]`, the loser `500 internal_error`
+ *   /`TransactionRetryLimitError`).
  *
  * ## Assumptions (recorded in ADR-0805)
  *
  * - **The two confirms are two requests, not one retried request.** Every call
  *   carries its own `Idempotency-Key` (the helper mints a fresh UUID), so a
  *   repeat that is deduped by the idempotency-key store would not satisfy the
- *   pin: the guarantee has to come from the state the first confirm wrote.
+ *   pin: the guarantee has to come from the state the first confirm wrote. The
+ *   concurrent case fires the pair through `Promise.all` and holds both at the
+ *   transaction boundary, because `Promise.all` alone leaves the interleaving to
+ *   the event loop and was measured passing on the defect when the two requests
+ *   happened to run one after the other (ADR-0816 §Decision 1).
  * - **"New" is the arrival since the last notification, not the total.** The
  *   §7.6 catalogue describes `attendee.matches.new` as "additional matches
  *   later", and the in-app feed is one rolling row whose `groupCount` is
@@ -98,6 +109,94 @@ import {
  *   `selfie.submit` bucket) are avoided. The uploads suite pins the presign
  *   envelope.
  */
+
+/* ────────────────────────────── the race gate ───────────────────────────── */
+
+/** How many confirms the one concurrent case fires at the same instant. */
+const CONCURRENT_CONFIRMS = 2;
+
+/**
+ * How long a racer waits for its rival at the transaction boundary before a
+ * serialising implementation is let through.
+ *
+ * The gate exists to make the case deterministic, not to require a particular
+ * fix: an implementation that serialises confirms before their transactions
+ * never brings the second racer to this line, so the first is released by the
+ * expiry instead of being parked forever.
+ */
+const CONFIRM_RACE_GRACE_MS = 250;
+
+/**
+ * A bounded latch on the confirmation's transaction boundary.
+ *
+ * `Promise.all` alone leaves the interleaving to the event loop, and this case
+ * was measured passing on the defect when the two requests happened to run one
+ * after the other — the wrong pin. Every racer passes this gate **after** it has
+ * decided whether to publish and **before** its transaction opens, so both
+ * decisions are taken before either write can commit: exactly the window a
+ * read-outside-the-transaction check cannot close.
+ *
+ * The latch is armed only by the concurrent case; every other transaction in
+ * this file passes through it untouched.
+ */
+const confirmRaceGate = vi.hoisted(() => {
+  let armed = false;
+  let arrivals = 0;
+  let expected = 0;
+  let released: Promise<void> = Promise.resolve();
+  let release = (): void => undefined;
+
+  return {
+    /**
+     * Close the gate for `count` racers.
+     *
+     * @param count - How many racers must arrive before either proceeds.
+     */
+    close(count: number): void {
+      armed = true;
+      arrivals = 0;
+      expected = count;
+      released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+    /**
+     * Wait at the gate until every racer has arrived, or the grace expires.
+     *
+     * @param graceMs - The longest a lone racer is held.
+     */
+    async arrive(graceMs: number): Promise<void> {
+      if (!armed) {
+        return;
+      }
+      arrivals += 1;
+      if (arrivals >= expected) {
+        armed = false;
+        release();
+        return;
+      }
+      const expiry = new Promise<void>((resolve) => {
+        setTimeout(resolve, graceMs);
+      });
+      await Promise.race([released, expiry]);
+      armed = false;
+    },
+  };
+});
+
+vi.mock("@/server/db/transaction", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/db/transaction")>();
+  return {
+    ...actual,
+    withTransaction: async <T>(
+      fn: (session: ClientSession) => Promise<T>,
+      options?: Parameters<typeof actual.withTransaction>[1]
+    ): Promise<T> => {
+      await confirmRaceGate.arrive(CONFIRM_RACE_GRACE_MS);
+      return actual.withTransaction(fn, options);
+    },
+  };
+});
 
 let app: TestApp;
 
@@ -547,5 +646,70 @@ describe("when the pipeline stays silent about a late worker result", () => {
     const repeated = await confirm(ready.event.slug, submitted.selfieId, ready);
     expect(repeated).toEqual(recovered);
     expect(await matchesNewRows()).toHaveLength(1);
+  });
+});
+
+/* ───── F3.4: two simultaneous confirms answer 200 twice, notify once ─────── */
+
+describe("when the same selfie is confirmed twice at the same instant", () => {
+  it("answers 200 to both requests and leaves one attendee.matches.new row", async () => {
+    const ready = await readyEvent("op132-f3-concurrent");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+    const submitted = await submitOne(ready.event.slug, ready, "f3-concurrent");
+    await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+
+    // Two REQUESTS, not one retried request: `confirmSelfie` mints a fresh
+    // `Idempotency-Key` per call, so the idempotency-key store cannot make this
+    // case pass — the only thing that may serialize the pair is the publication's
+    // own state. A double-tap and a client timeout-retry both have this shape,
+    // and §6.3 promises the same seven-key envelope for a second confirm.
+    //
+    // Both racers are walked to the transaction boundary together (see
+    // `confirmRaceGate`), so the case measures the race rather than the event
+    // loop's mood: both have read the publication state before either writes.
+    confirmRaceGate.close(CONCURRENT_CONFIRMS);
+    const responses = await Promise.all([
+      confirmSelfie(ready.event.slug, submitted.selfieId, { cookie: ready.cookie, ip: ready.ip }),
+      confirmSelfie(ready.event.slug, submitted.selfieId, { cookie: ready.cookie, ip: ready.ip }),
+    ]);
+
+    // Which racer finishes first is the event loop's business, so the pin is
+    // order-independent: sorted, the pair is two `200`s. A `5xx` here is a
+    // double-tap the attendee reads as a failure after their selfie did activate.
+    const statuses = responses
+      .map((response) => response.status)
+      .sort((left, right) => left - right);
+    expect(
+      statuses,
+      `the two simultaneous confirms answered [${statuses.join(",")}]; both must be 200`
+    ).toEqual([200, 200]);
+
+    const [first, second] = await Promise.all(
+      responses.map(async (response) => (await response.json()) as Record<string, unknown>)
+    );
+    if (first === undefined || second === undefined) {
+      throw new Error(`expected two confirm bodies, received ${String(responses.length)}`);
+    }
+    expect(keysOf(first)).toEqual(CONFIRM_KEYS);
+    expect(keysOf(second)).toEqual(CONFIRM_KEYS);
+    expect(first.selfieId).toBe(submitted.selfieId);
+    expect(second.selfieId).toBe(submitted.selfieId);
+    expect(first.status).toBe("ready");
+    expect(second.status).toBe("ready");
+    // One activation result, one answer: the racers do not report different
+    // results for the same selfie.
+    expect(second).toEqual(first);
+
+    // One announcement, not one per racer (§7.7: every notification originates
+    // from a `domainEvents` row, so the row count is the notification count).
+    const notifications = await matchesNewRows();
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.payload).toMatchObject({
+      eventId: eventContext.eventId,
+      count: FIRST_RUN_MATCHES,
+    });
+
+    // §6.4's cached total, once.
+    expect((await profileRow()).matchCount).toBe(FIRST_RUN_MATCHES);
   });
 });
