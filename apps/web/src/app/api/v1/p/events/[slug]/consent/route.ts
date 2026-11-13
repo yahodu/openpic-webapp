@@ -1,4 +1,4 @@
-import { ObjectId, type Db } from "mongodb";
+import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { buildConsentEvidence } from "@/server/attendee/consent-evidence";
@@ -8,7 +8,12 @@ import {
   type ConsentSubject,
 } from "@/server/attendee/consent-guard";
 import { DELETED_COUNTS_HEADER, formatDeletedCounts } from "@/server/attendee/deleted-counts";
-import { findRequestAttendeeSession } from "@/server/attendee/session-resolver";
+import {
+  resolveEventBySlug,
+  slugFromRequest,
+  type ResolvedEvent,
+} from "@/server/attendee/request-event";
+import { subjectForRequest } from "@/server/attendee/subject";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { getRateLimitConfig, getTrustedClientIpHeader } from "@/server/config/env";
@@ -18,7 +23,7 @@ import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { requestLogger } from "@/server/logging";
 import { createRateLimiter, rateLimitStage, resolveClientIp } from "@/server/rate-limit";
-import { platformRepo, tenantRepo } from "@/server/repos";
+import { tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { sha256Hex } from "@/server/runtime/crypto";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
@@ -73,88 +78,6 @@ const grantResponseSchema = z.object({
 /** The `204` body placeholder: the pipeline serves no body for this status. */
 const noContentSchema = z.null();
 
-/** The `events` fields the slug lookup reads (schema §15.1). */
-interface EventRow {
-  readonly _id: ObjectId;
-  readonly tenantId: string;
-}
-
-/** A stored `selfies` row, as the withdrawal counts and deletes it (§16.4). */
-interface SelfieRow {
-  readonly _id: ObjectId;
-  readonly assetId?: ObjectId | null;
-  readonly embedding?: unknown;
-}
-
-/** A stored `attendeeEventProfiles` row, as the grant links it (schema §15.3). */
-interface ProfileRow {
-  readonly _id: ObjectId;
-  readonly status?: string;
-}
-
-/** The event one consent call addresses. */
-interface ResolvedEvent {
-  readonly db: Db;
-  /** The event's tenant (hex, as the event row stores it). */
-  readonly tenantKey: string;
-  readonly eventId: ObjectId;
-}
-
-/** The `{slug}` path segment of the request; `""` when the path has none. */
-function slugFromRequest(request: Request): string {
-  const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");
-  return segments.at(-2) ?? "";
-}
-
-/**
- * Resolve the event a consent call addresses through an **active** access link.
- *
- * @param db - The database to read `events` from.
- * @param slug - The requested slug.
- * @returns The event's tenant and id.
- * @throws {AppError} `not_found` when no active link carries the slug.
- */
-async function resolveEvent(db: Db, slug: string): Promise<ResolvedEvent> {
-  const event =
-    slug === ""
-      ? null
-      : ((await platformRepo(db)
-          .collection(COLLECTIONS.events)
-          .findOne(
-            { accessLinks: { $elemMatch: { slug, active: true } } },
-            { projection: { _id: 1, tenantId: 1 } }
-          )) as EventRow | null);
-  if (event === null) {
-    throw appError("not_found", { details: { resource: "event" } });
-  }
-  return { db, tenantKey: event.tenantId, eventId: event._id };
-}
-
-/**
- * The consent subject behind the request: the anonymous attendee session, or the
- * signed-in user who satisfies the same `attendee` label.
- *
- * @param db - The database to read `attendeeSessions` from.
- * @param request - The inbound request.
- * @param principal - The authenticated user id, when the caller is signed in.
- * @returns The subject the consent belongs to.
- * @throws {AppError} `authentication_required` when neither credential resolves.
- */
-async function subjectFor(
-  db: Db,
-  request: Request,
-  principal: string | undefined
-): Promise<ConsentSubject> {
-  const session = await findRequestAttendeeSession({ database: db }, request);
-  if (session !== null) {
-    return { kind: "anonymous", attendeeSessionId: session._id.toHexString() };
-  }
-  if (principal !== undefined) {
-    return { kind: "user", userId: new ObjectId(principal) };
-  }
-  throw appError("authentication_required");
-}
-
 /**
  * The digest of the policy document one consent was given against (schema
  * §15.4).
@@ -170,6 +93,19 @@ async function subjectFor(
  */
 function policyDocumentHash(policyVersion: string, policyUrl: string): string {
   return `sha256:${sha256Hex(`${policyVersion}\u0000${policyUrl}`)}`;
+}
+
+/** A stored `selfies` row, as the withdrawal counts and deletes it (§16.4). */
+interface SelfieRow {
+  readonly _id: ObjectId;
+  readonly assetId?: ObjectId | null;
+  readonly embedding?: unknown;
+}
+
+/** A stored `attendeeEventProfiles` row, as the grant links it (schema §15.3). */
+interface ProfileRow {
+  readonly _id: ObjectId;
+  readonly status?: string;
 }
 
 /**
@@ -264,8 +200,8 @@ export const POST = defineRoute({
       throw appError("age_confirmation_required");
     }
 
-    const event = await resolveEvent(db, slugFromRequest(ctx.request));
-    const subject = await subjectFor(db, ctx.request, ctx.principal);
+    const event = await resolveEventBySlug(db, slugFromRequest(ctx.request));
+    const subject = await subjectForRequest(db, ctx.request, ctx.principal);
     const now = systemClock.now();
     const consentId = new ObjectId();
 
@@ -325,8 +261,8 @@ export const DELETE = defineRoute({
     requireAuth("attendee", { auth: getAuth(), database: getDb() })(ctx, request),
   handler: async (ctx) => {
     const db = getDb();
-    const event = await resolveEvent(db, slugFromRequest(ctx.request));
-    const subject = await subjectFor(db, ctx.request, ctx.principal);
+    const event = await resolveEventBySlug(db, slugFromRequest(ctx.request));
+    const subject = await subjectForRequest(db, ctx.request, ctx.principal);
     const now = systemClock.now();
     const tenant = tenantRepo(event.tenantKey, db);
     const profiles = tenant.collection(COLLECTIONS.attendeeEventProfiles);
