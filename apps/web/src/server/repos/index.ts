@@ -27,4 +27,5 @@ export type {
   AttendeeProfileSubject,
   CrossTenantPage,
   CrossTenantReads,
+  OwnedMatchRow,
 } from "./cross-tenant";

@@ -137,6 +137,19 @@ export interface CrossTenantReads {
     page?: CrossTenantPage,
     db?: Db
   ): Promise<ReusableSelfiePage>;
+
+  /**
+   * Return one `face_matches` row by its id alone (OP-133, §6.5, §17.5).
+   *
+   * `POST /p/matches/{matchId}/hide` carries no event slug, so the row's own
+   * `tenantId` is what scopes the ownership check that follows; the id is
+   * unguessable and is never the authorization.
+   *
+   * @param matchId - The 24-hex match id.
+   * @param db - The database handle; defaults to the shared client.
+   * @returns The row's owning scope, or `null` when no match carries the id.
+   */
+  findFaceMatchById(matchId: string, db?: Db): Promise<OwnedMatchRow | null>;
 }
 
 async function findAttendeeProfilesBySubjectUser(
@@ -208,8 +221,35 @@ async function findReusableSelfiesBySubjectUser(
   };
 }
 
+/** A stored `face_matches` row reduced to its owning scope (schema §17.5). */
+export interface OwnedMatchRow {
+  readonly tenantId: string;
+  readonly eventId: ObjectId;
+  readonly profileId: ObjectId;
+}
+
+/**
+ * One `face_matches` row by its id alone (OP-133; contract §6.5, schema §17.5).
+ *
+ * @param matchId - The 24-hex match id.
+ * @param db - The database handle; defaults to the shared client.
+ * @returns The row's owning scope, or `null` when no match carries the id.
+ */
+async function findFaceMatchById(matchId: string, db: Db = getDb()): Promise<OwnedMatchRow | null> {
+  if (!ObjectId.isValid(matchId)) {
+    return null;
+  }
+  return (await db
+    .collection(COLLECTIONS.faceMatches)
+    .findOne(
+      { _id: new ObjectId(matchId) },
+      { projection: { tenantId: 1, eventId: 1, profileId: 1 } }
+    )) as OwnedMatchRow | null;
+}
+
 /** The whitelisted cross-tenant reads. Import nothing else to cross a tenant. */
 export const crossTenantReads: CrossTenantReads = {
   findAttendeeProfilesBySubjectUser,
   findReusableSelfiesBySubjectUser,
+  findFaceMatchById,
 };

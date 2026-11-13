@@ -409,6 +409,37 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     ],
     unique: true,
   },
+  // face_matches — the newest-first order the gallery reads and the newest
+  // match the poll hands out as `latestMatchCursor` (§17.5; OP-133).
+  {
+    collection: COLLECTIONS.faceMatches,
+    name: "face_matches_profile_created",
+    keys: [
+      ["profileId", 1],
+      ["createdAt", -1],
+    ],
+  },
+  // face_matches — the "New" badge set: the unseen rows of one profile, so
+  // §6.4's `newMatchCount` never scans the seen ones (§17.5; OP-133).
+  {
+    collection: COLLECTIONS.faceMatches,
+    name: "face_matches_profile_unseen",
+    keys: [
+      ["profileId", 1],
+      ["seenAt", 1],
+      ["createdAt", -1],
+    ],
+    partialFilterExpression: { seenAt: null },
+  },
+
+  // downloadJobs — a finished job and its link expire on their own (§6.6,
+  // §22; OP-133).
+  {
+    collection: COLLECTIONS.downloadJobs,
+    name: "downloadJobs_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
 
   // provider_webhook_events — webhook replay protection with zero application
   // logic (§18.4, §21). The index is **partial on a string `providerEventId`**:
