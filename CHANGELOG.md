@@ -1,3 +1,9 @@
+## [1.62.0](https://github.com/yahodu/openpic-webapp/compare/v1.61.4...v1.62.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-132 bound the reusable selfie listing and page it by cursor ([#562](https://github.com/yahodu/openpic-webapp/issues/562)) ([3170f6a](https://github.com/yahodu/openpic-webapp/commit/3170f6a148f83a441cba9f3e790bffb0866bb9af))
+
 ## [1.61.4](https://github.com/yahodu/openpic-webapp/compare/v1.61.3...v1.61.4) (2026-11-13)
 
 ### Bug Fixes
