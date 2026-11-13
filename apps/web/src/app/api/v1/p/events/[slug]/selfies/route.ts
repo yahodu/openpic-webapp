@@ -22,7 +22,7 @@ import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
-import { appError } from "@/server/http/errors";
+import { appError, isAppError } from "@/server/http/errors";
 import { idempotencyStage, mongoIdempotencyStore } from "@/server/idempotency";
 import { requestLogger } from "@/server/logging";
 import { tenantRepo } from "@/server/repos";
@@ -107,8 +107,17 @@ export const POST = defineRoute({
     const now = systemClock.now();
 
     // §6.3: the object the client uploaded must be there before anything is
-    // charged against the attendee's budget.
-    await getObjectStorage().headObject(SELFIE_LOCATION_KEY, selfieObjectKey(hash));
+    // charged against the attendee's budget. The port's `not_found` is reshaped
+    // here so the refusal names the resource, as the confirm route does for the
+    // same selfie; any other throw is a real failure and stays one.
+    try {
+      await getObjectStorage().headObject(SELFIE_LOCATION_KEY, selfieObjectKey(hash));
+    } catch (error) {
+      if (!isAppError(error) || error.code !== "not_found") {
+        throw error;
+      }
+      throw appError("not_found", { details: { resource: "selfie" } });
+    }
 
     const profiles = tenantRepo(event.tenantKey, db).collection(COLLECTIONS.attendeeEventProfiles);
     const profile = (await profiles.findOne(
