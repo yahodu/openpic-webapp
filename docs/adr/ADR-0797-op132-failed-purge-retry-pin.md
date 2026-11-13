@@ -3,7 +3,7 @@
 - **Status:** Accepted (RED / executable contract)
 - **Consumers:**
   `apps/web/src/test/integration/liveness-selfie-submit.test.ts` — the two
-  appended cases (`:1073` P1, `:1132` P2) and their local readers
+  appended cases (`:1074` P1, `:1133` P2) and their local readers
   (`PurgeLedgerRow`, `assetByHash`, `selfieBytesReadable`, `recordsPendingPurge`).
 - **Lane:** the shared attendee block `0780`–`0798`
   (row `OP-129 attendee identity lane`). [ADR-0796](ADR-0796-op132-selfie-asset-owner-expiry-purge.md)
