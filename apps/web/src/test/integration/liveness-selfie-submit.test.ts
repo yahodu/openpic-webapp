@@ -20,6 +20,7 @@ import {
   nextIp,
   outboxLength,
   requestFor,
+  requireHandler,
   seedTenant,
   submitBody,
   submitHappyPath,
@@ -30,6 +31,7 @@ import {
   type UploadedSelfie,
   handlers,
 } from "../helpers/selfie-flow";
+import * as meRouteModule from "@/app/api/v1/p/events/[slug]/me/route";
 import {
   SELFIE_LOCATION_KEY,
   SELFIE_RETENTION_DAYS,
@@ -1509,5 +1511,278 @@ describe("when a withdrawal's purge failed and the attendee retries", () => {
       "the retry erased the bytes but left `purgedAt: null`, so the row still records an " +
         "in-flight purge and every later submit of these bytes is deflected (0798 §2)"
     ).toBeInstanceOf(Date);
+  });
+});
+
+/* ── F-A2b: a purged asset a later submit re-references is live again ─────── */
+
+/** The §6.4 participation poll — the `pollUrl` the submit's `202` names. */
+const meHandler = requireHandler(meRouteModule, "GET", "/api/v1/p/events/:slug/me");
+
+/**
+ * The attempt budget as the attendee's own poll surface reports it.
+ *
+ * @param slug - The event's active access-link slug.
+ * @param options - The caller's credential and client address.
+ * @returns `attemptsUsed` and `attemptsRemaining` from the `selfie` block.
+ */
+async function polledBudget(
+  slug: string,
+  options: { readonly cookie: string; readonly ip: string }
+): Promise<{ readonly attemptsUsed: number; readonly attemptsRemaining: number }> {
+  const response = await meHandler(
+    requestFor(`/api/v1/p/events/${slug}/me`, "GET", {
+      cookie: options.cookie,
+      ip: options.ip,
+      withoutIdempotencyKey: true,
+    })
+  );
+  const body = await bodyOf(response, 200, `GET /me on ${slug}`);
+  const selfie = body.selfie;
+  if (selfie === null || typeof selfie !== "object") {
+    throw new Error(`expected the /me body to carry a selfie block: ${JSON.stringify(body)}`);
+  }
+  const { attemptsUsed, attemptsRemaining } = selfie as Record<string, unknown>;
+  if (typeof attemptsUsed !== "number" || typeof attemptsRemaining !== "number") {
+    throw new Error(`expected the /me selfie block to carry the budget: ${JSON.stringify(selfie)}`);
+  }
+  return { attemptsUsed, attemptsRemaining };
+}
+
+/**
+ * F-A2b of the OP-132 round-3 review (this card, `t_ecc695e5`), pinned by
+ * ADR-0828 §1/§2.
+ *
+ * The withdrawal claims the asset row `purged` and stamps `purgedAt` once the
+ * blob is gone (ADR-0798 §1), which is the durable marker an operator query or
+ * the sweep `t_6b53935c` acts on. `insertQueuedSelfie` writes `status: "stored"`
+ * only inside `$setOnInsert` (`selfie-submit.ts`, the `mediaAssets` upsert), so
+ * a submit that takes a reference to an **existing** row — the only shape a
+ * content-addressed asset can have after a purge — leaves the row claiming
+ * `status: "purged"` with a stale `purgedAt` while `refCount` rises to 1 and the
+ * re-uploaded object at `originals/selfies/<sha256>` is byte-for-byte readable
+ * (measured: ADR-0828 §1). A consumer keyed on the purge marker then reads a
+ * live biometric object as purged.
+ *
+ * ## Contract expected of the implementation
+ *
+ * A submit that takes a reference to an existing `mediaAssets` row resets its
+ * lifecycle fields: `status: "stored"` and `purgedAt: null` (or the field
+ * absent). The row's marker must agree with its `refCount` and with the object
+ * the store actually holds — `refCount: 1` with readable bytes is not a purged
+ * asset. The rest of the lifecycle is unchanged: the second withdrawal below
+ * purges the same blob again, which is what proves the reset left a row the
+ * purge path still owns.
+ */
+describe("when the same selfie bytes are submitted after a completed purge", () => {
+  it("resets the asset's lifecycle fields, so a live reference is not recorded as purged", async () => {
+    // Arrange: a confirmed selfie whose bytes are really in the store, under
+    // the content hash the re-submit below will present again.
+    const ready = await readyEvent("op132-a2b-reuse");
+    const { bytes, hash } = makeSelfieBytes("a2b-reuse");
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "a2b-reuse",
+    });
+    const profile = await profileRow();
+    await finishSelfieWorker(app, {
+      selfieId: submitted.selfieId,
+      profileId: submitted.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: profile.subject,
+      matches: 1,
+    });
+    const confirmed = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(confirmed.status).toBe(200);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    // Act: the withdrawal completes, so the row really is a finished purge —
+    // the pre-state this case cannot pass without.
+    const withdrawal = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(withdrawal.status).toBe(204);
+    const purged = await assetByHash(hash);
+    expect(
+      purged?.refCount,
+      `expected the completed withdrawal to leave the asset at refCount 0: ${JSON.stringify(purged)}`
+    ).toBe(0);
+    expect(purged?.status).toBe("purged");
+    expect(purged?.purgedAt).toBeInstanceOf(Date);
+    expect(await selfieBytesReadable(hash)).toBe(false);
+
+    // Act: consent is granted again and the *same* bytes are re-uploaded to the
+    // same content-addressed key and submitted.
+    await grantConsent(ready.event.slug, { cookie: ready.cookie, ip: ready.ip });
+    const reuploaded = await uploadSelfie(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      bytes,
+      hash,
+    });
+    const challenge = await issueChallenge(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    const resubmitted = await submitSelfie(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      body: submitBody(reuploaded, challenge),
+    });
+    const body = await bodyOf(resubmitted, 202, "POST selfies on the re-submitted hash");
+    expect(body.status).toBe("processing");
+
+    // Assert: the row holds one live reference again, so it must not record a
+    // purge — and the one row per content hash is the reused row, not a second.
+    const reused = await assetByHash(hash);
+    expect(
+      await app.db.collection(COLLECTIONS.mediaAssets).countDocuments({ contentHash: hash }),
+      "the re-submit must re-reference the one asset row for its content hash"
+    ).toBe(1);
+    expect(
+      reused?.refCount,
+      `the re-submitted selfie must hold one reference: ${JSON.stringify(reused)}`
+    ).toBe(1);
+    expect(
+      reused?.status,
+      `the asset row still claims a purge although it holds a live reference and its bytes ` +
+        `are readable: ${JSON.stringify(reused)}`
+    ).toBe("stored");
+    expect(
+      reused?.purgedAt ?? null,
+      `the reused asset row kept the purge instant: ${JSON.stringify(reused)}`
+    ).toBeNull();
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    // The lifecycle is live again: a second withdrawal purges the same blob.
+    // This half is green on the shipped tree (ADR-0828 §1); the reset above is
+    // what this case is RED for.
+    const secondWithdrawal = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(secondWithdrawal.status).toBe(204);
+    const repurged = await assetByHash(hash);
+    expect(repurged?.refCount).toBe(0);
+    expect(repurged?.purgedAt).toBeInstanceOf(Date);
+    expect(await selfieBytesReadable(hash)).toBe(false);
+  });
+});
+
+/* ── F-A2b: a claim in flight still deflects the submit, and costs nothing ── */
+
+/**
+ * F-A2b's second arm (this card, `t_ecc695e5`), pinned by ADR-0828 §2.
+ *
+ * ADR-0798 §2 scopes the `409 selfie_purged` deflection to a claim **in
+ * flight** — `status: "purged"` with `purgedAt: null` — because that is the
+ * window in which the bytes are about to go: a submit that took a reference
+ * there would outlive its object. The reset the first case requires must not
+ * widen that guard to a stored row, and the refusal must cost the attendee
+ * nothing: §15.3 has no attempt counter, so the budget is the profile's stored
+ * `selfies` count and a refusal that writes no row spends no attempt.
+ *
+ * The budget is read through the §6.3 poll surface (`GET …/me`, the submit's own
+ * `pollUrl`), which answers `attemptsUsed`/`attemptsRemaining` from that count —
+ * so "no attempt spent" is asserted as the attendee observes it, not as an
+ * internal write count.
+ */
+describe("when a withdrawal's purge is still in flight", () => {
+  it("refuses a re-submit of the same bytes with 409 selfie_purged and spends no attempt", async () => {
+    // Arrange: a confirmed selfie whose bytes are really in the store.
+    const ready = await readyEvent("op132-a2b-inflight");
+    const { hash } = makeSelfieBytes("a2b-inflight");
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "a2b-inflight",
+    });
+    const profile = await profileRow();
+    await finishSelfieWorker(app, {
+      selfieId: submitted.selfieId,
+      profileId: submitted.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: profile.subject,
+      matches: 1,
+    });
+    const confirmed = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(confirmed.status).toBe(200);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    const budgetBefore = await polledBudget(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(budgetBefore.attemptsUsed).toBe(1);
+
+    // Act: one transient object-store failure leaves the row claimed with its
+    // purge unfinished — the only deterministic seam for a claim in flight.
+    const storage = getObjectStorage();
+    const deleteSpy = vi
+      .spyOn(storage, "deleteObject")
+      .mockRejectedValueOnce(new Error("object store unavailable"));
+    const failed = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    deleteSpy.mockRestore();
+
+    // The seed must be the window this case claims, not a finished purge.
+    const claimed = await assetByHash(hash);
+    expect(
+      claimed?.refCount,
+      `expected the failed withdrawal to leave a claimed row at refCount 0: ${JSON.stringify(claimed)}`
+    ).toBe(0);
+    expect(claimed?.status).toBe("purged");
+    expect(
+      claimed?.purgedAt ?? null,
+      `the failed withdrawal stamped purgedAt although the object is still readable: ${JSON.stringify(claimed)}`
+    ).toBeNull();
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    // Act: the same bytes are submitted again, on the same content hash.
+    const challenge = await issueChallenge(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    const refusal = await submitSelfie(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      body: submitBody({ hash }, challenge),
+    });
+
+    // Assert: the claim in flight deflects the submit …
+    expect(
+      refusal.status,
+      `expected the in-flight purge to deflect the re-submit (the failed withdrawal answered ${String(failed.status)})`
+    ).toBe(409);
+    const error = await errorBody(refusal);
+    expect(error.code).toBe("conflict");
+    expect(error.details?.reason).toBe("selfie_purged");
+
+    // … the refusal took no reference and completed no purge …
+    expect((await assetByHash(hash))?.refCount).toBe(0);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    // … and spent no attempt: the polled budget is where it was.
+    const budgetAfter = await polledBudget(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(
+      budgetAfter.attemptsUsed,
+      "the refused submit spent an attempt: the profile's stored selfie count moved"
+    ).toBe(budgetBefore.attemptsUsed);
+    expect(budgetAfter.attemptsRemaining).toBe(budgetBefore.attemptsRemaining);
   });
 });
