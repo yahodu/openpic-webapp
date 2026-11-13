@@ -1,4 +1,4 @@
-# ADR-0812 — OP-132: the four biometric writes refuse once `retentionExpiresAt` elapses
+# ADR-0813 — OP-132: the four biometric writes refuse once `retentionExpiresAt` elapses
 
 - **Status:** Accepted
 - **Consumers:**
@@ -9,23 +9,30 @@
   `storedChallenges`, `selfieRows`, `assetRows`, `storedSelfie`, `refusalOf`,
   `putBytes`, `confirmedSelfie`, `exhaustAttempts`).
 - **Lane:** OP-132 attendee identity. The shared attendee block `0780`–`0798` is
-  exhausted and the `unallocated (future lanes)` pool is the lane's draw
-  (ADR-0800/0811 precedent); both `Next free` cells read `0812` at the cut, so
-  this record draws exactly the reserved pool head and advances both to `0813`.
-  The number is the **allocator's reservation** written into card `t_1bbefaf0` at
-  creation (decision card `t_7e4d553b`), never a read of the cell. Before minting,
-  the sweep found **no** `ADR-0812*` record in `origin/main`, in any committed
-  worktree branch or in any open `OP-13x` PR head; the only `ADR-0812` file on
-  disk is an **uncommitted** probe artifact in the reviewer scratch worktree
-  `.worktrees/t_f5sym-transport`, which is in no commit and no PR. No lane row is
-  minted.
+  exhausted, so the lane draws from the `unallocated (future lanes)` pool
+  (ADR-0800/0811 precedent); no lane row is minted. The number is the
+  **allocator's reservation** written into card `t_1bbefaf0` at creation (decision
+  card `t_7e4d553b`), never a read of the `Next free` cell — and the reservation
+  was **`0812`**, which this record could not keep: before this branch landed, the
+  F5-symmetric card `t_5f76eab8` drew `0812` from the cell (its sweep saw no
+  conflict; this card's reservation was not visible to it) and merged
+  `ADR-0812-op132-submit-object-transport-500.md` onto the trunk (merge
+  `e0cf073`, PR #568). Under
+  [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) a number is consumed
+  **once** and the later record moves, so this record renumbers to **`0813`** —
+  the next free number above the trunk — and both `Next free` cells advance from
+  `0813` to `0814`. The renumber is a ledger fact, not a new decision: the
+  decision, the pins and every measurement below are unchanged, and no number
+  outside `0813` is consumed. Flagged for the allocator: the reservation channel
+  and the `Next free` cell disagreed, which is the collision ADR-0300 §7
+  describes; the card body's `Consumes: 0812` is `0813` here for that reason.
 - **Amends:** [ADR-0792](ADR-0792-op132-liveness-selfie-green.md) §2 — the
   contract order of the liveness/selfie write surface gains one stage between
   consent and the route's own checks. Closes the open item
   [ADR-0811](ADR-0811-op132-attendee-selfie-upload-window.md) §Consequences left
   explicitly undecided ("the retention boundary is not gated today … owned by
   decision card `t_7e4d553b`").
-- **Consumes:** `0812`.
+- **Consumes:** `0813`.
 
 ## Context
 
@@ -184,7 +191,7 @@ confirm step (#559)`), worktree `.worktrees/t_1bbefaf0`.
 | `tsc -p apps/web/tsconfig.json --noEmit`                                                                               | only the two `TS2305` missing exports      |
 | `eslint --max-warnings=0` on the two new specs                                                                         | clean                                      |
 | `prettier --check` on the two specs, this record and the ledger                                                        | clean                                      |
-| the five ADR guards (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`, `adr-source-references`, `adr-consumers`) | `5 files, 218 passed (218)`; `0812` unique |
+| the five ADR guards (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`, `adr-source-references`, `adr-consumers`) | `5 files, 218 passed (218)`; `0813` unique |
 
 **Satisfiability.** A throwaway probe (never committed) added the two exports,
 appended `gallery_expired` to `SELFIE_ERROR_CODES` and its transport, and wired

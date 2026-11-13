@@ -6,7 +6,7 @@ import { AppError } from "@/server/http/app-error";
 /**
  * Unit — the attendee retention gate the four biometric **writes** share
  * (OP-132 F4-R2b, decision `t_7e4d553b`; contract §6.1, §6.3, §6.5, Appendix A.7;
- * [ADR-0812](../../../../../docs/adr/ADR-0812-op132-attendee-retention-gate.md)).
+ * [ADR-0813](../../../../../docs/adr/ADR-0813-op132-attendee-retention-gate.md)).
  *
  * **Why this exists.** `events.retentionExpiresAt` is the attendee-facing window:
  * §6.1 publishes `gallery.open: false` and `gallery.expiredAt` from it, and
@@ -49,7 +49,7 @@ import { AppError } from "@/server/http/app-error";
  * integration suite drives real requests through `systemClock`, so it can show
  * elapsed and open windows but cannot land on the millisecond.
  *
- * ## Assumptions (ADR-0812 §Assumptions)
+ * ## Assumptions (ADR-0813 §Assumptions)
  *
  * - A1 — the deadline is compared as an instant, not as a calendar day: a
  *   `retentionExpiresAt` of `…T18:00:00.123Z` is elapsed at exactly that

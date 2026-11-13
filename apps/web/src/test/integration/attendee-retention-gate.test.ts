@@ -32,7 +32,7 @@ import {
 /**
  * Integration / contract — the attendee retention gate on the four biometric
  * **writes** (OP-132 F4-R2b, decision `t_7e4d553b`; contract §6.1, §6.3, §6.5,
- * Appendix A.7, Appendix B; [ADR-0812](../../../../../docs/adr/ADR-0812-op132-attendee-retention-gate.md)).
+ * Appendix A.7, Appendix B; [ADR-0813](../../../../../docs/adr/ADR-0813-op132-attendee-retention-gate.md)).
  *
  * **Why this exists.** `events.retentionExpiresAt` is the attendee-facing window
  * and nothing refused on it, so the two write paths that mint a selfie row
@@ -47,7 +47,7 @@ import {
  *     `mediaAssets` owner row (`kind: "selfie"`, `refCount: 1`) and the
  *     `originals/selfies/<sha256>` object have no expiry and no sweep. The only
  *     shipped purge is `DELETE …/consent` (the purge lane's own records, which
- *     ADR-0812 §Context names).
+ *     ADR-0813 §Context names).
  *
  * So a late submit **deterministically** minted orphaned biometric bytes, and a
  * late reuse re-processed bytes after the addressed event's window had closed.
@@ -85,7 +85,7 @@ import {
  * inside `requireAttendeeScope` reddens C4, and one placed at the reads or at the
  * confirm reddens it too.
  *
- * ## Assumptions (ADR-0812 §Assumptions)
+ * ## Assumptions (ADR-0813 §Assumptions)
  *
  * - A1 — the elapsed fixture is a direct `events` `updateOne` on the seeded
  *   `_id`, storing `Date.now() - 1`: the routes read the event through
