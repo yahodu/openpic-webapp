@@ -209,7 +209,8 @@ bounded-latch method (`confirmRaceGate.close(n)`, then `Promise.all`):
 - burst **6** → `[200,200,200,200,500,500]`
 
 Each `500` is a `TransactionRetryLimitError` (`transaction retry limit reached
-after 3 attempts`) at the `withTransaction(` call site, `confirm/route.ts:124`.
+after 3 attempts`) at the `withTransaction(` call site, `confirm/route.ts:124` at
+that head (`:137` on the trunk, after ADR-0823 added the options argument).
 The state stayed correct in every arm: one `attendee.matches.new` row, and
 `matchCount` 3. The three runs gave identical results, 3 of 3. At this head the
 repair has **one retry of headroom** (`DEFAULT_TRANSACTION_MAX_ATTEMPTS = 3`), so
