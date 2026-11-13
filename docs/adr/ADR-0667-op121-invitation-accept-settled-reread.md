@@ -173,3 +173,65 @@ attempt per rival commit) does not reach it, because the loser here loses to a
 - **Catch broadly and answer from whatever the row says.** Forbidden by the
   card and by the measured false accept of `t_6e555aa3`; a write failure would
   be reported as a success.
+
+## Review sign-off (round 1 — artifact + execution lens, card t_ed6d5933, PR #597, squash e8a1fd3)
+
+**Verdict: APPROVED WITH FINDINGS, and the deliverable landed exactly as reviewed.** PR #597 was reviewed at head
+`ceec554` and squash-merged as `e8a1fd3`. The reviewer edited nothing in the deliverable, and the scoped diff
+`git diff ceec554 e8a1fd3` over the PR's five paths — `invitation-transition.ts`, the
+`event-invitation-decisions` spec, this record, ADR-0666 and `docs/adr/README.md` — is empty, so every number
+below was measured on the tree the trunk now carries. This section is the record's first change since then and
+retracts nothing: **no part of §Decision, §Consequences, §Alternatives or §Verification is retracted.**
+
+### Acceptance evidence, re-measured at `ceec554`
+
+- `event-invitation-decisions.test.ts` whole file, five consecutive runs: **50 passed (50)** each (`17.29 s`,
+  `15.62 s`, `16.92 s`, `17.43 s`, `16.26 s`), exit `0` on all five — the pin is green repeatedly, not once.
+- full `unit`: **178 files, 2938 passed | 3 skipped (2941)**, exit `0`.
+- full `integration`: **131 files, 1353 passed (1353)**, exit `0`. Two unrelated specs
+  (`me-notification-preferences`, `tenant-provisioning-and-routes`) hit this host's 5 s ceiling on the first pass
+  on a loaded machine and were green on their own re-run (`2 files, 33 passed`), so the two timeouts are host load,
+  not this change.
+- `tsc -p apps/web/tsconfig.json --noEmit` exit `0`, `eslint` exit `0` with no error (the 187 warnings are the
+  repo's standing `security/*` advisories in test and script files), `prettier --check` clean.
+- the four `adr-*` guards this card names — `adr-numbering`, `adr-record-links`, `adr-consumers`,
+  `adr-lane-ranges` — **4 files, 195 passed (195)**; the tree's fifth guard, `adr-source-references`, is green
+  too (`23 passed`).
+- `gh pr checks 597`: **14 of 14 gates pass** at `ceec554`. The rollup lists fifteen entries only because the
+  close side-effect run `notify-discord` is not a gate.
+- **the spec is the pin's own.** One blob, `636aecda`, is the spec at the branch's `6a7e828`, at the reviewed head
+  `ceec554`, at the squash `e8a1fd3` and on `origin/main`: `I5` reached the trunk exactly as the pin wrote it.
+  Against the branch cut the spec is `139 additions, 0 deletions` (commit `20b3e68f`).
+
+### The four findings and where each was routed
+
+All four are Low or Info, none of them blocks the decision above, and each is routed by card id: no follow-up
+record number exists yet, so none is named here.
+
+- **F1 (Low) — the wait-expiry arm is unmeasured.** Focused coverage of the spec over
+  `invitation-transition.ts` reports line `100`, the `return false` of `rivalDecisionCommitted`, as uncovered, so a
+  regression on that arm — including a fabricated success once the wait runs out — stays green. The symmetric arm
+  is already pinned for the member removal as case `R2` at `event-invitation-decisions.test.ts:2415`. Routed to
+  `t_5025a7cc`.
+- **F2 (Low) — the bounded wait is duplicated verbatim.** `RIVAL_COMMIT_TIMEOUT_MS`, `RIVAL_COMMIT_POLL_MS`,
+  `sleep` and the poll loop exist twice: `invitation-transition.ts:54-101` and
+  `members/[userId]/route.ts:69-109`. Routed to `t_b4750d70`, which either extracts one helper or records why the
+  pair stays copied.
+- **F3 (Info) — the ceiling is 1 025 ms, not the documented 1 000 ms.** The loop sleeps once more after its last
+  poll, so `RIVAL_COMMIT_TIMEOUT_MS = 1_000` bounds the polls rather than the wait: 41 polls of 25 ms. Routed with
+  F2 to `t_b4750d70`, for the loop shape and the wording together.
+- **F4 (Low) — the failure path multiplies reads.** The wait is entered on every `isTransactionRetryLimitError`,
+  so a saturated primary with no rival decision costs up to 41 sequential `findOne` calls (`1_000 / 25 + 1`)
+  before the original `500`. §Consequences records that path's latency, not its read cost. Routed to
+  `t_b4750d70`.
+
+### Where the narrow-catch property is enforced
+
+§Consequences already states that the pin cannot tell a narrow catch from a broad one, and round 1 confirmed it
+instead of assuming it: a degenerate broad catch measured `50 passed (50)` three times at the pin head. The
+predicate is therefore `isTransactionRetryLimitError` alone, and review is what keeps it that way — `I5` cannot.
+A future change to the catch is a change to §Decision 1 and needs its own pin, not a green run of this one.
+
+This section adds a verdict and four routed findings around a decision that stands. It adds no executable claim
+and changes no test, helper, fixture or production file, and it consumes no ADR number: `docs/adr/README.md` is
+byte-identical to the trunk this append was cut from and the lane's `Next free` cell is untouched.
