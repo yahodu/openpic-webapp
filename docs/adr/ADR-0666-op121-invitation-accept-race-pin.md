@@ -85,8 +85,17 @@ confirm's pair.
 4. **No production code is touched.** The accept route, `decideInApp` and
    `invitation-transition.ts` are byte-identical to `origin/main` `a9c6d59`. The
    repair is the separate GREEN card `t_ed6d5933`.
-5. **The pin requires an answer from the settled invitation, not a wider fixed
-   budget** — see §Consequences.
+5. **A retry budget must be sized to the 100 ms hold, not to the pinned race,
+   and a busy retry loop is not the shape this pin selects.** Measured on this
+   spec at `b5a01dc`: `maxAttempts` `3`, `5` and `20` answer
+   `1 failed | 49 passed (50)` (2 of 2 runs each), and `60` and `120` answer
+   `50 passed (50)` (2 of 2 each), so the edge is about **57** attempts. A
+   budget derived from the contention (one attempt per rival — 2 or 3) fails,
+   and so does any small budget, because each attempt is one round trip and the
+   met pair's commit is held 100 ms. A budget of 57 or more does pass, but it is
+   a busy retry loop against a clock, not an answer from the settled row. So the
+   pin still selects the settled re-read (or serialising the pair) — see
+   §Consequences.
 
 ## Consequences
 
@@ -103,14 +112,19 @@ confirm's pair.
   accept fired, the request answered `200` in a case whose duration grew by the
   250 ms grace and **not** by the 100 ms hold, which is the measured proof that
   the serialising path neither hangs nor is held.
-- **A wider retry budget alone does not satisfy this pin, by design.** No finite
-  `maxAttempts` bounds a peer whose transaction is slower: each attempt is one
-  round trip, so a five- or ten-attempt budget exhausts against a 100 ms peer
-  exactly as three does. The contract §2.3 asks for is that the loser answers
-  from the invitation's settled state; the repair shape this file already uses
-  for the concurrent member removal (catch `isTransactionRetryLimitError`, wait
-  bounded, re-read, answer the settled status) satisfies the pin, and
-  ADR-0823's shape 1 would not. This is the one constraint the GREEN card
+- **A retry budget must be sized to the 100 ms hold, not to the pinned race.**
+  Measured on this spec at `b5a01dc`, whole file, two runs each: `maxAttempts`
+  `3`, `5` and `20` answer `1 failed | 49 passed (50)`; `60` and `120` answer
+  `50 passed (50)`, so the edge is about **57** attempts. Each attempt is one
+  round trip and the met pair's commit is held 100 ms, so no rival-count budget
+  (2 or 3) and no small budget carries the loser past the hold. A budget of 57
+  or more does carry it, but that is a busy retry loop against a clock. The
+  contract §2.3 asks for is that the loser answers from the invitation's settled
+  state, and the repair shape this file already uses for the concurrent member
+  removal (catch `isTransactionRetryLimitError`, wait bounded, re-read, answer
+  the settled status) satisfies the pin; serialising the pair does too.
+  ADR-0823's shape 1 (a rival-count budget) is not _forbidden_ by this pin — it
+  is unsatisfiable at that size. This is the one constraint the GREEN card
   `t_ed6d5933` inherits — it is a decision of this record, not an oversight.
 - **Cost.** The case pays one grace (250 ms) when an implementation serialises
   and one hold (100 ms) per met racer otherwise; the whole file stays at
@@ -166,6 +180,12 @@ failed | 4283 passed | 3 skipped (4287)`, the only failure `I5` with
   `132150722419`). So the pin reddens on CI as well as locally, which is the
   property the case lacked.
 - **Grace path**: an armed latch with a single racer answers `200`.
+- **Fixed-budget bound.** Measured by the round-1 review of `t_6f2bc11c` in a
+  throwaway worktree at `b5a01dc`, on this spec, two runs each; the probe set
+  `withTransaction(fn, { maxAttempts: n })` at the accept transition's call site
+  in `invitation-transition.ts` and was not committed. `maxAttempts` `3`, `5`
+  and `20` → `1 failed | 49 passed (50)`; `60` and `120` → `50 passed (50)`.
+  The edge is about `57` attempts.
 - **ADR number sweep.** Both `Next free` cells read `0666` (OP-120 invitations
   lane) and `0824` (`unallocated (future lanes)`). Every open PR head was
   inspected — #584, #577, #575, #573, #570, #545, #539, #373, #369, #361, #336,
