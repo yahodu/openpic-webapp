@@ -1,6 +1,7 @@
 # ADR-0807 — OP-132 TEST: the object-miss refusal's shape, the `expired` reason, the challenge cap, the zero-match confirmation and the reusable listing's bound
 
-- **Status:** Accepted (pins; one case RED by design — see §Decision 1)
+- **Status:** Accepted (pins; the one case RED by design at this record's branch cut
+  went green at `bd3f8f6` — see §Decision 1)
 - **Consumers:**
   `apps/web/src/test/integration/selfie-submit-refusal-edges.test.ts` (four cases)
   and `apps/web/src/test/integration/selfie-zero-match-and-reusable-pages.test.ts`
@@ -227,3 +228,20 @@ none of the seven cases passes vacuously.
    Shaping it in the route keeps the port a storage primitive (and the reuse/confirm
    routes already shape their own `not_found`); shaping it in the memory/S3
    adapters would leak an HTTP detail into storage. This record assumes the route.
+
+## Post-review note — the F5 arm is green on the trunk, and the other half of the port method
+
+The `details.resource: "selfie"` case that was the only deliberate red at this record's
+branch cut is green: the fix landed as `bd3f8f6` (PR #561), the same commit that carried
+these pins, so §Decision 1's "RED on the branch cut" is history and the status line above now
+states the trunk. **Nothing in §Decision 1 is retracted** — the token `"selfie"`, not a new
+`"selfie_object"`, is what shipped, and the two files named under `Consumers:` — four cases
+and three — answer `7 passed (7)` on the trunk.
+
+The **swallowing** half of the same port method is pinned separately by
+[ADR-0812](ADR-0812-op132-submit-object-transport-500.md) (card `t_5f76eab8`): `headObject`
+throws `AppError("not_found")` for the client's absent object and a retryable
+`TransportError` for our own storage outage, and the submit's narrowed catch must rethrow the
+second as `500 internal_error` instead of answering the client-actionable `404` that makes an
+attendee re-upload and spend `selfie.submit` on our failure. ADR-0812 is the record that
+names that pin's own consumer file; this record's `Consumers:` list stays exactly as it is.

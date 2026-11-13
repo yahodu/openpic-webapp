@@ -140,3 +140,83 @@ a **regression lock** on that shape, not a driver for new code.
   is pinned there.
 - The presign (`…/selfies/uploads`) and the confirm (`…/{selfieId}/confirm`)
   paths: neither reads `headObject`, so neither has this pair of error classes.
+
+## Review sign-off — round 1 (card `t_5f76eab8`, artifact lens)
+
+**Verdict: APPROVED / LGTM.** The delivery landed as the squash `e0cf073` (PR #568) and
+nothing was re-merged for this sign-off. The lens was the **artifact**: the spec and this
+record were read cold before the handoff narrative, then every count below was re-measured
+by the reviewer rather than transcribed from it.
+
+**No section of this record is retracted.** §Context, §Decision 1–5, §Evidence,
+§Consequences, §Alternatives, §Out of scope and the number-allocation paragraph all stand as
+written. The findings below are follow-ups and observations, not corrections.
+
+### The reviewed bytes are what shipped
+
+`git diff 0ba62e2 e0cf073` over the PR's three paths — the spec, this record and
+`docs/adr/README.md` — is **empty**, so every line this record cites is a line on the trunk.
+The only whole-tree difference between the reviewed head `0ba62e2` and the squash `e0cf073`
+is main's own `docs/API Contract.md` commit `e760e80`. The spec's, this record's and the
+route's blobs are unchanged again between `e0cf073` and `e322a92`, the trunk that carries
+this sign-off, so the measurements below apply to both trees.
+
+### Re-measured on the merged trunk
+
+| probe                                                       | measured                                                                                                                                                                                                                                       |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the new spec alone                                          | `Test Files 1 passed (1)`, `Tests 2 passed (2)`                                                                                                                                                                                                |
+| the over-broad-catch mutation, re-run at `e322a92`          | `Test Files 1 failed \| 2 passed (3)`, `Tests 1 failed \| 8 passed (9)`; the sole failure is `answers 500 internal_error instead of reporting a client-side 404 not_found` with `AssertionError: expected 404 to be 500 // Object.is equality` |
+| the seven shipped F5/F6/F7 cases under the same mutation    | `Test Files 2 passed (2)`, `Tests 7 passed (7)` — the coverage gap this record closes, re-measured rather than quoted                                                                                                                          |
+| the route restored after the mutation                       | sha256 `8cf9c49b…` before and after, `git status --short` empty                                                                                                                                                                                |
+| the five ADR guards (`adr-numbering`, `adr-lane-ranges`, …) | `5 passed (5)`, `218 passed (218)`                                                                                                                                                                                                             |
+
+### Non-vacuity, confirmed independently
+
+- The spy's `toHaveBeenCalledWith(SELFIE_LOCATION_KEY, selfieObjectKey(bytes.hash))`
+  (`selfie-submit-object-transport.test.ts:234`) is what makes the `500` arm diagnosable: a
+  route that answered `500` for an unrelated reason, or never asked the port, cannot satisfy
+  the status plus the call assertion together.
+- The sibling `404` arm runs **after** `vi.restoreAllMocks()`
+  (`selfie-submit-object-transport.test.ts:138`), so its real `not_found` is itself the
+  proof that the spy was restored — the two arms are independent pins, not one assertion
+  written twice.
+- `storedUsedAt` throws when the profile row or the presented challenge is missing
+  (`selfie-submit-object-transport.test.ts:160`), so the charge-free assertion cannot read
+  `null` off a row that does not exist.
+- `entriesSince` is proven to observe an entry by `liveness-selfie-submit.test.ts:528`
+  (`expect(entriesSince(before)).toHaveLength(1)`), so "no new `q:selfie` row" is not a
+  vacuous length-zero on a reader that never sees anything.
+
+### Findings (all non-blocking)
+
+- **F1 · Low — a prospective ADR-number collision, not this delivery's defect.** PR #565
+  (OP-134) carried `ADR-0811-op134` and `ADR-0812-op134` on a base that predates both
+  records this trunk minted, so that lane's records would have duplicated two live numbers.
+  Routed to card `t_135c11ae` to renumber above the highest in-flight number (`0813`) — the
+  same repair the OP-132 retention lane made in `63d42b7`. **Resolved before this sign-off:**
+  PR #565 landed as `0d57e95` with its records renamed to
+  [ADR-0814](ADR-0814-op134-attendee-claim-red.md) and
+  [ADR-0815](ADR-0815-op134-attendee-claim-green.md), and both `Next free` cells read
+  `0816`.
+- **F2 · Info — one redundant assertion.** `expect(error.code).not.toBe("not_found")`
+  (`selfie-submit-object-transport.test.ts:243`) can never fail after the `toBe` above it.
+  It is harmless and it reads as intent; no change is owed.
+- **F3 · Info — `retryable` is deliberately unpinned**, exactly as §Out of scope says. A
+  later decision to map the port's retry policy onto the wire needs its own pin and must not
+  be retro-fitted into this one.
+- **F4 · Info — environment noise, not a regression.** A local full `--project integration`
+  run at `e0cf073` answered `2 failed | 1290 passed (1292)` with two five-second
+  `testTimeout` hits in unrelated files (`plans-seed.test.ts` I1 and
+  `tenant-provisioning-and-routes.test.ts` I1); both files are green in isolation
+  (`26 passed (26)`) and main CI on the same sha is green. The reviewer's own full run at
+  `e322a92`, while preparing this sign-off, hit the same signature four times — `Test Files
+4 failed | 123 passed (127)`, `Tests 4 failed | 1305 passed (1309)`, each failure
+  `Error: Test timed out in 5000ms` and each in a file this delivery does not touch
+  (`billing-checkout.test.ts` I3, `notification-feed.test.ts` F3,
+  `notification-unsubscribe.test.ts` I2 and `subscription-history.test.ts`'s 401 case) —
+  and those four files answer `61 passed (61)` when run together in isolation. The tree
+  differs from that sha by these two records only, and main CI on `e322a92` is green.
+
+The record's own caveats hold as written: a route that special-cased `code` would still
+escape both cases, and the second error class is covered once rather than three times.
