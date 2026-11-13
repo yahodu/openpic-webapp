@@ -18,7 +18,10 @@ lane`) is exhausted, so this record draws from the `unallocated (future lanes)`
   (`git rev-list --objects --all -- docs/adr`), the highest in any
   `.worktrees/*/docs/adr`, and the highest on any open PR head (`#573`–`#580`
   inspected). `0823` is carried by nothing, so this record draws **`0823`** and
-  both cells advance to `0824`. No lane row is minted.
+  both cells advance to `0824`. PR #579 merged as `ad5b1ce` while this branch was
+  in CI; the merge with `main` kept that free number and resolved the ledger by
+  union (rows `0819`, `0821`, `0822`, `0823`, both cells `0824`). No lane row is
+  minted.
 - **Amends:** the "known limit" 2 of
   [ADR-0817](ADR-0817-op132-concurrent-confirm-reread.md) §Consequences ("the
   repair leans on the retry budget … a storm of `N > 2` … is not pinned and not
