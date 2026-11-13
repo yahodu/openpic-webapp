@@ -2168,9 +2168,11 @@ Failure paths:
 
 The **outcome** of detection/liveness is asynchronous (`attendee.selfie.accepted` / `attendee.selfie.rejected`, notification §4.8) and observed through §6.4. `attendee.selfie.rejected` emails only when the attendee is identified **and** has failed twice consecutively.
 
-### `GET /api/v1/p/selfies/reusable`
+### `GET /api/v1/p/selfies/reusable?cursor=&limit=`
 
 Auth `user` (identified only) — the PRD's "reuse a previous selfie".
+
+Request: `?cursor=<opaque>&limit=<1..100>` (§0.8). Default `limit` **40**, maximum **100**; a value above 100 is clamped. An unparseable or foreign `cursor` → `400 invalid_cursor`; a non-integer or `< 1` `limit` → `422 validation_failed`.
 
 ```json
 {
@@ -2181,9 +2183,12 @@ Auth `user` (identified only) — the PRD's "reuse a previous selfie".
       "previewUrl": "https://pic.openpic.in/t/....webp?exp=...&sig=...",
       "quality": { "accepted": true }
     }
-  ]
+  ],
+  "page": { "nextCursor": "eyJjIjoi...", "hasMore": true, "limit": 40 }
 }
 ```
+
+Sorted `createdAt` **desc**, `_id` desc as the tiebreak — keyset pagination, so a page boundary never repeats or skips a row that shares a `createdAt`. `nextCursor` is `null` when `hasMore` is `false`. There is **no `page.total`**: §0.8 forbids a total that would need an aggregation. A client that previews only the newest selfies may ignore `page`; a client that lists every reusable selfie must follow `nextCursor` until it is `null`. (ADR-0810.)
 
 Returns **crops/previews only**, never the embedding. Reuse: `POST /p/events/{slug}/selfies:reuse` with `{ "selfieId": "..." }` → `202`, same envelope as above, skipping upload and liveness.
 

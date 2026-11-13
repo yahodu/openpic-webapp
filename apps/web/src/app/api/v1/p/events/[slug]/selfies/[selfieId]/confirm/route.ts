@@ -35,12 +35,15 @@ import { systemClock } from "@/server/runtime/clock";
  * a second row (schema §15.3 has no counter), and the queue pointer already
  * exists — the confirm never enqueues a second job.
  *
- * The confirmation is also the **only publisher** (§7.6, ADR-0806): it announces
- * the rows this selfie produced, once per selfie. No shipped path re-issues it
- * after the worker finishes — the `200` body's `pollUrl` is a read-only
- * `GET …/me` — so a worker result that lands after the activation is announced
- * only by a second, client-initiated confirm. Who owns that publication is an
- * open decision (ADR-0806 §1, card `t_b0bf2ff2`).
+ * The confirmation is the **only publisher in this repo** (§7.6, ADR-0806): it
+ * announces the rows this selfie produced, once per selfie. No shipped path
+ * re-issues it after the worker finishes — the `200` body's `pollUrl` is a
+ * read-only `GET …/me` — so a worker result that lands after the activation is
+ * announced only by a second, client-initiated confirm. The settled owner of
+ * that late result is the **pipeline**, not this route: the worker's
+ * `POST /api/v1/internal/domain-events` with the same `dedupeKey` (OP-135 §1,
+ * not shipped yet); the pre-read above is what keeps the two mutually
+ * exclusive (ADR-0808 §1/§3).
  */
 
 /** The §6.3 answer the confirm returns with `status: "ready"` once published. */
