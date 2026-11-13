@@ -1071,11 +1071,11 @@ so `feature_not_available` is unreachable on that route — exactly the
 [ADR-0794](ADR-0794-op133-attendee-gallery-green.md) §13 decision — which is why
 the plan refusal is pinned on the gated `original-url` route while the preview
 case pins the other half ("a plan without originals still grants a preview").
-The card pointed at ADR-0793 §1/§6; those sections are the poll table and the two
-hide semantics, and the sentences that actually record these two paths as out of
-the RED pack are ADR-0793 §7 ("`preview-url` is pinned for the refusal only") and
-ADR-0794 §13, while §6 (the `event_images.visibility` predicate) is what the
-organizer-hide refusal now pins. Evidence: `attendee-media-access.test.ts` 8 → 14
+The card pointed at ADR-0793 §1/§6; §1 is the poll table and §6 the two hide
+semantics, and the sentences that actually record these two paths as out of the
+RED pack are ADR-0793's **Consequences** bullet ("`preview-url` is pinned for the
+refusal only", I11) and ADR-0794 §13, while §6 (the `event_images.visibility`
+predicate) is what the organizer-hide refusal now pins. Evidence: `attendee-media-access.test.ts` 8 → 14
 cases and `attendee-participation-status.test.ts` 8 → 11, both green on the
 branch cut (14 passed / 11 passed); five one-line mutations of the shipped files
 redden exactly their own case (`"original"` instead of `"preview"` →

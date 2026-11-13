@@ -16,11 +16,15 @@
   pool cell both advance to `0800`, so the next attendee-lane card takes a fresh
   block from `0800` instead of minting into the exhausted `0780`–`0798` block.
 
-- **References:** [ADR-0793](ADR-0793-op133-attendee-gallery-red.md) §7 ("`preview-url`
-  is pinned for the refusal only") and §10 (`/me`'s keys, which never named the
-  `selfie` field); [ADR-0794](ADR-0794-op133-attendee-gallery-green.md) §13
-  (identified-only, and **no** `originals.download` gate on a preview) and §18
-  (the pin-correction precedent on card `t_c6d20dea`).
+- **References:** [ADR-0793](ADR-0793-op133-attendee-gallery-red.md) §6 (the
+  two hide semantics, whose `event_images.visibility` predicate the
+  organizer-hide refusal pins) and its **Consequences** bullet "`preview-url` is
+  pinned for the refusal only" (I11) — the sentence that left this success path
+  out of the RED pack — plus §10 (`/me`'s fourteen-key body, which carries
+  `selfie` but never asserted it);
+  [ADR-0794](ADR-0794-op133-attendee-gallery-green.md) §13 (identified-only, and
+  **no** `originals.download` gate on a preview) and §18 (the pin-correction
+  precedent on card `t_c6d20dea`).
 - **Consumes:** `0799`.
 
 ## Context
