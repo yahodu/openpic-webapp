@@ -20,11 +20,16 @@
   `e0cf073`, PR #568). Under
   [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) a number is consumed
   **once** and the later record moves, so this record renumbers to **`0813`** —
-  the next free number above the trunk — and both `Next free` cells advance from
-  `0813` to `0814`. The renumber is a ledger fact, not a new decision: the
-  decision, the pins and every measurement below are unchanged, and no number
-  outside `0813` is consumed. Flagged for the allocator: the reservation channel
-  and the `Next free` cell disagreed, which is the collision ADR-0300 §7
+  free against the trunk **and** every in-flight allocation — and both `Next free`
+  cells advance to **`0817`**: §7 of that policy counts an **in-flight** number as
+  taken, `0814`/`0815` are held by the open PR #565
+  (`ADR-0814-op134-attendee-claim-red.md`, `ADR-0815-op134-attendee-claim-green.md`)
+  and `0816` by the open PR #570 (`OP-132-task-concurrent-confirm-pin`,
+  `ADR-0816-op132-concurrent-confirm-publication.md`), so the next newly-started
+  card in this lane receives `0817`. The renumber is a ledger fact, not a new
+  decision: the decision, the pins and every measurement below are unchanged, and
+  no number outside `0813` is consumed. Flagged for the allocator: the reservation
+  channel and the `Next free` cell disagreed, which is the collision ADR-0300 §7
   describes; the card body's `Consumes: 0812` is `0813` here for that reason.
 - **Amends:** [ADR-0792](ADR-0792-op132-liveness-selfie-green.md) §2 — the
   contract order of the liveness/selfie write surface gains one stage between
