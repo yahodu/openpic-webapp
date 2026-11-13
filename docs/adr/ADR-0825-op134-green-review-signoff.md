@@ -168,9 +168,12 @@ than accepting the disclosure.
 Both `Next free` cells read `0824` at this branch head (`origin/main`
 `5f6588a`). The mandatory sweep before minting found the pool head **already
 taken in flight**: `ADR-0824-op132-first-match-notified-pin.md` is committed on
-`OP-132-task-first-match-notified-pin` (PR #590, worktree `t_fba391ab`) and
-`ADR-0823` on PR #589; `git rev-list --objects --all -- docs/adr` returns `0824`
-as the highest number anywhere. Under ADR-0300 §7 an in-flight number counts as
+`OP-132-task-first-match-notified-pin` (PR #590, worktree `t_fba391ab`), and
+`git rev-list --objects --all -- docs/adr` returns `0824` as the highest number
+anywhere on any ref. (The sweep's other hit, `0823`, is the trunk's own merged
+`ADR-0823-op132-confirm-burst-budget.md` carried by PR #589's head — a branch
+inherits its base's records, so a sweep must be read against what each head
+_adds_, not what it contains.) Under ADR-0300 §7 an in-flight number counts as
 taken, so this record draws **`0825`** — the next number above the highest
 in-flight reservation — and both cells advance to `0826`. No lane row is minted:
 the shared attendee block `0780`–`0798` was exhausted before this lane, so the
