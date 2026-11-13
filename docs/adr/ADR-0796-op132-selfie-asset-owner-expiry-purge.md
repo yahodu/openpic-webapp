@@ -1,4 +1,4 @@
-# ADR-0793 — OP-132 GREEN: the selfie's owner row, its retention deadline and the purge path on withdrawal
+# ADR-0796 — OP-132 GREEN: the selfie's owner row, its retention deadline and the purge path on withdrawal
 
 - **Status:** Accepted
 - **Consumers:** `apps/web/src/server/attendee/selfie-submit.ts`,
@@ -7,15 +7,20 @@
   `apps/web/src/app/api/v1/p/events/[slug]/selfies:reuse/route.ts` and
   `apps/web/src/app/api/v1/p/events/[slug]/consent/route.ts`.
 - **Lane:** the shared attendee block `0780`–`0798` (row
-  `OP-129 attendee identity lane`), `Next free` read as `0793` at the branch cut
-  on `OP-132-task-selfie-asset-erasure-pins` (`7d0d215`). A sweep of `docs/adr`
-  and every in-flight `OP-13x` ref finds no `ADR-0793`, so this record takes
-  `0793`; the ledger cell advances to `0794`.
+  `OP-129 attendee identity lane`), `Next free` read as `0796` at the renumber
+  on `OP-132-task-selfie-asset-erasure` (`51c42f9`). This record first took
+  `0793`, which the OP-133 gallery lane (`ADR-0793-op133-attendee-gallery-red.md`,
+  PR #545, plus `0794` in the same worktree) already held in flight; round-1
+  review F-A1 measured that the second of the two merges reddens the ADR
+  numbering guard, so it moved to `0796`. A sweep of `docs/adr`, every
+  `.worktrees/*/docs/adr` and every open `OP-13x` PR head finds no `ADR-0795`
+  through `ADR-0799` and no `ADR-0796`, so this record takes `0796`; the ledger
+  cell advances to `0797`.
 - **Amends:** [ADR-0791](ADR-0791-op132-liveness-selfie-red.md) §6 — the three
   F1 pins (card `t_dd9cbd7c`) this record turns green; and
   [ADR-0792](ADR-0792-op132-liveness-selfie-green.md) §3, whose submit
   transaction left `assetId: null` and wrote no `expireAt`.
-- **Consumes:** `0793`.
+- **Consumes:** `0796`.
 
 ## Context
 

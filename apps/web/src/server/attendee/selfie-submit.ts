@@ -243,7 +243,7 @@ export interface QueuedSelfieOptions {
  * two-step submission makes publication a property of the confirmation, not of
  * the row's arrival. It carries its retention deadline and points at the
  * `mediaAssets` row for its content hash — the owner row the erasure path
- * follows to purge the bytes (§16.1, ADR-0793).
+ * follows to purge the bytes (§16.1, ADR-0796).
  *
  * @param options - The database, scope, owner, content hash and instant.
  * @returns The new selfie's id.

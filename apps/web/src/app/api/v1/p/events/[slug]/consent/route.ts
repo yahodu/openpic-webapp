@@ -315,7 +315,7 @@ export const DELETE = defineRoute({
         // The blob is purged once nothing references it (schema §16.1): the
         // withdrawal drops the references and deletes the object the row now
         // owns. The key is derived from the content hash — the asset row's
-        // `storage` slot may be absent (ADR-0793).
+        // `storage` slot may be absent (ADR-0796).
         const assets = tenant.collection(COLLECTIONS.mediaAssets);
         const storage = getObjectStorage();
         for (const { id, count } of references.values()) {
