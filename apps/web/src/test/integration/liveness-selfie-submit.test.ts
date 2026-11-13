@@ -1003,8 +1003,9 @@ describe("when a confirmed selfie's consent is withdrawn", () => {
  *   through the `(tenantId, contentHash)` unique index, so a `Promise.all` of
  *   two submits lands in the driver's `WriteConflict`/`E11000` path with no
  *   synchronous seam to interleave at; a spec built on that ordering is flaky
- *   by construction and would redden a correct implementation. P2 pins the same
- *   mediaAssets accounting with a deterministic interleaving instead.
+ *   by construction and would redden a correct implementation. P2 drives the
+ *   same re-reference deterministically, so the row's accounting is exercised
+ *   without pinning the concurrent write path.
  */
 
 /** A stored `mediaAssets` row, with the §16.1 purge slots these cases read. */
