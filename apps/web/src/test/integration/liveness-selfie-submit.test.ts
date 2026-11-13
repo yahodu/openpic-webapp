@@ -1398,3 +1398,116 @@ describe("when another attendee re-references the same bytes during a withdrawal
     ).toBe(false);
   });
 });
+
+/* ───── F2: a durable purge candidate is consumed, not merely recorded ────── */
+
+/**
+ * F2 of the OP-132 round-2 review of the F-A2 pins (this card, `t_6b53935c`),
+ * pinned by ADR-0827 §1.
+ *
+ * ADR-0797 §1 pins P1 as a **disjunction**: after a failed purge and a retry the
+ * bytes are gone, *or* the `mediaAssets` row is a durable purge candidate
+ * (`refCount: 0` and `status: "purged"`/`purgedAt`). The review of the pins
+ * measured that a repair which only *stamps* that marker satisfies P1 while the
+ * biometric bytes stay readable for good — a marker nobody acts on is a marker
+ * on an orphan, which is the whole F-A2 class the pin exists to close.
+ *
+ * ## Contract expected of the implementation
+ *
+ * The GREEN's record (0798 §1) makes the **withdrawal retry** the consumer —
+ * there is no sweep and no queue entry — so the retry must re-attempt the object
+ * delete on the claimed row and finish the purge (`purgedAt` a date, which is
+ * also what stops the claim from deflecting a later submit, §2). The failed
+ * attempt leaves the seed this case asserts: a claimed row at `refCount: 0`
+ * whose `purgedAt` is still `null`, with the bytes still stored; the retry must
+ * consume it.
+ *
+ * **This is not a restatement of P1.** P1 accepts either branch, so a repair that
+ * leaves the candidate behind and never purges it stays green there; this case
+ * requires the consumption. Measured, not argued: dropping the `$lte` from the
+ * claim filter (`refCount: count`) leaves P1 green — the retry finds nothing to
+ * re-attempt and the row still reads as a candidate — and reddens this case
+ * alone.
+ */
+describe("when a withdrawal's purge failed and the attendee retries", () => {
+  it("consumes the pending purge candidate, so the bytes are gone after the retry", async () => {
+    // Arrange: a confirmed selfie whose bytes are really in the store.
+    const ready = await readyEvent("op132-f2-consumer");
+    const { hash } = makeSelfieBytes("f2-consumer");
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "f2-consumer",
+    });
+    const profile = await profileRow();
+    await finishSelfieWorker(app, {
+      selfieId: submitted.selfieId,
+      profileId: submitted.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: profile.subject,
+      matches: 1,
+    });
+    const confirmed = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(confirmed.status).toBe(200);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    // Act: one transient object-store failure, then the retry a recovering
+    // client sends — the consumer the GREEN's record (0798 §1) names.
+    const storage = getObjectStorage();
+    const deleteSpy = vi
+      .spyOn(storage, "deleteObject")
+      .mockRejectedValueOnce(new Error("object store unavailable"));
+    const failed = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    deleteSpy.mockRestore();
+
+    // The seed must be the state this case claims: a durable purge candidate
+    // whose bytes are still there, and an *in-flight* one, not a finished purge.
+    const seed = await assetByHash(hash);
+    expect(
+      recordsPendingPurge(seed),
+      "the failed withdrawal left no durable purge candidate: the mediaAssets row is " +
+        `${JSON.stringify(seed)} (the attempt answered ${String(failed.status)})`
+    ).toBe(true);
+    expect(
+      await selfieBytesReadable(hash),
+      "the failed withdrawal already erased the bytes, so this case seeded no pending purge"
+    ).toBe(true);
+    expect(
+      seed?.purgedAt ?? null,
+      "the failed withdrawal stamped `purgedAt` although the object is still readable: the " +
+        "completion mark must not precede the object delete, or the row reads as a finished " +
+        "purge while the biometric bytes are still there"
+    ).toBeNull();
+
+    // Act: the retry.
+    const retry = await withdrawConsent(ready.event.slug, { cookie: ready.cookie, ip: ready.ip });
+
+    // Assert: the candidate was consumed — the retry answered the withdrawal's
+    // own contract, the bytes are gone (`getObject` answers the port's own
+    // `not_found`), and the row no longer reads as pending.
+    expect(
+      retry.status,
+      `the retry answered ${String(retry.status)} after the failed attempt answered ` +
+        String(failed.status)
+    ).toBe(204);
+    expect(
+      await selfieBytesReadable(hash),
+      `the withdrawal retry left the selfie object ${SELFIE_LOCATION_KEY}/` +
+        `${selfieObjectKey(hash)} readable although the failed attempt had left the ` +
+        `mediaAssets row a purge candidate: nothing consumed the candidate ` +
+        `(the first attempt answered ${String(failed.status)}, the retry ${String(retry.status)})`
+    ).toBe(false);
+    expect(
+      (await assetByHash(hash))?.purgedAt,
+      "the retry erased the bytes but left `purgedAt: null`, so the row still records an " +
+        "in-flight purge and every later submit of these bytes is deflected (0798 §2)"
+    ).toBeInstanceOf(Date);
+  });
+});
