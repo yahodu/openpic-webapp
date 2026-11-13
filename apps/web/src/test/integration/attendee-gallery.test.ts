@@ -513,7 +513,9 @@ describe("when an anonymous attendee has twenty matches", () => {
     expect(body.page.nextCursor).toBeNull();
     expect(body.page.hasMore).toBe(false);
     expect(body.summary.matchCount).toBe(20);
-    expect(keysOf(body)).toEqual([...BODY_KEYS, "loginUrl", "truncatedForAnonymous"]);
+    // `keysOf` sorts, and `loginUrl` sorts before `page`, so the expected side
+    // must be sorted too — the assertion is exact-set, not insertion-order.
+    expect(keysOf(body)).toEqual([...BODY_KEYS, "loginUrl", "truncatedForAnonymous"].sort());
   });
 
   it("rejects a cursor the server did not mint with validation_failed", async () => {
