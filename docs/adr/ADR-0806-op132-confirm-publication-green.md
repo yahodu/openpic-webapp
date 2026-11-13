@@ -186,3 +186,97 @@ file is the confirm route.
    watermark is per profile, not per selfie, so confirming selfie B after A was
    announced would suppress B's first delivery. `B`'s outbox row, keyed by
    selfie, has no such hole.
+
+## Review sign-off (OP-132 GREEN F3, round 2 — execution lens)
+
+**Verdict: APPROVED WITH FINDINGS.** The delivery is PR #557, reviewed at head
+`e5af1ac` (card `t_ed3785df`) and squash-merged as `fa350d3`. The squash kept
+the tree exactly: `git rev-parse e5af1ac^{tree}` == `fa350d3^{tree}` ==
+`e4c656480279999acb706721f65df4d13ef8c017`, and `git diff e5af1ac fa350d3` is
+empty per path, so every measurement below holds for both commits. The branch
+was auto-deleted on merge and local `main` == `origin/main` == `fa350d3`. As
+with the ADR-0664, ADR-0681, ADR-0781, ADR-0786 and ADR-0802 precedent, the
+verdict is recorded **inside** the delivered record: no new ADR number is
+consumed and the shared ledger is not touched.
+
+Nothing in this record's §Decision sections is retracted. §1's decision — the
+confirmation is the only publisher that **ships in this repo** — stands, and §2
+to §4 are unchanged. What the follow-ups corrected is §1's _justification_,
+which ADR-0808 §1–§2 now records. Every ADR number this section cites is on the
+trunk at writing (`c62000f`); no in-flight number is referenced, and the
+follow-ups that had not merged at review time are cited by card id.
+
+### Measured on the merged trunk
+
+| gate                                                    | result                                       |
+| ------------------------------------------------------- | -------------------------------------------- |
+| focused `integration`, the three confirm-adjacent specs | 3 files / 31 passed                          |
+| full `unit` project                                     | 175 files, 2909 passed, 3 skipped (2912)     |
+| full `integration` project                              | 118 files, 1267 passed (1267)                |
+| `tsc -p apps/web --noEmit`                              | exit `0`                                     |
+| `prettier --check`, the record, the route and the pin   | clean                                        |
+| the five ADR guards                                     | 5 files / 218 passed (218)                   |
+| PR checks at `e5af1ac`                                  | 14/14 pass                                   |
+| the ledger                                              | 311 records, no duplicate, both cells `0807` |
+
+The focused set is `selfie-confirm-publication.test.ts` (3 cases),
+`liveness-selfie-submit.test.ts` (21) and `selfie-reuse.test.ts` (7), all green
+with no case edited. The 14 PR-check entries are `ci`, `test_coverage`,
+`unit_test`, `lint`, `audit`, `audit-dev`, `secret-scan`, `env-changes`,
+`validate-branch-name`, `validate-pr-title`, the evidence guard and the three
+CodeQL entries; the rollup now also carries the `notify-discord` close
+side-effect run, which is not a pre-merge gate. The ledger figures are the
+`docs/adr` census at `fa350d3`: 311 `ADR-NNNN` records, 311 distinct numbers, and
+both `Next free` cells (`OP-129 attendee identity lane`, `unallocated (future
+lanes)`) at `0807`.
+
+### Round-1 corrections verified
+
+The round-1 request was comment-only: no behaviour change and no test change.
+All three landed:
+
+- §1 was retitled and now records the measured facts, including that case 3's
+  emptiness assertion cannot fail because `finishSelfieWorker` writes with raw
+  driver calls.
+- the route docblock was aligned with the record's wording.
+- the §Consequences outbox-TTL sentence was added.
+
+The pin file is untouched by that work: `selfie-confirm-publication.test.ts`
+carries the blob `a1729b4ced14bb8c47a761d84617e88c1c18d92a` at `545ffb9`, at
+`e5af1ac` and at `fa350d3` — one blob, three refs.
+
+### Load-bearing probes
+
+Each probe ran in a throwaway worktree detached at `fa350d3` (the merged tree),
+mutated one production statement and was reverted byte-identically afterwards
+(`git status` clean):
+
+| mutation                                          | measured result                                       |
+| ------------------------------------------------- | ----------------------------------------------------- |
+| `newMatches` counts the profile total again       | 1 failed, 2 passed — only the count case reddens      |
+| the dedupe pre-read is deleted                    | 2 failed, 1 passed — the repeat confirm answers `500` |
+| the §15.3 `firstMatchNotifiedAt` stamp is deleted | 24 passed, 0 failed                                   |
+
+The third row is the Low finding below: the stamp was genuinely unobserved,
+which is why the pin card exists rather than a comment.
+
+### Findings and routing
+
+| severity         | finding                                                                                                                                                                                               | route                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Low              | the §15.3 `firstMatchNotifiedAt` stamp was unobserved — deleting it left 24 passed, 0 failed                                                                                                          | card `t_fba391ab`, pinned as ADR-0824 (PR #590)                                 |
+| Low              | §1's "would fail case 3" justification and the §Consequences "the pipeline's own path" sentence were imprecise: case 3's emptiness assertion is vacuous, because `finishSelfieWorker` writes raw rows | corrected on the trunk by PR #560 / ADR-0808 §1–§2 (decision card `t_b0bf2ff2`) |
+| Medium (round 1) | two simultaneous confirms answered `[200, 500]`; the loser's outbox insert collided and aborted its transaction                                                                                       | pins card `t_6e555aa3`, GREEN `t_6e62ee84` — recorded as ADR-0816 and ADR-0817  |
+| Info             | item 3 of the GREEN card, a shipped recovery path for a late worker result, is not delivered by this record; the publication-ownership question it left open is decided in ADR-0808 §1                | ADR-0808 §1; the writer itself lands with OP-135/OP-136                         |
+
+No finding was left for a later reader to infer: the two Low items each have an
+owner, and the Medium one was pinned and repaired in its own pair before this
+sign-off was written. The burst of more than two simultaneous confirms, which
+ADR-0817 §Consequences disclosed as unpinned, was pinned separately (ADR-0821)
+and given its attempt budget by ADR-0823 — that chain follows from the same
+Medium finding and is documented by those records, not by this one.
+
+This section adds no executable claim and changes no test, helper, fixture or
+production file. It records a verdict, so the mechanics it describes are frozen
+where they were measured: a later change to the confirm route is governed by
+ADR-0808 and by the pins named here, not by this paragraph.

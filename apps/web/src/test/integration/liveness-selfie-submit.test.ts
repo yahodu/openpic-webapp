@@ -30,7 +30,12 @@ import {
   type UploadedSelfie,
   handlers,
 } from "../helpers/selfie-flow";
-import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-submit";
+import {
+  SELFIE_LOCATION_KEY,
+  SELFIE_RETENTION_DAYS,
+  selfieObjectKey,
+} from "@/server/attendee/selfie-submit";
+import { MS_PER_DAY } from "@/server/runtime/time";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
 
 /**
@@ -955,6 +960,188 @@ describe("when a confirmed selfie's consent is withdrawn", () => {
   });
 });
 
+/* ───── G1: the retention window is a window, not merely a future instant ──── */
+
+/**
+ * G1 of the OP-132 round-1 F1 review (this card, `t_26ab6dd7`).
+ *
+ * The F1 case above pins that `expireAt` is after both `createdAt` and the wall
+ * clock. That is a *direction*, not a window: replacing the row's `expireAt`
+ * with `new Date(now.getTime() + 90 * 24 * 60 * 1000)` — a minutes-vs-days unit
+ * confusion, i.e. **90 minutes** — left the whole file green (measured on the
+ * fix branch `7d0d215`: `19 passed (19)`). The window is what schema §22 names,
+ * so the window is what this case pins.
+ *
+ * ## Contract expected of the implementation
+ *
+ * `expireAt − createdAt` is the §22 selfie retention window, which the module
+ * publishes as `SELFIE_RETENTION_DAYS`. The expectation is **derived from that
+ * export** (±1 s) rather than written into the assertion, so a legitimate change
+ * to the record's window keeps the pin true; the `366 d` ceiling bounds it even
+ * if the constant is edited. An event's own `retentionExpiresAt` may only
+ * *shorten* the selfie window (§22, "whichever comes first"), so this case
+ * clears it on the seeded event and measures the selfie's own window alone —
+ * otherwise the deadline would be the fixture's and the case could not tell the
+ * two apart.
+ */
+describe("when a selfie is queued on an event with no retention cap", () => {
+  it("carries the record's retention window, so a window measured in minutes is refused", async () => {
+    const ready = await readyEvent("op132-g1-window");
+    await app.db
+      .collection(COLLECTIONS.events)
+      .updateOne({ _id: ready.event.id }, { $set: { retentionExpiresAt: null } });
+
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "g1-window",
+    });
+
+    const selfie = await selfieById(submitted.selfieId);
+    const expireAt = selfie.expireAt;
+    if (!(expireAt instanceof Date)) {
+      throw new Error(
+        `expected the selfie row to carry an expireAt date, received ${String(expireAt)}`
+      );
+    }
+
+    const windowMs = expireAt.getTime() - selfie.createdAt.getTime();
+    const expectedWindowMs = SELFIE_RETENTION_DAYS * MS_PER_DAY;
+
+    expect(
+      windowMs,
+      `the queued selfie's retention window is ${String(windowMs)} ms ` +
+        `(${String(windowMs / MS_PER_DAY)} days); the record names ` +
+        `${String(SELFIE_RETENTION_DAYS)} days (${String(expectedWindowMs)} ms)`
+    ).toBeGreaterThanOrEqual(expectedWindowMs - 1000);
+    expect(windowMs).toBeLessThanOrEqual(expectedWindowMs + 1000);
+    // A window longer than a year is not the retention window §22 names.
+    expect(windowMs).toBeLessThanOrEqual(366 * MS_PER_DAY);
+  });
+});
+
+/* ─── G2: a withdrawal erases only the bytes nothing still references ─────── */
+
+/**
+ * G2 of the OP-132 round-1 F1 review (this card, `t_26ab6dd7`).
+ *
+ * The F1 erasure case withdraws the **only** attendee holding the bytes, so it
+ * cannot tell a reference-counted release from a delete that ignores the count:
+ * making `DELETE …/consent` delete the object for **every** referenced
+ * `mediaAssets` row (dropping the `refCount ≤ 0` guard) left `41 passed (41)`
+ * across `liveness-selfie-submit.test.ts` (19) and `biometric-consent.test.ts`
+ * (22), because no case in either file has two references to one asset.
+ *
+ * ## Contract expected of the implementation
+ *
+ * Two attendees who submit the same bytes share one `(tenantId, contentHash)`
+ * `mediaAssets` row at `refCount: 2` (§16.1). A withdrawal releases exactly the
+ * references its own profile holds, and the blob is purged **only once nothing
+ * references it** (§16.1 — OP-131's route comment: "the blob is purged once
+ * nothing references it"): after the first withdrawal the row is at
+ * `refCount: 1` and the object is still readable, and the second withdrawal is
+ * what makes `getObject` reject `not_found`.
+ *
+ * The pre-state is asserted, so the case cannot pass by measuring bytes that
+ * were never uploaded or a row that never reached two references.
+ */
+
+/** The stored `attendee_event_profiles` row for one id, failing loudly when absent. */
+async function profileById(profileId: string): Promise<ProfileRow> {
+  const row = (await app.db
+    .collection(COLLECTIONS.attendeeEventProfiles)
+    .findOne({ _id: new ObjectId(profileId) })) as unknown as ProfileRow | null;
+  if (row === null) {
+    throw new Error(`expected a stored attendee profile ${profileId}`);
+  }
+  return row;
+}
+
+describe("when two attendees hold one selfie's bytes and the first withdraws", () => {
+  it("keeps the object readable until the last reference is released", async () => {
+    const ready = await readyEvent("op132-g2-erasure");
+    const { hash } = makeSelfieBytes("g2-erasure");
+
+    const first = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "g2-erasure",
+    });
+
+    const otherIp = nextIp();
+    const other = await createAttendeeSession(app, otherIp);
+    await grantConsent(ready.event.slug, { cookie: other.cookie, ip: otherIp });
+    const second = await submitHappyPath(ready.event.slug, {
+      cookie: other.cookie,
+      ip: otherIp,
+      tag: "g2-erasure",
+    });
+
+    // Both selfies are ordinary confirmed ones: this case measures the
+    // withdrawal's reference accounting, not its handling of a queued row.
+    const firstProfile = await profileById(first.profileId);
+    await finishSelfieWorker(app, {
+      selfieId: first.selfieId,
+      profileId: first.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: firstProfile.subject,
+      matches: 1,
+    });
+    const firstConfirm = await confirmSelfie(ready.event.slug, first.selfieId, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(firstConfirm.status).toBe(200);
+
+    const secondProfile = await profileById(second.profileId);
+    await finishSelfieWorker(app, {
+      selfieId: second.selfieId,
+      profileId: second.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: secondProfile.subject,
+      matches: 1,
+    });
+    const secondConfirm = await confirmSelfie(ready.event.slug, second.selfieId, {
+      cookie: other.cookie,
+      ip: otherIp,
+    });
+    expect(secondConfirm.status).toBe(200);
+
+    // Pre-state: one asset row holding two references, and the bytes really
+    // stored under that hash.
+    const assetBefore = await assetByHash(hash);
+    expect(assetBefore?.refCount).toBe(2);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    // Act: the first attendee withdraws.
+    const firstWithdrawal = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+
+    // Assert: only its own reference is released, and the other still holds the
+    // blob, so the object must survive.
+    expect(firstWithdrawal.status).toBe(204);
+    expect((await assetByHash(hash))?.refCount).toBe(1);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+    expect(await app.db.collection("selfies").countDocuments({})).toBe(1);
+
+    // Act: the second — last — attendee withdraws.
+    const secondWithdrawal = await withdrawConsent(ready.event.slug, {
+      cookie: other.cookie,
+      ip: otherIp,
+    });
+
+    // Assert: nothing references the bytes any more, so they are purged.
+    expect(secondWithdrawal.status).toBe(204);
+    await expect(
+      getObjectStorage().getObject(SELFIE_LOCATION_KEY, selfieObjectKey(hash))
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
 /* ────── P1/P2: a failed purge, and a purge that races a live reference ───── */
 
 /**
@@ -1209,5 +1396,118 @@ describe("when another attendee re-references the same bytes during a withdrawal
         `second attendee's submit (answered ${String(otherSubmitStatus)}) had taken a reference ` +
         `to those bytes: a reference must not outlive its object`
     ).toBe(false);
+  });
+});
+
+/* ───── F2: a durable purge candidate is consumed, not merely recorded ────── */
+
+/**
+ * F2 of the OP-132 round-2 review of the F-A2 pins (this card, `t_6b53935c`),
+ * pinned by ADR-0827 §1.
+ *
+ * ADR-0797 §1 pins P1 as a **disjunction**: after a failed purge and a retry the
+ * bytes are gone, *or* the `mediaAssets` row is a durable purge candidate
+ * (`refCount: 0` and `status: "purged"`/`purgedAt`). The review of the pins
+ * measured that a repair which only *stamps* that marker satisfies P1 while the
+ * biometric bytes stay readable for good — a marker nobody acts on is a marker
+ * on an orphan, which is the whole F-A2 class the pin exists to close.
+ *
+ * ## Contract expected of the implementation
+ *
+ * The GREEN's record (0798 §1) makes the **withdrawal retry** the consumer —
+ * there is no sweep and no queue entry — so the retry must re-attempt the object
+ * delete on the claimed row and finish the purge (`purgedAt` a date, which is
+ * also what stops the claim from deflecting a later submit, §2). The failed
+ * attempt leaves the seed this case asserts: a claimed row at `refCount: 0`
+ * whose `purgedAt` is still `null`, with the bytes still stored; the retry must
+ * consume it.
+ *
+ * **This is not a restatement of P1.** P1 accepts either branch, so a repair that
+ * leaves the candidate behind and never purges it stays green there; this case
+ * requires the consumption. Measured, not argued: dropping the `$lte` from the
+ * claim filter (`refCount: count`) leaves P1 green — the retry finds nothing to
+ * re-attempt and the row still reads as a candidate — and reddens this case
+ * alone.
+ */
+describe("when a withdrawal's purge failed and the attendee retries", () => {
+  it("consumes the pending purge candidate, so the bytes are gone after the retry", async () => {
+    // Arrange: a confirmed selfie whose bytes are really in the store.
+    const ready = await readyEvent("op132-f2-consumer");
+    const { hash } = makeSelfieBytes("f2-consumer");
+    const submitted = await submitHappyPath(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+      tag: "f2-consumer",
+    });
+    const profile = await profileRow();
+    await finishSelfieWorker(app, {
+      selfieId: submitted.selfieId,
+      profileId: submitted.profileId,
+      eventId: ready.event.id.toHexString(),
+      tenantKey: ready.tenantKey,
+      subject: profile.subject,
+      matches: 1,
+    });
+    const confirmed = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    expect(confirmed.status).toBe(200);
+    expect(await selfieBytesReadable(hash)).toBe(true);
+
+    // Act: one transient object-store failure, then the retry a recovering
+    // client sends — the consumer the GREEN's record (0798 §1) names.
+    const storage = getObjectStorage();
+    const deleteSpy = vi
+      .spyOn(storage, "deleteObject")
+      .mockRejectedValueOnce(new Error("object store unavailable"));
+    const failed = await withdrawConsent(ready.event.slug, {
+      cookie: ready.cookie,
+      ip: ready.ip,
+    });
+    deleteSpy.mockRestore();
+
+    // The seed must be the state this case claims: a durable purge candidate
+    // whose bytes are still there, and an *in-flight* one, not a finished purge.
+    const seed = await assetByHash(hash);
+    expect(
+      recordsPendingPurge(seed),
+      "the failed withdrawal left no durable purge candidate: the mediaAssets row is " +
+        `${JSON.stringify(seed)} (the attempt answered ${String(failed.status)})`
+    ).toBe(true);
+    expect(
+      await selfieBytesReadable(hash),
+      "the failed withdrawal already erased the bytes, so this case seeded no pending purge"
+    ).toBe(true);
+    expect(
+      seed?.purgedAt ?? null,
+      "the failed withdrawal stamped `purgedAt` although the object is still readable: the " +
+        "completion mark must not precede the object delete, or the row reads as a finished " +
+        "purge while the biometric bytes are still there"
+    ).toBeNull();
+
+    // Act: the retry.
+    const retry = await withdrawConsent(ready.event.slug, { cookie: ready.cookie, ip: ready.ip });
+
+    // Assert: the candidate was consumed — the retry answered the withdrawal's
+    // own contract, the bytes are gone (`getObject` answers the port's own
+    // `not_found`), and the row no longer reads as pending.
+    expect(
+      retry.status,
+      `the retry answered ${String(retry.status)} after the failed attempt answered ` +
+        String(failed.status)
+    ).toBe(204);
+    expect(
+      await selfieBytesReadable(hash),
+      `the withdrawal retry left the selfie object ${SELFIE_LOCATION_KEY}/` +
+        `${selfieObjectKey(hash)} readable although the failed attempt had left the ` +
+        `mediaAssets row a purge candidate: nothing consumed the candidate ` +
+        `(the first attempt answered ${String(failed.status)}, the retry ${String(retry.status)})`
+    ).toBe(false);
+    expect(
+      (await assetByHash(hash))?.purgedAt,
+      "the retry erased the bytes but left `purgedAt: null`, so the row still records an " +
+        "in-flight purge and every later submit of these bytes is deflected (0798 §2)"
+    ).toBeInstanceOf(Date);
   });
 });
