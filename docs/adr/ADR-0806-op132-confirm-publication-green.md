@@ -132,7 +132,8 @@ published still answers `processing`.
 - Two selfies on one profile produce two deliveries whose counts add up to
   `matchCount` (3 + 2 = 5 in the pin).
 - A late worker result publishes on the next confirm, once — but nothing
-  shipped issues that confirm (§1; open on `t_b0bf2ff2`).
+  shipped issues that confirm (§1; decided in ADR-0808 §1 — the pipeline owns
+  it, and that writer does not ship at this head).
 - **The dedupe record ages out with the outbox:** the row's
   `expireAt = occurredAt + retention.domainEventDays` (default 180), so a
   re-confirm after the row has been purged emits a second
@@ -180,8 +181,14 @@ file is the confirm route.
 3. **`dedupeKey` alone, letting the index swallow the collision.** Rejected on
    measurement: the collision aborts the transaction and the repeat answers
    `500`. It works only because the pre-read keeps the collision from happening.
-4. **A worker-side publisher.** Rejected: the pin asserts the outbox is empty
-   after the worker writes.
+4. **A worker-side publisher.** Not adopted at this head: there was no writer to
+   call — no worker application ships in this repo, and the internal API surface
+   under `apps/web/src/app/api/v1/internal/` holds only `cron/` — so a
+   worker-side publisher would have needed a production route that does not
+   exist (the upstream worker endpoints land with OP-135/OP-136). The pin did
+   not decide this: as §1 records, its emptiness read observed an absence
+   rather than constraining a publisher. ADR-0808 §1 assigns the late-result
+   publication to the pipeline, and §2 corrects the inference drawn from case 3.
 5. **A state guard on `activeSelfieId` + `firstMatchNotifiedAt`.** Rejected: the
    watermark is per profile, not per selfie, so confirming selfie B after A was
    announced would suppress B's first delivery. `B`'s outbox row, keyed by
