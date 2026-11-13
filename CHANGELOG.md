@@ -1,3 +1,9 @@
+## [1.61.4](https://github.com/yahodu/openpic-webapp/compare/v1.61.3...v1.61.4) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 publish the confirmation once, count the new matches and recover a late worker result ([#557](https://github.com/yahodu/openpic-webapp/issues/557)) ([fa350d3](https://github.com/yahodu/openpic-webapp/commit/fa350d3d6269812cba8375ce7284b84446740028))
+
 ## [1.61.3](https://github.com/yahodu/openpic-webapp/compare/v1.61.2...v1.61.3) (2026-11-13)
 
 ### Bug Fixes
