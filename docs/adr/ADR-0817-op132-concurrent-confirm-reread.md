@@ -15,9 +15,9 @@ lane`) is exhausted, so this record draws from the `unallocated (future lanes)`
   **`0817`**. Both cells then read `0818`, but that is a **snapshot at this head,
   not a claim**: `0818` was in flight on the draft PR #573 when this record was
   cut, and it has since landed on the trunk as
-  [ADR-0818](ADR-0818-op134-claim-endpoint-arms-pins.md) (PR #584, `5a0c8e05`),
-  whose own revision the still-open PR #573 carries. The cells have moved past it
-  since.
+  [ADR-0818](ADR-0818-op134-claim-endpoint-arms-pins.md) (PR #584, `5a0c8e05`).
+  The draft PR #573, open when this append was written, carries a later revision
+  of that file. The cells have moved past it since.
 - **Amends:** [ADR-0806](ADR-0806-op132-confirm-publication-green.md) §Decision —
   its read-before-the-insert is replaced by a read inside the transaction. The
   record is not edited.
