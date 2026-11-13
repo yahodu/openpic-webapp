@@ -1,3 +1,9 @@
+## [1.63.3](https://github.com/yahodu/openpic-webapp/compare/v1.63.2...v1.63.3) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-134 return "" for galleryUrl when the event has no active access link ([#579](https://github.com/yahodu/openpic-webapp/issues/579)) ([ad5b1ce](https://github.com/yahodu/openpic-webapp/commit/ad5b1cea2b0b1fc290d7e41c3759716c9b1bbc42)), closes [#565](https://github.com/yahodu/openpic-webapp/issues/565)
+
 ## [1.63.2](https://github.com/yahodu/openpic-webapp/compare/v1.63.1...v1.63.2) (2026-11-13)
 
 ### Bug Fixes
