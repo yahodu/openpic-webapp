@@ -22,6 +22,8 @@ export type { Dto, WithId } from "./dto";
 
 export { crossTenantReads } from "./cross-tenant";
 export type {
+  AttendeeEventItem,
+  AttendeeEventPage,
   AttendeeProfileDto,
   AttendeeProfilePage,
   AttendeeProfileSubject,

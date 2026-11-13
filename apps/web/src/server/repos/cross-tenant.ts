@@ -84,6 +84,35 @@ export interface ReusableSelfiePage {
   readonly items: ReusableSelfie[];
 }
 
+/**
+ * One participation in the caller's own event list (contract §6.7).
+ *
+ * The profile's identity, the event facts and the organizer's display name are
+ * joined here because this is the one read allowed to cross tenants: the join
+ * keys are the row's own `eventId`/`tenantId`, never a caller-supplied one.
+ */
+export interface AttendeeEventItem {
+  readonly profileId: string;
+  readonly tenantId: string;
+  readonly eventId: string;
+  readonly eventName: string;
+  readonly organizerDisplayName: string;
+  readonly startAt: Date | null;
+  readonly displayTimeZone: string | null;
+  readonly slug: string;
+  readonly matchCount: number;
+  readonly newMatchCount: number;
+  readonly status: string;
+  readonly galleryExpiresAt: Date | null;
+  /** The participation's own touch time — the list's sort key and cursor half. */
+  readonly updatedAt: Date;
+}
+
+/** One page of the caller's own events. */
+export interface AttendeeEventPage {
+  readonly items: AttendeeEventItem[];
+}
+
 /** A 24-hex ObjectId, the only accepted `_id` tiebreaker in a cursor. */
 const OBJECT_ID_HEX = /^[0-9a-f]{24}$/i;
 
@@ -148,6 +177,24 @@ export interface CrossTenantReads {
     page?: CrossTenantCursorPage,
     db?: Db
   ): Promise<ReusableSelfiePage>;
+
+  /**
+   * Return the caller's own participations across all tenants, newest touch
+   * first (contract §6.7, schema §15.3 `{"subject.userId":1, updatedAt:-1}`).
+   *
+   * The filter is `subject.userId === caller` and nothing else: that predicate
+   * **is** the security boundary of the one whitelisted cross-tenant read.
+   *
+   * @param userId - The data subject's user id (the caller).
+   * @param page - The §0.8 page size plus the previous page's cursor.
+   * @param db - The database handle; defaults to the shared client.
+   * @returns The page, with each row joined to its event and organizer.
+   */
+  findAttendeeEventsBySubjectUser(
+    userId: string,
+    page?: CrossTenantCursorPage,
+    db?: Db
+  ): Promise<AttendeeEventPage>;
 
   /**
    * Return one `face_matches` row by its id alone (OP-133, §6.5, §17.5).
@@ -261,6 +308,158 @@ async function findReusableSelfiesBySubjectUser(
   };
 }
 
+/**
+ * The keyset filter that follows `cursor` on an `updatedAt`-desc list (§0.8).
+ *
+ * Both halves of the compound `(updatedAt, _id)` key are revived to their
+ * stored BSON types, because a string `_id` compares unequal to every
+ * `ObjectId` and would silently skip a row on the page boundary.
+ *
+ * @param cursor - The decoded cursor, or `null` on the first page.
+ * @returns The filter fragment, or the empty filter.
+ * @throws {AppError} `invalid_cursor` (400) when a half is not a stored type.
+ */
+function attendanceKeysetFilter(cursor: Cursor | null): Document {
+  if (cursor === null) {
+    return {};
+  }
+  const at = new Date(cursor.c);
+  if (Number.isNaN(at.getTime()) || !OBJECT_ID_HEX.test(cursor.i)) {
+    throw appError("invalid_cursor");
+  }
+  return {
+    $or: [{ updatedAt: { $lt: at } }, { updatedAt: at, _id: { $lt: new ObjectId(cursor.i) } }],
+  };
+}
+
+/** The stored `attendee_event_profiles` fields this read projects (§15.3). */
+interface AttendeeProfileRow {
+  readonly _id: ObjectId;
+  readonly tenantId: string;
+  readonly eventId: ObjectId;
+  readonly status?: string;
+  readonly matchCount?: number;
+  readonly updatedAt?: Date;
+}
+
+/** The stored `events` fields the list item needs (§15.1). */
+interface AttendeeEventRow {
+  readonly _id: ObjectId;
+  readonly name?: string;
+  readonly startAt?: Date;
+  readonly displayTimeZone?: string;
+  readonly retentionExpiresAt?: Date | null;
+  readonly accessLinks?: readonly { readonly slug?: string; readonly active?: boolean }[];
+}
+
+/** The stored `tenants` field the item's organizer name reads (§13.1). */
+interface AttendeeTenantRow {
+  readonly _id: ObjectId;
+  readonly name?: string;
+}
+
+/**
+ * The caller's own participations, newest touch first (contract §6.7).
+ *
+ * @param userId - The data subject's user id (hex).
+ * @param page - The §0.8 page size plus the previous page's cursor.
+ * @param db - The database handle; defaults to the shared client.
+ * @returns The page, joined to each row's event and organizer.
+ */
+async function findAttendeeEventsBySubjectUser(
+  userId: string,
+  page: CrossTenantCursorPage = {},
+  db: Db = getDb()
+): Promise<AttendeeEventPage> {
+  const offset = page.offset ?? 0;
+
+  let cursor = db
+    .collection<AttendeeProfileRow>(COLLECTIONS.attendeeEventProfiles)
+    .find({
+      "subject.userId": subjectUserValue(userId),
+      ...attendanceKeysetFilter(page.cursor ?? null),
+    })
+    .sort({ updatedAt: -1, _id: -1 });
+
+  if (offset > 0) {
+    cursor = cursor.skip(offset);
+  }
+  if (page.limit !== undefined && page.limit > 0) {
+    cursor = cursor.limit(page.limit);
+  }
+
+  const profiles = await cursor.toArray();
+  if (profiles.length === 0) {
+    return { items: [] };
+  }
+
+  const events = await db
+    .collection<AttendeeEventRow>(COLLECTIONS.events)
+    .find(
+      { _id: { $in: profiles.map((profile) => profile.eventId) } },
+      {
+        projection: {
+          name: 1,
+          startAt: 1,
+          displayTimeZone: 1,
+          retentionExpiresAt: 1,
+          accessLinks: 1,
+        },
+      }
+    )
+    .toArray();
+  const eventById = new Map(events.map((event) => [String(event._id), event]));
+
+  const tenantObjectIds = profiles
+    .map((profile) => profile.tenantId)
+    .filter((tenantId) => ObjectId.isValid(tenantId))
+    .map((tenantId) => new ObjectId(tenantId));
+  const tenants = await db
+    .collection<AttendeeTenantRow>(COLLECTIONS.tenants)
+    .find({ _id: { $in: tenantObjectIds } }, { projection: { name: 1 } })
+    .toArray();
+  const tenantById = new Map(tenants.map((tenant) => [String(tenant._id), tenant]));
+
+  const unseen = await db
+    .collection(COLLECTIONS.faceMatches)
+    .aggregate([
+      {
+        $match: {
+          profileId: { $in: profiles.map((profile) => profile._id) },
+          seenAt: null,
+          hiddenAt: null,
+        },
+      },
+      { $group: { _id: "$profileId", count: { $sum: 1 } } },
+    ])
+    .toArray();
+  const newMatchCountByProfile = new Map(
+    unseen.map((row) => [String(row._id), Number(row.count ?? 0)])
+  );
+
+  const items = profiles.map((profile) => {
+    const event = eventById.get(String(profile.eventId));
+    const slug = event?.accessLinks?.find((link) => link.active === true)?.slug;
+    return {
+      profileId: String(profile._id),
+      tenantId: profile.tenantId,
+      eventId: String(profile.eventId),
+      eventName: event?.name ?? "",
+      organizerDisplayName: tenantById.get(profile.tenantId)?.name ?? "",
+      startAt: event?.startAt ?? null,
+      displayTimeZone: event?.displayTimeZone ?? null,
+      slug: slug ?? "",
+      matchCount: profile.matchCount ?? 0,
+      newMatchCount: newMatchCountByProfile.get(String(profile._id)) ?? 0,
+      status: profile.status ?? "ready",
+      galleryExpiresAt: event?.retentionExpiresAt ?? null,
+      updatedAt: profile.updatedAt ?? new Date(0),
+    };
+  });
+
+  return { items };
+}
+
 /** A stored `face_matches` row reduced to its owning scope (schema §17.5). */
 export interface OwnedMatchRow {
   readonly tenantId: string;
@@ -291,5 +490,6 @@ async function findFaceMatchById(matchId: string, db: Db = getDb()): Promise<Own
 export const crossTenantReads: CrossTenantReads = {
   findAttendeeProfilesBySubjectUser,
   findReusableSelfiesBySubjectUser,
+  findAttendeeEventsBySubjectUser,
   findFaceMatchById,
 };
