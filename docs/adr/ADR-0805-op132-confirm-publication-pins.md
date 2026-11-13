@@ -23,7 +23,8 @@
 ## Context
 
 Review finding **F3** (Medium) of `t_3b8151c3` / PR #543. The confirmation is the
-lane's only publisher (`…/selfies/[selfieId]/confirm/route.ts:92-117`), and three
+lane's only publisher (`…/selfies/[selfieId]/confirm/route.ts`, the
+`if (published && matched > 0)` branch that ends in `emitDomainEvent`), and three
 probes on the branch cut measure what it publishes:
 
 | probe                                                                      | result                                                                                         |
@@ -130,11 +131,11 @@ On `origin/main` `26cc00d` (branch `OP-132-task-confirm-publication-pins`), all
 three cases fail for the stated reason, twice consecutively
 (`Test Files 1 failed (1)`, `Tests 3 failed (3)`):
 
-| case                                                   | failure                                                                                               |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| 1 — a confirmed selfie confirmed a second time         | `AssertionError: expected [ { …(9) }, { …(9) } ] to have a length of 1 but got 2` (`:349`)            |
-| 2 — a second selfie finds more photos than the first   | `AssertionError: expected { …(2) } to match object { …(2) }` — `"count": 5` for `"count": 2` (`:393`) |
-| 3 — the worker's result arrives after the confirmation | `AssertionError: expected [ { …(9) }, { …(9) } ] to have a length of 1 but got 2` (`:444`)            |
+| case                                                   | failure                                                                                      |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| 1 — a confirmed selfie confirmed a second time         | `AssertionError: expected [ { …(9) }, { …(9) } ] to have a length of 1 but got 2`            |
+| 2 — a second selfie finds more photos than the first   | `AssertionError: expected { …(2) } to match object { …(2) }` — `"count": 5` for `"count": 2` |
+| 3 — the worker's result arrives after the confirmation | `AssertionError: expected [ { …(9) }, { …(9) } ] to have a length of 1 but got 2`            |
 
 `tsc -p apps/web/tsconfig.json --noEmit` exits `0` and `eslint
 --max-warnings=0` is clean on this head, so no case is red for a type or load
