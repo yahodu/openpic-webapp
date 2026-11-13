@@ -181,3 +181,67 @@ Measured on `OP-132-task-selfie-asset-erasure` (base `7d0d215`), real
   `biometric-consent` (22), `selfie-reuse` (7), `selfie-submit-user` (2) —
   **50 passed (50)**, no test file edited.
 - `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; prettier clean.
+
+## Review sign-off (round 2 — execution lens, PR #546, squash 90110ee)
+
+**Verdict: APPROVED and landed.** PR #546 was reviewed at head `2ed5c51` and squash-merged as `90110ee`; the
+reviewed tree `3477b7c` is identical to the squash, so every count below belongs to both commits. This section is
+the record's first prose change since then: the only other edit was the F-A2 GREEN (`4c31808`, PR #550), which
+added `apps/web/src/test/integration/liveness-selfie-submit.test.ts` to `§Consumers`. **No section is retracted or
+rewritten here** — the paragraph about the renumber is the correction of a number, not of any decision this record
+takes.
+
+### What round 2 verified, and the numbers it measured
+
+Re-measured in a throwaway worktree detached at `90110ee` (the merged tree, not a transcription of the handoff):
+
+- the three F1 pins — `:862` one `mediaAssets` row of kind `selfie` at `refCount: 1`, `:889` the queued row's
+  `expireAt`, `:914` the bytes erased with the rows — are green inside the four attendee specs
+  (`liveness-selfie-submit` 19, `biometric-consent` 22, `selfie-reuse` 7, `selfie-submit-user` 2):
+  **50 passed (50)**;
+- full `unit`: **171 files, 2846 passed | 3 skipped (2849)**; full `integration`: **112 files, 1214 passed (1214)**,
+  both exit `0`;
+- the five ADR guards: **218 passed (218)**;
+- `tsc` exit `0`, `eslint --max-warnings=0` exit `0`, `prettier --check` clean;
+- **the GREEN edited no test, fixture or mock.** The pins' blob is `0a3437fe` at the RED branch's `7d0d215` (the
+  base this record names) and at `90110ee`, while the squash's own parent carries the pre-pin spec, so the `+151`
+  lines the squash adds under `apps/web/src/test` are the three pins and the `selfieById` reader that the RED card
+  (`t_dd9cbd7c`) wrote; `git diff --stat 7d0d215..90110ee -- apps/web/src/test` is empty.
+
+### The round-1 Critical (F-A1), and the re-sweep
+
+The record first took `0793`, which the OP-133 gallery lane held in flight (a red record at `0793` and a green one
+at `0794` in the same worktree). Round 1 measured the duplicate instead of inferring it — `adr-numbering.test.ts`
+answered `{"code":"duplicate"}` with `1 failed | 28 passed` — and requested the renumber to `0796` with the ledger
+cell at `0797`. Round 2 re-swept every `.worktrees/*/docs/adr` tree (max `0794`), every open PR head (`0790`–`0794`)
+and this lane's own records (`0790`–`0792` plus `0796`) and found no duplicate on any head. The re-sweep has held:
+on the trunk this append is cut from (`1448973`) the ledger carries 330 records up to `0827`, and the five ADR
+guards are green.
+
+### Where the routed follow-ups went
+
+Both routes are landed, and neither one changes a decision taken here.
+
+- **F-A2 (High, the failed-purge orphan):** cards `t_c146a82e` (pins, PR #548) → `t_0f7341d7` (GREEN, PR #550,
+  squash `4c31808`). The withdrawal now claims the asset and purges the blob before it deletes the rows, and the
+  retry consumes the claim.
+- **F-A3 (Medium, the missing `selfies` TTL index) and F-A4 (Medium, the kind-blind `(tenantId, contentHash)` unique
+  key):** cards `t_c1cf4306` → `t_e6c45f3b`, PR #553, squash `13bb8f5`. The registry gained a `selfies` TTL spec and
+  the dedupe key became `(tenantId, kind, contentHash)`, with each reader scoped to its own kind.
+
+Nothing in `§Consequences` is retracted: the two "known gap, routed" bullets describe the state at `90110ee`, and
+the cards above are the record of what followed them. The follow-ups carry their own decisions; this record is not
+amended to restate them.
+
+### The Low items
+
+Two Low observations stay open by design, and neither is a defect this record hides. The per-asset `$inc` and the
+`deleteObject` are two calls, so a concurrent re-reference between them can lose its blob — the window `§3` accepts
+in its `shortcut:` note, bounded there to the same subject's own attempts. The concurrent same-hash upsert arm (two
+submissions of one blob racing the unique key) remains unpinned, recorded on `t_c146a82e` (comment 1354): the Test
+Author measured no synchronous seam for it and a concurrent case would be flaky by construction, which is why it is
+recorded rather than pinned.
+
+This section adds no executable claim and changes no test, helper, fixture or production file. It records a
+verdict, so the mechanics it describes are frozen where they were measured: a later change to the submit or the
+withdrawal path is governed by the records of the follow-ups named above, not by this paragraph.
