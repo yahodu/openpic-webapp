@@ -1,3 +1,9 @@
+## [1.63.2](https://github.com/yahodu/openpic-webapp/compare/v1.63.1...v1.63.2) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 make two simultaneous confirms answer 200 twice ([#571](https://github.com/yahodu/openpic-webapp/issues/571)) ([a49599c](https://github.com/yahodu/openpic-webapp/commit/a49599c73a68dbe77a88b19275a63eaf60ba0f74))
+
 ## [1.63.1](https://github.com/yahodu/openpic-webapp/compare/v1.63.0...v1.63.1) (2026-11-13)
 
 ### Bug Fixes
