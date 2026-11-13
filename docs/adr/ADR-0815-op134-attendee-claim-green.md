@@ -11,7 +11,11 @@
   `apps/web/src/app/api/v1/me/attendee-sessions:claim/route.ts` and
   `apps/web/src/app/api/v1/me/events/route.ts` — plus the executable contract
   it makes true
-  ([ADR-0814](ADR-0814-op134-attendee-claim-red.md)).
+  ([ADR-0814](ADR-0814-op134-attendee-claim-red.md)); and, from the round-1
+  review's follow-up, `apps/web/src/test/integration/attendee-claim-endpoint-arms.test.ts`
+  (`t_08232689`, I8 ×3, I9), which cites this record for the two §6.7 arms it
+  pins and records its decisions in
+  [ADR-0818](ADR-0818-op134-claim-endpoint-arms-pins.md).
 - **Amends:** nothing. **Amended by:** nothing yet.
 - **Consumes:** `0815` (`Next free` advances to `0816`).
 - **Base:** `origin/main` `f9a0f27` + the RED pin pack `fcaf0d7`.
@@ -155,3 +159,58 @@ not clear it.
   special-case the order of its own sign-in hook and explicit call.
 - **A second pagination codec for the list.** Rejected: §0.8's shared module is
   exact and already ships.
+
+## Amendment — round-1 review F1/F2 (record [ADR-0818](ADR-0818-op134-claim-endpoint-arms-pins.md) discharged)
+
+The round-1 review of this GREEN measured two contract §6.7 arms the shipped
+codes left unsatisfied, and [ADR-0818](ADR-0818-op134-claim-endpoint-arms-pins.md)
+pinned them (`I8` ×3, `I9`). Card `t_07786aa0` turns those pins green with the
+two changes below and no test, fixture or helper edit; **no number is
+consumed**, because both decisions belong to this record.
+
+### 9. Session ownership is decided by the write, not by the read
+
+`§2` above walked the profiles and stamped `attendeeSessions.claimedByUserId`
+at the end, after a plain read of that field. A read cannot answer _who owns
+this session_ for two accounts that read it together: both passed the check, and
+the last write won the field while both callers were told they had moved the
+profile.
+
+`claimAttendeeSession` now opens with one conditional `findOneAndUpdate` on
+`{_id, $or: [{claimedByUserId: null}, {claimedByUserId: userId}]}` setting
+`claimedByUserId`/`claimedAt`, and answers `conflict` → `409
+session_claimed_by_other_user` when it matches nothing. The owner's repeat still
+matches (the second `$or` arm), so it stays a `200` no-op, and the trailing
+unconditional session write is gone — the same field, written once, atomically.
+
+A re-point whose `updateOne` reports `matchedCount === 0` is **dropped**: the
+row was moved by someone else between the read and the write, so it is neither
+reported in `claimed[]` nor announced with `attendee.event.linked`. Dropping
+rather than adding a `skipped[]` reason keeps the §6.7 reason set and the error
+catalogue unchanged.
+
+### 10. The omitted body is the documented arm; an empty one is treated the same
+
+§6.7 states the body as `{ "sessionToken": "opat_…" }` **"(or omitted, reading
+the `op_att` cookie)"**. `defineRoute`'s `body:` option is all-or-nothing — a
+declared schema makes a bodyless request `415 unsupported_media_type` — so this
+route drops `body:` and reads the stream through the house helper
+`optionalJsonBody` (§6.5's `gallery:seen` and `hide`), keeping the cookie as the
+fallback. `define-route.ts` is **not** touched: a pipeline-wide change would
+alter the media-type behaviour of every route.
+
+`content-type: application/json` with an **empty** body is now also a valid
+cookie-only claim, i.e. read as an omission: an empty stream carries no body to
+parse, and a client that has nothing to say should not be refused. That choice
+is recorded in §6.7 of the contract; it is not pinned by ADR-0818. `{}`,
+`{sessionToken}` and a malformed body keep their shipped behaviour (`200`,
+`200`, `400 malformed_json`).
+
+### 11. Measured
+
+`I8` ×3 + `I9` on the carried spec: `Tests 4 failed (4)` before (I8 "more than
+one account reported a claimed event", I9 "expected 200 from a bodyless claim,
+received 415"), `Tests 4 passed (4)` after, on three consecutive whole-file
+runs. The neighbouring claim suites stay `17 passed (17)`. The file takes ~8 s
+green instead of ~5 s red: each `I8` run waits out the pin's `1_000 ms` park
+bound when the loser is refused before the park — expected, and not shortened.

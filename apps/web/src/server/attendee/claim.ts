@@ -144,8 +144,20 @@ export async function claimAttendeeSession(
 
   const userIdHex = userId.toHexString();
   const sessionIdHex = session._id.toHexString();
+  const now = (options.clock ?? systemClock).now();
 
-  if (session.claimedByUserId !== null && !session.claimedByUserId.equals(userId)) {
+  // Ownership is decided by this one conditional write, not by the read above:
+  // two accounts can pass a read and then both claim. The `$or` makes the
+  // write itself the conflict check — the owner's repeat still matches, a
+  // different account matches nothing.
+  const owned = await platformRepo(db)
+    .collection(COLLECTIONS.attendeeSessions)
+    .findOneAndUpdate(
+      { _id: session._id, $or: [{ claimedByUserId: null }, { claimedByUserId: userId }] },
+      { $set: { claimedByUserId: userId, claimedAt: now } },
+      { returnDocument: "after", projection: { _id: 1 } }
+    );
+  if (owned === null) {
     getLogger().warn("attendee claim conflict", {
       event: "attendee.claim_conflict",
       userId: userIdHex,
@@ -153,7 +165,6 @@ export async function claimAttendeeSession(
     return { outcome: "conflict" };
   }
 
-  const now = (options.clock ?? systemClock).now();
   const claimed: ClaimedEvent[] = [];
   const skipped: SkippedEvent[] = [];
 
@@ -179,7 +190,7 @@ export async function claimAttendeeSession(
     if (decision.action === "repoint") {
       // Schema §15.3's atomic re-point, verbatim: `_id`, selfies and matches
       // stay put; only `subject` moves.
-      await profilesOf(db).updateOne(
+      const repointed = await profilesOf(db).updateOne(
         {
           _id: profile._id,
           "subject.kind": "anonymous",
@@ -190,6 +201,11 @@ export async function claimAttendeeSession(
           $unset: { "subject.attendeeSessionId": "" },
         }
       );
+      // A row this caller did not move is not this call's event to report or
+      // to announce; another writer got there first.
+      if (repointed.matchedCount === 0) {
+        continue;
+      }
 
       claimed.push({
         eventId: profile.eventId.toHexString(),
@@ -222,10 +238,6 @@ export async function claimAttendeeSession(
     }
     skipped.push({ eventId: profile.eventId.toHexString(), reason: decision.skipReason });
   }
-
-  await platformRepo(db)
-    .collection(COLLECTIONS.attendeeSessions)
-    .updateOne({ _id: session._id }, { $set: { claimedByUserId: userId, claimedAt: now } });
 
   getLogger().info("attendee claimed", {
     event: "attendee.claimed",
