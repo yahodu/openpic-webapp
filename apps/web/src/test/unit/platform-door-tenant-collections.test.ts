@@ -8,7 +8,8 @@ import { describe, expect, it } from "vitest";
  * tenant-scoped collections the OP-134 F5a finding was about.
  *
  * **Why this exists.** `eslint`'s `no-direct-collection-access` rule forbids a
- * raw `db.collection(...)` outside `apps/web/src/server/repos/**` (schema §10.2),
+ * raw `db.collection(...)` everywhere except `apps/web/src/server/db/**` (the
+ * driver, indexes, lifecycle) and `apps/web/src/server/repos/**` (schema §10.2),
  * but it permits `platformRepo(db).collection(...)` — and `platformRepo` injects
  * **no** `tenantId` (`apps/web/src/server/repos/platform.ts`: it is a bare
  * `collectionHandle(db, name)`). So the lint boundary cannot tell a deliberate
@@ -47,8 +48,12 @@ import { describe, expect, it } from "vitest";
  * single-line form the finding lived on and the multi-line
  * `platformRepo(db)\n  .collection(COLLECTIONS.selfies)` shape count. The match
  * tolerates an argument list that itself spans lines or nests parens
- * (`platformRepo(options.db ?? getDb())`) and an optional collection type
- * argument (`.collection<ReusableSelfieDocument>(...)`). Because a chain is read
+ * (`platformRepo(options.db ?? getDb())`), skipping string literals, template
+ * literals and comments so a paren that is data (`platformRepo(pick("("))`) does
+ * not move the counter; and an optional collection type argument
+ * (`.collection<ReusableSelfieDocument>(...)`), closed by balancing `<`/`>` so a
+ * **nested** argument is read whole (`.collection<Record<string, unknown>>(...)`,
+ * `.collection<Pick<SelfieDocument, "_id">>(...)`). Because a chain is read
  * through a **four-line window** starting at the `platformRepo` token, one
  * offender yields exactly one violation, and the reported `line` is the line a
  * reader must open.
@@ -65,7 +70,8 @@ import { describe, expect, it } from "vitest";
  * scanned; that directory is excluded because it *is* the reviewed collection
  * boundary — the raw `db.collection(...)` calls in `repos/cross-tenant.ts` are the
  * sanctioned ones, and `no-direct-collection-access` already forbids them
- * everywhere else.
+ * everywhere else (only `src/server/db/**` and `src/server/repos/**` hold the
+ * driver, so scan-hit code in `db/**` is a real finding, not an exemption).
  *
  * **Allowlist: empty.** Only `attendeeEventProfiles` and `selfies` are pinned.
  * `platformRepo` over `subscriptions`, `invitations`, `userProfiles`,
@@ -74,7 +80,10 @@ import { describe, expect, it } from "vitest";
  * rule over those collections needs a product decision about which of them are
  * genuinely platform-scope, so it is out of scope here.
  *
- * **Known gaps** (deliberate, and the reason the eslint boundary stays in place):
+ * **Known gaps** (deliberate, and the reason the eslint boundary stays in place).
+ * A **nested** type argument and a paren inside a string, template literal or
+ * comment were escapes of the first matcher; both are read now (the cases above),
+ * so neither is listed here. What remains:
  *   - an aliased door (`const repo = platformRepo(db); repo.collection(...)`);
  *   - a collection name held in a variable, or reached by a string literal
  *     (`.collection("selfies")`) instead of `COLLECTIONS.<name>`;
@@ -86,6 +95,9 @@ import { describe, expect, it } from "vitest";
  * `apps/web/src/server` outside `repos/**` opens the door on either collection.
  * Red on the pre-`5a0c8e0` shape: restoring that `claim.ts` reports
  * `apps/web/src/server/attendee/claim.ts:86` (and `:101`) — measured, not assumed.
+ * The hardened matcher is red on the two shapes the first one missed — a nested
+ * type argument and a paren inside a string argument — which were measured
+ * against the merged trunk with a probe file and no longer escape.
  *
  * @see docs/adr/ADR-0825-op134-green-review-signoff.md §3 (finding F5)
  * @see apps/web/src/server/repos/cross-tenant.ts
@@ -113,7 +125,13 @@ const OUT_OF_SCOPE_COLLECTIONS = [
 /** The subtree a service file must not open the tenant-free door inside. */
 const SCANNED_ROOT = "apps/web/src/server";
 
-/** The one directory allowed to reach a collection directly (schema §10.2). */
+/**
+ * The directory the scan skips: the reviewed repository layer. Together with
+ * `src/server/db/**` it is one of the **two** directories
+ * `no-direct-collection-access` allows a raw `db.collection(...)` in (schema
+ * §10.2); `db/**` is scanned here, because it still must not open the
+ * tenant-free door on a tenant-scoped collection.
+ */
 const REPOSITORY_ROOT = "apps/web/src/server/repos/";
 
 /** How many lines (from the `platformRepo` token) a single chain may span. */
@@ -161,14 +179,131 @@ function isIdentifierBoundary(text: string, index: number): boolean {
 }
 
 /**
+ * Find the offset just past a non-code run (a string, template literal or
+ * comment) starting at `from`, so a paren inside one is never counted as
+ * structure. A quote, backtick, `//` or `/*` inside ordinary code starts such a
+ * run; anything else is returned unchanged.
+ *
+ * @param text - The window under inspection.
+ * @param from - Offset to test.
+ * @returns The offset just past the non-code run, or `from` when `from` is code.
+ */
+function skipNonCode(text: string, from: number): number {
+  const char = text.charAt(from);
+  const next = text.charAt(from + 1);
+  if (char === "/" && next === "/") {
+    const end = text.indexOf("\n", from);
+    return end === -1 ? text.length : end;
+  }
+  if (char === "/" && next === "*") {
+    const end = text.indexOf("*/", from + 2);
+    return end === -1 ? text.length : end + 2;
+  }
+  if (char === '"' || char === "'") {
+    return skipQuoted(text, from, char);
+  }
+  if (char === "`") {
+    return skipTemplate(text, from);
+  }
+  return from;
+}
+
+/**
+ * Skip a `'…'` or `"…"` literal, honouring backslash escapes.
+ *
+ * @param text - The window under inspection.
+ * @param from - Offset of the opening quote.
+ * @param quote - The character that closes this literal.
+ * @returns The offset just past the closing quote, or the window's end.
+ */
+function skipQuoted(text: string, from: number, quote: string): number {
+  let index = from + 1;
+  while (index < text.length) {
+    const char = text.charAt(index);
+    if (char === "\\") {
+      index += 2;
+    } else if (char === quote) {
+      return index + 1;
+    } else {
+      index += 1;
+    }
+  }
+  return text.length;
+}
+
+/**
+ * Skip a `` `…` `` template literal. A `${…}` interpolation is read as code, so
+ * a paren inside the interpolation still counts (only the literal's own text is
+ * data).
+ *
+ * @param text - The window under inspection.
+ * @param from - Offset of the opening backtick.
+ * @returns The offset just past the closing backtick, or the window's end.
+ */
+function skipTemplate(text: string, from: number): number {
+  let index = from + 1;
+  while (index < text.length) {
+    const char = text.charAt(index);
+    if (char === "\\") {
+      index += 2;
+    } else if (char === "`") {
+      return index + 1;
+    } else if (char === "$" && text.charAt(index + 1) === "{") {
+      index = skipBraced(text, index + 1);
+    } else {
+      index += 1;
+    }
+  }
+  return text.length;
+}
+
+/**
+ * Skip a `${…}` interpolation body, honouring nested braces and non-code inside.
+ *
+ * @param text - The window under inspection.
+ * @param openIndex - Offset of the opening `{`.
+ * @returns The offset just past the matching `}`, or the window's end.
+ */
+function skipBraced(text: string, openIndex: number): number {
+  let depth = 0;
+  let index = openIndex;
+  while (index < text.length) {
+    const skipped = skipNonCode(text, index);
+    if (skipped !== index) {
+      index = skipped;
+      continue;
+    }
+    const char = text.charAt(index);
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+    index += 1;
+  }
+  return text.length;
+}
+
+/**
  * Find the `)` that closes the `(` at `openIndex`, counting nesting so an
- * argument list like `platformRepo(options.db ?? getDb())` is read whole.
+ * argument list like `platformRepo(options.db ?? getDb())` is read whole, and
+ * skipping string literals, template literals and comments so a paren that is
+ * data (`platformRepo(pick("("))`) does not move the counter.
  *
  * @returns The index of the matching `)`, or `-1` when the call is unterminated.
  */
 function matchingParen(text: string, openIndex: number): number {
   let depth = 0;
-  for (let index = openIndex; index < text.length; index += 1) {
+  let index = openIndex;
+  while (index < text.length) {
+    const skipped = skipNonCode(text, index);
+    if (skipped !== index) {
+      index = skipped;
+      continue;
+    }
     const char = text.charAt(index);
     if (char === "(") {
       depth += 1;
@@ -178,6 +313,38 @@ function matchingParen(text: string, openIndex: number): number {
         return index;
       }
     }
+    index += 1;
+  }
+  return -1;
+}
+
+/**
+ * Find the `>` that closes the `<` at `openIndex` by balancing angle brackets,
+ * so a nested type argument (`Record<string, unknown>`, `Pick<X, "_id">`) is
+ * read whole instead of ending at its first inner `>`. A `=>` belongs to an
+ * arrow-function type, not to the argument list, so it never closes.
+ *
+ * @returns The index of the closing `>`, or `-1` when the list is unterminated.
+ */
+function matchingAngle(text: string, openIndex: number): number {
+  let depth = 0;
+  let index = openIndex;
+  while (index < text.length) {
+    const skipped = skipNonCode(text, index);
+    if (skipped !== index) {
+      index = skipped;
+      continue;
+    }
+    const char = text.charAt(index);
+    if (char === "<") {
+      depth += 1;
+    } else if (char === ">" && text.charAt(index - 1) !== "=") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+    index += 1;
   }
   return -1;
 }
@@ -215,9 +382,11 @@ function pinnedCollectionReachedThrough(text: string, at: number): PinnedCollect
   }
   index = skipWhitespace(text, index + ".collection".length);
 
-  // 3. An optional collection type argument, `.collection<Document>(`.
+  // 3. An optional collection type argument, `.collection<Document>(`, closed by
+  //    balancing `<`/`>` — `Record<string, unknown>` nests, so the inner `>` is
+  //    not the end of the list.
   if (text.charAt(index) === "<") {
-    const typeArgumentsEnd = text.indexOf(">", index);
+    const typeArgumentsEnd = matchingAngle(text, index);
     if (typeArgumentsEnd === -1) {
       return null;
     }
@@ -470,6 +639,74 @@ describe("findPlatformDoorViolations — the shapes the tenant-free door takes",
       [2, "attendeeEventProfiles"],
     ]);
   });
+
+  it("flags a nested type argument — .collection<Record<string, unknown>>", () => {
+    // Arrange — a nested type argument closes twice; only the second `>` ends it.
+    const source = [
+      "  const selfies = platformRepo(db)",
+      "    .collection<Record<string, unknown>>(COLLECTIONS.selfies)",
+      "    .findOne({});",
+    ].join("\n");
+
+    // Act
+    const violations = findPlatformDoorViolations("apps/web/src/server/example.ts", source);
+
+    // Assert — the reach is reported at the door's line, never the type argument's.
+    expect(violations).toEqual([
+      {
+        file: "apps/web/src/server/example.ts",
+        line: 1,
+        collection: "selfies",
+        snippet: "const selfies = platformRepo(db)",
+      },
+    ]);
+  });
+
+  it('flags a nested type argument — .collection<Pick<SelfieDocument, "_id">>', () => {
+    // Arrange — `Pick<…>` closes once for itself and once for the door, on the door's line.
+    const source = [
+      'import { platformRepo } from "@/server/repos";',
+      "",
+      'const profile = platformRepo(db).collection<Pick<SelfieDocument, "_id">>(COLLECTIONS.attendeeEventProfiles).findOne({ eventId });',
+    ].join("\n");
+
+    // Act
+    const violations = findPlatformDoorViolations("apps/web/src/server/example.ts", source);
+
+    // Assert
+    expect(violations).toEqual([
+      {
+        file: "apps/web/src/server/example.ts",
+        line: 3,
+        collection: "attendeeEventProfiles",
+        snippet:
+          'const profile = platformRepo(db).collection<Pick<SelfieDocument, "_id">>(COLLECTIONS.attendeeEventProfiles).findOne({ eventId });',
+      },
+    ]);
+  });
+
+  it.each([
+    ["a double-quoted string", 'pick("(")'],
+    ["a single-quoted string", "pick('(')"],
+    ["a template literal", "pick(`(`)"],
+    ["a block comment", "/* ported from (legacy claim */ db"],
+  ])("flags a door whose argument list holds a paren inside %s", (_label, argument) => {
+    // Arrange — a `(` inside non-code is data, not nesting: the door still closes at its own `)`.
+    const source = `  const selfies = platformRepo(${argument}).collection(COLLECTIONS.selfies);`;
+
+    // Act
+    const violations = findPlatformDoorViolations("apps/web/src/server/example.ts", source);
+
+    // Assert
+    expect(violations).toEqual([
+      {
+        file: "apps/web/src/server/example.ts",
+        line: 1,
+        collection: "selfies",
+        snippet: source.trim(),
+      },
+    ]);
+  });
 });
 
 describe("findPlatformDoorViolations — what the pin must not flag", () => {
@@ -540,8 +777,9 @@ describe("the tracked server tree never opens the tenant-free door on profiles o
     // Act
     const files = trackedServerFiles();
 
-    // Assert — a vacuous scan must fail: the listing is what makes the pin real.
-    expect(files.length).toBeGreaterThan(0);
+    // Assert — a vacuous scan must fail: the listing is what makes the pin real,
+    // and naming one file rules out a listing that returns a single entry.
+    expect(files).toContain("apps/web/src/server/attendee/claim.ts");
     expect(files.filter((file) => file.startsWith("apps/web/src/server/repos/"))).toEqual([]);
     expect(files.filter((file) => !file.startsWith(`${SCANNED_ROOT}/`))).toEqual([]);
   });
