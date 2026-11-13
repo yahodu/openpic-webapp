@@ -22,7 +22,10 @@
 - **Consumes:** `0791` (`Next free` advances to `0792`).
 - **Base:** the RED branch is cut from `origin/OP-131-task-biometric-consent-green`
   (`1298529`), not from `main`, because every selfie route mounts
-  `requireConsent` and `main` does not carry it yet (OP-131's PR #541 is open).
+  `requireConsent` and `main` did not carry it yet (OP-131's PR #541 is open).
+  The F1 follow-up (`t_dd9cbd7c`) is cut from `origin/main` (`1857540`): the
+  lane branch was deleted once the lane landed, and `main` now carries both the
+  RED pack and the implementation.
 
 ## Context
 
@@ -214,7 +217,9 @@ be 412`), the rest at their first fixture step (`expected 201 … received
 
 ### Evidence measured for §6 (`t_dd9cbd7c`)
 
-- **Red list on the current tree** (base `3eb7c7d`): 3 failed | 16 passed.
+- **Red list on the current tree** (measured on `3eb7c7d`, re-measured identical
+  on `origin/main` `1857540` once the lane branch was deleted): 3 failed |
+  16 passed.
 - **Red, asset accounting** — `expected [] to have a length of 1 but got +0`.
 - **Red, retention** — `expected undefined to be an instance of Date`.
 - **Red, erasure** — `promise resolved "Uint8Array[ … ]" instead of rejecting`:
