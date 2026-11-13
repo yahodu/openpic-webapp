@@ -4,7 +4,9 @@
 - **Consumers:** `apps/web/src/app/api/v1/p/selfies/reusable/route.ts`,
   `apps/web/src/server/repos/cross-tenant.ts`,
   `apps/web/src/test/integration/selfie-zero-match-and-reusable-pages.test.ts`
-  (the F7 pins, extended by the card that follows this one) and
+  (the F7 pins, extended by the card that follows this one),
+  `apps/web/src/test/integration/selfie-reusable-listing-page-bound.test.ts`
+  (the executable pin of this record's bound and cursor round-trip) and
   `docs/API Contract.md` §6.3.
 - **Lane:** the shared attendee block `0780`–`0798` (row `OP-129 attendee identity
 lane`) is exhausted, so this record draws from the
