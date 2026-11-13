@@ -2,9 +2,10 @@ import { ObjectId, type ClientSession, type Db } from "mongodb";
 import { z } from "zod";
 
 import { subjectFilter, type ConsentSubject } from "./consent-guard";
-import type { SelfieAttemptBudget } from "./selfie-attempts";
+import { selfieAttemptBudget, type SelfieAttemptBudget } from "./selfie-attempts";
 
 import { COLLECTIONS } from "@/server/db/collections";
+import { withTransaction } from "@/server/db/transaction";
 import { appError } from "@/server/http/errors";
 import type { Logger } from "@/server/logging";
 import { enqueueWork } from "@/server/queue/enqueue-work";
@@ -323,6 +324,163 @@ export async function insertQueuedSelfie(options: QueuedSelfieOptions): Promise<
     sessionOption(options.session)
   );
   return _id;
+}
+
+/** The scope one attempt is charged to: one profile on one event (schema §15.3). */
+export interface AttemptScope {
+  readonly db: Db;
+  /** The event's tenant (hex, as the event row stores it). */
+  readonly tenantKey: string;
+  readonly eventId: ObjectId;
+  readonly subject: ConsentSubject;
+}
+
+/** The facts one attempt's charge needs. */
+export interface ChargeAttemptOptions extends AttemptScope {
+  readonly contentHash: string;
+  readonly now: Date;
+  /** The event's own retention deadline, or `null` when the plan is unlimited. */
+  readonly retentionExpiresAt: Date | null;
+  /** Work that must commit with the attempt (the challenge's single-use spend). */
+  readonly commit?: (
+    session: ClientSession,
+    attempt: { readonly profileId: ObjectId; readonly selfieId: ObjectId }
+  ) => Promise<void>;
+}
+
+/** The attempt one charge committed, and the budget it was read against. */
+export interface ChargedAttempt {
+  readonly selfieId: ObjectId;
+  readonly profileId: ObjectId;
+  /** The budget as it stood **before** this attempt was written. */
+  readonly attempts: { readonly used: number; readonly allowed: number };
+}
+
+/**
+ * In-process serialization of attempt charges, keyed by the profile's identity.
+ *
+ * The budget is a count of `selfies` rows (schema §15.3 has no counter), so a
+ * read followed by an insert is a write skew: snapshot isolation does not
+ * conflict on two inserts into different documents, and moving the read inside
+ * the transaction does not close it. Serializing the read-and-write per profile
+ * does, and it also keeps the racers out of `withTransaction`, whose three-attempt
+ * budget their own concurrent `upsertProcessingProfile` writes would exhaust.
+ *
+ * shortcut: the queue is per process; several instances can still overshoot by
+ * one each. Upgrade to an atomic conditional claim on the profile when the cap
+ * must hold across instances.
+ */
+const attemptQueues = new Map<string, Promise<void>>();
+
+/**
+ * The lock key of one profile: the event plus the subject `subjectFilter` keys on.
+ *
+ * @param scope - The database, tenant, event and subject.
+ * @returns A key two callers of the same profile share.
+ */
+function attemptLockKey(scope: AttemptScope): string {
+  const subject =
+    scope.subject.kind === "user"
+      ? `user:${scope.subject.userId.toHexString()}`
+      : `anonymous:${scope.subject.attendeeSessionId}`;
+  return `${scope.tenantKey}\u0000${scope.eventId.toHexString()}\u0000${subject}`;
+}
+
+/**
+ * Run `task` after every charge already queued for the same profile.
+ *
+ * @param scope - The profile the charge belongs to.
+ * @param task - The read-and-write to run exclusively.
+ * @returns The task's result, once every earlier queued charge has settled.
+ */
+function withAttemptLock<T>(scope: AttemptScope, task: () => Promise<T>): Promise<T> {
+  const key = attemptLockKey(scope);
+  const previous = attemptQueues.get(key) ?? Promise.resolve();
+  const result = previous.then(task, task);
+  const settled = result.then(
+    () => undefined,
+    () => undefined
+  );
+  // Keep only the charges actually in flight: a long-lived process must not
+  // accumulate one entry per profile it has ever served.
+  void settled.finally(() => {
+    if (attemptQueues.get(key) === settled) {
+      attemptQueues.delete(key);
+    }
+  });
+  attemptQueues.set(key, settled);
+  return result;
+}
+
+/**
+ * Charge one attempt: resolve the budget, refuse an exhausted one, and write
+ * the profile, the queued selfie and any `commit` work in one transaction.
+ *
+ * The check and the write are one critical section per profile, so concurrent
+ * callers cannot both observe the last free attempt (§14.1's hard cap is not
+ * bypassable by a race). A refusal writes nothing, and no attempt is charged
+ * when `commit` (e.g. the challenge's single-use spend) fails.
+ *
+ * @param options - The scope, the content hash, the instant, retention and the
+ *   extra work to commit.
+ * @returns The committed ids and the budget the attempt was charged against.
+ * @throws {AppError} `plan_limit_exceeded` (403) when no attempt is left.
+ */
+export async function chargeSelfieAttempt(options: ChargeAttemptOptions): Promise<ChargedAttempt> {
+  return withAttemptLock(options, async () => {
+    const attempts = await selfieAttemptNumbers({
+      db: options.db,
+      tenantKey: options.tenantKey,
+      profileId: await findProfileId(options),
+    });
+    if (selfieAttemptBudget(attempts).exhausted) {
+      throw appError("plan_limit_exceeded", {
+        details: { entitlementKey: SELFIE_ATTEMPTS_KEY },
+      });
+    }
+
+    const written = await withTransaction(async (session) => {
+      const profileId = await upsertProcessingProfile({
+        db: options.db,
+        tenantKey: options.tenantKey,
+        eventId: options.eventId,
+        subject: options.subject,
+        now: options.now,
+        session,
+      });
+      const selfieId = await insertQueuedSelfie({
+        db: options.db,
+        tenantKey: options.tenantKey,
+        eventId: options.eventId,
+        profileId,
+        subject: options.subject,
+        contentHash: options.contentHash,
+        now: options.now,
+        retentionExpiresAt: options.retentionExpiresAt,
+        session,
+      });
+      await options.commit?.(session, { profileId, selfieId });
+      return { selfieId, profileId };
+    });
+
+    return { ...written, attempts };
+  });
+}
+
+/**
+ * The caller's profile id on the event, or `null` before the first attempt.
+ *
+ * @param scope - The database, tenant, event and subject.
+ * @returns The stored profile's id, or `null`.
+ */
+async function findProfileId(scope: AttemptScope): Promise<ObjectId | null> {
+  const profile = (await tenantRepo(scope.tenantKey, scope.db)
+    .collection(COLLECTIONS.attendeeEventProfiles)
+    .findOne(
+      { eventId: scope.eventId, ...subjectFilter(scope.subject) },
+      { projection: { _id: 1 } }
+    )) as { readonly _id: ObjectId } | null;
+  return profile?._id ?? null;
 }
 
 /** The facts one `q:selfie` pointer needs. */

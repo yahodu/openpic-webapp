@@ -10,21 +10,17 @@ import {
 } from "@/server/attendee/liveness-challenge";
 import { selfieAttemptBudget } from "@/server/attendee/selfie-attempts";
 import {
-  SELFIE_ATTEMPTS_KEY,
   SELFIE_ENVELOPE_SCHEMA,
   SELFIE_LOCATION_KEY,
+  chargeSelfieAttempt,
   enqueueSelfie,
-  insertQueuedSelfie,
-  selfieAttemptNumbers,
   selfieEnvelope,
   selfieObjectKey,
-  upsertProcessingProfile,
 } from "@/server/attendee/selfie-submit";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
-import { withTransaction } from "@/server/db/transaction";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { idempotencyStage, mongoIdempotencyStore } from "@/server/idempotency";
@@ -49,7 +45,10 @@ import { getObjectStorage } from "@/server/storage/get-object-storage";
  *
  * The write is one transaction — the profile upsert, the queued `selfies` row
  * and the challenge's `usedAt` — so a refusal can never spend an attempt or a
- * challenge. Only then is the `q:selfie` pointer published (§10.4/§18.1).
+ * challenge; the budget is resolved inside the same per-profile critical
+ * section, so two concurrent submits cannot both take the last attempt
+ * (`chargeSelfieAttempt`, ADR-0804). Only then is the `q:selfie` pointer
+ * published (§10.4/§18.1).
  *
  * Publication is **not** part of this step: the selfie is `queued` and inactive
  * until `POST …/selfies/{selfieId}/confirm` activates it, which is what keeps a
@@ -139,53 +138,30 @@ export const POST = defineRoute({
       throw livenessChallengeInvalid(decision.reason);
     }
 
-    const attempts = await selfieAttemptNumbers({
+    const challengeObjectId = new ObjectId(challengeId);
+    const submitted = await chargeSelfieAttempt({
       db,
       tenantKey: event.tenantKey,
-      profileId: profile?._id ?? null,
-    });
-    if (selfieAttemptBudget(attempts).exhausted) {
-      throw appError("plan_limit_exceeded", {
-        details: { entitlementKey: SELFIE_ATTEMPTS_KEY },
-      });
-    }
-
-    const challengeObjectId = new ObjectId(challengeId);
-    const submitted = await withTransaction(async (session) => {
-      const ownerId = await upsertProcessingProfile({
-        db,
-        tenantKey: event.tenantKey,
-        eventId: event.eventId,
-        subject,
-        now,
-        session,
-      });
-      const selfieId = await insertQueuedSelfie({
-        db,
-        tenantKey: event.tenantKey,
-        eventId: event.eventId,
-        profileId: ownerId,
-        subject,
-        contentHash: hash,
-        now,
-        retentionExpiresAt: event.retentionExpiresAt,
-        session,
-      });
-
+      eventId: event.eventId,
+      subject,
+      contentHash: hash,
+      now,
+      retentionExpiresAt: event.retentionExpiresAt,
       // Single-use: the conditional update is what makes a replay impossible,
       // even when two submits present the same challenge concurrently.
-      const spent = await profiles.updateOne(
-        {
-          _id: ownerId,
-          livenessChallenges: { $elemMatch: { challengeId: challengeObjectId, usedAt: null } },
-        },
-        { $set: { "livenessChallenges.$.usedAt": now } },
-        { session }
-      );
-      if (spent.modifiedCount === 0) {
-        throw livenessChallengeInvalid("already_used");
-      }
-      return { selfieId, profileId: ownerId };
+      commit: async (session, attempt) => {
+        const spent = await profiles.updateOne(
+          {
+            _id: attempt.profileId,
+            livenessChallenges: { $elemMatch: { challengeId: challengeObjectId, usedAt: null } },
+          },
+          { $set: { "livenessChallenges.$.usedAt": now } },
+          { session }
+        );
+        if (spent.modifiedCount === 0) {
+          throw livenessChallengeInvalid("already_used");
+        }
+      },
     });
 
     await enqueueSelfie({
@@ -210,7 +186,10 @@ export const POST = defineRoute({
         profileId: submitted.profileId,
         slug,
         status: "processing",
-        budget: selfieAttemptBudget({ used: attempts.used + 1, allowed: attempts.allowed }),
+        budget: selfieAttemptBudget({
+          used: submitted.attempts.used + 1,
+          allowed: submitted.attempts.allowed,
+        }),
       }),
     };
   },
