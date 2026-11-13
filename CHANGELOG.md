@@ -1,3 +1,9 @@
+## [1.61.0](https://github.com/yahodu/openpic-webapp/compare/v1.60.0...v1.61.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-133 implement participation polling, gallery, seen/hide and downloads ([#547](https://github.com/yahodu/openpic-webapp/issues/547)) ([c659947](https://github.com/yahodu/openpic-webapp/commit/c659947c2d64b0e72d7c3dfde1bb365b9bc8dbad))
+
 ## [1.60.0](https://github.com/yahodu/openpic-webapp/compare/v1.59.0...v1.60.0) (2026-11-13)
 
 ### Features
