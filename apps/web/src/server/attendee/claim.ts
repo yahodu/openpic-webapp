@@ -4,7 +4,7 @@ import { COLLECTIONS } from "@/server/db/collections";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
-import { platformRepo, tenantRepo } from "@/server/repos";
+import { platformRepo, tenantRepo, crossTenantWrites } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
 
 import { decideClaim, type ClaimSkipReason } from "./claim-decision";
@@ -27,6 +27,12 @@ import { findAttendeeSession } from "./session-resolver";
  * `attendeeSessions.eventIds`: a profile can exist for an event the session was
  * never explicitly bound to (the attendee reached that event's page holding the
  * cookie she already had).
+ *
+ * Those profiles are tenant-scoped, yet the walk crosses tenants by design (each
+ * was minted under whichever tenant the attendee reached), so every profile read
+ * and write goes through `crossTenantWrites` — the whitelisted door for this
+ * deliberate cross-tenant write. Only the session row is platform-scope, so only
+ * that one write uses `platformRepo`.
  */
 
 /** One event whose profile was re-pointed to the caller. */
@@ -65,16 +71,6 @@ export interface ClaimAttendeeSessionOptions {
   readonly clock?: Clock;
 }
 
-/** The stored `attendee_event_profiles` fields the claim reads (§15.3). */
-interface ProfileRow {
-  readonly _id: ObjectId;
-  readonly tenantId: string;
-  readonly eventId: ObjectId;
-  readonly status?: string;
-  readonly activeSelfieId?: ObjectId | null;
-  readonly matchCount?: number;
-}
-
 /** The stored `events` fields the claim's answer and event need (§15.1). */
 interface EventRow {
   readonly _id: ObjectId;
@@ -82,28 +78,9 @@ interface EventRow {
   readonly accessLinks?: readonly { readonly slug?: string; readonly active?: boolean }[];
 }
 
-/** The `attendee_event_profiles` collection, shared by every read and write here. */
-const profilesOf = (db: Db) => platformRepo(db).collection(COLLECTIONS.attendeeEventProfiles);
-
 /** Narrow a string to a usable ObjectId, or `null` when it is malformed. */
 function toObjectId(value: string): ObjectId | null {
   return ObjectId.isValid(value) ? new ObjectId(value) : null;
-}
-
-/** Read one selfie's `createdAt`, or `null` when the profile has no selfie. */
-async function selfieCreatedAt(
-  db: Db,
-  selfieId: ObjectId | null | undefined
-): Promise<Date | null> {
-  if (selfieId === null || selfieId === undefined) {
-    return null;
-  }
-  const row = (await platformRepo(db)
-    .collection(COLLECTIONS.selfies)
-    .findOne({ _id: selfieId }, { projection: { createdAt: 1 } })) as {
-    readonly createdAt?: unknown;
-  } | null;
-  return row?.createdAt instanceof Date ? row.createdAt : null;
 }
 
 /** Read one event inside its own tenant, or `null` when it is gone. */
@@ -168,42 +145,35 @@ export async function claimAttendeeSession(
   const claimed: ClaimedEvent[] = [];
   const skipped: SkippedEvent[] = [];
 
-  const anonymousProfiles = (await profilesOf(db)
-    .find({ "subject.kind": "anonymous", "subject.attendeeSessionId": sessionIdHex })
-    .toArray()) as unknown as ProfileRow[];
+  const anonymousProfiles = await crossTenantWrites.findAnonymousProfilesOfSession(
+    sessionIdHex,
+    db
+  );
 
   for (const profile of anonymousProfiles) {
     const event = await readEvent(db, profile.tenantId, profile.eventId);
-    const existing = (await profilesOf(db).findOne({
-      eventId: profile.eventId,
-      "subject.kind": "user",
-      "subject.userId": userId,
-    })) as ProfileRow | null;
+    const existing = await crossTenantWrites.findUserProfileForEvent(profile.eventId, userId, db);
 
     const decision = decideClaim({
       hasExistingUserProfile: existing !== null,
-      anonymousSelfieCreatedAt: await selfieCreatedAt(db, profile.activeSelfieId),
+      anonymousSelfieCreatedAt: await crossTenantWrites.selfieCreatedAt(profile.activeSelfieId, db),
       existingSelfieCreatedAt:
-        existing === null ? null : await selfieCreatedAt(db, existing.activeSelfieId),
+        existing === null
+          ? null
+          : await crossTenantWrites.selfieCreatedAt(existing.activeSelfieId, db),
     });
 
     if (decision.action === "repoint") {
-      // Schema §15.3's atomic re-point, verbatim: `_id`, selfies and matches
-      // stay put; only `subject` moves.
-      const repointed = await profilesOf(db).updateOne(
-        {
-          _id: profile._id,
-          "subject.kind": "anonymous",
-          "subject.attendeeSessionId": sessionIdHex,
-        },
-        {
-          $set: { "subject.kind": "user", "subject.userId": userId, claimedAt: now },
-          $unset: { "subject.attendeeSessionId": "" },
-        }
-      );
+      const repointed = await crossTenantWrites.repointAttendeeProfile({
+        profileId: profile._id,
+        sessionId: sessionIdHex,
+        userId,
+        now,
+        db,
+      });
       // A row this caller did not move is not this call's event to report or
       // to announce; another writer got there first.
-      if (repointed.matchedCount === 0) {
+      if (!repointed) {
         continue;
       }
 
@@ -231,10 +201,7 @@ export async function claimAttendeeSession(
     // The merge arm: the unique partial index forbids a second user profile per
     // event, so the anonymous row is left untouched and only the selfie moves.
     if (decision.adoptAnonymousSelfie && existing !== null) {
-      await profilesOf(db).updateOne(
-        { _id: existing._id },
-        { $set: { activeSelfieId: profile.activeSelfieId ?? null } }
-      );
+      await crossTenantWrites.adoptSelfie(existing._id, profile.activeSelfieId, db);
     }
     skipped.push({ eventId: profile.eventId.toHexString(), reason: decision.skipReason });
   }

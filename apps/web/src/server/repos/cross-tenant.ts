@@ -239,18 +239,19 @@ async function findAttendeeProfilesBySubjectUser(
 }
 
 /**
- * The keyset filter that follows `cursor` on a `createdAt`-desc list (§0.8).
+ * The keyset filter that follows `cursor` on a `field`-desc list (§0.8).
  *
- * The strict `$or` on the compound `(createdAt, _id)` key is what keeps a row
- * that shares an instant with the last one of the previous page from being
- * skipped; both halves are revived to their stored BSON types, because a string
- * `_id` compares unequal to every `ObjectId`.
+ * The strict `$or` on the compound `(field, _id)` key is what keeps a row that
+ * shares an instant with the last one of the previous page from being skipped;
+ * both halves are revived to their stored BSON types, because a string `_id`
+ * compares unequal to every `ObjectId`.
  *
+ * @param field - The participation's sort field: `createdAt` or `updatedAt`.
  * @param cursor - The decoded cursor, or `null` on the first page.
  * @returns The filter fragment, or the empty filter.
  * @throws {AppError} `invalid_cursor` (400) when a half is not a stored type.
  */
-function reusableKeysetFilter(cursor: Cursor | null): Document {
+function keysetFilter(field: "createdAt" | "updatedAt", cursor: Cursor | null): Document {
   if (cursor === null) {
     return {};
   }
@@ -259,7 +260,7 @@ function reusableKeysetFilter(cursor: Cursor | null): Document {
     throw appError("invalid_cursor");
   }
   return {
-    $or: [{ createdAt: { $lt: at } }, { createdAt: at, _id: { $lt: new ObjectId(cursor.i) } }],
+    $or: [{ [field]: { $lt: at } }, { [field]: at, _id: { $lt: new ObjectId(cursor.i) } }],
   };
 }
 
@@ -284,7 +285,7 @@ async function findReusableSelfiesBySubjectUser(
       {
         "subject.userId": subjectUserValue(userId),
         isActive: true,
-        ...reusableKeysetFilter(page.cursor ?? null),
+        ...keysetFilter("createdAt", page.cursor ?? null),
       },
       { projection: { _id: 1, createdAt: 1, contentHash: 1, quality: 1 } }
     )
@@ -305,30 +306,6 @@ async function findReusableSelfiesBySubjectUser(
       contentHash: doc.contentHash,
       quality: { accepted: doc.quality?.accepted === true },
     })),
-  };
-}
-
-/**
- * The keyset filter that follows `cursor` on an `updatedAt`-desc list (§0.8).
- *
- * Both halves of the compound `(updatedAt, _id)` key are revived to their
- * stored BSON types, because a string `_id` compares unequal to every
- * `ObjectId` and would silently skip a row on the page boundary.
- *
- * @param cursor - The decoded cursor, or `null` on the first page.
- * @returns The filter fragment, or the empty filter.
- * @throws {AppError} `invalid_cursor` (400) when a half is not a stored type.
- */
-function attendanceKeysetFilter(cursor: Cursor | null): Document {
-  if (cursor === null) {
-    return {};
-  }
-  const at = new Date(cursor.c);
-  if (Number.isNaN(at.getTime()) || !OBJECT_ID_HEX.test(cursor.i)) {
-    throw appError("invalid_cursor");
-  }
-  return {
-    $or: [{ updatedAt: { $lt: at } }, { updatedAt: at, _id: { $lt: new ObjectId(cursor.i) } }],
   };
 }
 
@@ -377,7 +354,7 @@ async function findAttendeeEventsBySubjectUser(
     .collection<AttendeeProfileRow>(COLLECTIONS.attendeeEventProfiles)
     .find({
       "subject.userId": subjectUserValue(userId),
-      ...attendanceKeysetFilter(page.cursor ?? null),
+      ...keysetFilter("updatedAt", page.cursor ?? null),
     })
     .sort({ updatedAt: -1, _id: -1 });
 
@@ -492,4 +469,172 @@ export const crossTenantReads: CrossTenantReads = {
   findReusableSelfiesBySubjectUser,
   findAttendeeEventsBySubjectUser,
   findFaceMatchById,
+};
+
+/** A stored `attendee_event_profiles` row as a claim walks it (§15.3). */
+export interface ClaimProfileRow {
+  readonly _id: ObjectId;
+  readonly tenantId: string;
+  readonly eventId: ObjectId;
+  readonly status?: string;
+  readonly activeSelfieId?: ObjectId | null;
+  readonly matchCount?: number;
+}
+
+/** One §15.3 re-point: the profile, its session, the new owner and the instant. */
+export interface RepointAttendeeProfileOptions {
+  readonly profileId: ObjectId;
+  /** The anonymous owner being moved, matched so a row another writer moved is not. */
+  readonly sessionId: string;
+  /** The account the profile moves to. */
+  readonly userId: ObjectId;
+  /** The instant stamped on `claimedAt`. */
+  readonly now: Date;
+  readonly db: Db;
+}
+
+/**
+ * The whitelisted cross-tenant **write** surface (OP-134, contract §6.7, schema
+ * §15.3).
+ *
+ * A session's anonymous profiles were minted under whichever tenant the
+ * attendee reached, so re-pointing them at one account crosses tenants by
+ * construction and cannot go through `tenantRepo` (the owning tenant is only
+ * known once the row is read). This module is the deliberate, reviewable door
+ * for that write — the sibling of `crossTenantReads`, in the one place the lint
+ * rule permits reaching the driver directly. Contract §0.3/§10.3 still names
+ * only the `GET /me/events` **read**; this write belongs beside it here, not in
+ * a service.
+ *
+ * Filters, the §15.3 `$set`/`$unset` pair and the ordering of the walk's calls
+ * are the claim's own, moved verbatim: no key, projection or write changed.
+ */
+export interface CrossTenantWrites {
+  /**
+   * The session's still-anonymous profiles, across every tenant.
+   *
+   * @param sessionId - The session's `_id` (hex) as stored on `subject`.
+   * @param db - The database handle.
+   * @returns The rows the walk decides over.
+   */
+  findAnonymousProfilesOfSession(sessionId: string, db: Db): Promise<ClaimProfileRow[]>;
+
+  /**
+   * The account's own profile for one event, across every tenant.
+   *
+   * @param eventId - The event's id.
+   * @param userId - The caller's id.
+   * @param db - The database handle.
+   * @returns The row, or `null` when the account has none for that event.
+   */
+  findUserProfileForEvent(
+    eventId: ObjectId,
+    userId: ObjectId,
+    db: Db
+  ): Promise<ClaimProfileRow | null>;
+
+  /**
+   * One selfie's `createdAt`, the decision table's tie input.
+   *
+   * @param selfieId - The profile's active selfie, or `null`/absent.
+   * @param db - The database handle.
+   * @returns The instant, or `null` when the profile holds no selfie.
+   */
+  selfieCreatedAt(selfieId: ObjectId | null | undefined, db: Db): Promise<Date | null>;
+
+  /**
+   * Move one anonymous profile to the account, keeping `_id`, selfies and
+   * matches (§15.3's atomic re-point).
+   *
+   * @param options - The profile, its session, the owner and the instant.
+   * @returns `true` when this call moved the row, `false` when another writer
+   *   got there first.
+   */
+  repointAttendeeProfile(options: RepointAttendeeProfileOptions): Promise<boolean>;
+
+  /**
+   * Adopt the anonymous profile's active selfie onto the account's own row.
+   *
+   * @param profileId - The account's profile for that event.
+   * @param selfieId - The anonymous profile's active selfie.
+   * @param db - The database handle.
+   */
+  adoptSelfie(profileId: ObjectId, selfieId: ObjectId | null | undefined, db: Db): Promise<void>;
+}
+
+async function findAnonymousProfilesOfSession(
+  sessionId: string,
+  db: Db
+): Promise<ClaimProfileRow[]> {
+  return db
+    .collection<ClaimProfileRow>(COLLECTIONS.attendeeEventProfiles)
+    .find({ "subject.kind": "anonymous", "subject.attendeeSessionId": sessionId })
+    .toArray();
+}
+
+async function findUserProfileForEvent(
+  eventId: ObjectId,
+  userId: ObjectId,
+  db: Db
+): Promise<ClaimProfileRow | null> {
+  return db.collection<ClaimProfileRow>(COLLECTIONS.attendeeEventProfiles).findOne({
+    eventId,
+    "subject.kind": "user",
+    "subject.userId": userId,
+  });
+}
+
+async function selfieCreatedAt(
+  selfieId: ObjectId | null | undefined,
+  db: Db
+): Promise<Date | null> {
+  if (selfieId === null || selfieId === undefined) {
+    return null;
+  }
+  const row = (await db
+    .collection(COLLECTIONS.selfies)
+    .findOne({ _id: selfieId }, { projection: { createdAt: 1 } })) as {
+    readonly createdAt?: unknown;
+  } | null;
+  return row?.createdAt instanceof Date ? row.createdAt : null;
+}
+
+async function repointAttendeeProfile(options: RepointAttendeeProfileOptions): Promise<boolean> {
+  // Schema §15.3's atomic re-point, verbatim: `_id`, selfies and matches stay
+  // put; only `subject` moves.
+  const repointed = await options.db.collection(COLLECTIONS.attendeeEventProfiles).updateOne(
+    {
+      _id: options.profileId,
+      "subject.kind": "anonymous",
+      "subject.attendeeSessionId": options.sessionId,
+    },
+    {
+      $set: {
+        "subject.kind": "user",
+        "subject.userId": options.userId,
+        claimedAt: options.now,
+      },
+      $unset: { "subject.attendeeSessionId": "" },
+    }
+  );
+  return repointed.matchedCount > 0;
+}
+
+async function adoptSelfie(
+  profileId: ObjectId,
+  selfieId: ObjectId | null | undefined,
+  db: Db
+): Promise<void> {
+  await db
+    .collection(COLLECTIONS.attendeeEventProfiles)
+    .updateOne({ _id: profileId }, { $set: { activeSelfieId: selfieId ?? null } });
+}
+
+/** The whitelisted cross-tenant writes. Import nothing else to cross a tenant. */
+export const crossTenantWrites: CrossTenantWrites = {
+  findAnonymousProfilesOfSession,
+  findUserProfileForEvent,
+  selfieCreatedAt,
+  repointAttendeeProfile,
+  adoptSelfie,
 };
