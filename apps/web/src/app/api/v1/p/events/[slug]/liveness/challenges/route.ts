@@ -2,7 +2,7 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { attendeeRateLimitStage } from "@/server/attendee/attendee-rate-limit";
-import { requireAttendeeScope } from "@/server/attendee/request-event";
+import { requireAttendeeScope, requireRetentionOpen } from "@/server/attendee/request-event";
 import { subjectFilter } from "@/server/attendee/consent-guard";
 import { createLivenessChallenge } from "@/server/attendee/liveness-challenge";
 import { getAuth } from "@/server/auth";
@@ -55,6 +55,7 @@ export const POST = defineRoute({
     const { db, event, subject, consentId } = await requireAttendeeScope(ctx, { slugFromEnd: 3 });
 
     const now = systemClock.now();
+    requireRetentionOpen(event, now);
     const challengeId = new ObjectId();
     const created = createLivenessChallenge({ now });
 

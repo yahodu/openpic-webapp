@@ -167,6 +167,44 @@ export async function requireAttendeeSubject(ctx: HandlerContext, db: Db): Promi
   );
 }
 
+/**
+ * Whether the attendee-facing retention window has elapsed (contract §6.1/§6.3).
+ *
+ * `events.retentionExpiresAt` is the instant §6.1 publishes `gallery.open: false`
+ * and `gallery.expiredAt` from, so it reads elapsed **at** the instant, not
+ * after it, and a `null` deadline (an unlimited plan) never elapses.
+ *
+ * @param retentionExpiresAt - The event's deadline, or `null` when unlimited.
+ * @param now - The instant to compare against.
+ * @returns `true` when a deadline exists and `now` is at or past it.
+ */
+export function retentionElapsed(retentionExpiresAt: Date | null, now: Date): boolean {
+  return retentionExpiresAt !== null && now.getTime() >= retentionExpiresAt.getTime();
+}
+
+/**
+ * Refuse one biometric write once the addressed event's retention has elapsed.
+ *
+ * Called by the four write routes immediately after {@link requireAttendeeScope}
+ * and before they read their own input, so a refusal writes, charges and mints
+ * nothing. It deliberately does not live inside `requireAttendeeScope`: the
+ * confirm route shares that helper and must still answer `200` after retention.
+ *
+ * @param window - The resolved event (any object carrying the deadline).
+ * @param now - The instant to compare against.
+ * @throws {AppError} `gallery_expired` (410) carrying `details.expiredAt`, the
+ *   same instant §6.1 publishes as `gallery.expiredAt`.
+ */
+export function requireRetentionOpen(
+  window: { readonly retentionExpiresAt: Date | null },
+  now: Date
+): void {
+  const { retentionExpiresAt } = window;
+  if (retentionExpiresAt !== null && retentionElapsed(retentionExpiresAt, now)) {
+    throw appError("gallery_expired", { details: { expiredAt: retentionExpiresAt.toISOString() } });
+  }
+}
+
 /** A stored `attendeeEventProfiles` row, as the attendee read routes use it (§15.3). */
 export interface AttendeeProfileRow {
   readonly _id: ObjectId;

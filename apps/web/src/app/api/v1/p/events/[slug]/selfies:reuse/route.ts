@@ -1,7 +1,7 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 
-import { requireAttendeeScope } from "@/server/attendee/request-event";
+import { requireAttendeeScope, requireRetentionOpen } from "@/server/attendee/request-event";
 import { subjectFilter } from "@/server/attendee/consent-guard";
 import { attendeeRateLimitStage } from "@/server/attendee/attendee-rate-limit";
 import { selfieAttemptBudget } from "@/server/attendee/selfie-attempts";
@@ -69,6 +69,11 @@ export const POST = defineRoute({
   handler: async (ctx) => {
     const { db, slug, event, subject } = await requireAttendeeScope(ctx);
 
+    // §6.3: the window is checked before the source-selfie lookup, so an
+    // expired event mints and charges nothing.
+    const now = systemClock.now();
+    requireRetentionOpen(event, now);
+
     const source = (await tenantRepo(event.tenantKey, db)
       .collection(COLLECTIONS.selfies)
       .findOne(
@@ -81,7 +86,6 @@ export const POST = defineRoute({
       throw appError("not_found", { details: { resource: "selfie" } });
     }
 
-    const now = systemClock.now();
     const contentHash = source.contentHash;
     const reused = await chargeSelfieAttempt({
       db,

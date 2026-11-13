@@ -350,7 +350,7 @@ export type CollaborationErrorCode = (typeof COLLABORATION_ERROR_CODES)[number];
  * it is appended to the client-facing enum ({@link API_ERROR_CODES}) and
  * transported from its own table (OP-132, ADR-0792). Append-only.
  */
-export const SELFIE_ERROR_CODES = ["liveness_challenge_invalid"] as const;
+export const SELFIE_ERROR_CODES = ["liveness_challenge_invalid", "gallery_expired"] as const;
 
 /** A member of the closed {@link SELFIE_ERROR_CODES} set. */
 export type SelfieErrorCode = (typeof SELFIE_ERROR_CODES)[number];
