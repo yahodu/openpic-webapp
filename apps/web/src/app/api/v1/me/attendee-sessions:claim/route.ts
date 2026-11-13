@@ -14,7 +14,7 @@ import { appError } from "@/server/http/errors";
 /**
  * `POST /api/v1/me/attendee-sessions:claim` — link an anonymous attendee
  * session to the signed-in account (OP-134, contract §6.7, §0.2, schema §13.5,
- * §15.3; ADR-0812).
+ * §15.3; ADR-0814).
  *
  * This is the PRD's *"she doesn't have to re-visit and re-upload"*: the claim
  * re-points every anonymous profile of the session at the caller, moving no

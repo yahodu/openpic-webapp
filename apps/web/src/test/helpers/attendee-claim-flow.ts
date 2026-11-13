@@ -15,7 +15,7 @@ import { nextIp, requestFor, requireHandler, type CallOptions } from "./selfie-f
 
 /**
  * Shared fixture flow for the OP-134 claim + my-events suites (contract §6.7,
- * schema §13.5, §15.3, §15.4; ADR-0811).
+ * schema §13.5, §15.3, §15.4; ADR-0813).
  *
  * Three things every case needs are built here once: the two HTTP surfaces
  * (`POST /me/attendee-sessions:claim` and `GET /me/events`), a stored

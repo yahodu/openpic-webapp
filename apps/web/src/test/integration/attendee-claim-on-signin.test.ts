@@ -29,7 +29,7 @@ import { grantConsent, nextIp, seedTenant, submitHappyPath } from "../helpers/se
 
 /**
  * Integration / contract — the claim that happens **at sign-in** (OP-134 I5, I6;
- * contract §6.7, §1.1 "session created" hook; schema §13.5; ADR-0811, ADR-0040 §5).
+ * contract §6.7, §1.1 "session created" hook; schema §13.5; ADR-0813, ADR-0040 §5).
  *
  * **Why this exists.** The explicit `POST /me/attendee-sessions:claim` is the
  * contract's endpoint, but it is not the path a real attendee takes: she uploads
@@ -60,7 +60,7 @@ import { grantConsent, nextIp, seedTenant, submitHappyPath } from "../helpers/se
  *   second account.
  * - The raw bearer token never reaches a log record (§0.15).
  *
- * ## Assumptions (recorded in ADR-0811)
+ * ## Assumptions (recorded in ADR-0813)
  *
  * - The conflict is not an error: §1.1's hook contract is that a hook failure
  *   never fails a sign-in (ADR-0038), and the attendee's browser simply drops the

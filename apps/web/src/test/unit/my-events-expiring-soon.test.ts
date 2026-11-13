@@ -4,7 +4,7 @@ import * as myEvents from "@/server/attendee/my-events";
 
 /**
  * Unit contract — `expiringSoon` for the attendee's own event list (OP-134 U1,
- * contract §6.7 `GET /api/v1/me/events`; ADR-0811).
+ * contract §6.7 `GET /api/v1/me/events`; ADR-0813).
  *
  * **Why this exists.** `expiringSoon` is the only field in §6.7 that is a
  * *computed warning* rather than a projection: it is what makes the client show
@@ -35,7 +35,7 @@ import * as myEvents from "@/server/attendee/my-events";
  * The function is **pure**: the clock is an input, never a read, so the boundary
  * is testable to the millisecond.
  *
- * ## The decision (documented in ADR-0811)
+ * ## The decision (documented in ADR-0813)
  *
  * `expiringSoon` is `true` when `galleryExpiresAt - now` is **inclusive** at both
  * ends of `[0, 7 days]`:
@@ -47,7 +47,7 @@ import * as myEvents from "@/server/attendee/my-events";
  * - no retention deadline at all → `false`.
  *
  * The inclusive lower end and the zero-width "this instant" arm are the parts
- * the contract does not spell out; ADR-0811 §Assumptions records the choice so
+ * the contract does not spell out; ADR-0813 §Assumptions records the choice so
  * the GREEN cannot silently pick the other one.
  */
 

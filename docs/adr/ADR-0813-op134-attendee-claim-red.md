@@ -1,4 +1,4 @@
-# ADR-0811 — OP-134 RED: claim an anonymous session and the cross-tenant "my events" read
+# ADR-0813 — OP-134 RED: claim an anonymous session and the cross-tenant "my events" read
 
 - **Status:** Accepted (RED / executable contract)
 - **Consumers:** the OP-134 RED specs —
@@ -16,14 +16,19 @@
   ledger's `Next free` and the pool both read `0811` on `origin/main`
   `f9a0f27`, and `docs/adr` holds every number from `0780` to `0810` that the
   block and the pool issued). A dependent ticket does not continue its parent's
-  range ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §7), so this
-  record draws `0811` from the `unallocated (future lanes)` pool; **no lane row
-  is created** and both cells advance to `0812`. The sweep before minting was
-  empty: no `ADR-0811*` file exists on this head, on any local branch or in
-  `docs/adr`.
+  range ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §7), so the
+  record drew `0811` from the `unallocated (future lanes)` pool; **no lane row
+  is created**. The sweep before minting was empty: no `ADR-0811*` file existed
+  on that head, on any local branch or in `docs/adr`. **Renumbered `0811 → 0813`
+  at merge:** the OP-132 F4-R2 record (`ADR-0811-op132-attendee-selfie-upload-window.md`)
+  and the F5-symmetric record (`ADR-0812-op132-submit-object-transport-500.md`)
+  landed on `main` first, so main's merged lane wins (ADR-0300 §10); this record
+  takes the next pool head `0813`, the GREEN takes `0814`, both ledger cells read
+  `0815`, and the RED specs' docblock citations follow (`ADR-0811 → ADR-0813`,
+  docs only — no assertion, fixture or helper behaviour changed).
 - **Amends:** nothing. **Amended by:** the OP-134 GREEN implementation record
-  (same lane, `0812`).
-- **Consumes:** `0811` (`Next free` advances to `0812`).
+  (same lane, `0814`).
+- **Consumes:** `0813` as renumbered (`Next free` advances to `0814`).
 - **Base:** `origin/main` `f9a0f27`.
 
 ## Context

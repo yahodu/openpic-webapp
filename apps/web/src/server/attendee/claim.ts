@@ -12,7 +12,7 @@ import { findAttendeeSession } from "./session-resolver";
 
 /**
  * Claim an anonymous attendee session for a signed-in account (OP-134, contract
- * §6.7, schema §13.5/§15.3; ADR-0812).
+ * §6.7, schema §13.5/§15.3; ADR-0814).
  *
  * The whole value of the operation is that it **moves no data**: each profile
  * row keeps its `_id`, its `matchCount`, its `selfies` and its `faceMatches`,

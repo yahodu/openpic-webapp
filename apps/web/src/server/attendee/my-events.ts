@@ -7,7 +7,7 @@
  * read of the current time here would make the boundary untestable to the
  * millisecond and impossible to reproduce in a review.
  *
- * The two ends the contract does not spell out, decided in ADR-0812:
+ * The two ends the contract does not spell out, decided in ADR-0814:
  * the window is **inclusive** at both ends of `[0, 7 days]`, and an
  * **already-expired** gallery is not "expiring soon" — its `status` and
  * `galleryExpiresAt` tell that story, and a permanently-true badge is noise.

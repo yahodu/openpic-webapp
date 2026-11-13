@@ -4,7 +4,7 @@ import * as decision from "@/server/attendee/claim-decision";
 
 /**
  * Unit contract — the claim decision table (OP-134 U2, contract §6.7, schema
- * §15.3 "The claim operation"; ADR-0811).
+ * §15.3 "The claim operation"; ADR-0813).
  *
  * **Why this exists.** A claim has to answer one question per event the
  * anonymous session touched: *does this caller already own a profile here?*
@@ -50,7 +50,7 @@ import * as decision from "@/server/attendee/claim-decision";
  * export function decideClaim(input: ClaimDecisionInput): ClaimDecision;
  * ```
  *
- * ## The decision table (documented in ADR-0811)
+ * ## The decision table (documented in ADR-0813)
  *
  * | existing profile | anonymous selfie | existing selfie | action   | adopt |
  * | ---------------- | ---------------- | --------------- | -------- | ----- |
@@ -65,7 +65,7 @@ import * as decision from "@/server/attendee/claim-decision";
  * The tie arm is a **choice**: two selfies with the same `createdAt` cannot be
  * ordered, so the existing profile keeps its own (`adoptAnonymousSelfie: false`)
  * — the row that already owns the matches is not rewritten for a coin flip.
- * ADR-0811 §Assumptions records it.
+ * ADR-0813 §Assumptions records it.
  */
 
 /** An arbitrary but fixed instant; the table only compares instants to each other. */

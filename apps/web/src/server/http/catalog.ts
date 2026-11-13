@@ -156,7 +156,7 @@ export const AUTH_ERROR_TRANSPORT: Readonly<Record<AuthErrorCode, ErrorCatalogEn
     retryable: false,
     message: "Your attendee session has expired. Please start again.",
   },
-  // OP-134 (ADR-0812): a second account presenting a token whose photos are
+  // OP-134 (ADR-0814): a second account presenting a token whose photos are
   // already claimed (contract §6.7).
   session_claimed_by_other_user: {
     status: 409,
