@@ -118,7 +118,7 @@ confirm's pair.
   `50 passed (50)`, so the edge is about **57** attempts. Each attempt is one
   round trip and the met pair's commit is held 100 ms, so no rival-count budget
   (2 or 3) and no small budget carries the loser past the hold. A budget of 57
-  or more does carry it, but that is a busy retry loop against a clock. The
+  or more does carry it, but that is a busy retry loop against a clock. What the
   contract §2.3 asks for is that the loser answers from the invitation's settled
   state, and the repair shape this file already uses for the concurrent member
   removal (catch `isTransactionRetryLimitError`, wait bounded, re-read, answer
