@@ -258,16 +258,18 @@ export async function insertQueuedSelfie(options: QueuedSelfieOptions): Promise<
   const claimed = await tenant
     .collection(COLLECTIONS.mediaAssets)
     .findOne(
-      { contentHash: options.contentHash, status: "purged", purgedAt: null },
+      { contentHash: options.contentHash, kind: "selfie", status: "purged", purgedAt: null },
       { projection: { _id: 1 }, ...sessionOption(options.session) }
     );
   if (claimed !== null) {
     throw appError("conflict", { details: { reason: "selfie_purged" } });
   }
-  // One asset row per (tenant, content hash): the unique index is the arbiter
-  // and `$inc` makes a re-submitted hash a second reference, not a second row.
+  // One asset row per (tenant, kind, content hash): the unique index is the
+  // arbiter and `$inc` makes a re-submitted hash a second reference, not a
+  // second row. `kind` is in the filter for the same reason it is in the index:
+  // an organizer's row for these bytes is a different asset (ADR-0801).
   const asset = (await tenant.collection(COLLECTIONS.mediaAssets).findOneAndUpdate(
-    { contentHash: options.contentHash },
+    { contentHash: options.contentHash, kind: "selfie" },
     {
       $setOnInsert: {
         _id: new ObjectId(),

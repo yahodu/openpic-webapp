@@ -373,12 +373,19 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["accessLinks.slug", 1]],
   },
 
-  // media_assets — content-addressed dedupe within a tenant (§16.1).
+  // media_assets — content-addressed dedupe within a tenant (§16.1). `kind` is
+  // part of the identity: a selfie and an organizer upload of the same bytes
+  // are two assets with different lifecycles, and the selfie row deliberately
+  // carries no `storage` descriptor (§16.1's `kind` row; ADR-0796 §3, ADR-0801).
+  // The name predates `kind`: renaming it would leave the drifted two-key
+  // index live on any database whose bootstrap never runs again, so the
+  // definition is drop-rebuilt under the same name (`ensureIndexes`).
   {
     collection: COLLECTIONS.mediaAssets,
     name: "media_assets_tenant_content_hash_unique",
     keys: [
       ["tenantId", 1],
+      ["kind", 1],
       ["contentHash", 1],
     ],
     unique: true,
@@ -386,7 +393,7 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
 
   // media_assets — the QR export cache lookup by its render-free key (OP-118
   // ADR-0623). Non-unique: the key addresses at most one row per tenant, but
-  // the `(tenantId, contentHash)` unique index remains the only hard invariant.
+  // the `(tenantId, kind, contentHash)` unique index is the only hard invariant.
   {
     collection: COLLECTIONS.mediaAssets,
     name: "media_assets_tenant_kind_qr_cache_key",
@@ -437,6 +444,18 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
   {
     collection: COLLECTIONS.downloadJobs,
     name: "downloadJobs_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
+  // selfies — the biometric probe image is minimised by the TTL monitor, not by
+  // a purge job (§16.4's `{expireAt: 1}` TTL 0 in the index list; §22's
+  // `selfies` row: `createdAt + 90 d` or event retention, whichever first).
+  // The submit route stamps `expireAt`; this index is what enforces it
+  // (OP-132 F-A3, ADR-0801).
+  {
+    collection: COLLECTIONS.selfies,
+    name: "selfies_expire_at_ttl",
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },

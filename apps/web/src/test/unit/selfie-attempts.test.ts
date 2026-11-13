@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { selfieAttemptBudget } from "@/server/attendee/selfie-attempts";
+import { COLLECTIONS } from "@/server/db/collections";
+import { INDEX_SPECS, type IndexSpec } from "@/server/db/indexes";
 
 /**
  * Unit contract — the selfie attempt budget
@@ -107,4 +109,96 @@ describe("selfieAttemptBudget — the numbers §6.3 and §6.4 report", () => {
       });
     }
   );
+});
+
+/* ─────────────── the index set the selfie lane depends on ────────────────── */
+
+/**
+ * Unit contract — the §16.4 / §16.1 / §22 index set the selfie lane depends on
+ * (OP-132 findings F-A3 and F-A4; registry `@/server/db/indexes`).
+ *
+ * **Why this exists.** The OP-132 F1 GREEN made two facts true that the
+ * database does not enforce. It stamps a retention deadline (`expireAt`) on
+ * every queued `selfies` row and writes the first `kind: "selfie"` row into
+ * `media_assets` — a row that deliberately carries **no** `storage` descriptor,
+ * because the selfie's bytes are the attendee's and are addressed by their own
+ * content hash. Neither fact has an index behind it today:
+ *
+ *   1. `INDEX_SPECS` declares **no** `selfies` index set at all, so schema
+ *      §16.4's `{expireAt: 1}` TTL (`expireAfterSeconds: 0`, §22's
+ *      biometric-minimisation row) does not exist in any environment. The field
+ *      the submit route writes is a deadline nothing enforces: a biometric row
+ *      would live forever.
+ *   2. The tenant-wide dedupe key is `[tenantId, contentHash]` with no `kind`,
+ *      so a selfie hash and an organizer upload of the same bytes are forced to
+ *      share one asset row. The organizer path then reads the selfie row's
+ *      `storage` descriptor, which does not exist
+ *      (`@/server/uploads/complete-upload`), and registers an `eventImages` row
+ *      against an asset it cannot describe.
+ *
+ * ## The two invariants pinned here
+ *
+ * 1. **The retention field is enforced.** Exactly one TTL index on `selfies`,
+ *    keyed `[["expireAt", 1]]` with `expireAfterSeconds: 0` — the same shape
+ *    §22's other TTL collections use, and the shape the registry's own U2 lint
+ *    (`@/server/db/indexes.test.ts`) requires of every TTL index.
+ * 2. **Asset identity distinguishes kinds.** No unique index on `media_assets`
+ *    may be kind-blind: two rows that differ **only** by `kind` must not be
+ *    forced to share one asset. Accepted encodings are (a) `kind` as a key of
+ *    the unique dedupe index — the encoding asserted here and the one the lane
+ *    accepted — and (b) a partial unique index whose
+ *    `partialFilterExpression` fixes `kind`. The integration pin
+ *    `selfie-upload-collision.test.ts` I4 asserts the invariant itself (two
+ *    rows differing only by `kind` coexist), so either encoding satisfies it.
+ *
+ * Both cases assert the **declared** registry, so they are cheap: no database,
+ * no route, no fixture. The behaviour they imply is pinned where it is
+ * observable, in `apps/web/src/test/integration/selfie-upload-collision.test.ts`.
+ *
+ * See `docs/adr/ADR-0800-op132-selfies-ttl-and-kind-dedupe-pins.md`.
+ */
+
+/** True when a unique spec's key tuple or its partial filter fixes `kind`. */
+function distinguishesKind(spec: IndexSpec): boolean {
+  if (spec.keys.some(([field]) => field === "kind")) {
+    return true;
+  }
+  const filter = spec.partialFilterExpression;
+  return filter !== undefined && "kind" in filter;
+}
+
+describe("the index set — the selfies retention TTL (F-A3, schema §16.4 / §22)", () => {
+  it("declares an {expireAt: 1} TTL index on selfies that expires immediately", () => {
+    const ttlSpecs = INDEX_SPECS.filter(
+      (spec) => spec.collection === COLLECTIONS.selfies && spec.expireAfterSeconds !== undefined
+    );
+    const [spec] = ttlSpecs;
+    if (spec === undefined || ttlSpecs.length !== 1) {
+      throw new Error(
+        `expected INDEX_SPECS to declare exactly one '${COLLECTIONS.selfies}' TTL index ` +
+          `(schema §16.4's {expireAt: 1}, §22's biometric retention), found ${String(ttlSpecs.length)}`
+      );
+    }
+
+    expect(spec.keys, "a TTL index must key on expireAt alone").toEqual([["expireAt", 1]]);
+    expect(spec.expireAfterSeconds, "the TTL monitor must expire at the deadline").toBe(0);
+  });
+});
+
+describe("the index set — asset identity distinguishes kinds (F-A4, schema §16.1)", () => {
+  it("keys every unique mediaAssets index on the kind, not on the hash alone", () => {
+    const uniqueSpecs = INDEX_SPECS.filter(
+      (spec) => spec.collection === COLLECTIONS.mediaAssets && spec.unique === true
+    );
+    expect(uniqueSpecs.length, "expected at least one unique mediaAssets index").toBeGreaterThan(0);
+
+    const blind = uniqueSpecs.filter((spec) => !distinguishesKind(spec)).map((spec) => spec.name);
+
+    expect(
+      blind,
+      "a unique media_assets index keyed on (tenantId, contentHash) alone forces a selfie and an " +
+        "organizer upload of the same bytes onto one asset row; add `kind` to the key (or make the " +
+        "index partial on it)"
+    ).toEqual([]);
+  });
 });
