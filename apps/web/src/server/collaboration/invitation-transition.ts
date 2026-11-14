@@ -1,6 +1,7 @@
 import { ObjectId, type ClientSession, type Db } from "mongodb";
 
 import { COLLECTIONS } from "@/server/db/collections";
+import { waitForCommitted } from "@/server/db/retry-wait";
 import { isTransactionRetryLimitError, withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { appError } from "@/server/http/errors";
@@ -52,24 +53,6 @@ export interface DecisionInvitationRow extends InvitationRow {
 const RACE_ATTEMPTS = 3;
 
 /**
- * How long a loser of the decision race waits for the winner's commit, in ms.
- *
- * shortcut: a fixed ceiling, not the winner's own duration; a decision
- * transaction taking longer than this answers `500` as before. Upgrade to a
- * shared per-invitation decision lock if a bounded wait proves too short.
- */
-const RIVAL_COMMIT_TIMEOUT_MS = 1_000;
-
-/** Poll interval while waiting for the winner's committed decision, in ms. */
-const RIVAL_COMMIT_POLL_MS = 25;
-
-/** Resolve after `ms`, for the bounded wait below. */
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
-/**
  * Wait, bounded, for a concurrent decision on the same invitation to commit.
  *
  * Two accepts of one invitation collide on the same document inside their
@@ -88,16 +71,10 @@ async function rivalDecisionCommitted(
   invitations: RepositoryCollection,
   invitationId: ObjectId
 ): Promise<boolean> {
-  for (let waited = 0; waited <= RIVAL_COMMIT_TIMEOUT_MS; waited += RIVAL_COMMIT_POLL_MS) {
-    const row = (await invitations.findOne({
-      _id: invitationId,
-    })) as DecisionInvitationRow | null;
-    if (row !== null && row.status !== "pending") {
-      return true;
-    }
-    await sleep(RIVAL_COMMIT_POLL_MS);
-  }
-  return false;
+  return waitForCommitted(
+    async () => (await invitations.findOne({ _id: invitationId })) as DecisionInvitationRow | null,
+    (row) => row !== null && row.status !== "pending"
+  );
 }
 
 /** The status one terminal transition writes. */
