@@ -94,7 +94,7 @@ import {
  *     inline span, whatever the author meant. Inside a single-backtick span it
  *     is the prettier trap; outside a span it renders a literal backtick, which
  *     is the CommonMark way to write one; inside a double-backtick span it can
- *     be literal shell text (`echo \`id\``). So the two sanctioned alternatives
+ *     be literal shell text (see below). So the two sanctioned alternatives
  *     are a **fenced block**, or **dropping the escape** where the meaning
  *     allows (a double-backtick span holds a bare backtick, e.g. ``echo `id` ``).
  *     Widening the delimiters is not an escape on its own: the pair must also
