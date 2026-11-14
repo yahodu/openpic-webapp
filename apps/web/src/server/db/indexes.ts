@@ -688,6 +688,15 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     expireAfterSeconds: 0,
   },
 
+  // workerHeartbeats — one row per worker process, so the TTL keeps the
+  // liveness board to the workers that reported recently (§10.3.2, ADR-0829 §3).
+  {
+    collection: COLLECTIONS.workerHeartbeats,
+    name: "worker_heartbeats_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
   // contact_change_fanouts — holds the raw previous/current contacts until the
   // fan-out reads them. The TTL index is what makes ADR-0040 §2's "short-lived,
   // TTL-bound" privacy justification actually hold (ADR-0043).

@@ -55,6 +55,8 @@ interface SelfieRow {
     readonly accepted?: boolean;
     readonly rejectionReason?: string | null;
   } | null;
+  /** The worker's pipeline state; its error code names the §6.4 detail. */
+  readonly processing?: { readonly lastError?: { readonly code?: string } | null } | null;
 }
 
 /** The `media_assets` fields a selfie preview is signed from (§16.1). */
@@ -146,7 +148,7 @@ async function readActiveSelfie(
     .collection(COLLECTIONS.selfies)
     .findOne(
       { _id: selfieId },
-      { projection: { _id: 1, assetId: 1, liveness: 1, quality: 1 } }
+      { projection: { _id: 1, assetId: 1, liveness: 1, quality: 1, processing: 1 } }
     )) as SelfieRow | null;
 }
 
@@ -243,6 +245,9 @@ export const GET = defineRoute({
       status: wireStatus,
       matchCount: profile.matchCount,
       rejectionReason: selfieRow?.quality?.rejectionReason ?? null,
+      // §6.4 renders the `liveness_failed` detail from the pipeline's own code
+      // (§10.3.3), never from a worker string invented for the browser.
+      lastErrorCode: selfieRow?.processing?.lastError?.code ?? null,
     });
     const intervalMs = pollIntervalMs({ status: resolved.status, indexingComplete });
 
