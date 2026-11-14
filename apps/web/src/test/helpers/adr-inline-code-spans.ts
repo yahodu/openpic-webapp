@@ -10,7 +10,8 @@
  * in seven records before the sweep in `585`/`608`. Renderers show the escaped
  * backtick as a literal backtick, which is what the author meant, so the
  * construct looks right in review and only the space loss is wrong. The fix is
- * to widen the span's delimiters to two backticks each side, or to fenced code.
+ * to drop the escape and widen the span's delimiters to two backticks each side,
+ * or to move the text into a fenced code block.
  *
  * The rationale lives here rather than in a record on purpose: the card that
  * added this guard forbids minting a number, and this family keeps each
