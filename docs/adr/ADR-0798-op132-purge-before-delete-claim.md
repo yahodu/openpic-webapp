@@ -139,3 +139,138 @@ reach because no row was ever claimed before.
   row's `status` back to `stored`. Left as is (§2); unpinned.
 - Whether the first attempt should answer a softer status than `500`. Left as is
   (§1); unpinned.
+
+## Review sign-off (OP-132 GREEN `t_0f7341d7`, round 1 — artifact + execution lens)
+
+**Verdict: APPROVED WITH FINDINGS (Medium ×2, Info ×3).** The delivery is PR #550,
+reviewed at head `f48ff31` and squash-merged as `4c31808`; nothing was re-merged for this
+sign-off. The lens was the artifact **and** the execution: every count below is the
+reviewer's own run, and both probes were measured rather than assumed.
+
+**No section of this record is retracted.** §1, §2, §3, §Consequences, §Alternatives and
+§Open questions stand as written. The items at the end are dispositions, not corrections.
+
+### The reviewed bytes are what shipped
+
+`git diff --stat f48ff31 4c31808` is **empty**: the squash kept the branch tree, so a
+suite run on the branch applies to the trunk verbatim. The squash is **7 paths**
+(`git diff --name-status 4c31808^ 4c31808`): the withdrawal route and `selfie-submit.ts`
+modified, the pins spec `+257`, ADR-0796 amended, ADR-0797 added, this record added and
+the ledger's two `Next free` cells plus its two new index rows.
+
+The `+257` test lines are the RED card's pins carried in, not edits this GREEN made.
+Measured as blob identity, which is strictly stronger than a three-dot diff:
+
+- `apps/web/src/test/integration/liveness-selfie-submit.test.ts` — `c29e7f6c…` at the
+  RED head `4f0cfbd`, at the reviewed head `f48ff31` and at the squash `4c31808`, i.e. one
+  blob OID three times, with 21 cases at each (counted, not inferred);
+- this record — `0028d788…` at `f48ff31` and at `4c31808`, so the GREEN edited no record
+  it satisfies;
+- the withdrawal route — `82d5aa49…` at `f48ff31`, at `4c31808`, at the follow-up fix
+  `76d3315c` and at the trunk `872fd046`, so every claim about that file holds on all four
+  trees.
+
+### Measured by the review at `f48ff31`
+
+| gate                                                                                                                   | result                                       |
+| ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| the pins, `liveness-selfie-submit.test.ts`                                                                             | `21 passed (21)`                             |
+| the four attendee specs (this one, `biometric-consent`, `selfie-reuse`, `selfie-submit-user`)                          | `4 files, 52 passed (52)`                    |
+| full `unit`                                                                                                            | `175 files, 2907 passed \| 3 skipped (2910)` |
+| full `integration`                                                                                                     | `115 files, 1242 passed (1242)`              |
+| the five ADR guards (`adr-consumers`, `adr-lane-ranges`, `adr-numbering`, `adr-record-links`, `adr-source-references`) | `5 files, 218 passed (218)`                  |
+| `tsc -p apps/web/tsconfig.json --noEmit`                                                                               | exit `0`                                     |
+| `prettier --check` and `eslint`                                                                                        | clean / 0 warnings                           |
+| CI on the head                                                                                                         | 15 of 15 checks                              |
+
+### Re-measured on this branch's tree (`186fa464` plus this append)
+
+- the pins: **26 passed (26)**. The five extra cases are ADR-0828's, added by `76d3315c`;
+  the 21 cases measured at the squash are unchanged in behaviour;
+- the four attendee specs: **4 files, 57 passed (57)**;
+- full `unit`: **179 files, 2965 passed | 3 skipped (2968)**, exit `0`;
+- full `integration`: **131 files, 1356 passed (1356)**, exit `0`;
+- the five ADR guards: **5 files, 218 passed (218)**, unchanged;
+- `tsc -p apps/web/tsconfig.json --noEmit`: exit `0`;
+- `docs/adr` holds **334** records and no number appears twice; `0796`–`0800` and `0828`
+  each exist exactly once;
+- both shared `Next free` cells in the ledger read `0829`, which is the highest number on
+  any ref plus one.
+
+The full-suite figures are larger than the review's because sibling lanes landed cases
+between the squash and this append (ADR-0828's pins pack is the visible one). No figure
+above is a transcription of the implementer's handoff.
+
+### The two probes, and what they decided
+
+- **Probe (a) — a claim injected between the submit's guard read and its `$inc`.** The
+  submit's own `withTransaction` retries the write conflict and the loser answers
+  `{"submitStatus":409,"submitCode":"conflict","refCount":0,"status":"purged","readable":false}`:
+  the purge really happened, no reference survives it, and nothing dangles. §2's refusal is
+  therefore atomic **enough** in practice even though the read-then-write shape is not
+  atomic in principle (Info F-I3, no action).
+- **Probe (b) — a reuse after a completed purge.** The re-submitted hash re-referenced the
+  surviving row and left `{"refCount":1,"status":"purged","purgedAt":"<date>"}` with the
+  bytes readable: a live reference recorded as purged, and §2's cosmetic-status reasoning
+  turned out to have a measurable cost (Medium F-A2b). The defect is now pinned and closed;
+  its mutation is re-run for this append under §"Honesty checks" below.
+
+### Honesty checks
+
+The GREEN touched no existing test, fixture, mock or helper: the spec's added lines are the
+RED card's carried-in pins (blob identity above), and the squash's production hunks carry no
+`NODE_ENV`, `process.env`, `console.`, `ts-ignore`, `eslint-disable`, `.only` or `.skip`
+(grepped over the added lines of both files).
+
+The F-A2b mutation was re-measured for this append, twice, and only the second attempt is
+evidence (the `selfie-submit.ts` blob is `901fcf19…` both where the mutation ran and on this
+branch's tree, so the reading holds for both):
+
+1. reverting the **whole** `selfie-submit.ts` file to `4c31808` reddened **20** cases with
+   `expected 500 to be 202`. That is **not** recorded as a proof: it mixes the reviewed tree's
+   server module with the trunk's neighbours, so it measures the mix and not the defect.
+2. reversing exactly the `+4/−1` of `76d3315c` (`git diff 76d3315c^ 76d3315c -- apps/web/src/server/attendee/selfie-submit.ts`) reddens **exactly one** case,
+   `1 failed | 25 passed (26)`, with the assertion carrying the defect's own signature:
+   `"refCount":1,"status":"purged","purgedAt":"…": expected 'purged' to be 'stored'`. The file
+   was then restored byte-identically (`sha256` equal to the pre-mutation hash, `git status`
+   empty), so no pin is vacuous and none passes for a broken fixture.
+
+### Findings and their disposition
+
+- **Medium — F-A2b, a reused row keeps the purge marker.** Routed to TEST `t_ecc695e5`, then
+  GREEN `t_1805f512`. Landed as `76d3315c` (PR #604) and recorded in
+  [ADR-0828](ADR-0828-op132-purged-asset-reuse-reset-pins.md), whose case sits at
+  `liveness-selfie-submit.test.ts:1577`. Closed, and pinned in the direction that reddens.
+- **Medium — F-L1, the ledger cell.** At review time the ledger read `0799` for this lane
+  while §Lane says `0800`, and `0799` was in flight on the OP-133 preview-url pins. That PR
+  landed as `55e665a` and consumed `0799`, moving the cell to `0800`; the lane has since
+  drawn every number through `0828`, so both cells read `0829` at `186fa464`. The DOCS card's
+  instruction to set the cell to `0800` is therefore **void** at this trunk: the cell only
+  moves forward, and lowering it would re-mint twenty-nine consumed numbers. This append
+  touches the ledger not at all.
+- **Info — F-I1, the handoff's suite counts.** The implementer's `unit` 2846 / `integration`
+  1216 over 112 files are pre-merge figures; at the squash the same suites measure 2907 and
+  1242 over 115 files, because the trunk merge brought the OP-133 specs. Anchored to
+  `4c31808`, both sets are true of different trees.
+- **Info — F-I2, the check count.** PR #550 carries **15** checks, not 14; the post-close
+  `notify-discord` run is the extra one (`statusCheckRollup` measured at 15 today).
+- **Info — F-I3, the guard's shape.** `insertQueuedSelfie`'s refusal is a read-then-write and
+  §2 claims determinism from the transaction's ordering; probe (a) shows the ordering holds
+  under an injected claim, so the claim is right for the shipped code even though it is
+  right by `withTransaction` rather than by the guard alone. No action, and no pin asked for.
+
+### Post-review status
+
+- **§Open questions' first item is decided, by a later record.** Whether a resubmit after a
+  completed purge should reset `status` to `stored` was left "as is (§2); unpinned". It is now
+  answered **yes**: ADR-0828 puts `status: "stored"` and `purgedAt: null` on the upsert's
+  `$set`, the **Consumers** line at the top of this record names that decision, and the case
+  at `liveness-selfie-submit.test.ts:1577` pins it. This record is not edited for it — the
+  later record carries the change and supersedes the open question.
+- **§Consequences' "Known limit, not pinned" stands untouched.** A submit that lands after
+  the purge completed is still admitted whenever `headObject` passes; ADR-0828 resets the
+  row's lifecycle fields but does not re-check object existence inside the transaction.
+- **§Consequences' "Known gap, routed" is consumed.** `t_6b53935c` landed the consumption
+  pin, `liveness-selfie-submit.test.ts:1435` ("consumes the pending purge candidate, so the
+  bytes are gone after the retry"), so §1's claim that the withdrawal retry is the consumer
+  is pinned rather than only argued.
