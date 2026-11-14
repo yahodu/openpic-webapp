@@ -158,7 +158,11 @@ rule that satisfies all three inspects the _value_ of the wrong bearer to pick
 the code, which is a meaning-free special case and contradicts
 `authorizeInternalRequest`'s documented order (bearer policy, then HMAC) and
 ADR-0028 §1's scoping of the cron exception. **Proposed correction (one line,
-test side):** `authorization: \`Bearer ${options.bearer ?? getConfig().internal.apiSecret}\``.
+test side):** use the helper's own documented default —
+
+```ts
+authorization: `Bearer ${options.bearer ?? getConfig().internal.apiSecret}`,
+```
 
 ### D2 — `countDocuments({})` ignores the two rows the fixture's sign-in writes (1 case)
 
