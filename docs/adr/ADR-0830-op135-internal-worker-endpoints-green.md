@@ -11,8 +11,9 @@
   [ADR-0806](ADR-0806-op132-confirm-publication-green.md)/[ADR-0808](ADR-0808-op132-late-match-publication-ownership.md)
   (the one delivery identity), [ADR-0792](ADR-0792-op132-liveness-selfie-green.md)
   (the attempt budget), ADR-0798 (withdrawal deletes the rows)
-- **Amends:** nothing. Records the GREEN's decisions on the arms ADR-0829 left
-  open, and two test-side defects it found (see §8).
+- **Amends:** [ADR-0028](ADR-0028-internal-hmac-and-cron-framework.md) §1's
+  denial precedence, minimally (see §8.1). Records the GREEN's decisions on the
+  arms ADR-0829 left open, and the one test-side defect it found (see §8.2).
 - **Number allocation:** the lane row `OP-135 worker interface lane` reads
   `0829`–`0848` / `Next free 0830` on this head; this record takes `0830` and
   advances that cell to `0831`. The `unallocated (future lanes)` cell stays
@@ -24,7 +25,8 @@
 ADR-0829 fixed the executable contract — two pure modules and four `POST`
 routes — and left the RED specs as its only expression. This record covers
 turning them green: what shipped at each path, the decisions the pins did not
-make, and the two pins that **cannot** be made green without editing a test.
+make, the one auth-precedence rule the pins forced (§8.1) and the one pin that
+**cannot** be made green without editing a test (§8.2).
 
 ## Decision
 
@@ -125,46 +127,51 @@ boundary is still the one the repository layer enforces, and
   `dedupeKey` — so the helper has one production caller and the spec's own
   literal stays the contract that catches drift.
 
-## 8. Disputes — two pins no implementation can satisfy
+## 8. One forced precedence rule, and one dispute that no implementation can satisfy
 
-Both are RED on this branch, with everything else green. Neither test file was
-edited.
-
-### D1 — `signedPost`'s bearer default contradicts its own documented contract (4 cases)
+### 8.1 — `invalid_signature` outranks a wrong bearer when a signature is present (resolved)
 
 `apps/web/src/test/integration/internal-worker-endpoints.test.ts:161-171`:
 
 ```ts
 const secret = options.secret ?? getConfig().internal.apiSecret;   // 161
 ...
-authorization: `Bearer ${options.bearer ?? secret}`,                // 165
+authorization: `Bearer ${options.bearer ?? secret}`,               // 165
 "x-signature": signatureHeader(secret, raw),
 ```
 
-The helper's own TSDoc says the bearer "defaults to the real
-`INTERNAL_API_SECRET`" and `secret` is "the secret the body is signed with". The
-code defaults the bearer to `secret`, so the four
-`refuses a body signed with another secret as invalid_signature` cases send
-`{bearer: "wrong-signing-secret-…", signature: HMAC(wrong-signing-secret)}` and
-get `internal_auth_failed` (measured: `expected 'internal_auth_failed' to be
-'invalid_signature'`).
+The helper's TSDoc says the bearer "defaults to the real `INTERNAL_API_SECRET`"
+and `secret` is "the secret the body is signed with", but the code defaults the
+bearer to `secret`. So the four `refuses a body signed with another secret as
+invalid_signature` cases send `{bearer: "wrong-signing-secret-…", signature:
+HMAC(wrong-signing-secret)}` and, under ADR-0028 §1's order (bearer policy, then
+HMAC), get `internal_auth_failed` (measured: `expected 'internal_auth_failed' to
+be 'invalid_signature'`).
 
-No honest policy separates those four from the three sibling I5 arms: within the
-same `describe`, `wrong bearer` (`bearer = wrong`, signature valid) must answer
-`internal_auth_failed` and `CRON_SECRET bearer` (`bearer = cronSecret`,
-signature invalid) must answer `internal_auth_failed`, while this arm
-(`bearer = wrong`, signature invalid) must answer `invalid_signature`. The only
-rule that satisfies all three inspects the _value_ of the wrong bearer to pick
-the code, which is a meaning-free special case and contradicts
-`authorizeInternalRequest`'s documented order (bearer policy, then HMAC) and
-ADR-0028 §1's scoping of the cron exception. **Proposed correction (one line,
-test side):** use the helper's own documented default —
+That order was not a decision the I5 ladder can keep: the same `describe` pins
+`wrong bearer` (`bearer = wrong`, signature valid) → `internal_auth_failed` and
+`CRON_SECRET bearer` (`bearer = cronSecret`, signature invalid) →
+`internal_auth_failed`, while this arm (`bearer = wrong`, signature invalid) →
+`invalid_signature`. `authorizeInternalRequest` now decides in this order:
 
-```ts
-authorization: `Bearer ${options.bearer ?? getConfig().internal.apiSecret}`,
-```
+1. the cron-`GET` exception (unchanged);
+2. `token === null` **or** `token === CRON_SECRET` → `internal_auth_failed` — the
+   caller has not identified itself, and the cron secret must never earn a
+   signature verdict it could replay onto a route;
+3. the HMAC verdict, on every request that presents one:
+   - a **present** `X-Signature` that does not verify → its own code
+     (`invalid_signature` / `stale_signature`), even when the bearer is unknown:
+     the caller did sign this body, just not with our secret (§0.3), and that is
+     the more specific failure;
+   - **no** `X-Signature` at all under an unknown bearer → `internal_auth_failed`
+     (step 4 covers it: nothing to verify, and the bearer is not ours);
+4. `token !== INTERNAL_API_SECRET` → `internal_auth_failed`.
 
-### D2 — `countDocuments({})` ignores the two rows the fixture's sign-in writes (1 case)
+No request gains access: every path here denies. The three codes keep their
+documented meaning, and every earlier pin holds unchanged — `internal-hmac` U4,
+U4b, `internal-hmac.test.ts` I2/I4 and the cron routes' own suites are green.
+
+### 8.2 — `countDocuments({})` ignores the two rows the fixture's sign-in writes (1 case, still RED)
 
 `apps/web/src/test/integration/internal-worker-endpoints.test.ts:819`, in
 `counts a repeat of the same dedupeKey as deduped and keeps one row`: the case
@@ -176,8 +183,8 @@ and the run's log shows exactly those two `domain_event.emitted` lines before th
 batch). Every other assertion in the case passes (`accepted: 1`, then
 `{accepted: 0, deduped: 1}`), so the dedupe itself is green; only the unscoped
 count cannot be. **Proposed correction (test side):** scope the read to the
-delivery, e.g.
-`countDocuments({ dedupeKey: activation }) === 1` — or to the tenant.
+delivery, e.g. `countDocuments({ dedupeKey: activation }) === 1` — or to the
+tenant.
 
 ## 9. Deliberately not implemented (unpinned, and recorded so the omission is auditable)
 
