@@ -12,7 +12,12 @@ lane`) is exhausted, so this record draws from the `unallocated (future lanes)`
   head **both `Next free` cells read `0817`**, and the sweep found `0813` (PR
   #569), `0814`/`0815` (PR #565) and `0816` (this lane's pin, PR #570) in flight;
   no ref and no `.worktrees/*/docs/adr` carries `0817`, so this record draws
-  **`0817`** and both cells advance to `0818`.
+  **`0817`**. Both cells then read `0818`, but that is a **snapshot at this head,
+  not a claim**: `0818` was in flight on the draft PR #573 when this record was
+  cut, and it has since landed on the trunk as
+  [ADR-0818](ADR-0818-op134-claim-endpoint-arms-pins.md) (PR #584, `5a0c8e05`).
+  The draft PR #573, open when this append was written, carries a later revision
+  of that file. The cells have moved past it since.
 - **Amends:** [ADR-0806](ADR-0806-op132-confirm-publication-green.md) §Decision —
   its read-before-the-insert is replaced by a read inside the transaction. The
   record is not edited.
@@ -131,9 +136,13 @@ three runs in three by the review of `t_ed3785df`, and again at this branch cut,
 - The spec file is carried byte-identically from `1030322` (`git diff` touches no
   test), and so is the [ADR-0816](ADR-0816-op132-concurrent-confirm-publication.md)
   record (`git diff 1030322 --` is empty for both).
-- **CI on the head `a9ec3f2`**: all 14 checks of PR #571 pass — `unit_test`,
+- **CI on the head `ed24de6`**: all 14 checks of PR #571 pass — `unit_test`,
   `test_coverage` (the full unit + integration projects under the coverage
-  thresholds) and the aggregate `ci` (integration) among them.
+  thresholds) and the aggregate `ci` (integration, 9m09s) among them.
+  `notify-discord` runs only after the merge, so it is not a gate. The head this
+  sentence first named, `a9ec3f2`, was a **pre-rebase** head and is not an
+  ancestor of the merge; `ed24de6` is the PR's `headRefOid`, and the whole-tree
+  diff `git diff ed24de6 a49599c` is empty (see the sign-off below).
 - **Local whole-suite caveat, measured rather than glossed.** The full
   unit + integration run passed `4202` tests before the rebase onto `main`
   `e322a92`; after it, two whole-suite runs on this loaded machine hit 5 s
@@ -142,3 +151,85 @@ three runs in three by the review of `t_ed3785df`, and again at this branch cut,
   `me-notification-preferences`); all of them pass in isolation (`6 files / 53
 passed`), and CI's `test_coverage` run on the same head is clean. No failure
   was in the confirm route, the spec, or any file this branch edits.
+
+## Review sign-off (OP-132 GREEN t_6e62ee84, round 1 — artifact + execution lens)
+
+**Verdict: APPROVED WITH FINDINGS.** The delivery is PR #571, reviewed at head
+`ed24de6` and merged as the squash `a49599c`. The whole-tree diff
+`git diff ed24de6 a49599c` is empty, so every figure below holds at both commits.
+The reviewer edited no production file, no test file, no fixture and no mock: the
+reviewed SHA is the SHA that shipped. Nothing in §Context, §Decision,
+§Consequences or §Alternatives is retracted. This section is an append, plus the
+two in-place corrections below.
+
+### The two corrections
+
+1. **§Evidence named a head that never shipped.** The CI sentence read `a9ec3f2`.
+   That is a **pre-rebase** head: `git merge-base --is-ancestor a9ec3f2 a49599c`
+   is false. The branch's commits are `8dcb308` → `417f6e1` → `ed24de6`, the PR's
+   `headRefOid` is `ed24de6`, and the fourteen checks pass there. The sentence
+   now names `ed24de6`.
+2. **§Lane read a snapshot as a claim.** The sentence said "both cells advance to
+   `0818`". `0818` was the next free number **at this head**. It was not a
+   reservation this record made: `ADR-0818` was in flight on the draft PR #573 at
+   the cut and has since landed on the trunk (PR #584, `5a0c8e05`). The sentence
+   now says so.
+
+### What the review measured, at the reviewed head
+
+- **The pin is green through the retry path, not around it.** The focused file
+  `selfie-confirm-publication.test.ts` is `5 passed (5)` on **3 of 3 runs**, and
+  each run logs `db.transaction.retry` at **attempt 2 / maxAttempts 3** (the
+  default in `apps/web/src/server/db/transaction.ts:22`). The loser really runs
+  its callback a second time.
+- **The pin and ADR-0816 were carried, not rewritten.** `git diff 1030322 HEAD --`
+  is empty for `selfie-confirm-publication.test.ts` and for
+  [ADR-0816](ADR-0816-op132-concurrent-confirm-publication.md).
+- **Full `unit`:** 178 files, **2938 passed / 3 skipped**, exit `0`.
+- **Full `integration`:** **1 failed | 1321 passed**. The one failure is
+  `notification-digest-flush-claim-lease.test.ts` › _honours a claim that is not
+  yet stale…_, `Test timed out in 5007ms`. The same file is **4 passed (4) in
+  isolation on 3 of 3 runs**. Two sibling worktrees ran integration suites at the
+  same time, so the cause is load, not a regression. No case in the confirm
+  route, in the pin, or in any file this delivery edits failed.
+- **`tsc`, `eslint`, `prettier`:** clean.
+- **The numbering guard:** `adr-numbering` **29 passed (29)**, and `0817` is
+  unique across every ref and every `.worktrees/*/docs/adr`.
+- **The merged trunk, re-checked at `a49599c`:** the same focused file is
+  `5 passed (5)` and the same guard is `29 passed (29)`.
+
+### Post-review status, routed and not retracted
+
+§Consequences item 2 says a storm of `N > 2` simultaneous confirms "is not pinned
+and not measured here". The reviewer has since measured it, with the pin's own
+bounded-latch method (`confirmRaceGate.close(n)`, then `Promise.all`):
+
+- burst **3** → `[200,200,200]`
+- burst **4** → `[200,200,200,500]`
+- burst **6** → `[200,200,200,200,500,500]`
+
+Each `500` is a `TransactionRetryLimitError` (`transaction retry limit reached
+after 3 attempts`) at the `withTransaction(` call site, `confirm/route.ts:124` at
+that head (`:137` on the trunk, after ADR-0823 added the options argument).
+The state stayed correct in every arm: one `attendee.matches.new` row, and
+`matchCount` 3. The three runs gave identical results, 3 of 3. At this head the
+repair has **one retry of headroom** (`DEFAULT_TRANSACTION_MAX_ATTEMPTS = 3`), so
+a burst of more than three racers can spend it.
+
+The finding went to the TEST card `t_3032fa5a` and the GREEN card `t_e0b862be`.
+Both cards have landed:
+
+- `t_3032fa5a` pinned the width-four burst and minted
+  [ADR-0821](ADR-0821-op132-confirm-burst-pin.md) (draft PR #578, closed as
+  superseded).
+- `t_e0b862be` set an explicit attempt budget at the confirm call site and
+  minted [ADR-0823](ADR-0823-op132-confirm-burst-budget.md) (PR #581, squash
+  `659c0edd`).
+
+So the width-four burst that this record disclosed as unmeasured is pinned and
+green on the trunk, and ADR-0823 gives its bound. Item 2 above stays as written,
+because it was true at this head.
+
+**No new ADR number.** This record already exists and consumes nothing. The
+append only points at numbers other records hold, so `docs/adr/README.md` is
+byte-identical to the trunk.
