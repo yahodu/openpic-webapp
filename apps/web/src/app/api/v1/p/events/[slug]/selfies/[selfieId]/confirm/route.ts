@@ -13,7 +13,7 @@ import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { withTransaction } from "@/server/db/transaction";
-import { emitDomainEvent } from "@/server/domain/domain-events";
+import { emitDomainEvent, matchesNewDedupeKey } from "@/server/domain/domain-events";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { tenantRepo, platformRepo } from "@/server/repos";
@@ -129,7 +129,11 @@ export const POST = defineRoute({
     // (ADR-0817): a read taken before the transaction lets both racers of a
     // double-tap see `0`, and the loser's insert then collides on the outbox's
     // unique partial index and aborts its transaction.
-    const dedupeKey = `attendee.matches.new:${event.eventId.toHexString()}:${profile._id.toHexString()}:${selfieId.toHexString()}`;
+    const dedupeKey = matchesNewDedupeKey(
+      event.eventId.toHexString(),
+      profile._id.toHexString(),
+      selfieId.toHexString()
+    );
     // §15.3's watermark is stamped by the first delivery and never moved.
     const firstDelivery =
       profile.firstMatchNotifiedAt === undefined || profile.firstMatchNotifiedAt === null;

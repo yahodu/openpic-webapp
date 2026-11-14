@@ -265,6 +265,25 @@ function scheduleNotificationFanOut(): void {
   }
 }
 
+/** The event key an activation result is announced under (§7.6). */
+const MATCHES_NEW_EVENT_KEY = "attendee.matches.new";
+
+/**
+ * The one delivery identity of an activation result (ADR-0808 §3).
+ *
+ * The confirmation and the worker both announce the same result, so the key is
+ * minted in exactly one place: whoever publishes first owns the row and the
+ * other publisher is deduped by `domain_events`' unique partial index.
+ *
+ * @param eventId - The event the matches belong to.
+ * @param profileId - The announced attendee profile.
+ * @param selfieId - The selfie whose activation produced the rows.
+ * @returns `` `attendee.matches.new:<eventId>:<profileId>:<selfieId>` ``.
+ */
+export function matchesNewDedupeKey(eventId: string, profileId: string, selfieId: string): string {
+  return `${MATCHES_NEW_EVENT_KEY}:${eventId}:${profileId}:${selfieId}`;
+}
+
 /**
  * Record one domain event in the outbox.
  *
