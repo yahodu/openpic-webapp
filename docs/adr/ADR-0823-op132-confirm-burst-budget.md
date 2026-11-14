@@ -127,3 +127,48 @@ after their selfie succeeded).
   empty), and the five shipped cases are unedited.
 - Full `unit` + `integration` suites, `tsc`, `eslint` and `prettier` were run at
   this head; see the card handoff for the counts.
+
+## Measured width (round-1 review)
+
+The §Consequences sentence above — "a storm **wider than five**" — is a **lower
+bound**, not the measured edge. The width was measured with the shipped budget
+(`CONFIRM_MAX_ATTEMPTS = 5`) on the reviewed head `5e4feae`, the lane head whose
+tree matches the squash `659c0ed` (tree `f1faf53`) for every file the probe
+touches: `git diff --name-status 5e4feae 659c0ed` names only main-side churn
+(`CHANGELOG.md`, `docs/adr/README.md`, `docs/adr/ADR-0813-op132-attendee-retention-gate.md`,
+`package.json`).
+
+**Method.** A throwaway probe worktree at `5e4feae`, carrying no committed
+change: this file's burst case copied with its `confirmRaceGate` latch reused
+unchanged and the width parameterised — `N` racers released together at the
+transaction boundary, a fresh database per round, twenty rounds per width, one
+case per round. The case records the sorted statuses instead of asserting them.
+
+| width | rounds | all-200 rounds | failing rounds | `500`s in the run |
+| ----- | ------ | -------------- | -------------- | ----------------- |
+| 5     | 20     | 20             | 0              | 0                 |
+| 6     | 20     | 20             | 0              | 0                 |
+| 7     | 20     | 17             | 3              | 4                 |
+
+Every failing round answered one `500` (rounds 6 and 8) or two
+(`[200,200,200,200,200,500,500]`, round 14), each with
+`transaction retry limit reached after 5 attempts` in its log.
+
+**The edge is load-sensitive, and a re-run narrows it.** The same probe, re-run
+three times at `origin/main` `597a2700` — where the confirm route and
+`apps/web/src/server/db/transaction.ts` are byte-identical to `659c0ed`
+(`git diff --name-only 659c0ed origin/main` over them is empty) — measured these
+all-200 rounds out of twenty per width:
+
+| width | run 1 | run 2 | run 3 |
+| ----- | ----- | ----- | ----- |
+| 5     | 20    | 20    | 20    |
+| 6     | 18    | 16    | 15    |
+| 7     | 15    | 13    | 15    |
+
+So five simultaneous confirms are covered in all **eighty** round-samples of the
+four runs; six passed every round of the round-1 run but failed two, four and
+five rounds of twenty when re-run; seven failed in every run. The §Consequences
+wording therefore understates nothing — it is a bound in the safe direction —
+and the practical edge sits between five and seven, where scheduling places it
+rather than a constant.
