@@ -90,10 +90,16 @@ import {
  * not depend on whether a build ran.
  *
  * **Assumptions resolved in this spec** (flagged in the handoff):
- *   - An escaped backtick *outside* a fence is always wrong, whatever the
- *     author meant: inside a single-backtick span it is the prettier trap, and
- *     outside a span it renders a literal backtick that did not need escaping.
- *     Nothing legitimate needs the pair in prose.
+ *   - An escaped backtick *outside* a fence is banned in prose **and** inside an
+ *     inline span, whatever the author meant. Inside a single-backtick span it
+ *     is the prettier trap; outside a span it renders a literal backtick, which
+ *     is the CommonMark way to write one; inside a double-backtick span it can
+ *     be literal shell text (`echo \`id\``). So the two sanctioned alternatives
+ *     are a **fenced block**, or **dropping the escape** where the meaning
+ *     allows (`` ``…`…`` ``). An earlier revision of this bullet claimed the
+ *     pair was "always wrong … nothing legitimate needs it in prose", which was
+ *     too strong: the two characterization rows at the end of the rule block pin
+ *     the shapes that are reported although prettier leaves them byte-stable.
  *   - `column` is the 1-based character offset of the **backslash** — the first
  *     byte of the pair — so a report can be pasted into an editor's gutter.
  *   - The sweep root is the repository root the spec derives from its own
@@ -108,6 +114,11 @@ import {
  *     rather than an `ADR-NNNN-` name: this spec's own source is swept by the
  *     citation guards for `ADR-`-prefixed tokens, so a fixture that spelled one
  *     would have to cite a real record. This spec cites no record, by design.
+ *
+ * **Open design question, not answered here.** Should a double-backtick span's
+ * content be exempt from the ban — which needs span parsing — or stay banned, as
+ * it is today under a cheap byte scan? This card pins the behaviour that exists,
+ * so the answer belongs to an orchestrator decision, not to an edit here.
  */
 
 describe("checkMarkdownInlineCodeDelimiters — the escaped-delimiter rule", () => {
@@ -415,6 +426,59 @@ describe("checkMarkdownInlineCodeDelimiters — the escaped-delimiter rule", () 
       fencedOccurrences: 0,
       scannedFiles: 1,
       checkedLines: 2,
+    });
+  });
+
+  it("reports an escaped backtick inside an indented code block (pins current behaviour)", () => {
+    // Arrange — a four-space indented code block is read as prose: only fenced
+    // blocks are recognised, which the docblock calls a deliberate limitation.
+    // The shape is reported although `prettier@3.9.9` leaves it byte-unchanged.
+    const files: MarkdownFileText[] = [
+      {
+        path: "docs/a.md",
+        text: ["# Record", "", "    grep -F '\\`' notes.txt", "", "Prose after the block."].join(
+          "\n"
+        ),
+      },
+    ];
+
+    // Act
+    const result = checkMarkdownInlineCodeDelimiters(files);
+
+    // Assert — one issue at the backslash, and the indent did not silence it.
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ code: "escaped-backtick", file: "docs/a.md", line: 3, column: 14 }],
+      occurrences: 1,
+      fencedOccurrences: 0,
+      scannedFiles: 1,
+      checkedLines: 5,
+    });
+  });
+
+  it("reports an escaped backtick inside a double-backtick span (pins current behaviour)", () => {
+    // Arrange — the literal shell form inside a double-backtick span. Widening
+    // the delimiters is the sanctioned way to carry a *bare* backtick in a span,
+    // but the pair inside the span is still a byte match, so it is reported
+    // although `prettier@3.9.9` leaves this line byte-unchanged.
+    const files: MarkdownFileText[] = [
+      { path: "docs/a.md", text: "Run ``echo \\`id\\` `` to test." },
+    ];
+
+    // Act
+    const result = checkMarkdownInlineCodeDelimiters(files);
+
+    // Assert — both pairs on the line, inside the span, at the backslashes.
+    expect(result).toEqual({
+      ok: false,
+      issues: [
+        { code: "escaped-backtick", file: "docs/a.md", line: 1, column: 12 },
+        { code: "escaped-backtick", file: "docs/a.md", line: 1, column: 16 },
+      ],
+      occurrences: 2,
+      fencedOccurrences: 0,
+      scannedFiles: 1,
+      checkedLines: 1,
     });
   });
 });
