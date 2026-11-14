@@ -133,15 +133,15 @@ this one is implied.
 
 ## Evidence (mutation probes, each restored byte-identically)
 
-| Pin          | Mutation                                                                                        | Observed failure                                                                   |
-| ------------ | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| F2 create    | add `link: \`${baseUrl}/invitations/${token}\``to the route's`collab.invite.created` log fields | `AssertionError: expected [ Array(1) ] to deeply equal []`                         |
-| F2 preview   | log `{ path: new URL(request.url).pathname }` in the preview handler                            | `AssertionError: expected [ Array(1) ] to deeply equal []`                         |
-| F3 phone     | `deliveryFor` phone arm → `channels: ["email"]`                                                 | `AssertionError: expected [ 'email' ] to include 'sms'`                            |
-| F4 scoping   | drop `eventId` from the list `find(...)`                                                        | `AssertionError: expected [ '6af4a5cc…c', …(1) ] to deeply equal [ '6af4a5cc…8' ]` |
-| F5 duplicate | disable the pre-check **and** break the `11000` mapping                                         | `AssertionError: expected [ 201, 500 ] to deeply equal [ 201, 409 ]`               |
-| F5 duplicate | break **only** the `11000` mapping                                                              | pin stays **green** — the loser was refused by the pre-check, not the index (D4)   |
-| F6 preview   | add `status: "pending"` to the token lookup                                                     | `AssertionError: expected 404 to be 200`                                           |
+| Pin          | Mutation                                                                                            | Observed failure                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| F2 create    | add `` link: `${baseUrl}/invitations/${token}` `` to the route's `collab.invite.created` log fields | `AssertionError: expected [ Array(1) ] to deeply equal []`                         |
+| F2 preview   | log `{ path: new URL(request.url).pathname }` in the preview handler                                | `AssertionError: expected [ Array(1) ] to deeply equal []`                         |
+| F3 phone     | `deliveryFor` phone arm → `channels: ["email"]`                                                     | `AssertionError: expected [ 'email' ] to include 'sms'`                            |
+| F4 scoping   | drop `eventId` from the list `find(...)`                                                            | `AssertionError: expected [ '6af4a5cc…c', …(1) ] to deeply equal [ '6af4a5cc…8' ]` |
+| F5 duplicate | disable the pre-check **and** break the `11000` mapping                                             | `AssertionError: expected [ 201, 500 ] to deeply equal [ 201, 409 ]`               |
+| F5 duplicate | break **only** the `11000` mapping                                                                  | pin stays **green** — the loser was refused by the pre-check, not the index (D4)   |
+| F6 preview   | add `status: "pending"` to the token lookup                                                         | `AssertionError: expected 404 to be 200`                                           |
 
 A first F2-preview probe that logged `{ token }` also stayed green — that is the
 redaction layer doing its job, not a hole in the pin (D1).

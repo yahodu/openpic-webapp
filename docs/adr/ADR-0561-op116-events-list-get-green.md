@@ -24,10 +24,10 @@ passing (section D); each asserted server behaviour is independently proven.
 `@/server/events/search` exports `escapeRegex(value)` — every regex
 metacharacter (`\ ^ $ . * + ? ( ) [ ] { } |`) escaped with a backslash,
 ordinary characters untouched — and `buildNamePrefixRegex(query)` which builds
-`new RegExp(\`^\${escapeRegex(query)}\`, "i")`, the anchored case-insensitive
-literal prefix the list `?q=`matches against (never a widening injection:
-U1's`[a-z]`/`.*`/`^`cases act as literals).`@/server/events/pipeline`exports the`ProcessingCounts`shape, the`PipelineStatus`union and`derivePipelineStatus(counts)` implementing the ADR-0560 priority table (`idle`→`indexing`→`indexed`→`delayed`→`partial_failure`). `@/server/events/windows`adds`uploadClosesInHours(uploadWindowEndsAt, now)`: `null`in →`null`out,
-else`max(0, ceil((end - now) / 3 600 000))` — the upward-rounded countdown
+``new RegExp(`^\${escapeRegex(query)}`, "i")``, the anchored case-insensitive
+literal prefix the list `?q=` matches against (never a widening injection:
+U1's `[a-z]`/`.*`/`^` cases act as literals). `@/server/events/pipeline` exports the `ProcessingCounts` shape, the `PipelineStatus` union and `derivePipelineStatus(counts)` implementing the ADR-0560 priority table (`idle`→`indexing`→`indexed`→`delayed`→`partial_failure`). `@/server/events/windows` adds `uploadClosesInHours(uploadWindowEndsAt, now)`: `null` in → `null` out,
+else `max(0, ceil((end - now) / 3 600 000))` — the upward-rounded countdown
 (U3).
 
 All three are pure and fully covered by the 46 unit cases.
