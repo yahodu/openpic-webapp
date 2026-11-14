@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
+import { waitForCommitted } from "@/server/db/retry-wait";
 import { isTransactionRetryLimitError, withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { requireEventRole } from "@/server/events/access";
@@ -60,32 +61,14 @@ function targetUserIdFromRequest(request: Request): ObjectId {
 }
 
 /**
- * How long a loser of the removal race waits for the winner's commit, in ms.
- *
- * shortcut: a fixed ceiling, not the winner's own duration; a removal
- * transaction taking longer than this answers `500` as before. Upgrade to a
- * shared per-member removal lock if a bounded wait proves too short.
- */
-const RIVAL_COMMIT_TIMEOUT_MS = 1_000;
-
-/** Poll interval while waiting for the winner's committed removal, in ms. */
-const RIVAL_COMMIT_POLL_MS = 25;
-
-/** Resolve after `ms`, for the bounded wait below. */
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
-/**
  * Wait, bounded, for a concurrent removal of the same member to commit.
  *
  * Two `DELETE`s of one member collide on the same document inside their
- * transactions. The loser's bounded retry budget is spent **before** the
- * winner commits (measured: three attempts inside the winner's open
- * transaction), so the row still reads `revokedAt: null` at that moment and a
- * single re-read would answer `500`. Poll until the winner's commit is
- * visible instead (ADR-0664 §Amendment).
+ * transactions. The loser's bounded retry budget is spent **before the winner
+ * commits** (measured: three attempts inside the winner's open transaction), so
+ * the row still reads `revokedAt: null` at that moment and a single re-read
+ * would answer `500`. Poll until the winner's commit is visible instead
+ * (ADR-0664 §Amendment).
  *
  * @param members - The `event_organizers` collection.
  * @param memberId - The row the pre-transaction lookup resolved.
@@ -96,16 +79,11 @@ async function rivalRemovalCommitted(
   members: RepositoryCollection,
   memberId: unknown
 ): Promise<boolean> {
-  for (let waited = 0; waited <= RIVAL_COMMIT_TIMEOUT_MS; waited += RIVAL_COMMIT_POLL_MS) {
-    const row = (await members.findOne({ _id: memberId })) as {
-      readonly revokedAt?: unknown;
-    } | null;
-    if (row?.revokedAt !== null && row?.revokedAt !== undefined) {
-      return true;
-    }
-    await sleep(RIVAL_COMMIT_POLL_MS);
-  }
-  return false;
+  return waitForCommitted(
+    async () =>
+      (await members.findOne({ _id: memberId })) as { readonly revokedAt?: unknown } | null,
+    (row) => row?.revokedAt !== null && row?.revokedAt !== undefined
+  );
 }
 
 export const DELETE = defineRoute({
