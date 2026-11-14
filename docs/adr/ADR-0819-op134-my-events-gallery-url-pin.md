@@ -86,11 +86,11 @@ trunk today; it exists to keep the direction of the fix unambiguous.
 
 Measured on the pins branch, `origin/main` `fdff81c` + this spec only:
 
-| pass                                                             | result                                                                                                         |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| trunk, focused                                                   | `Test Files 1 failed (1)` / `Tests 2 failed \| 2 passed (4)` — both failures `expected '/e//gallery' to be ''` |
-| near-fix (`item.slug === "" ? "" : \`/e/${item.slug}/gallery\``) | `4 passed (4)`                                                                                                 |
-| weak fix (`galleryUrl: ""` unconditionally)                      | `1 failed \| 3 passed (4)` — the control fails `expected '' to be '/e/op134-f4-control000004/gallery'`         |
+| pass                                                               | result                                                                                                         |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| trunk, focused                                                     | `Test Files 1 failed (1)` / `Tests 2 failed \| 2 passed (4)` — both failures `expected '/e//gallery' to be ''` |
+| near-fix (`` item.slug === "" ? "" : `/e/${item.slug}/gallery` ``) | `4 passed (4)`                                                                                                 |
+| weak fix (`galleryUrl: ""` unconditionally)                        | `1 failed \| 3 passed (4)` — the control fails `expected '' to be '/e/op134-f4-control000004/gallery'`         |
 
 Both mutations were applied to `route.ts` from a scratch backup and reverted;
 the restored file is byte-identical (`sha256

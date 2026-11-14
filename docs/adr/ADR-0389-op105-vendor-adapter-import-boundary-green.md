@@ -120,9 +120,9 @@ apps/web/src/test/unit/eslint/no-direct-vendor-adapter-import.test.ts` →
   pins and its ADR are carried byte-unchanged.
 - **Unpinned edges recorded for the Test Author** (not fixed here — a GREEN may
   not write tests): a dynamic `import()` whose specifier is a **template
-  literal** with no expressions (`import(\`@/server/adapters/cashfree/x\`)`) is
-not reported (the rule matches a string `Literal`only, which is what the pin
-exercises); and`export * from "…/cashfree/…"`is reported, but only the`export { … } from` shape is pinned.
+  literal** with no expressions (``import(`@/server/adapters/cashfree/x`)``) is
+  not reported (the rule matches a string `Literal` only, which is what the pin
+  exercises); and `export * from "…/cashfree/…"` is reported, but only the `export { … } from` shape is pinned.
 - The boundary is path-based, so it deliberately covers **every** current and
   future module under `server/adapters/cashfree/**`, not one file name.
 

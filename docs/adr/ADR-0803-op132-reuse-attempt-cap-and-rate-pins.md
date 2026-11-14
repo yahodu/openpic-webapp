@@ -158,7 +158,7 @@ five cases fail for the stated reason:
 | 1 — a spent budget refunds nothing to reuse     | `AssertionError: expected 202 to be 403` — the reuse is accepted and mints a fourth attempt                                                               |
 | 2 — submits and reuses are mixed on one event   | `AssertionError: expected 202 to be 403` — the fourth call on the reuse path is accepted                                                                  |
 | 3 — five submits race for one remaining attempt | `AssertionError: expected [202, 202, 202, 500, 500] to deeply equal [202, 403, 403, 403, 403]` — two overshoots, two `TransactionRetryLimitError` (`500`) |
-| 4a — a reuse answer carries the §0.11 headers   | `Error: expected the reuse answer to carry the §0.11 \`ratelimit-limit\` header`                                                                          |
+| 4a — a reuse answer carries the §0.11 headers   | ``Error: expected the reuse answer to carry the §0.11 `ratelimit-limit` header``                                                                          |
 | 4b — past the loosest POST bound                | `AssertionError: the reuse route never answered 429: statuses 404,404,…,404` (61 × `404`): expected -1 to be greater than or equal to 0                   |
 
 `Test Files 1 failed (1)`, `Tests 5 failed (5)`. `tsc -p apps/web/tsconfig.json
