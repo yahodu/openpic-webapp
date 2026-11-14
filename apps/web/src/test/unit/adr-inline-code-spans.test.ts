@@ -96,10 +96,11 @@ import {
  *     is the CommonMark way to write one; inside a double-backtick span it can
  *     be literal shell text (`echo \`id\``). So the two sanctioned alternatives
  *     are a **fenced block**, or **dropping the escape** where the meaning
- *     allows (`` ``…`…`` ``). An earlier revision of this bullet claimed the
- *     pair was "always wrong … nothing legitimate needs it in prose", which was
- *     too strong: the two characterization rows at the end of the rule block pin
- *     the shapes that are reported although prettier leaves them byte-stable.
+ *     allows (a double-backtick span holds a bare backtick, e.g. ``echo `id` ``).
+ *     An earlier revision of this bullet claimed the pair was "always wrong …
+ *     nothing legitimate needs it in prose", which was too strong: the two
+ *     characterization rows at the end of the rule block pin the shapes that
+ *     are reported although prettier leaves them byte-stable.
  *   - `column` is the 1-based character offset of the **backslash** — the first
  *     byte of the pair — so a report can be pasted into an editor's gutter.
  *   - The sweep root is the repository root the spec derives from its own
