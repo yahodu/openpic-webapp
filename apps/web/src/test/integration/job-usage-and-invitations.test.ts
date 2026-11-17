@@ -261,6 +261,37 @@ describe("usage-threshold-check: the per-period latch", () => {
     expect(events[0]?.payload).toMatchObject({ threshold: 80, percent: 90 });
     expect(result.details?.notified).toBe(1);
     expect(await latch("events.active", periodKey("monthly", NOW))).toEqual([80]);
+    // The elapsed row keeps its own latch verbatim: an elapsed period is not
+    // re-announced, and it is not deleted to make that true (ADR-0851 §3).
+    expect(await latch("events.active", "2026-10")).toEqual([80, 95, 100]);
+  });
+
+  it("leaves an elapsed period's row alone even when its own latch is behind", async () => {
+    await seedPlan();
+    await seedActiveSubscription();
+
+    // The elapsed month is at 90 % of the limit with no latch recorded at all,
+    // so a job that reads every counter row would warn for it.
+    await seedCounter({ entitlementKey: "events.active", periodKey: "2026-09", value: 9 });
+    // The current month is at 10 % — below the first threshold, so the run has
+    // nothing live to warn about either way.
+    await seedCounter({
+      entitlementKey: "events.active",
+      periodKey: periodKey("monthly", NOW),
+      value: 1,
+    });
+
+    // ── Act ──
+    const result = await usageThresholdCheckJob.run({
+      requestedLimit: null,
+      clock: fixedClock(NOW),
+      logger: recordingLogger(),
+    });
+
+    // ── Assert: the elapsed row neither warns nor latches ──
+    expect(result.details?.notified).toBe(0);
+    expect(await thresholdEvents("usage.events.threshold")).toHaveLength(0);
+    expect(await latch("events.active", "2026-09")).toBeUndefined();
   });
 
   it("says nothing for an unlimited quota or a counter below the first threshold", async () => {
