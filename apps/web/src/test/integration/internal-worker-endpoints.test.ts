@@ -816,7 +816,12 @@ describe("when the worker flushes a batch of domain events", () => {
     );
     expect(second).toEqual({ accepted: 0, deduped: 1, rejected: [] });
 
-    expect(await app.db.collection(COLLECTIONS.domainEvents).countDocuments({})).toBe(1);
+    // Scoped to the delivery this case is about: the fixture's own sign-in has
+    // already emitted `account.welcome` + `auth.signin.new_device` into the same
+    // outbox, so an unscoped count can never be 1 (ADR-0830 §8.2).
+    expect(
+      await app.db.collection(COLLECTIONS.domainEvents).countDocuments({ dedupeKey: activation })
+    ).toBe(1);
   });
 
   it("dedupes the activation identity a confirmation has already published (ADR-0808 §3)", async () => {
