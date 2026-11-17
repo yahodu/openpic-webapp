@@ -538,3 +538,280 @@ describe("when a sweep's step fails after its state change", () => {
     expect(row?.status, "the event is still ended").toBe("ended");
   });
 });
+
+/**
+ * The stored post-purge state of one account, read in one place so each pin's
+ * assertions stay about the step whose failure it injected.
+ */
+interface DeletionState {
+  /** Tombstone rows keyed at the user — the only place the contact survives (§12). */
+  readonly tombstones: number;
+  /** The contact the tombstone retains. */
+  readonly tombstoneEmail: unknown;
+  /** `account.deletion.completed` rows for this user. */
+  readonly receipts: number;
+  /** The receipt's payload keys — the fan-out resolves the recipient itself. */
+  readonly receiptKeys: string[];
+  /** The receipt's payload. */
+  readonly receiptPayload: Record<string, unknown>;
+  /** The profile's lifecycle status. */
+  readonly profileStatus: unknown;
+  /** The Better Auth sessions still addressing this user. */
+  readonly sessions: number;
+  /** The Better Auth row's email, `null` when the purge anonymized it. */
+  readonly accountEmail: unknown;
+  /** The Better Auth row's name, `null` when the purge anonymized it. */
+  readonly accountName: unknown;
+}
+
+/** The stored purge state of one account — the facts every post-claim pin asserts. */
+async function deletionState(userId: ObjectId): Promise<DeletionState> {
+  const tombstones = await app.db
+    .collection(TOMBSTONES)
+    .find({ userId: userId.toHexString() })
+    .toArray();
+  const receipts = await eventsFor("account.deletion.completed", userId.toHexString());
+  const profile = await app.db.collection(COLLECTIONS.userProfiles).findOne({ userId });
+  const account = await app.db.collection("user").findOne({ _id: userId });
+  const sessions = await app.db
+    .collection("session")
+    .countDocuments({ userId: { $in: [userId.toHexString(), userId] } });
+
+  return {
+    tombstones: tombstones.length,
+    tombstoneEmail: tombstones[0]?.email,
+    receipts: receipts.length,
+    receiptKeys: Object.keys(receipts[0]?.payload ?? {}).sort(),
+    receiptPayload: (receipts[0]?.payload ?? {}) as Record<string, unknown>,
+    profileStatus: profile?.status,
+    sessions,
+    accountEmail: account?.email ?? null,
+    accountName: account?.name ?? null,
+  };
+}
+
+/** The driver's own `deleteMany`, captured before any spy replaces it. */
+const driverDeleteMany = ((): typeof Collection.prototype.deleteMany => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "deleteMany");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("the driver's Collection#deleteMany is missing from the prototype");
+  }
+  return descriptor.value as typeof Collection.prototype.deleteMany;
+})();
+
+/** The driver's own `deleteMany` argument tuple. */
+type DriverDeleteManyArgs = Parameters<typeof driverDeleteMany>;
+
+/**
+ * Arm one transient driver failure on the next `deleteMany` of `collectionName`.
+ *
+ * The error carries `code: 91` (a replica-set election), never `11000`, so no
+ * caller can mistake it for the dedupe collision the outbox relies on.
+ *
+ * @param collectionName - The collection whose delete fails, matched on `this`.
+ * @returns The injection, whose `fired` count proves it was reached.
+ */
+function failNextDeleteMany(collectionName: string): InjectedWriteFailure {
+  let remaining = 1;
+  let fired = 0;
+  const spy = vi.spyOn(Collection.prototype, "deleteMany").mockImplementation(function (
+    this: Collection,
+    ...args: DriverDeleteManyArgs
+  ) {
+    if (this.collectionName === collectionName && remaining > 0) {
+      remaining -= 1;
+      fired += 1;
+      return Promise.reject(
+        Object.assign(new Error(`injected failure: deleteMany on ${collectionName}`), { code: 91 })
+      );
+    }
+    return driverDeleteMany.call(this, ...args);
+  } as never);
+
+  return {
+    fired: () => fired,
+    restore: () => {
+      spy.mockRestore();
+    },
+  };
+}
+
+/** Seed one Better Auth session row for a user. */
+async function seedSession(userId: ObjectId): Promise<void> {
+  await app.db.collection("session").insertOne({
+    _id: new ObjectId(),
+    userId: userId.toHexString(),
+    token: `session-${userId.toHexString()}`,
+    createdAt: new Date(NOW.getTime() - DAY_MS),
+    expiresAt: new Date(NOW.getTime() + DAY_MS),
+  });
+}
+
+/** The instant one purge run is timed at — every run in these pins shares it. */
+function purgeRun(): Promise<{ readonly scanned: number; readonly errors: number }> {
+  return accountDeletionPurgeJob.run({
+    requestedLimit: null,
+    clock: fixedClock(NOW),
+    logger: recordingLogger(),
+  });
+}
+
+/**
+ * Integration / contract — the account purge's **remaining** post-claim failure
+ * windows (OP-136 follow-up, finding **F3a**; contract §10.2, §1.4, §12;
+ * ADR-0857).
+ *
+ * The user story: *as the platform I want any failed step of a delete I have
+ * already claimed to be recoverable, so no single transient write failure can
+ * leave an account `deleted` with no receipt and a live session.*
+ *
+ * The tombstone window is pinned above (ADR-0853). These pins cover the other
+ * three steps the purge performs after it claims the account, one injected
+ * failure each — the session `deleteMany`, the `account.deletion.completed`
+ * receipt, and the contact anonymize — and each one then requires the *next*
+ * run to finish the deletion: one tombstone holding the last known email, one
+ * receipt whose `payload` is `{ userId }` only, and a `deleted` profile.
+ *
+ * The mechanism is deliberately unpinned: one transaction, a resumable
+ * intermediate state or an emit-first order all satisfy them. A near-fix that
+ * only passes the tombstone pin fails the session-delete pin.
+ */
+describe("when a purge step fails after the account is claimed", () => {
+  it("the session is revoked by the next run after a failed session delete", async () => {
+    // Arrange — one account inside its purge window, with a session to revoke.
+    const userId = await seedUser({
+      emailVerified: true,
+      createdAt: new Date(NOW.getTime() - 60 * DAY_MS),
+    });
+    const email = userEmail(userId);
+    await seedProfile(userId, {
+      status: "deletion_pending",
+      deletionScheduledAt: new Date(NOW.getTime() - DAY_MS),
+    });
+    await seedSession(userId);
+
+    // ── Act: the daily run, with one injected session-delete failure ──
+    const injection = failNextDeleteMany("session");
+    let first: RunReport;
+    try {
+      first = await runReporting(purgeRun);
+    } finally {
+      injection.restore();
+    }
+
+    // ── Assert: the injection was reached and the run reported it ──
+    expect(injection.fired(), "the injection must fire exactly once").toBe(1);
+    expect(first.errors, "run 1 reports the account whose session delete failed").toBe(1);
+
+    // ── Act: the next daily run, with the failure gone ──
+    const retry = await purgeRun();
+
+    // ── Assert: the deletion is finished, sessions included, not lost ──
+    const state = await deletionState(userId);
+    expect(
+      {
+        tombstones: state.tombstones,
+        receipts: state.receipts,
+        sessions: state.sessions,
+      },
+      `run 2 must finish the deletion the failed session delete left unfinished (run 2 reported scanned: ${String(retry.scanned)}, errors: ${String(retry.errors)})`
+    ).toMatchObject({ tombstones: 1, receipts: 1, sessions: 0 });
+    expect(state.tombstoneEmail, "the retained contact is the last known email").toBe(email);
+    expect(state.receiptKeys).toEqual(["userId"]);
+    expect(state.receiptPayload, "the receipt addresses the user and nothing else").toMatchObject({
+      userId: userId.toHexString(),
+    });
+    expect(state.profileStatus, "the profile is deleted once run 2 finishes").toBe("deleted");
+  });
+
+  it("the receipt is emitted by the next run after a failed receipt write", async () => {
+    // Arrange — one account inside its purge window, with a contact to retain.
+    const userId = await seedUser({
+      emailVerified: true,
+      createdAt: new Date(NOW.getTime() - 60 * DAY_MS),
+    });
+    const email = userEmail(userId);
+    await seedProfile(userId, {
+      status: "deletion_pending",
+      deletionScheduledAt: new Date(NOW.getTime() - DAY_MS),
+    });
+    await seedSession(userId);
+
+    // ── Act: the daily run, with one injected receipt-insert failure ──
+    const injection = failNextInsertOne(COLLECTIONS.domainEvents, "account.deletion.completed");
+    let first: RunReport;
+    try {
+      first = await runReporting(purgeRun);
+    } finally {
+      injection.restore();
+    }
+
+    // ── Assert: the injection was reached and the run reported it ──
+    expect(injection.fired(), "the injection must fire exactly once").toBe(1);
+    expect(first.errors, "run 1 reports the account whose receipt write failed").toBe(1);
+
+    // ── Act: the next daily run, with the failure gone ──
+    const retry = await purgeRun();
+
+    // ── Assert: the receipt exists once, and the deletion it announces is done ──
+    const state = await deletionState(userId);
+    expect(
+      { tombstones: state.tombstones, receipts: state.receipts },
+      `run 2 must emit the receipt the failed write lost (run 2 reported scanned: ${String(retry.scanned)}, errors: ${String(retry.errors)})`
+    ).toMatchObject({ tombstones: 1, receipts: 1 });
+    expect(state.tombstoneEmail, "the retained contact is the last known email").toBe(email);
+    expect(state.receiptKeys, "the receipt addresses the user and nothing else").toEqual([
+      "userId",
+    ]);
+    expect(state.receiptPayload).toMatchObject({ userId: userId.toHexString() });
+    expect(state.profileStatus, "the profile is deleted once run 2 finishes").toBe("deleted");
+  });
+
+  it("the account is anonymized by the next run after a failed anonymize write", async () => {
+    // Arrange — one account inside its purge window, with a contact to retain.
+    const userId = await seedUser({
+      emailVerified: true,
+      createdAt: new Date(NOW.getTime() - 60 * DAY_MS),
+    });
+    const email = userEmail(userId);
+    await seedProfile(userId, {
+      status: "deletion_pending",
+      deletionScheduledAt: new Date(NOW.getTime() - DAY_MS),
+    });
+    await seedSession(userId);
+
+    // ── Act: the daily run, with one injected anonymize failure ──
+    const injection = failNextUpdateOne("user");
+    let first: RunReport;
+    try {
+      first = await runReporting(purgeRun);
+    } finally {
+      injection.restore();
+    }
+
+    // ── Assert: the injection was reached and the run reported it ──
+    expect(injection.fired(), "the injection must fire exactly once").toBe(1);
+    expect(first.errors, "run 1 reports the account whose anonymize write failed").toBe(1);
+
+    // ── Act: the next daily run, with the failure gone ──
+    const retry = await purgeRun();
+
+    // ── Assert: the contact is revoked from the account and kept in the tombstone ──
+    const state = await deletionState(userId);
+    expect(
+      { tombstones: state.tombstones, receipts: state.receipts },
+      `run 2 must finish the anonymize the failed write left undone (run 2 reported scanned: ${String(retry.scanned)}, errors: ${String(retry.errors)})`
+    ).toMatchObject({ tombstones: 1, receipts: 1 });
+    expect(state.accountEmail, "the account keeps no contact of its own").toBeNull();
+    expect(state.accountName, "the account keeps no display name of its own").toBeNull();
+    expect(
+      state.tombstoneEmail,
+      "the last known email survives only because the contact was read before the erase"
+    ).toBe(email);
+    expect(state.receiptKeys).toEqual(["userId"]);
+    expect(state.receiptPayload, "the receipt addresses the user and nothing else").toMatchObject({
+      userId: userId.toHexString(),
+    });
+    expect(state.profileStatus, "the profile is deleted once run 2 finishes").toBe("deleted");
+  });
+});
