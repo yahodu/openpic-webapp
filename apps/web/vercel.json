@@ -15,6 +15,50 @@
     {
       "path": "/api/v1/internal/cron/quiet-hours-release",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/pipeline-sweep",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/pipeline-indexed-check",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/upload-session-sweep",
+      "schedule": "10 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/event-window-sweep",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/retention-warnings",
+      "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/retention-purge",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/usage-threshold-check",
+      "schedule": "15 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/invitation-expiry",
+      "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/account-deletion-purge",
+      "schedule": "45 3 * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/verification-nudge",
+      "schedule": "25 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/attendee-no-match-check",
+      "schedule": "35 * * * *"
     }
   ]
 }
