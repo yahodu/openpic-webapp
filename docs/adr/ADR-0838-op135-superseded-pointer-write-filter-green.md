@@ -64,7 +64,7 @@ filter, so the same raced window can no longer stamp `status: "failed"` on a new
 The wire shapes and status codes, the `withTransaction` boundary (selfie row and profile still commit
 or roll back together), the warn's fields (`{event, kind, id, workerId, reason}` — no profile id, no
 biometric field), the lease predicate, and every existing test case, helper, fixture and mock. The
-diff is `apps/web/src/app/api/v1/internal/worker/report/route.ts` alone.
+diff is `apps/web/src/app/api/v1/internal/worker/report/route.ts` alone (+28/−28).
 
 ## Consequences
 
@@ -119,5 +119,9 @@ AssertionError: expected { …(3) } to deeply equal { …(3) }
 
 The route was restored byte-identically after each probe
 (`sha256 9e379612246b0bafc5327bc093986951cb9545407827141403b54787f2a27162`). Gates: full `unit`
-`184 files / 3077 passed | 3 skipped`, full `integration` green, `tsc` exit `0`, `eslint` 0 issues,
-`prettier --check` clean, the `adr-*` guards green.
+`184 files / 3077 passed | 3 skipped`, full `integration` green **in CI** (PR #630 `ci`; `main` CI on
+the squash), `tsc` exit `0`, `eslint` 0 issues, `prettier --check` clean, the `adr-*` guards green.
+The local full `integration` run was `2 failed | 1432 passed (1434)` — two 5 s timeouts in specs
+unrelated to this change (`auth.test.ts` `I13: disabling 2FA requires a fresh SMS OTP…` and
+`event-images-management.test.ts` `R2: deleting one event's reference…`), both green isolated
+(`48 passed (48)`).
