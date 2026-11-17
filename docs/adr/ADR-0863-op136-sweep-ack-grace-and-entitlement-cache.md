@@ -131,3 +131,86 @@ window, unchanged from the shipped design's own re-resolution.
   the latch, not the verdict, is what keeps a warning at once per period.
 - The step-2 loop is still unbounded in wall-clock terms while the broker refuses
   every enqueue, which is the accepted trade recorded in decision 2.
+
+## Review sign-off (round 1, artifact lens) — APPROVED WITH FINDINGS
+
+Reviewed head `d4b2f4215513532b2ff060c81987b36957229ac4` (PR #663, base
+`origin/main` `4a98f0136d60f7c610e9acd6494c119573b348f1`, squash-merged as
+`7b97a584`). This record's blob is identical at the reviewed head, at the squash
+and on `origin/main` (`5949c58e…`), so this section is appended to the bytes that
+landed. The diff is four files, `+163/−3`: the two job modules, this record and
+the shared ledger. No test, fixture, helper or frozen record is edited.
+
+### Evidence the reviewer reproduced
+
+Measured in throwaway worktrees at the reviewed head and again on the trunk
+`533bc7f5`, not copied from the delivery's handoff; every probe worktree was
+removed, and each mutated production file was restored to its committed bytes.
+
+- **A refused step-2 re-enqueue warns exactly once** — one
+  `queue.enqueue_failed` at `level: "warn"`, carrying `kind: "event_image"` and
+  `queueKey: "q:image"` — and the row stays `queued` with no broker pointer.
+- **A refused step-4 enqueue warns exactly once** with
+  `kind: "match_incremental"`, and `lastMatchRunAt` is handed back to its pre-run
+  value, because no broker pointer exists for the run.
+- **A healthy broker prints no `queue.enqueue_failed`** on the same seed, so the
+  warn is not emitted on every run; that control is what keeps the two positive
+  probes honest.
+- **Both halves are load-bearing once pinned.** Dropping `logger,` at both
+  `enqueueWork` call sites in `pipeline-sweep.ts` reddens the two positive probes
+  (`2 failed | 2 passed (4)`, `expected [] to have a length of 1 but got +0`)
+  while the two OP-136 job specs stay `11 passed (11)`. Calling
+  `checkEntitlement` per row inside `usage-threshold-check.ts` reddens the cache
+  probe alone (`1 failed | 3 passed (4)`, `expected 3 to be 1`) while the same
+  two specs stay `11 passed (11)`. `pipeline-sweep.ts` was restored to
+  `sha256 c74f78c7…5dba089` and `usage-threshold-check.ts` to
+  `sha256 b13124d8…c37445cd64` after each pass. This is finding **F1** of the
+  review, closed by card `t_8bd36a07` (PR #666, squash `f3bb846a`), which pins all
+  four arms.
+- **The cache collapses the plan reads** — three `usageCounters` rows of one
+  `(tenantId, entitlementKey)` (two elapsed periods and the live one) read
+  `COLLECTIONS.plans` **1** time through `verdictFor` and **3** times with the
+  cache removed, while `details.notified` and the latch are unchanged.
+
+The gates, at the reviewed head and on the trunk `533bc7f5`: the `ci` aggregate is green at `d4b2f421` (typecheck, lint, unit, integration, coverage thresholds, build, e2e) and 14 of the 15 check-runs pass. The `audit` job is red repo-wide on `GHSA-fc5q-39xc-vjpf` — also red on `origin/main`'s own runs `44145272406` and `44144795502`, whose `ci`, `audit-dev` and `secret-scan` jobs pass — and no dependency, lockfile or manifest is in this diff. Card `t_b0e2c0dd` (PR #669, squash `47d36617`) governs the advisory afterwards, and `audit` is green on the trunk's `CI` run `44163679770` at `268c842e`. On the trunk the two OP-136 job specs are `11 passed (11)`, the new pins are `4 passed (4)`, and the six `adr-*` guards are `6 files / 236 passed (236)`; `tsc` exits `0`, `eslint` reports `0` on the two modules and `prettier --check` is clean on the four paths.
+
+### Correction to §2 — which rows the unbounded grace can hold (decision unchanged)
+
+§2 closes with "only steps 1 and 2, where no claim happened, ever sit in the
+unbounded grace". That is inaccurate for **step 1**: its candidate is a row with
+`processing.status: "processing"` and an expired `processing.leaseExpiresAt`, so
+a claim _did_ happen, and schema §18.2's claim had already incremented
+`processing.attempts` before the lease ran out.
+
+What is exactly true is narrower: the _unbounded_ grace covers **re-enqueues the
+broker never accepted**, and it can hold a row that has already spent one or more
+attempts. Step 1's refusal path leaves such a row `queued` with its spent
+attempts intact, and step 2's filter admits it (`attempts < maxAttempts`, and no
+fresh broker pointer), so one row can sit in the grace more than once. A row
+leaves the grace when the broker accepts the enqueue; after that, further claims
+drain the budget, and step 3 fails it at `attempts >= maxAttempts`. What bounds
+the grace is the broker's acceptance, not a counter — which is §2's own decision.
+
+The decision of §2 is unaffected and stands as written: the ack grace is
+unbounded, and the budget counts claims. Only this one description of which rows
+the grace can hold is corrected.
+
+### Post-review status
+
+Written after the follow-ups landed, so they are cited by card id and PR number.
+
+- **F1 — landed.** Card `t_8bd36a07` (PR #666, squash `f3bb846a`, record
+  ADR-0864) pins both observability halves as four characterization cases: the
+  step-2 warn with the row still `queued`, the step-4 warn with the watermark
+  restored, the healthy-broker control, and the single plan read per key. Each of
+  the two reverts above now reddens the case it belongs to.
+- **F2 — landed.** Card `t_0924f321` (PR #667, squash `268c842e`, record
+  ADR-0865) gives `apps/web/src/server/images/requeue.ts` the `logger` its own
+  docblock already promised, and pins that warn.
+- **F3 — this section.** The §2 sentence above. The record is frozen from
+  `7b97a584`, so the correction is appended here; no ADR number is consumed and
+  the shared `docs/adr/README.md` ledger is untouched.
+- **No decision in §1–§3 is retracted.** These records document what followed the
+  landing, and the two decisions — the run's logger at both enqueue sites, and one
+  entitlement verdict per `(tenantId, entitlementKey)` per run — shipped as
+  written.
