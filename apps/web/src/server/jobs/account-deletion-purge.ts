@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
+import { withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { defineCronJob, type CronJob, type CronRunOutcome } from "@/server/jobs/cron-job";
 import { platformRepo } from "@/server/repos";
@@ -71,61 +72,70 @@ export async function accountDeletionPurge(options: SweepJobRunOptions): Promise
 
   for (const profile of candidates) {
     try {
-      // The expected prior state is in the filter, so a second run is a no-op.
-      const claimed = await profiles.findOneAndUpdate(
-        { _id: profile._id, status: "deletion_pending", deletionScheduledAt: { $lte: now } },
-        {
-          $set: {
-            status: "deleted",
-            purgeStartedAt: now,
-            displayName: null,
-            avatarAssetId: null,
-            updatedAt: now,
-          },
-        }
-      );
-      if (claimed === null) {
-        continue;
-      }
-
-      const userId = profile.userId.toHexString();
-      const userRow = (await platform
-        .collection(AUTH_USER_COLLECTION)
-        .findOne({ _id: profile.userId })) as { readonly email?: unknown } | null;
-      const email = typeof userRow?.email === "string" ? userRow.email : null;
-
-      // Anonymize the account: the Better Auth row keeps no contact of its own.
-      await platform
-        .collection(AUTH_USER_COLLECTION)
-        .updateOne({ _id: profile.userId }, { $unset: { email: "", name: "" } });
-
-      await platform
-        .collection(AUTH_SESSION_COLLECTION)
-        .deleteMany({ userId: { $in: [userId, profile.userId] } });
-
-      if (email !== null) {
-        await platform.collection(TOMBSTONE_COLLECTION).updateOne(
-          { userId },
+      // One transaction: the claim, the erase, the tombstone and the receipt
+      // commit together, so a failure at any step rolls the claim back and the
+      // next run still finds the account `deletion_pending` and finishes it.
+      const finished = await withTransaction(async (session) => {
+        // The expected prior state is in the filter, so a second run is a no-op.
+        const claimed = await profiles.findOneAndUpdate(
+          { _id: profile._id, status: "deletion_pending", deletionScheduledAt: { $lte: now } },
           {
-            $set: { email },
-            $setOnInsert: { userId, deletedAt: now },
+            $set: {
+              status: "deleted",
+              purgeStartedAt: now,
+              displayName: null,
+              avatarAssetId: null,
+              updatedAt: now,
+            },
           },
-          { upsert: true }
+          { session }
         );
-      }
+        if (claimed === null) {
+          return false;
+        }
 
-      await emitDomainEvent(
-        {
-          eventKey: "account.deletion.completed",
-          tenantId: userId,
-          actorRef: { kind: "system", id: "account-deletion-purge" },
-          subjectRef: { kind: "user", id: userId },
-          payload: { userId },
-          dedupeKey: `account.deletion.completed:${userId}`,
-        },
-        { db, clock }
-      );
-      purged += 1;
+        const userId = profile.userId.toHexString();
+        const userRow = (await platform
+          .collection(AUTH_USER_COLLECTION)
+          .findOne({ _id: profile.userId }, { session })) as { readonly email?: unknown } | null;
+        const email = typeof userRow?.email === "string" ? userRow.email : null;
+
+        // Anonymize the account: the Better Auth row keeps no contact of its own.
+        await platform
+          .collection(AUTH_USER_COLLECTION)
+          .updateOne({ _id: profile.userId }, { $unset: { email: "", name: "" } }, { session });
+
+        await platform
+          .collection(AUTH_SESSION_COLLECTION)
+          .deleteMany({ userId: { $in: [userId, profile.userId] } }, { session });
+
+        if (email !== null) {
+          await platform.collection(TOMBSTONE_COLLECTION).updateOne(
+            { userId },
+            {
+              $set: { email },
+              $setOnInsert: { userId, deletedAt: now },
+            },
+            { upsert: true, session }
+          );
+        }
+
+        await emitDomainEvent(
+          {
+            eventKey: "account.deletion.completed",
+            tenantId: userId,
+            actorRef: { kind: "system", id: "account-deletion-purge" },
+            subjectRef: { kind: "user", id: userId },
+            payload: { userId },
+            dedupeKey: `account.deletion.completed:${userId}`,
+          },
+          { db, clock, session }
+        );
+        return true;
+      });
+      if (finished) {
+        purged += 1;
+      }
     } catch (error) {
       errors += 1;
       logger.error("account deletion purge failed", {
