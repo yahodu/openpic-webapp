@@ -14,7 +14,9 @@
   returning **`0863`** as the highest number on any object (the OP-136 lane) with no object **path**
   carrying `0842` — the three `0842` hits in that listing are hex substrings of object ids. So this
   record takes **`0842`** and advances **only** the `OP-135 worker interface lane` cell to `0843`; the
-  OP-136 cell stays `0863`, the `OP-129 attendee identity lane` cell and both `unallocated (future
+  OP-136 cell then read `0863` (the merge of `origin/main` `4a295db5` into this branch brought a newer
+  trunk that had advanced it to `0864`, and the resolution keeps both moves), and the
+  `OP-129 attendee identity lane` cell and both `unallocated (future
 lanes)` cells stay `0869`. No range is re-cut.
 - **Consumers:** `apps/web/src/test/integration/internal-worker-endpoints.test.ts`
 - **Consumes:** [ADR-0835](ADR-0835-op135-internal-worker-boundary-hardening-green.md) §4 (where the

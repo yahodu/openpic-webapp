@@ -3,7 +3,7 @@ import { COLLECTIONS } from "@/server/db/collections";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { defineCronJob, type CronJob, type CronRunOutcome } from "@/server/jobs/cron-job";
 import { platformRepo } from "@/server/repos";
-import { checkEntitlement } from "@/server/services/entitlements";
+import { checkEntitlement, type EntitlementVerdict } from "@/server/services/entitlements";
 
 import type { SweepJobRunOptions } from "./run-options";
 import { usageThresholdsToNotify } from "./sweep-decisions";
@@ -79,10 +79,25 @@ export async function usageThresholdCheck(options: SweepJobRunOptions): Promise<
   let notified = 0;
   let skipped = 0;
 
+  // One resolution per `(tenantId, entitlementKey)` per run: the plan, the
+  // overrides and the grants are the same for every counter row of that key,
+  // and a run can reach up to `limit` rows (ADR-0863).
+  const verdicts = new Map<string, EntitlementVerdict>();
+  const verdictFor = async (row: UsageCounterRow): Promise<EntitlementVerdict> => {
+    const key = `${row.tenantId}:${row.entitlementKey}`;
+    const cached = verdicts.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const verdict = await checkEntitlement(row.tenantId, row.entitlementKey, 0, {}, { db, clock });
+    verdicts.set(key, verdict);
+    return verdict;
+  };
+
   for (const row of candidates) {
     scanned += 1;
     const eventKey = THRESHOLD_EVENT_KEYS[row.entitlementKey];
-    const verdict = await checkEntitlement(row.tenantId, row.entitlementKey, 0, {}, { db, clock });
+    const verdict = await verdictFor(row);
     // A counter row from an elapsed period is not this period's usage; the
     // service resolves the key's own current period, and only that row is live.
     if (eventKey === undefined || verdict.periodKey !== row.periodKey) {

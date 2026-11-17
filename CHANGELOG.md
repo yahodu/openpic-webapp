@@ -1,3 +1,9 @@
+## [1.65.7](https://github.com/yahodu/openpic-webapp/compare/v1.65.6...v1.65.7) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 warn on a refused sweep enqueue and cache the entitlement verdict ([#663](https://github.com/yahodu/openpic-webapp/issues/663)) ([7b97a58](https://github.com/yahodu/openpic-webapp/commit/7b97a584cb20c4adbbe53981a559c06e65a57031))
+
 ## [1.65.6](https://github.com/yahodu/openpic-webapp/compare/v1.65.5...v1.65.6) (2026-11-17)
 
 ### Bug Fixes
