@@ -2221,3 +2221,180 @@ describe("when a worker sends an event instant outside the outbox window", () =>
     expect(stored?.expireAt).toEqual(new Date(occurredAt.getTime() + retentionMs));
   });
 });
+
+/* ───── F-A: the pointer decides at write time, not at read (ADR-0837) ────── */
+
+/**
+ * The profile facts this pin turns on (§15.3, §6.4).
+ *
+ * `activeSelfieId` is the one that matters: the route reads it to decide
+ * `supersededSelfie`, so a confirmation that moves it between that read and the
+ * profile write must still stop the write.
+ */
+interface PointerProfile {
+  readonly activeSelfieId?: ObjectId | null;
+  readonly matchCount?: number;
+  readonly lastMatchRunAt?: Date | null;
+}
+
+describe("when the active selfie moves while a selfie report is being applied", () => {
+  /** The instant the superseded report's own run started. */
+  const STALE_RUN_STARTED_AT = new Date("2026-09-25T09:30:00.000Z");
+
+  /** The instant the newer confirmation's run started — the live watermark. */
+  const NEWER_RUN_STARTED_AT = new Date("2026-09-25T12:00:00.000Z");
+
+  /** The match count the newer confirmation published. */
+  const NEWER_MATCH_COUNT = 7;
+
+  /** The match count the superseded report carries. */
+  const STALE_MATCH_COUNT = 2;
+
+  it("F-A: keeps the newer selfie's count and watermark and still applies the item", async () => {
+    const fixture = await submittedSelfie("op135-pointer-race", "op135-pointer-race");
+    // The confirmation points the profile at the very row the worker is about to
+    // report, so the route's own read answers `supersededSelfie === false`. The
+    // pointer moves only afterwards, inside the window this case pins.
+    await bodyOf(
+      await confirmSelfie(fixture.world.event.slug, fixture.selfieId, {
+        cookie: fixture.world.cookie,
+        ip: fixture.world.ip,
+      }),
+      200,
+      `POST confirm on ${fixture.world.event.slug}`
+    );
+    await claimSelfie(fixture.selfieId, LEASEHOLDER);
+
+    const profile = await profileRow();
+    // The second, newer selfie a later submission leaves behind: a real row of
+    // this profile's on this event, already finished. The flip below points the
+    // profile at it, so the state the stale report must not touch is one a
+    // confirmation could have produced. Nothing in the report path reads it.
+    const newerSelfieId = new ObjectId();
+    await app.db.collection(COLLECTIONS.selfies).insertOne({
+      _id: newerSelfieId,
+      tenantId: fixture.world.tenantKey,
+      eventId: fixture.world.event.id,
+      profileId: profile._id,
+      subject: profile.subject,
+      contentHash: createHash("sha256").update("op135-pointer-race-newer").digest("hex"),
+      liveness: { required: true, challengeKind: "gesture", passed: true, score: 0.94 },
+      processing: {
+        status: "done",
+        priority: "high",
+        attempts: 1,
+        maxAttempts: 5,
+        leaseExpiresAt: null,
+        workerId: OTHER_WORKER,
+        queuedAt: NEWER_RUN_STARTED_AT,
+        startedAt: NEWER_RUN_STARTED_AT,
+        finishedAt: NEWER_RUN_STARTED_AT,
+        durationMs: 900,
+        lastError: null,
+        queueRef: null,
+      },
+      isActive: true,
+      createdAt: NEWER_RUN_STARTED_AT,
+    });
+
+    /** What the newer confirmation leaves on the profile. */
+    const flip = {
+      activeSelfieId: newerSelfieId,
+      status: "ready",
+      matchCount: NEWER_MATCH_COUNT,
+      lastMatchRunAt: NEWER_RUN_STARTED_AT,
+      updatedAt: NEWER_RUN_STARTED_AT,
+    };
+
+    // The window: this request's own profile read is held open, a confirmation
+    // flips the pointer to the newer selfie in the meantime, and only then does
+    // the held read resolve with the profile as it was **before** that flip. A
+    // write that repeats the read's verdict instead of carrying the pointer as a
+    // predicate of the write now overwrites a result it no longer owns.
+    const held: { opened: boolean; flipped: Document | null } = { opened: false, flipped: null };
+    const findOneSpy = vi.spyOn(Collection.prototype, "findOne").mockImplementation(function (
+      this: Collection,
+      ...args: Parameters<typeof driverFindOne>
+    ) {
+      if (held.opened || this.collectionName !== COLLECTIONS.attendeeEventProfiles) {
+        return driverFindOne.call(this, ...args);
+      }
+      if (filterTargetId(args[0]) !== profile._id.toHexString()) {
+        return driverFindOne.call(this, ...args);
+      }
+      held.opened = true;
+      return (async () => {
+        const snapshot = await driverFindOne.call(this, ...args);
+        await app.db
+          .collection(COLLECTIONS.attendeeEventProfiles)
+          .updateOne({ _id: profile._id }, { $set: flip });
+        // The window is open, so this read falls through to the driver.
+        held.flipped = await app.db
+          .collection(COLLECTIONS.attendeeEventProfiles)
+          .findOne({ _id: profile._id });
+        return snapshot;
+      })();
+    } as never);
+
+    let response: Response;
+    try {
+      response = await workerReportHandler(
+        signedPost(REPORT_PATH, {
+          workerId: LEASEHOLDER,
+          items: [
+            {
+              kind: "selfie",
+              id: fixture.selfieId,
+              outcome: "done",
+              quality: { faceCount: 1, accepted: true },
+              matchesCreated: STALE_MATCH_COUNT,
+              matchRunStartedAt: STALE_RUN_STARTED_AT.toISOString(),
+            },
+          ],
+        })
+      );
+    } finally {
+      findOneSpy.mockRestore();
+    }
+
+    // Without the held read there is no window, so say that instead of passing:
+    // a green here would mean this case measures nothing.
+    if (!held.opened) {
+      throw new Error("the route never read the profile, so the pinned window never opened");
+    }
+    const beforeFlip = held.flipped;
+    if (beforeFlip === null) {
+      throw new Error("the pointer flip left no profile to compare against");
+    }
+
+    expect(response.status).toBe(200);
+    // ADR-0832 §2: a discarded **profile** write is still an applied item — the
+    // row's own verdict landed and this worker held the lease.
+    expect(
+      await bodyOf(response, 200, "POST internal worker/report after the pointer flip")
+    ).toEqual({ applied: 1, leaseLost: 0, rejected: [] });
+
+    // The live result belongs to the newer selfie: this report may not move the
+    // count or rewind the watermark (§10.3.3 makes the watermark the incremental
+    // search's lower bound, so a rewind re-scores every already-matched face).
+    const profileAfter = (await app.db
+      .collection(COLLECTIONS.attendeeEventProfiles)
+      .findOne({ _id: profile._id })) as unknown as PointerProfile | null;
+    expect({
+      activeSelfieId: profileAfter?.activeSelfieId,
+      matchCount: profileAfter?.matchCount,
+      lastMatchRunAt: profileAfter?.lastMatchRunAt,
+    }).toEqual({
+      activeSelfieId: newerSelfieId,
+      matchCount: NEWER_MATCH_COUNT,
+      lastMatchRunAt: NEWER_RUN_STARTED_AT,
+    });
+    expect(profileAfter).toEqual(beforeFlip);
+
+    // ...while the item's own row still records the verdict.
+    expect((await selfieRow(fixture.selfieId))?.processing).toMatchObject({
+      status: "done",
+      lastError: null,
+    });
+  });
+});
