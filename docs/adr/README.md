@@ -72,7 +72,7 @@ the rejected alternatives are recorded in
 | OP-126 uploads lane                 | `0760`–`0779`                   | `0777`    |
 | OP-129 attendee identity lane       | `0780`–`0798`                   | `0869`    |
 | OP-135 worker interface lane        | `0829`–`0848`                   | `0842`    |
-| OP-136 jobs lane                    | `0849`–`0868`                   | `0860`    |
+| OP-136 jobs lane                    | `0849`–`0868`                   | `0862`    |
 | unallocated (future lanes)          | `0799`+ (20 per lane, in order) | `0869`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -477,6 +477,8 @@ _The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-card-serializati
 | [0857](ADR-0857-op136-purge-post-claim-step-pins.md) | OP-136 TEST (**F3a**, Medium): the purge's three remaining post-claim windows, one injected failure each — the `session` `deleteMany`, the `account.deletion.completed` insert (gated on the document's own `eventKey`) and the `user` anonymize `updateOne` — after which the **next** run must still finish the deletion exactly as ADR-0853's pin 1 requires: one tombstone holding the last known email, one receipt whose `payload` is `{ userId }` only, a `deleted` profile, plus `sessions: 0` for the session window and no contact left on the account for the anonymize window. Green on arrival (`7 passed (7)`) because ADR-0856's `withTransaction` closed every step; the characterization is proven load-bearing by the F3a near-fix that passes the tombstone pin (`3 failed | 4 passed`), by one swallowed step at a time and by one step moved outside the transaction (each `1 failed | 6 passed`, reddening exactly its own pin). Draws `0857` (the lane cell's own value, no `ADR-0857*` on any surface), advancing that cell to `0858`; the pool cells stay `0869`. | Accepted (TEST) |
 | [0858](ADR-0858-op136-purge-anonymize-injection-shape.md) | OP-136 TEST (**F1**, Low): the purge's anonymize pin becomes method-agnostic. ADR-0857 armed it with `Collection.prototype.updateOne` gated on `this.collectionName === "user"`, so a behaviour-preserving `updateOne` -> `updateMany` refactor of the production erase reddened it alone (`the injection must fire exactly once: expected +0 to be 1`, `1 failed | 6 passed (7)`). The case now arms one failure across **all three** single-document write shapes the erase can honestly take — `updateOne`, `updateMany` and `findOneAndUpdate` — still gated on the collection name only (gating on the `$unset` document would prescribe the mechanism), sharing one counter so `fired() === 1` stays the first assertion and one call is armed in total. The diff is the spec only (+98/−1: the new `failNextDocumentUpdate` helper, its two driver-original captures, and the call site); `failNextUpdateOne` and the other six cases, the fixtures and helpers are untouched, and no production file is in it. Evidence: positive control `7 passed (7)` on the unmodified job; the finding's `updateMany` mutation is now `7 passed (7)` where the pre-change spec is `1 failed | 6 passed (7)` with `expected +0 to be 1`; the pin is still load-bearing — a swallowed erase gives `1 failed | 6 passed (7)` with `run 1 reports the account whose anonymize write failed: expected +0 to be 1` and an erase moved outside the transaction gives `1 failed | 6 passed (7)` with `the account keeps no contact of its own: expected 'user-…@example…' to be null`; and the third arm is live — a `findOneAndUpdate` erase is also `7 passed (7)`. The job was restored byte-identically each time (`sha256 2dd50c64…311139c`, `git status --short` empty); `tsc` exit `0`, `eslint` 0, `prettier --check` clean and the six ADR guards green. Draws `0858` (the lane cell's own value, no `ADR-0858*` on any surface), advancing that cell to `0859`; the pool cells stay `0869`. | Accepted (TEST) |
 | [0859](ADR-0859-op136-batch-arm-non-indexed-terminal-pins.md) | OP-136 TEST (**F1**, Low): the OP-126 batch arm for the **non-indexed terminal** events — a batch that settles as `complete_with_errors` (one failed image) inside a `partial_failure` event, and inside a `delayed` event, must each emit exactly **one** `upload.batch.completed_with_errors` addressed to the batch's uploader with its `batchId`/`fileCount`, never an `upload.batch.completed`, and a second run 7 h later adds none; `derivePipelineStatus` is the oracle, asserted before any outbox read. Three cases appended (+168/−0) beside ADR-0852's frozen eight, no existing case, fixture or helper touched. **Green on arrival** (`11 passed (11)`), proven load-bearing by narrowing the arm to the announced events (`3 failed / 8 passed`, reddening only `I9`–`I11`). | Accepted (TEST) |
+| [0860](ADR-0860-op136-indexed-check-scan-drain-shape.md) | OP-136 TEST (**H1**, High): the indexed check's scan window drains, and the decision of record for it. The shipped page is a fixed first-`limit` slice (`find({ "counters.imageCount": { $gt: 0 } }).limit(limit)`, no sort, no predicate its own work clears) and the per-event latch is applied only inside the loop, so latched rows hold their slots for ever and an event behind the first page is never announced and its worker-settled batch never summarised (`3e6d7e1e` probe: run 2 reports `details.indexed: 0` and the third event keeps zero rows). Decision: a row is a candidate iff `counters.imageCount > 0` and its live `(imageCount, processedImageCount, failedImageCount)` triple differs from the job-owned `pipeline.indexedCheckedCounters`, `.sort({ _id: 1 }).limit(limit)`, one page driving both arms — the announcement arm keeps the shipped oracle and `pipeline.indexedNotifiedAt` latch and emits **before** the marker stamp (ADR-0856), every other candidate stamps the triple only, and the OP-126 arm iterates the same page (no second query, no per-batch marker). Five appended cases (+204/−0; ADR-0852's frozen eight, ADR-0859's three, every helper, fixture and constant byte-identical): `I12` the window advances (three `indexed` events, `requestedLimit: 2`, two runs — each event exactly one `pipeline.event.indexed` row, the second run `details.indexed: 1`), `I13` no duplicate on the advance (a third run adds none and reports `0`, the drain does not wrap), `I14` the batch arm reaches an event behind the first page (one `upload.batch.completed` for its worker-settled batch), and `I15` a declared characterization (a `delayed` event that later derives `indexed` is announced once with `notifyByEmail: true` — the discriminator against a "finish" that marks every evaluated row done, which it reds; it stays green on the latch-as-filter window), and `I16` **the latch-as-filter discriminator** (two `delayed` events ahead of one `indexed`, `requestedLimit: 2`, three runs — the indexable event is announced exactly once and the two `delayed` ones never, which the rejected latch-scoped page cannot do because a `delayed` row never latches). RED at the branch head: `4 failed | 12 passed (16)`, the four failures at assertion level (`expected +0 to be 1`, `expected [ … ] to have a length of 3 but got 2`, and `expected [] to have a length of 1 but got +0` for the batch summary and for the starved announcement); a faithful near-fix of the decision turns the file `16 passed (16)` and is restored byte-identically (`sha256 5eb913d4…ef00de`). No production file in the diff; the PR is a **draft** (OP-93/ADR-0306) because the GREEN `t_6a0e3e55` carries the pins. | Accepted (TEST, RED) |
+| [0861](ADR-0861-op136-indexed-check-scan-window-drain-green.md) | OP-136 GREEN (**H1**, High): the indexed check's scan window drains, so no event is starved. The shipped page was a fixed first-`limit` slice over a set its own work never leaves, and the per-event latch was applied only inside the loop; ADR-0860's decision is now implemented in `apps/web/src/server/jobs/pipeline-indexed-check.ts` — a row is a candidate iff `counters.imageCount > 0` **and** its live `(imageCount, processedImageCount, failedImageCount)` triple differs from the job-owned `pipeline.indexedCheckedCounters` (the ADR's exact `$expr` `$or`, plus `.sort({ _id: 1 }).limit(limit)`), one page drives both arms: the announcement arm keeps `derivePipelineStatus` as the oracle and the `pipeline.indexedNotifiedAt` latch, emits **then** stamps the latch **and** the checked triple in one `updateOne` (ADR-0856), every other candidate stamps the triple only and still counts in `skipped`, and the OP-126 arm iterates the same page — no second query, no per-batch marker. Neither rejected shape is adopted (an unconditional latch reds `I15` alone; a latch-scoped filter reds `I16` alone). The diff is that one production file plus the sixteen pins carried **byte-identically** from `4ec78c79`: no test, fixture, helper or frozen pin touched, and the sibling jobs untouched. Evidence: the pin file `4 failed \| 12 passed (16)` at the pin head (`I12`–`I14`, `I16`) and `16 passed (16)` now, ADR-0852's frozen eight included; `tsc` exit `0`, `eslint` 0 and `prettier --check` clean on the touched paths, the six ADR guards green, and the `--coverage` run above the 80 % branch threshold. Known limit recorded: `$expr` is not index-served (the `counters.pipelineRevision` refinement is the OP-135 counters lane's). Draws `0861`, the lane cell's own value read on the pin head (`ADR-0860` exists only on open PR #653, this branch's base, and in this worktree; the trunk's newest is `0859`, all 654 fetched PR heads and 38 worktrees are at `0860` or below, and no `ADR-0861` object is in `git rev-list --objects --all`), advancing that cell to `0862`; the pool cells stay `0869`. | Accepted (GREEN) |
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
@@ -1364,3 +1366,88 @@ as an **index-only union** against `ADR-0858` (PR #641 squash-merged as `cbab1f0
 was in flight, so its row and its note are kept verbatim and this record's row and note are
 appended), with the lane cell taking the higher value `0860`; the pool cells stay `0869`. No
 number outside `0849`–`0868` is consumed._
+
+_The **OP-136** TEST card `t_07d09535` (High; finding **H1** of the review of the GREEN
+`t_16239628`, which landed as PR #635 / squash `b62256b8`, and the parent of the GREEN
+`t_6a0e3e55`) draws `0860` — the lane row's own `Next free` cell, re-read at this head
+(`20fcf119`); the sweep immediately before minting found `ADR-0859` as the highest record on
+the trunk, in every `.worktrees/*/docs/adr` tree (their maxima are `0851`–`0859`), in
+`git rev-list --objects --all -- docs/adr` and on all eighteen open PR heads fetched into
+`refs/remotes/pr/*`, so no `ADR-0860*` existed on any surface — and advances **only** the
+`OP-136 jobs lane` cell to `0861`; both `unallocated (future lanes)` cells stay `0869`.
+[ADR-0860](ADR-0860-op136-indexed-check-scan-drain-shape.md) is the pin record **and** the
+decision of record for the shape decided on `t_ec9726b1`: the shipped page is a fixed
+first-`limit` slice over a set its own work never leaves, so a latched row and a
+`delayed`/`partial_failure` row hold their slots for ever and every event past the page is
+starved. The decision keys the window on the pipeline **input** — a row is a candidate iff
+`counters.imageCount > 0` and its live `(imageCount, processedImageCount, failedImageCount)`
+triple differs from the job-owned `pipeline.indexedCheckedCounters`, `.sort({ _id: 1
+}).limit(limit)`, one page driving both arms: the announcement leg keeps the shipped oracle
+and the `pipeline.indexedNotifiedAt` latch and emits **before** the marker stamp (ADR-0856),
+every other candidate stamps the triple only, and the OP-126 arm iterates the same page — no
+second query and no per-batch marker. The record also states the rejected alternatives
+(a latch-scoped announcement query, because `delayed`/`partial_failure` never latch and a
+latched event whose counters move must still be swept for a new batch; an ordered cursor,
+because it trades starvation for announcement latency) and the known limit (`$expr` is not
+index-served, so the indexable `counters.pipelineRevision` refinement belongs to the OP-135
+counters lane). **Five appended cases** in a new `describe` block of
+`apps/web/src/test/integration/job-pipeline-indexed-check.test.ts` (+204/−0: ADR-0852's
+frozen eight and ADR-0859's three, every helper, fixture and constant byte-identical, with
+only an additive `runJobWithLimit` and `seedSettledBatchOf`): `I12` the window advances —
+three events that all derive `indexed`, `requestedLimit: 2`, the first run `details.indexed:
+2`, the second `1`, and each event exactly one `pipeline.event.indexed` row; `I13` no
+duplicate on the advance — the same drain, then a third run adds none and reports `0`;
+`I14` the batch arm reaches an event behind the first page — its worker-settled batch emits
+one `upload.batch.completed` with its `batchId`/`fileCount`; `I15` a **declared
+characterization**, green on arrival — a `delayed` event that later derives `indexed` is
+announced once with `notifyByEmail: true`, the discriminator against a "finish" that marks
+every evaluated row done (it stays green on the latch-as-filter window); and `I16` **the
+latch-as-filter discriminator** — two `delayed` events seeded ahead of one `indexed` at
+`requestedLimit: 2`, three runs, and the indexable event is announced exactly once while the
+`delayed` ones are never announced, which the rejected latch-scoped page cannot do because a
+`delayed` row never latches.
+**RED at the branch head**: `Tests 4 failed | 12 passed (16)`, the four failures at
+assertion level (`expected +0 to be 1`, `two runs must have announced all three events:
+expected [ … ] to have a length of 3 but got 2`, and `expected [] to have a length of 1 but
+got +0` for the batch summary and for the starved announcement), and a faithful near-fix of
+the decision turns the file `16 passed (16)` — so the pins and the frozen ones agree on one
+implementation — while each rejected shape reds exactly one case (the latch-scoped window
+`1 failed | 15 passed (16)` on `I16`; the decided drain plus an unconditional latch
+`1 failed | 15 passed (16)` on `I15`) — with
+`apps/web/src/server/jobs/pipeline-indexed-check.ts` restored byte-identically
+(`sha256 5eb913d4…ef00de`, `git status --short` showing only the spec). `tsc -p
+apps/web/tsconfig.json --noEmit` exit `0`, `eslint` 0 issues, `prettier --check` clean, the
+six `adr-*` guards green, and no production file in the diff. The PR is a **draft**
+(OP-93/ADR-0306): a RED pin PR must never be squash-merged, because the GREEN `t_6a0e3e55`
+carries these cases forward unchanged. Deliberately unpinned: `scanned`/`skipped`/`hasMore`
+and the marker's field name (any drain shape must pass), the arm's cost (`t_eeb212c2`), the
+three emit-only sibling sweeps (`t_c32ed838`) and the indexable refinement of the filter.
+`docs/adr/README.md` is the lane's shared-ledger hotspot: this index row, this lane cell and
+this note merge as a union keeping the higher cell (`0861` lane, `0869` pool). No number
+outside `0849`–`0868` is consumed._
+
+_The **OP-136** GREEN card `t_6a0e3e55` (High; finding **H1** of the review of the GREEN
+`t_16239628`, and the child of the pin card `t_07d09535`) draws `0861` — the lane row's own
+`Next free` cell, re-read at this base (`4ec78c79`, the pin head that carries ADR-0860); the
+sweep immediately before minting found no `ADR-0861` on the trunk (newest `0859`), on any of the
+seventeen open PR heads (`0860` at most, on PR #653, this branch's own base), in any
+`.worktrees/*/docs/adr` tree or in `git rev-list --objects --all -- docs/adr` — and advances
+**only the `OP-136 jobs lane` cell to `0862`**; both pool cells stay `0869`.
+[ADR-0861](ADR-0861-op136-indexed-check-scan-window-drain-green.md) implements ADR-0860's
+decision in **one** production file, `apps/web/src/server/jobs/pipeline-indexed-check.ts`
+(+51/−2): the candidate page is the change-scoped `$expr` filter (`counters.imageCount > 0` and a
+live `(imageCount, processedImageCount, failedImageCount)` triple that differs from
+`pipeline.indexedCheckedCounters`) with `.sort({ _id: 1 }).limit(limit)`, one page driving both
+arms — the announcement arm keeps `derivePipelineStatus` as the oracle, emits, then stamps the
+latch **and** the triple in one `updateOne`; every other candidate stamps the triple only and
+still counts in `skipped`; the OP-126 arm is unchanged and iterates the same page. The sixteen
+pins are carried byte-identically from `4ec78c79`: no test, fixture, helper, frozen pin, sibling
+job or route touched. Evidence: the pin file `4 failed | 12 passed (16)` at the pin head (`I12`,
+`I13`, `I14`, `I16`) and `16 passed (16)` now; `tsc` exit `0`, `eslint` 0, `prettier --check`
+clean, the six `adr-*` guards `236 passed (236)`, and the run's own `--coverage` above the 80 %
+branch threshold. Neither rejected shape is adopted (an unconditional latch reds `I15` alone; a
+latch-scoped filter reds `I16` alone). Known limit: `$expr` is not index-served, so a run still
+scans the `counters.imageCount > 0` set (the `counters.pipelineRevision` refinement is OP-135's).
+`docs/adr/README.md` is the lane's hotspot: this index row, this lane cell and this note merge as
+a union keeping the higher cell (`0862` lane, `0869` pool). No number outside `0849`–`0868` is
+consumed._
