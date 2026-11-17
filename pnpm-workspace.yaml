@@ -27,3 +27,10 @@ audit:
   level: moderate
   ignore:
     - GHSA-vfj7-8cjw-p6xm
+    # GHSA-fc5q-39xc-vjpf — picomatch does ReDoS on single-branch repeated
+    # extglobs; vulnerable <=4.0.7 and no patched release exists (registry
+    # latest is 4.0.7, the 4.0.8 tarball is 404, the advisory's
+    # first_patched_version is null). Delete this entry when
+    # picomatch@>=4.0.8 publishes; re-run `pnpm audit --prod` before deleting
+    # and after. See ADR-0315.
+    - GHSA-fc5q-39xc-vjpf
