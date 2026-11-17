@@ -2636,3 +2636,71 @@ describe("when the active selfie moves while a selfie report is being applied", 
     });
   });
 });
+
+/* ── F-B: the refusal precedence for a doubly-invalid item (ADR-0842) ─────── */
+
+/**
+ * Finding **F-B** of ADR-0835 §"Review sign-off (round 1, artifact lens)",
+ * pinned by ADR-0842. One item is refused for **two** independent reasons at
+ * once — its `occurredAt` is more than 24 h ahead of the platform clock *and*
+ * its `eventKey` is outside the §7.6 catalogue — so this case fixes **which**
+ * refusal the caller sees, the string a worker's retry logic branches on.
+ * Nothing about the data can move: both paths refuse the item and neither
+ * writes a row, which the stored-row assertion below also holds to.
+ *
+ * **The contract is the shipped order, and the case name states it: the
+ * envelope's instant gate first.** ADR-0842 §1 records why that order is a
+ * decision and not an accident: ADR-0835 §4 places the forward-window guard in
+ * the route (it cannot live in `emitDomainEvent`, whose clock seam *is* the
+ * worker's instant and whose own specs drive fixed clocks), while the catalogue
+ * gate is owned inside `emitDomainEvent` for every in-process publisher of a
+ * domain event. The route therefore asks its envelope question before the
+ * emitter's semantic ones; resolving the key first would need a second copy of
+ * the catalogue rule in the route. A lone unknown key still answers
+ * `unknown_event_key` (I1 above) — only the compound item is decided here.
+ */
+describe("when one event item is both ahead of the outbox window and out of the event catalogue", () => {
+  it("F-B: applies the sibling and answers occurred_at_out_of_window for the compound item", async () => {
+    const seeded = await world("op135-fb-precedence");
+    // The sibling is a valid item: a registered key, an instant inside the
+    // window (an hour in the past — the window is one-sided forward).
+    const insideAt = new Date(Date.now() - 60 * 60 * 1000);
+    // The compound item: 25 h ahead, and a key in no catalogue.
+    const aheadAt = new Date(Date.now() + EVENT_INSTANT_WINDOW_MS + 60 * 60 * 1000);
+
+    const response = await domainEventsHandler(
+      signedPost(DOMAIN_EVENTS_PATH, {
+        events: [
+          {
+            ...domainEvent(PIPELINE_INDEXED_EVENT, seeded.tenantKey, seeded.event),
+            occurredAt: insideAt.toISOString(),
+          },
+          {
+            ...domainEvent(UNKNOWN_EVENT_KEY, seeded.tenantKey, seeded.event),
+            occurredAt: aheadAt.toISOString(),
+          },
+        ],
+      })
+    );
+
+    // The compound item is refused in its own `rejected[]` slot — index 1, the
+    // position it holds in the batch — and the batch still answers 202.
+    expect(response.status).toBe(202);
+    const body = await bodyOf(response, 202, "POST internal domain-events (doubly-invalid item)");
+    expect(keysOf(body)).toEqual(BATCH_KEYS);
+    expect(body.accepted).toBe(1);
+    expect(body.deduped).toBe(0);
+    expect(body.rejected).toEqual([
+      { index: 1, eventKey: UNKNOWN_EVENT_KEY, reason: OUT_OF_WINDOW_REASON },
+    ]);
+
+    // Exactly the accepted item's row is stored: the refused item wrote none, so
+    // the only row under this tenant carries the sibling's key.
+    const stored = (await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: seeded.tenantKey })
+      .sort({ _id: 1 })
+      .toArray()) as unknown as DomainEventRow[];
+    expect(stored.map((row) => row.eventKey)).toEqual([PIPELINE_INDEXED_EVENT]);
+  });
+});
