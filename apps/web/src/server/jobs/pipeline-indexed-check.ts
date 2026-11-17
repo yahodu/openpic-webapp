@@ -51,11 +51,11 @@ interface EventBatch {
 }
 
 /**
- * How many batch checks one run has in flight (ADR-0862 §3: the arm's
- * round-trip chains were serialised). Kept small — a chunk is three reads per
+ * How many candidate rows one run drives at once (ADR-0862 §3: the arm's
+ * round-trip chains were serialised). Kept small — a row is three reads per
  * batch against one database.
  */
-const BATCH_CHECK_CONCURRENCY = 8;
+const ROW_CHECK_CONCURRENCY = 8;
 
 /** Narrow a stored event row, or `null`. */
 function asIndexedEventRow(value: unknown): IndexedEventRow | null {
@@ -198,10 +198,33 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
     ? raw.map(asIndexedEventRow).filter((row): row is IndexedEventRow => row !== null)
     : [];
 
+  const pending = await pendingBatches(candidates, db, limit);
+  /** The page's batches, grouped by the event that owns them. */
+  const batchesByEvent = new Map<string, EventBatch[]>();
+  for (const batch of pending) {
+    const eventKey = batch.eventId.toHexString();
+    const owned = batchesByEvent.get(eventKey);
+    if (owned === undefined) {
+      batchesByEvent.set(eventKey, [batch]);
+    } else {
+      owned.push(batch);
+    }
+  }
+
   let indexed = 0;
   let skipped = 0;
 
-  for (const row of candidates) {
+  /**
+   * Announce one candidate, run its batch arm, then stamp its checked triple.
+   *
+   * The triple goes last (ADR-0867 §1): a row leaves the candidate page when
+   * that stamp lands, so a run that aborts inside the arm leaves the row a
+   * candidate and the next tick retries the arm's work instead of losing the
+   * batch's §4.7 summary with the counters it was owed for.
+   *
+   * @param row - One candidate of the run's page.
+   */
+  async function checkRow(row: IndexedEventRow): Promise<void> {
     const counts = pipelineCounts(row);
     const checked = {
       imageCount: counts.imageCount,
@@ -210,64 +233,64 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
     };
     // The shipped §4.1 table is the oracle: only `indexed` is fully searchable,
     // and a latched event was announced already.
-    if (derivePipelineStatus(counts) !== "indexed" || row.pipeline?.indexedNotifiedAt != null) {
-      await events.updateOne(
-        { _id: row._id },
-        { $set: { "pipeline.indexedCheckedCounters": checked } }
+    const announce =
+      derivePipelineStatus(counts) === "indexed" && row.pipeline?.indexedNotifiedAt == null;
+    let deduped = false;
+    if (announce) {
+      const eventId = row._id.toHexString();
+      const result = await emitDomainEvent(
+        {
+          eventKey: "pipeline.event.indexed",
+          tenantId: row.tenantId,
+          actorRef: { kind: "system", id: "pipeline-indexed-check" },
+          subjectRef: { kind: "event", id: eventId },
+          // The latch below makes this the event's first completion, which is the
+          // one §4.7 sends the email for (`email` itself is a forbidden key).
+          payload: { eventId, images: counts.imageCount, notifyByEmail: true },
+          dedupeKey: `pipeline.event.indexed:${eventId}`,
+        },
+        { db, clock }
       );
-      skipped += 1;
-      continue;
+      deduped = result.deduped;
+      // Emit first, marker second (ADR-0861 §2) — and the latch only: the triple
+      // waits for this row's arm work below.
+      await events.updateOne({ _id: row._id }, { $set: { "pipeline.indexedNotifiedAt": now } });
     }
-    const eventId = row._id.toHexString();
-    const result = await emitDomainEvent(
-      {
-        eventKey: "pipeline.event.indexed",
-        tenantId: row.tenantId,
-        actorRef: { kind: "system", id: "pipeline-indexed-check" },
-        subjectRef: { kind: "event", id: eventId },
-        // The latch below makes this the event's first completion, which is the
-        // one §4.7 sends the email for (`email` itself is a forbidden key).
-        payload: { eventId, images: counts.imageCount, notifyByEmail: true },
-        dedupeKey: `pipeline.event.indexed:${eventId}`,
-      },
-      { db, clock }
-    );
-    // Emit first, marker second (ADR-0861 §2): one update stamps the latch and the
-    // checked triple, so this row leaves the window too.
+    for (const batch of batchesByEvent.get(row._id.toHexString()) ?? []) {
+      await checkUploadBatchTransition({ db, ...batch });
+    }
     await events.updateOne(
       { _id: row._id },
-      {
-        $set: {
-          "pipeline.indexedNotifiedAt": now,
-          "pipeline.indexedCheckedCounters": checked,
-        },
-      }
+      { $set: { "pipeline.indexedCheckedCounters": checked } }
     );
-    if (result.deduped) {
+    if (!announce || deduped) {
       skipped += 1;
-      continue;
+      return;
     }
     indexed += 1;
   }
 
   // A batch already summarised on an earlier run is re-checked when its event's
   // counters move again — the outbox's (batch, uploader) dedupe key makes the
-  // repeat a no-op. The checks run a chunk at a time so a full page is one wave
-  // of round trips, not `limit` serialised ones.
-  const batches = await pendingBatches(candidates, db, limit);
-  for (let start = 0; start < batches.length; start += BATCH_CHECK_CONCURRENCY) {
-    await Promise.all(
-      batches
-        .slice(start, start + BATCH_CHECK_CONCURRENCY)
-        .map((batch) => checkUploadBatchTransition({ db, ...batch }))
+  // repeat a no-op. The rows run a chunk at a time so a full page is one wave of
+  // round trips, not `limit` serialised ones; a throw inside a chunk surfaces
+  // after the chunk has settled, so no write outlives the rejected run.
+  for (let start = 0; start < candidates.length; start += ROW_CHECK_CONCURRENCY) {
+    const settled = await Promise.allSettled(
+      candidates.slice(start, start + ROW_CHECK_CONCURRENCY).map((row) => checkRow(row))
     );
+    for (const outcome of settled) {
+      if (outcome.status === "rejected") {
+        throw outcome.reason;
+      }
+    }
   }
 
   const scanned = candidates.length;
   logger.info("pipeline indexed check completed", {
     event: "pipeline.indexed_check",
     indexed,
-    batches: batches.length,
+    batches: pending.length,
   });
   return {
     scanned,
@@ -275,7 +298,7 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
     skipped,
     errors: 0,
     hasMore: scanned >= limit,
-    details: { indexed, batches: batches.length },
+    details: { indexed, batches: pending.length },
   };
 }
 
