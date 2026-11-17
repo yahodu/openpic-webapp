@@ -182,3 +182,51 @@ passed (7)`: `I6` and the two-period case, both
   the index-row repair to the ledger card `t_d44c4094` (review finding F6).
 - Every other OP-136 sweep and its pins; ADR-0850 stays the record of what
   shipped, and ADR-0849/0850/0851 are frozen.
+
+## Review sign-off (round 1, t_4473eaf5)
+
+Reviewed at head `47d799dd` against base `origin/main` `02c53172`: the diff is
+three files, +218/−1, and no production file — the spec, this record and the
+ledger's lane note.
+
+- **Verdict: APPROVED**, with no change requests. Landed as
+  `gh pr merge 632 --squash --admin` → squash
+  `d5830902bef1b377374ba884917435286c2900e7`, whose tree
+  `a03486df58939cbada8fc46784888fdb3af483d3` equals the reviewed head's tree,
+  so the trunk carries the reviewed bytes verbatim.
+- CI at the reviewed head, **15/15 green**: the aggregate `ci`,
+  `test_coverage`, `unit_test`, `lint`, `audit`, `audit-dev`, `secret-scan`,
+  `env-changes`, `CodeQL`, `Analyze (actions)`,
+  `Analyze (javascript-typescript)`, `validate-branch-name`,
+  `validate-pr-title`, `Assert CI evidence for the pushed head` and
+  `notify-discord`.
+- The reviewer **re-measured all three mutations itself** in a detached
+  throwaway worktree at `47d799dd`, restoring the job with `git checkout --`
+  and re-hashing it to
+  `ce786ce6ce94d2232ab3e119f3a3f17b27ff0265e195c5297da757791fccf962` (the
+  untouched base) after every run:
+  1. delete the elapsed row after the latch write → `1 failed | 6 passed (7)`,
+     only `notifies the same threshold again in a new period`,
+     `expected undefined to deeply equal [ 80, 95, 100 ]`;
+  2. drop the `verdict.periodKey !== row.periodKey` guard →
+     `1 failed | 6 passed (7)`, only the new case,
+     `leaves an elapsed period's row alone even when its own latch is behind`,
+     `expected 1 to be +0`;
+  3. control, the latch write removed → `2 failed | 5 passed (7)`: `I6` and the
+     two-period case, `expected undefined to deeply equal [ 80 ]`.
+- Green at the reviewed head: the focused spec `7 passed (7)`;
+  `pnpm exec tsc -p apps/web/tsconfig.json --noEmit` exit `0`;
+  `pnpm exec prettier --check` clean on all three files; the six ADR guards
+  `6 files / 236 passed (236)`.
+- No `.only`, no `.skip`, no relaxed matcher, no fixture-shaped hardcoding and
+  no production edit. The review wrote nothing but the merge.
+
+### Finding — Info only
+
+The `OP-136 jobs lane` `Next free` cell this branch advances to `0855` is a
+snapshot of the ledger. The sibling GREEN card `t_16239628` holds an in-flight
+`ADR-0855-<slug>.md` and moves the same cell to `0856`, so the `README.md`
+union at that merge must keep the **higher** cell. No duplicate number existed
+at merge time: `0854` here, `0852` on PR #631, `0853` on PR #629. No Critical,
+High, Medium or Low finding; the index-row repair for the `0849`+ records stays
+with `t_d44c4094`, as `## Out of scope` above records.

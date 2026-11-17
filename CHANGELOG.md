@@ -1,3 +1,9 @@
+## [1.65.2](https://github.com/yahodu/openpic-webapp/compare/v1.65.1...v1.65.2) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 make each sweep's state change and its outbox row one unit ([#636](https://github.com/yahodu/openpic-webapp/issues/636)) ([7b4b07d](https://github.com/yahodu/openpic-webapp/commit/7b4b07d74c5a9903ac3b47f06b24af47690df124)), closes [#635](https://github.com/yahodu/openpic-webapp/issues/635)
+
 ## [1.65.1](https://github.com/yahodu/openpic-webapp/compare/v1.65.0...v1.65.1) (2026-11-17)
 
 ### Bug Fixes
