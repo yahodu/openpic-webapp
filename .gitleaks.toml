@@ -31,13 +31,17 @@ regexes = [
   # allowlisted (the same treatment the entries above receive).
   '''op117-unlimited''',
   # The OP-135 worker-endpoint spec's opaque-derivative fixtures (ADR-0829 §5,
-  # ADR-0830 §5): a 20-char `hnd_` handle and two per-case asset tags. The
-  # `objectKeyRef` name and the entropy of the values match gitleaks'
-  # generic-api-key heuristic, but a handle is by definition not a key and the
-  # tags are suite-local labels — the exact non-secret values are allowlisted
-  # (the same treatment the entries above receive).
+  # ADR-0830 §5, ADR-0835 §1): the `hnd_` handles the processor sends in place of
+  # an object key, and the per-case `op135-` tags the spec derives asset content
+  # hashes from. The `objectKeyRef` name and the entropy of the values match
+  # gitleaks' generic-api-key heuristic, but a handle is by definition not a key
+  # and the tags are suite-local labels — the exact non-secret values are
+  # allowlisted (the same treatment the entries above receive).
   '''hnd_9f2c1d4b7a6e5f80''',
   '''hnd_1a2b3c4d5e6f7081''',
+  '''hnd_6b1e4c9a2f7d3085''',
   '''op135-deriv-thumb''',
   '''op135-deriv-rawkey''',
+  '''op135-f2-handle''',
+  '''op135-f4-lease-race''',
 ]

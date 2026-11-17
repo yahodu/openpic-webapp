@@ -175,6 +175,11 @@ leaseMinutes,maxAttempts,pauseRequested}`, `{applied,leaseLost,rejected}`, `{sta
   as a log pin, the null-`activeSelfieId`, `failed` and `skipped` arms) belong to card `t_795ba842`.
   The derivative's `objectKeyRef` binding stays documented-as-opaque; if a handle table is ever
   introduced, §1's decision is the one to revisit.
+- `.gitleaks.toml` gains three allowlist entries (`hnd_6b1e4c9a2f7d3085`, `op135-f2-handle`,
+  `op135-f4-lease-race`): gitleaks' `generic-api-key` heuristic flags the pins' synthetic handle and
+  two suite-local asset tags, the same false positive the file already allowlists for the earlier
+  OP-135 fixtures. No test file is touched — the allowlist is scanner configuration, and the values
+  are labels, not credentials.
 
 ## Alternatives
 
