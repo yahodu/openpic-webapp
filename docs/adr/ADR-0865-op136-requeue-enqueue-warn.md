@@ -106,10 +106,10 @@ The existing behaviour is unchanged where it was pinned:
 (both reprocess routes, their status codes and their response shapes).
 
 Full `vitest run --project unit --project integration --coverage`, measured at
-the merged head (which carries `origin/main`'s `internal-worker-endpoints`
-spec from PR #665): `325 passed (325)` files,
-`4576 passed | 3 skipped (4579)` tests, statements 91.58 %, branches 80.33 %,
-functions 95.95 %, lines 91.71 %, exit `0`. The six `adr-*` guard specs:
+the merged head (which carries `origin/main`'s `internal-worker-endpoints` spec
+from PR #665 and the sibling OP-136 pins of PR #666): `326 passed (326)` files,
+`4580 passed | 3 skipped (4583)` tests, statements 91.66 %, branches 80.4 %,
+functions 95.95 %, lines 91.79 %, exit `0`. The six `adr-*` guard specs:
 `6 passed (6)` / `236 passed (236)`. Typecheck
 (`tsc -p apps/web/tsconfig.json --noEmit`) exit `0`, `eslint` 0 on the four
 touched files, `prettier --check` clean on all six paths.
