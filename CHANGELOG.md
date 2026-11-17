@@ -1,3 +1,9 @@
+## [1.65.4](https://github.com/yahodu/openpic-webapp/compare/v1.65.3...v1.65.4) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 drain the indexed check's scan window so events beyond limit are reached ([#655](https://github.com/yahodu/openpic-webapp/issues/655)) ([848b1d5](https://github.com/yahodu/openpic-webapp/commit/848b1d547b28d191736f911e5b16aafeb9ae8ca1))
+
 ## [1.65.3](https://github.com/yahodu/openpic-webapp/compare/v1.65.2...v1.65.3) (2026-11-17)
 
 ### Bug Fixes
