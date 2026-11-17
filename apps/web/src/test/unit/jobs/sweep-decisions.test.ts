@@ -309,7 +309,8 @@ describe("RETENTION_STEPS and nextEraseStep", () => {
     { case: "faceMatches done", marker: { step: "faceMatches" }, expected: "eventImages" },
     { case: "eventImages done", marker: { step: "eventImages" }, expected: "mediaAssets" },
     { case: "mediaAssets done", marker: { step: "mediaAssets" }, expected: "selfies" },
-    { case: "selfies done", marker: { step: "profiles" }, expected: null },
+    { case: "selfies done", marker: { step: "selfies" }, expected: "profiles" },
+    { case: "profiles done", marker: { step: "profiles" }, expected: null },
     { case: "the complete marker", marker: { step: "done" }, expected: null },
   ])("answers $expected for $case", ({ marker, expected }) => {
     expect(nextEraseStep(marker)).toBe(expected);

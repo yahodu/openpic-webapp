@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { CONSENT_PURPOSE } from "@/server/attendee/consent-guard";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
 import { retentionPurgeJob } from "@/server/jobs/retention-purge";
@@ -302,6 +303,7 @@ beforeEach(async () => {
       COLLECTIONS.selfies,
       COLLECTIONS.attendeeEventProfiles,
       COLLECTIONS.attendeeSessions,
+      COLLECTIONS.consents,
       COLLECTIONS.domainEvents,
       "imageFaces",
     ].map((name) => app.db.collection(name).deleteMany({}))
@@ -511,6 +513,66 @@ describe("retention-purge: an expired event", () => {
       eventImages: 1,
       mediaAssets: 1,
     });
+  });
+
+  it("purges an event in status deleting although its retention has not expired", async () => {
+    const tenantKey = newTenant();
+    const eventId = await seedEvent(tenantKey, {
+      status: "deleting",
+      retentionExpiresAt: new Date(NOW.getTime() + 30 * DAY_MS),
+    });
+    const asset = await seedImageAsset(tenantKey, contentHash("g"), 1);
+    const imageId = await seedImage(tenantKey, eventId, asset.assetId);
+
+    // ── Act ──
+    const result = await retentionPurgeJob.run({
+      requestedLimit: null,
+      clock: fixedClock(NOW),
+      logger: recordingLogger(),
+    });
+
+    // ── Assert: the user-initiated delete is not gated on the retention clock ──
+    expect(result.details?.events).toBe(1);
+    expect(await app.db.collection(COLLECTIONS.eventImages).findOne({ _id: imageId })).toBeNull();
+    expect(
+      await app.db.collection(COLLECTIONS.mediaAssets).findOne({ _id: asset.assetId })
+    ).toBeNull();
+    const event = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect((event?.purge as Record<string, unknown>).step).toBe("done");
+  });
+
+  it("keeps a consent row as evidence when its event is erased", async () => {
+    const tenantKey = newTenant();
+    const eventId = await seedEvent(tenantKey);
+    const profileId = await seedProfile(tenantKey, eventId);
+    const consentId = new ObjectId();
+    await app.db.collection(COLLECTIONS.consents).insertOne({
+      _id: consentId,
+      eventId,
+      subject: { kind: "anonymous", attendeeSessionId: new ObjectId().toHexString() },
+      purpose: CONSENT_PURPOSE,
+      policyVersion: "2026-01",
+      policyDocumentHash: contentHash("policy"),
+      grantedAt: new Date(NOW.getTime() - 20 * DAY_MS),
+      withdrawnAt: null,
+      evidence: { ipHash: "ip-hash", uaHash: "ua-hash" },
+    });
+
+    // ── Act ──
+    const result = await retentionPurgeJob.run({
+      requestedLimit: null,
+      clock: fixedClock(NOW),
+      logger: recordingLogger(),
+    });
+
+    // ── Assert: the profile goes, the consent record stays ──
+    expect(
+      await app.db.collection(COLLECTIONS.attendeeEventProfiles).findOne({ _id: profileId })
+    ).toBeNull();
+    expect(await app.db.collection(COLLECTIONS.consents).countDocuments({ _id: consentId })).toBe(
+      1
+    );
+    expect(result.details?.events).toBe(1);
   });
 
   it("I12: leaves zero selfies, zero embeddings and zero matches for the purged event", async () => {
