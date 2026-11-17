@@ -1,5 +1,5 @@
-import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { Collection, ObjectId } from "mongodb";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
@@ -921,5 +921,261 @@ describe("pipeline-indexed-check: the scan window advances past the first page",
 
     // …and nothing else was announced in their place.
     expect(await outboxFor(INDEXED_EVENT)).toHaveLength(1);
+  });
+});
+
+/** The driver's own `Collection#find`, captured before any spy replaces it. */
+const driverFind = ((): typeof Collection.prototype.find => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "find");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("the driver's Collection#find is missing from the prototype");
+  }
+  return descriptor.value as typeof Collection.prototype.find;
+})();
+
+/** The driver's own `find` argument tuple. */
+type DriverFindArgs = Parameters<typeof driverFind>;
+
+/** A one-shot driver-read failure, and how to take it back. */
+interface InjectedReadFailure {
+  /** How many times the injected failure actually fired — the pin is vacuous unless 1. */
+  readonly fired: () => number;
+  /** Remove the injection. Call it in the same case (a `finally` is best). */
+  readonly restore: () => void;
+}
+
+/**
+ * Arm one transient driver failure on the next `find` of `collectionName`.
+ *
+ * The error carries `code: 91` (a replica-set election) — the shape of a
+ * transient read failure — and it is thrown, never resolved to an empty page:
+ * the caller must abort, not silently read a batch that is not there.
+ *
+ * @param collectionName - The collection whose read fails, matched on `this`.
+ * @returns The injection, whose `fired` count proves it was reached.
+ */
+function failNextFind(collectionName: string): InjectedReadFailure {
+  let remaining = 1;
+  let fired = 0;
+  const spy = vi.spyOn(Collection.prototype, "find").mockImplementation(function (
+    this: Collection,
+    ...args: DriverFindArgs
+  ) {
+    if (this.collectionName === collectionName && remaining > 0) {
+      remaining -= 1;
+      fired += 1;
+      throw Object.assign(new Error(`injected failure: find on ${collectionName}`), { code: 91 });
+    }
+    return driverFind.call(this, ...args);
+  } as never);
+
+  return {
+    fired: () => fired,
+    restore: () => {
+      spy.mockRestore();
+    },
+  };
+}
+
+/**
+ * Integration / contract — the batch arm's work survives a run that aborts
+ * inside it (ADR-0866 §1; finding **M2** of the review of the OP-136 GREEN
+ * `t_6a0e3e55`).
+ *
+ * ## Why this block exists
+ *
+ * A run evaluates an event (and records that it did) before the OP-126 batch arm
+ * runs for the same page. When the arm's own read fails — a transient driver
+ * error, or an invocation killed mid-run — the run rejects after the event's row
+ * has already been marked as evaluated. If nothing brings that row back into a
+ * page, the next tick scans nothing and this batch's §4.7 summary is never
+ * emitted for that counter state: the uploader is never told its batch finished,
+ * and no later tick can tell them.
+ *
+ * ## How to read it
+ *
+ * The case names no marker, no ordering and no query. It seeds one event the
+ * status table derives as `indexed` with one worker-settled batch, arms a
+ * **one-shot** failure on the arm's own read, and asserts only what the API
+ * consumer observes: the first run rejects, and the run after it leaves exactly
+ * one `upload.batch.completed` row for that batch, naming its batch, event and
+ * file count. Any implementation that keeps the row a candidate until its arm
+ * work completes satisfies it — retrying the arm, stamping after the arm, or
+ * anything else that stops the row leaving the page early.
+ *
+ * ## Why it is RED at the RED head
+ *
+ * The mark lands in the announcement loop, before the arm. Run 1 stamps the
+ * row and then aborts, so run 2 reports `scanned: 0, details.batches: 0` and the
+ * outbox holds no `upload.batch.completed` row for the batch at all.
+ */
+describe("pipeline-indexed-check: the batch arm's work survives an aborted run", () => {
+  /**
+   * Run the job once at one instant, over a caller-chosen page size.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @param limit - The per-run cap the run is asked for.
+   * @returns The §10.2 run envelope.
+   */
+  async function runJobWithLimit(
+    at: Date,
+    limit: number
+  ): Promise<Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>> {
+    return pipelineIndexedCheckJob.run({
+      requestedLimit: limit,
+      clock: fixedClock(at),
+      logger: recordingLogger(),
+    });
+  }
+
+  /**
+   * Give one event a batch of two files whose images the worker already
+   * finished (§16.2, §16.3) — the state the OP-126 arm reads.
+   *
+   * The completion route is never called: the sessions are already `completed`
+   * and the images already `done`.
+   *
+   * @param event - The event that owns the batch.
+   * @returns The batch id and the batch's uploader.
+   */
+  async function seedSettledBatchOf(event: SeededEvent): Promise<{
+    readonly batchId: string;
+    readonly uploader: ObjectId;
+  }> {
+    const batchId = new ObjectId().toHexString();
+    const uploader = new ObjectId();
+    let sequence = 0;
+    for (const name of ["op136-arm-retry-one", "op136-arm-retry-two"]) {
+      sequence += 1;
+      await seedCompletedSession(event, {
+        batchId,
+        createdByUserId: uploader,
+        contentHash: hashFor(name),
+        fileName: `DSC_3${String(sequence).padStart(3, "0")}.JPG`,
+      });
+      await seedBatchImage(event, { batchId, status: "done", sequence });
+    }
+    return { batchId, uploader };
+  }
+
+  it("I17: the next run still summarises the batch whose run aborted in the arm", async () => {
+    // Arrange — one event the status table derives as indexed, one settled batch,
+    // and a one-shot read failure armed on the arm's own read.
+    const event = await seedEvent(ALL_PROCESSED);
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const { batchId, uploader } = await seedSettledBatchOf(event);
+    const injection = failNextFind(COLLECTIONS.eventImages);
+    try {
+      // Act — the first tick aborts inside the arm.
+      await expect(
+        runJobWithLimit(NOW, 50),
+        "the seeded read failure must abort the run, or the case proves nothing"
+      ).rejects.toThrow("injected failure: find on event_images");
+    } finally {
+      injection.restore();
+    }
+    expect(injection.fired(), "the injected read failure must have fired exactly once").toBe(1);
+    expect(
+      await outboxFor(BATCH_COMPLETED_EVENT),
+      "the aborted run cannot have summarised the batch it never read"
+    ).toHaveLength(0);
+
+    // Act — the next tick, over the same rows and unchanged counters.
+    await runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 50);
+
+    // Assert — the batch's work is not lost: one §4.7 summary for it, exactly
+    // once, naming what the summary's email rule reads.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(
+      summaries,
+      "a batch whose arm work was cut off must be summarised by a later run"
+    ).toHaveLength(1);
+    const summary = summaries[0];
+    expect(summary?.tenantId).toBe(event.tenantKey);
+    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.payload.batchId).toBe(batchId);
+    expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
+    expect(summary?.payload.fileCount).toBe(2);
+
+    // …and a batch with no failure is never an errors summary.
+    expect(
+      await outboxFor(BATCH_COMPLETED_WITH_ERRORS_EVENT),
+      "a batch with no failure is not an errors summary"
+    ).toHaveLength(0);
+  });
+});
+
+/**
+ * Characterization / contract — the §10.2 backpressure field `hasMore`
+ * (ADR-0866 §2).
+ *
+ * An earlier record of this lane declared `scanned`, `skipped` and `hasMore`
+ * deliberately unpinned; these two cases pin the observable half. `hasMore` is
+ * what tells the scheduler to invoke again sooner: a run that filled its page
+ * must ask for another (or the tail of a backlog waits a whole interval — the
+ * starvation H1 pinned), and a run over a drained window must not (or a drained
+ * board spins the scheduler for ever).
+ *
+ * Both cases are **green on arrival**: they exist so a later "optimisation"
+ * cannot turn `hasMore` into a constant in either direction. Neither reads
+ * `scanned` as a contract — the page size is the case's own input, and only
+ * `hasMore` is asserted.
+ */
+describe("pipeline-indexed-check: the §10.2 backpressure field", () => {
+  /**
+   * Run the job once at one instant, over a caller-chosen page size.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @param limit - The per-run cap the run is asked for.
+   * @returns The §10.2 run envelope.
+   */
+  async function runJobWithLimit(
+    at: Date,
+    limit: number
+  ): Promise<Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>> {
+    return pipelineIndexedCheckJob.run({
+      requestedLimit: limit,
+      clock: fixedClock(at),
+      logger: recordingLogger(),
+    });
+  }
+
+  it("I18: a run that filled its page reports hasMore true", async () => {
+    // Arrange — three indexed events behind a page of two: the page fills and an
+    // event is left unread.
+    await seedEvent(ALL_PROCESSED);
+    await seedEvent(ALL_PROCESSED);
+    await seedEvent(ALL_PROCESSED);
+
+    // Act
+    const run = await runJobWithLimit(NOW, 2);
+
+    // Assert — the scheduler is asked to come back for the work left behind.
+    expect(
+      run.hasMore,
+      "a full page leaves events unread, so the run must ask for another invocation"
+    ).toBe(true);
+  });
+
+  it("I19: a run over a drained window reports hasMore false", async () => {
+    // Arrange — two indexed events behind a page of two; the first tick drains
+    // both, which the outbox shows.
+    const one = await seedEvent(ALL_PROCESSED);
+    const two = await seedEvent(ALL_PROCESSED);
+    await runJobWithLimit(NOW, 2);
+    expect(
+      await outboxFor(INDEXED_EVENT),
+      "the draining tick must have announced both events"
+    ).toHaveLength(2);
+
+    // Act — the tick after the drain.
+    const run = await runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 2);
+
+    // Assert — nothing is left to read, so the window does not ask to be re-run…
+    expect(run.hasMore, "a drained window must not keep asking for another invocation").toBe(false);
+
+    // …and it did not re-announce what it had already drained.
+    expect(await indexedRowsFor(one.eventId)).toHaveLength(1);
+    expect(await indexedRowsFor(two.eventId)).toHaveLength(1);
   });
 });
