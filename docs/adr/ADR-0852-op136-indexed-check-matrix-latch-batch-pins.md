@@ -207,3 +207,93 @@ after; `git status --short` shows only the new spec).
   `0869` pool). The index table carries rows for `0849` and `0852` in this lane
   segment only — `0850`/`0851` minted without one, which this card leaves as it
   found them.
+
+## Review sign-off (OP-136 TEST t_7e31328b, round 1 — artifact + execution lens)
+
+Reviewed at head `228df183` against the review base `origin/main` `7d986972`: the
+diff is three files, +766/−1 (the new spec, this record and the ledger's lane
+note), and no production file.
+
+- **Verdict: APPROVED WITH FINDINGS.** The reviewer edited no pin. The spec blob
+  the delivery carries (`b4d77678…`) is the spec blob of `228df183` _and_ of the
+  GREEN's squash `b62256b8`, and this record's own blob (`2111f767…`) is the same
+  blob at the reviewed head, at that squash and on today's trunk, so the pins
+  landed byte-identically. At the reviewed head
+  `apps/web/src/server/jobs/pipeline-indexed-check.ts` is byte-identical to the
+  review base's job (`sha256 adc3e08e…`): the delivery touched no production
+  file, and the `5eb913d4…` the trunk carries today is the GREEN's own change to
+  that job, not the delivery's.
+- **Criteria restated, then matched.**
+  1. _Every pin RED at `7d986972`, each for its own reason._ Re-measured by the
+     reviewer from the delivered spec blob on the review base: `Tests 8 failed (8)`,
+     every failure at assertion level — `I1`, `I2` and `I3` with
+     `expected [ { …(10) } ] to have a length of +0 but got 1` (the all-failed
+     and the partial event are announced), `I4` with
+     `expected [ { …(10) }, { …(10) } ] to have a length of 1 but got 2` (the
+     second row), `I5` with
+     `expected { …(2) } to match object { notifyByEmail: true, …(2) }` (the
+     missing flag), and `I6`, `I7`, `I8` with
+     `expected [] to have a length of 1 but got +0` (zero rows).
+  2. _The static gates._ `tsc -p apps/web/tsconfig.json --noEmit` exit `0`;
+     `prettier --check` clean on the three touched paths; `eslint` exit `0` on
+     the spec, 0 errors and 0 warnings.
+  3. _The ADR guards._ The six `adr-*` specs, `6 files` and `236 passed (236)`
+     at this head.
+  4. _The ledger._ `ADR-0852` is unique on the tree at this head, and the
+     `OP-136 jobs lane` `Next free` cell reads `` `0853` ``.
+
+### The reviewer's independent probes
+
+One throwaway worktree, since deleted, detached at the review base with the
+delivered spec blob in place; the job is mutated and the spec never is, and the
+job is restored after every run. The near-fix is the reviewer's own, not the
+GREEN's: the shipped status table, a per-event latch on the event row, the
+first-completion flag derived from whether that event already has an
+announcement, and `checkUploadBatchTransition` for each candidate event's
+batches.
+
+- Faithful near-fix → `8 passed (8)`, nothing reddened.
+- The batch arm removed → `2 failed | 6 passed (8)`: `I7` and `I8` only.
+- The latch removed, the bucketed dedupe key kept → `1 failed | 7 passed (8)`:
+  `I4` only.
+- The latch removed **and** the flag raised on every announcement →
+  `2 failed | 6 passed (8)`: `I4` and, additionally, `I6`.
+
+This is what proves each pin family **load-bearing**: the status-table family
+(`I1`–`I3`), the latch (`I4`) and the first-completion flag (`I5`, `I6`) redden
+only when their own mechanism is removed, so no pin is satisfied by a sibling's
+mechanism, and the batch family (`I7`, `I8`) is the only thing the arm answers.
+The near-fix also shows **satisfiability**: a plausible shape the card never
+prescribed makes all eight green, so the pins do not encode the GREEN's
+implementation.
+
+### Findings, graded and routed
+
+- **F1 — Low, coverage gap.** The batch arm is pinned only for the derived
+  `indexed` event, while the job card's all-terminal scope also covers
+  `partial_failure` and `delayed`. Routed to card `t_71729b5e`, made a child of
+  the GREEN `t_16239628` so it could not run before the GREEN landed. It has
+  since closed the gap: PR #644 (squash `ca8925f9`) pins the non-indexed terminal
+  events, three cases, and its own record carries them.
+- **F2 — Low, docs accuracy.** This record's own §Decision 1 reads "eight
+  appended cases", which describes an append to an existing spec; the spec is
+  new, so the eight cases are its whole content and nothing was appended to
+  anything. Corrected here, in this section, because the frozen sections are not
+  edited: the delivery adds
+  `apps/web/src/test/integration/job-pipeline-indexed-check.test.ts` whole.
+- **F3 — Info, test quality.** The batch fixture dates its rows from
+  `Date.now()` (line 233 of the spec) while the run is driven by `fixedClock`,
+  and `readBatchSnapshot` reads `systemClock.now()`. Recorded, no card: the pin
+  reads a six-hour bucket, so the drift cannot red it today, but a future pin on
+  the age boundary would be time-dependent.
+- **F4 — Info, ledger.** At the reviewed head the sibling pin card `t_535ab5d2`
+  shaped the same cell: its PR #629 held `ADR-0853` and moved that cell to
+  `` `0854` `` while this record took `` `0853` ``. That is a same-cell mint
+  resolved by the index-only union the lane's merge rule prescribes, not a
+  renumber. Recorded, no card; the record has since landed with PR #636.
+
+### What this append does not retract
+
+Nothing in §Context, §Decision, §Consequences or §Alternatives is retracted. This
+section is an append: the two findings that needed movement were carried by their
+own cards, and those cards' own records document what followed.
