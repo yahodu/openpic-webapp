@@ -137,6 +137,13 @@ export async function eventWindowSweep(options: SweepJobRunOptions): Promise<Cro
     if (nextStatus === null) {
       continue;
     }
+    // Announce before the status write: a failed `event.ended` insert must leave
+    // the row in the candidate set, or the announcement is lost. The dedupe key
+    // keeps the retry at one row.
+    const delivered =
+      nextStatus === "ended"
+        ? await emit("event.ended", { endedAt: row.endAt.toISOString() }, `event.ended:${eventId}`)
+        : false;
     // The prior status is in the filter, so a concurrent run that already moved
     // the event matches nothing and announces nothing twice.
     const moved = await events.findOneAndUpdate(
@@ -146,11 +153,6 @@ export async function eventWindowSweep(options: SweepJobRunOptions): Promise<Cro
     if (moved === null || nextStatus !== "ended") {
       continue;
     }
-    const delivered = await emit(
-      "event.ended",
-      { endedAt: row.endAt.toISOString() },
-      `event.ended:${eventId}`
-    );
     ended += delivered ? 1 : 0;
   }
 
