@@ -1,3 +1,9 @@
+## [1.65.10](https://github.com/yahodu/openpic-webapp/compare/v1.65.9...v1.65.10) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 stamp the checked triple after the row's batch-arm work ([#670](https://github.com/yahodu/openpic-webapp/issues/670)) ([40b6530](https://github.com/yahodu/openpic-webapp/commit/40b65309970a006af95310071c4c8e2c9fca8e5b)), closes [#668](https://github.com/yahodu/openpic-webapp/issues/668)
+
 ## [1.65.9](https://github.com/yahodu/openpic-webapp/compare/v1.65.8...v1.65.9) (2026-11-17)
 
 ### Bug Fixes
