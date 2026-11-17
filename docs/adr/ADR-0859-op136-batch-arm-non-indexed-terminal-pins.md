@@ -27,12 +27,14 @@
   `ADR-0858*` in flight only, on the open PR #641 head
   (`OP-136-task-anonymize-injection-shape`, `de739d20`) and in the worktree
   `.worktrees/t_8901d758` that produced it, and `ADR-0857` as the highest record
-  on the trunk; no `ADR-0859*` exists on the trunk, in any
-  `.worktrees/*/docs/adr`, in `git rev-list --objects --all -- docs/adr` or on
-  any open PR head. This record therefore takes `0859` — the first number above
-  the highest in-flight one — and advances **only** the `OP-136 jobs lane` cell
-  to `0860`; both `unallocated (future lanes)` cells stay `0869`. No number
-  outside `0849`–`0868` is consumed and no range is re-cut.
+  on the trunk. That PR squash-merged as `cbab1f0f` while this card was being
+  written, so the trunk now carries `ADR-0858` and its cell reads `0859`; this
+  record is still the first number above the highest one in flight, and no
+  `ADR-0859*` existed on the trunk (`cbab1f0f`), in any `.worktrees/*/docs/adr`,
+  in `git rev-list --objects --all -- docs/adr` or on any open PR head. It
+  therefore takes `0859` and advances **only** the `OP-136 jobs lane` cell to
+  `0860`; both `unallocated (future lanes)` cells stay `0869`. No number outside
+  `0849`–`0868` is consumed and no range is re-cut.
 
 ## Context
 
@@ -202,7 +204,9 @@ production file in the diff.
 - Because the trio is a characterization, there is no GREEN sibling: the PR is a
   normal test PR, not a draft.
 - `docs/adr/README.md` is the lane's hotspot: this index row, this lane cell and
-  this note merge as a union against PR #641's `ADR-0858` (index-only, keeping
-  the higher cells `0860` lane / `0869` pool). `0851`, `0854` and `0856` carry
-  no index row on this head; this record adds only its own and leaves those as it
+  this note merged as an **index-only union** against PR #641's `ADR-0858`, which
+  squash-merged as `cbab1f0f` mid-work — its index row and its note are kept
+  verbatim, this record's row and note are appended, and the lane cell takes the
+  higher value (`0860` lane / `0869` pool). `0851`, `0854` and `0856` carry no
+  index row on this head; this record adds only its own and leaves those as it
   found them.

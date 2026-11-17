@@ -636,6 +636,100 @@ function failNextDeleteMany(collectionName: string): InjectedWriteFailure {
   };
 }
 
+/** The driver's own `updateMany`, captured before any spy replaces it. */
+const driverUpdateMany = ((): typeof Collection.prototype.updateMany => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "updateMany");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("the driver's Collection#updateMany is missing from the prototype");
+  }
+  return descriptor.value as typeof Collection.prototype.updateMany;
+})();
+
+/** The driver's own `updateMany` argument tuple. */
+type DriverUpdateManyArgs = Parameters<typeof driverUpdateMany>;
+
+/** The driver's own `findOneAndUpdate`, captured before any spy replaces it. */
+const driverFindOneAndUpdate = ((): typeof Collection.prototype.findOneAndUpdate => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "findOneAndUpdate");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("the driver's Collection#findOneAndUpdate is missing from the prototype");
+  }
+  return descriptor.value as typeof Collection.prototype.findOneAndUpdate;
+})();
+
+/** The driver's own `findOneAndUpdate` argument tuple. */
+type DriverFindOneAndUpdateArgs = Parameters<typeof driverFindOneAndUpdate>;
+
+/**
+ * Arm one transient driver failure on the next write that touches a single
+ * document of `collectionName`, **whichever driver method carries it**:
+ * `updateOne`, `updateMany` (identical to `updateOne` for a filter that names
+ * one `_id`) or `findOneAndUpdate`.
+ *
+ * The method is not part of the behaviour a pin protects, and ADR-0857's
+ * §Alternatives rejects prescribing the erase mechanism, so gating on one
+ * method would redden a behaviour-preserving refactor (ADR-0858). The gate stays
+ * the collection name — the narrowest honest one — and one call is armed across
+ * the three methods, so `fired()` still proves the injection was reached
+ * exactly once.
+ *
+ * The error carries `code: 91` (a replica-set election), never `11000`, so no
+ * caller can mistake it for the dedupe collision the outbox relies on.
+ *
+ * @param collectionName - The collection whose write fails, matched on `this`.
+ * @returns The injection, whose `fired` count proves it was reached.
+ */
+function failNextDocumentUpdate(collectionName: string): InjectedWriteFailure {
+  let remaining = 1;
+  let fired = 0;
+
+  const inject = (method: string): Promise<never> => {
+    remaining -= 1;
+    fired += 1;
+    return Promise.reject(
+      Object.assign(new Error(`injected failure: ${method} on ${collectionName}`), { code: 91 })
+    );
+  };
+
+  const updateOne = vi.spyOn(Collection.prototype, "updateOne").mockImplementation(function (
+    this: Collection,
+    ...args: DriverUpdateOneArgs
+  ) {
+    if (this.collectionName === collectionName && remaining > 0) {
+      return inject("updateOne");
+    }
+    return driverUpdateOne.call(this, ...args);
+  } as never);
+
+  const updateMany = vi.spyOn(Collection.prototype, "updateMany").mockImplementation(function (
+    this: Collection,
+    ...args: DriverUpdateManyArgs
+  ) {
+    if (this.collectionName === collectionName && remaining > 0) {
+      return inject("updateMany");
+    }
+    return driverUpdateMany.call(this, ...args);
+  } as never);
+
+  const findOneAndUpdate = vi
+    .spyOn(Collection.prototype, "findOneAndUpdate")
+    .mockImplementation(function (this: Collection, ...args: DriverFindOneAndUpdateArgs) {
+      if (this.collectionName === collectionName && remaining > 0) {
+        return inject("findOneAndUpdate");
+      }
+      return driverFindOneAndUpdate.call(this, ...args);
+    } as never);
+
+  return {
+    fired: () => fired,
+    restore: () => {
+      updateOne.mockRestore();
+      updateMany.mockRestore();
+      findOneAndUpdate.mockRestore();
+    },
+  };
+}
+
 /** Seed one Better Auth session row for a user. */
 async function seedSession(userId: ObjectId): Promise<void> {
   await app.db.collection("session").insertOne({
@@ -781,7 +875,10 @@ describe("when a purge step fails after the account is claimed", () => {
     await seedSession(userId);
 
     // ── Act: the daily run, with one injected anonymize failure ──
-    const injection = failNextUpdateOne("user");
+    // The erase is one write to the `user` collection; which driver method
+    // carries it (`updateOne`, `updateMany`, `findOneAndUpdate`) is not part of
+    // the behaviour this pin protects, so the injection takes any of the three.
+    const injection = failNextDocumentUpdate("user");
     let first: RunReport;
     try {
       first = await runReporting(purgeRun);
