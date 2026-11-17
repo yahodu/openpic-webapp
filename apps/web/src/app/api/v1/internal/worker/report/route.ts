@@ -1,4 +1,4 @@
-import type { Document, ObjectId } from "mongodb";
+import type { Document } from "mongodb";
 import { z } from "zod";
 
 import { internalRouteAuth } from "@/server/auth/internal-hmac";
@@ -96,10 +96,9 @@ const reportResponseSchema = z.object({
   rejected: z.array(rejectedItemSchema),
 });
 
-/** A stored attendee profile, as the withdrawn and superseded guards read it (§15.3). */
+/** A stored attendee profile, as the withdrawn guard reads it (§15.3). */
 interface ProfileStatusRow {
   readonly status?: string;
-  readonly activeSelfieId?: ObjectId | null;
 }
 
 export const POST = defineRoute<
@@ -152,13 +151,14 @@ export const POST = defineRoute<
       const tenant = tenantRepo(row.tenantId, db);
       // §6.4: the profile's live count and watermark belong to the selfie it
       // points at, so a late report for a superseded row must not move them.
-      let supersededSelfie = false;
+      // That is a predicate of the write below, not of this read: a confirmation
+      // can flip the pointer between the two (ADR-0837).
       if (item.kind === "selfie") {
         const profile = (await tenant
           .collection(COLLECTIONS.attendeeEventProfiles)
           .findOne(
             { _id: row.profileId },
-            { projection: { status: 1, activeSelfieId: 1 } }
+            { projection: { status: 1 } }
           )) as ProfileStatusRow | null;
         if (profile?.status === "withdrawn") {
           rejected.push({ index, id: item.id, reason: "profile_withdrawn" });
@@ -169,8 +169,6 @@ export const POST = defineRoute<
           });
           continue;
         }
-        supersededSelfie =
-          profile?.activeSelfieId != null && !profile.activeSelfieId.equals(row._id);
       }
 
       const faceCount = item.kind === "event_image" ? item.faceCount : item.quality?.faceCount;
@@ -235,9 +233,30 @@ export const POST = defineRoute<
             return false;
           }
           // The profile projection §6.4 polls: `ready` only on a success, and
-          // the watermark is the run's own start instant (§10.3.3).
+          // the watermark is the run's own start instant (§10.3.3). The pointer
+          // rides the filter, so a profile whose live result now belongs to a
+          // newer selfie matches nothing (ADR-0837); a null pointer protects
+          // nothing and is still written (ADR-0832 §4).
           if (decision.status !== "skipped") {
-            if (supersededSelfie) {
+            const published = await tenant.collection(COLLECTIONS.attendeeEventProfiles).updateOne(
+              { _id: row.profileId, activeSelfieId: { $in: [row._id, null] } },
+              {
+                $set:
+                  decision.status === "done"
+                    ? {
+                        status: "ready",
+                        matchCount: item.matchesCreated ?? 0,
+                        lastMatchRunAt:
+                          item.matchRunStartedAt === undefined
+                            ? null
+                            : new Date(item.matchRunStartedAt),
+                        updatedAt: now,
+                      }
+                    : { status: "failed", updatedAt: now },
+              },
+              { session }
+            );
+            if (published.matchedCount === 0) {
               getLogger().warn("worker.report_discarded", {
                 event: "worker.report_discarded",
                 kind: item.kind,
@@ -245,25 +264,6 @@ export const POST = defineRoute<
                 workerId,
                 reason: "superseded_selfie",
               });
-            } else {
-              await tenant.collection(COLLECTIONS.attendeeEventProfiles).updateOne(
-                { _id: row.profileId },
-                {
-                  $set:
-                    decision.status === "done"
-                      ? {
-                          status: "ready",
-                          matchCount: item.matchesCreated ?? 0,
-                          lastMatchRunAt:
-                            item.matchRunStartedAt === undefined
-                              ? null
-                              : new Date(item.matchRunStartedAt),
-                          updatedAt: now,
-                        }
-                      : { status: "failed", updatedAt: now },
-                },
-                { session }
-              );
             }
           }
           return true;
