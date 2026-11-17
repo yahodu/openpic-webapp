@@ -1,3 +1,9 @@
+## [1.65.0](https://github.com/yahodu/openpic-webapp/compare/v1.64.2...v1.65.0) (2026-11-17)
+
+### Features
+
+- **jobs:** OP-136 implement the pipeline, window, retention, deletion and lifecycle sweeps ([#625](https://github.com/yahodu/openpic-webapp/issues/625)) ([c762840](https://github.com/yahodu/openpic-webapp/commit/c7628400d989fb73a2d73c5e96137d8a58386aa5))
+
 ## [1.64.2](https://github.com/yahodu/openpic-webapp/compare/v1.64.1...v1.64.2) (2026-11-17)
 
 ### Bug Fixes
