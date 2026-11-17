@@ -26,6 +26,15 @@ import type { SweepJobRunOptions } from "./run-options";
  * last run gets a `match_incremental` run. Every transition carries the expected
  * prior state in its filter, so a second run over the same rows is a no-op.
  *
+ * The attempt budget counts **worker claims**: §18.2 increments
+ * `processing.attempts` on the claim itself, so step 2 — the broker never
+ * accepted the message, no worker ever saw it — deliberately leaves the budget
+ * untouched and the ack grace is unbounded (ADR-0863). Such an item is
+ * re-enqueued every tick until the broker takes it, and each refusal is the
+ * `queue.enqueue_failed` warn §18.1 makes the operator's signal. Step 2's
+ * `attempts < maxAttempts` filter only keeps an item that already spent its
+ * budget out of the re-enqueue path, where step 3 owns it.
+ *
  * The sweep is also the only producer of `match_incremental` (§10.2 step 4). It
  * enqueues the run and advances `lastMatchRunAt`; it never announces the run's
  * matches — the worker's report owns that (ADR-0808 §3).
@@ -153,6 +162,7 @@ export async function pipelineSweep(options: SweepJobRunOptions): Promise<CronRu
         priority: priorityOf(row),
         attempt: row.processing.attempts ?? 0,
       },
+      logger,
     });
     return enqueued;
   };
@@ -309,6 +319,7 @@ export async function pipelineSweep(options: SweepJobRunOptions): Promise<CronRu
         traceId: randomUUID(),
         priority: "high",
       },
+      logger,
     });
     if (!enqueued) {
       // No broker pointer exists, so the run would be lost: hand the watermark
