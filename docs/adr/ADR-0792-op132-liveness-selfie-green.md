@@ -15,7 +15,9 @@
   `apps/web/src/app/api/v1/p/events/[slug]/selfies/route.ts`,
   `apps/web/src/app/api/v1/p/events/[slug]/selfies/[selfieId]/confirm/route.ts`,
   `apps/web/src/app/api/v1/p/events/[slug]/selfies:reuse/route.ts` and
-  `apps/web/src/app/api/v1/p/selfies/reusable/route.ts`.
+  `apps/web/src/app/api/v1/p/selfies/reusable/route.ts`; the attempt budget is
+  also **cited by** `apps/web/src/test/integration/internal-worker-endpoints.test.ts`
+  (OP-135's report arm spends the same attempt).
 - **Lane:** the shared attendee block `0780`–`0798` (row
   `OP-129 attendee identity lane`), `Next free` read as `0792` at the branch cut
   on `OP-132-task-liveness-selfie-red` (`b257470`). OP-132 is a **dependent**

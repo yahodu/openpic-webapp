@@ -208,6 +208,36 @@ export interface CrossTenantReads {
    * @returns The row's owning scope, or `null` when no match carries the id.
    */
   findFaceMatchById(matchId: string, db?: Db): Promise<OwnedMatchRow | null>;
+
+  /**
+   * Return one worker work item by its id alone (OP-135, contract §10.3.2).
+   *
+   * The internal report carries `workerId` and an item `id`, never a tenant: a
+   * worker's lease is a property of the row it holds, so the row's own
+   * `tenantId` is what scopes the write that follows (§10.3.1).
+   *
+   * @param kind - The collection the id addresses.
+   * @param id - The work item's id, as the worker reported it.
+   * @param db - The database handle; defaults to the shared client.
+   * @returns The row's owning scope and lease state, or `null`.
+   */
+  findWorkItemById(
+    kind: "event_image" | "selfie",
+    id: string,
+    db?: Db
+  ): Promise<OwnedWorkItemRow | null>;
+
+  /**
+   * Return one media asset by its id alone (OP-135, contract §10.3.2, §16.1).
+   *
+   * The derivative report carries the asset id and no tenant; the resolved key
+   * is derived from the row's own content hash.
+   *
+   * @param assetId - The asset's id.
+   * @param db - The database handle; defaults to the shared client.
+   * @returns The asset's owning scope and content hash, or `null`.
+   */
+  findMediaAssetById(assetId: string, db?: Db): Promise<OwnedMediaAssetRow | null>;
 }
 
 async function findAttendeeProfilesBySubjectUser(
@@ -463,12 +493,81 @@ async function findFaceMatchById(matchId: string, db: Db = getDb()): Promise<Own
     )) as OwnedMatchRow | null;
 }
 
+/** A stored work item's owning scope and lease state (§18.2). */
+export interface OwnedWorkItemRow {
+  readonly _id: ObjectId;
+  readonly tenantId: string;
+  readonly profileId?: ObjectId;
+  readonly processing?: {
+    readonly status?: string;
+    readonly workerId?: string | null;
+    readonly attempts?: number;
+    readonly maxAttempts?: number;
+  } | null;
+}
+
+/** A stored media asset's owning scope and content hash (§16.1). */
+export interface OwnedMediaAssetRow {
+  readonly _id: ObjectId;
+  readonly tenantId: string;
+  readonly contentHash: string;
+}
+
+/**
+ * One work item by its id alone, for the worker's report (OP-135, §10.3.2).
+ *
+ * @param kind - The collection the id addresses.
+ * @param id - The 24-hex work item id.
+ * @param db - The database handle; defaults to the shared client.
+ * @returns The row's scope and lease state, or `null` when the id is absent.
+ */
+async function findWorkItemById(
+  kind: "event_image" | "selfie",
+  id: string,
+  db: Db = getDb()
+): Promise<OwnedWorkItemRow | null> {
+  if (!ObjectId.isValid(id)) {
+    return null;
+  }
+  const collection = kind === "selfie" ? COLLECTIONS.selfies : COLLECTIONS.eventImages;
+  return (await db
+    .collection(collection)
+    .findOne(
+      { _id: new ObjectId(id) },
+      { projection: { tenantId: 1, profileId: 1, processing: 1 } }
+    )) as OwnedWorkItemRow | null;
+}
+
+/**
+ * One media asset by its id alone, for the derivative report (OP-135, §16.1).
+ *
+ * @param assetId - The 24-hex asset id.
+ * @param db - The database handle; defaults to the shared client.
+ * @returns The asset's scope and content hash, or `null`.
+ */
+async function findMediaAssetById(
+  assetId: string,
+  db: Db = getDb()
+): Promise<OwnedMediaAssetRow | null> {
+  if (!ObjectId.isValid(assetId)) {
+    return null;
+  }
+  return (await db
+    .collection(COLLECTIONS.mediaAssets)
+    .findOne(
+      { _id: new ObjectId(assetId) },
+      { projection: { tenantId: 1, contentHash: 1 } }
+    )) as OwnedMediaAssetRow | null;
+}
+
 /** The whitelisted cross-tenant reads. Import nothing else to cross a tenant. */
 export const crossTenantReads: CrossTenantReads = {
   findAttendeeProfilesBySubjectUser,
   findReusableSelfiesBySubjectUser,
   findAttendeeEventsBySubjectUser,
   findFaceMatchById,
+  findWorkItemById,
+  findMediaAssetById,
 };
 
 /** A stored `attendee_event_profiles` row as a claim walks it (§15.3). */

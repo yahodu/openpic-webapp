@@ -33,5 +33,7 @@ export type {
   CrossTenantReads,
   CrossTenantWrites,
   OwnedMatchRow,
+  OwnedMediaAssetRow,
+  OwnedWorkItemRow,
   RepointAttendeeProfileOptions,
 } from "./cross-tenant";

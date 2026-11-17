@@ -210,6 +210,12 @@ const pipelineSchema = z.object({
   sweepIntervalSeconds: z.number().int().positive(),
   backlogWarnDepth: z.number().int().positive(),
   backlogWarnAgeMinutes: z.number().int().positive(),
+  /**
+   * The operator's pause switch (OP-135, contract §10.3.2; ADR-0829 §3): a
+   * worker that reads it true drains nothing new. Defaulted so a singleton
+   * seeded before the field existed still parses.
+   */
+  pauseRequested: z.boolean().default(false),
 });
 
 /** `upload` — size thresholds, the accepted MIME allow-list and the window grace. */
@@ -355,6 +361,7 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettingsValues = {
     sweepIntervalSeconds: 120,
     backlogWarnDepth: 5000,
     backlogWarnAgeMinutes: 15,
+    pauseRequested: false,
   },
   upload: {
     multipartThresholdBytes: 8_388_608,

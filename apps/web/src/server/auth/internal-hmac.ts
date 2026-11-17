@@ -178,7 +178,9 @@ function isCronPath(path: string): boolean {
  * is accepted with an empty, unsigned body (Vercel Cron issues GETs and cannot
  * sign one). Every other request needs `Bearer <INTERNAL_API_SECRET>` and a
  * valid signature; a `CRON_SECRET` bearer anywhere else (including a non-GET
- * cron request) is refused so the exception cannot be replayed.
+ * cron request) is refused so the exception cannot be replayed. When neither
+ * header is ours the answer names the more specific failure: a signature that
+ * does not verify is `invalid_signature`, a missing one is `internal_auth_failed`.
  *
  * @param input - Method, path, the credential headers, `now` and both secrets.
  * @returns `{ ok: true }` or a coded denial.
@@ -192,11 +194,15 @@ export function authorizeInternalRequest(input: AuthorizeInternalRequestInput): 
     }
   }
 
-  if (token === null || !constantTimeEquals(token, input.internalApiSecret)) {
+  // No bearer, or the cron secret where its one exception does not apply: the
+  // caller has not identified itself at all, so the answer is the bearer — and
+  // never a signature verdict, or the cron secret could be replayed onto a
+  // route by signing with it.
+  if (token === null || constantTimeEquals(token, input.cronSecret)) {
     return { ok: false, code: "internal_auth_failed" };
   }
 
-  return verifyInternalSignature({
+  const signature = verifyInternalSignature({
     secret: input.internalApiSecret,
     body: input.body,
     signature: input.signature,
@@ -204,6 +210,23 @@ export function authorizeInternalRequest(input: AuthorizeInternalRequestInput): 
     now: input.now,
     ...(input.maxSkewSeconds === undefined ? {} : { maxSkewSeconds: input.maxSkewSeconds }),
   });
+
+  // An unknown bearer that carries a signature did sign this body, just not
+  // with our secret, so `invalid_signature` names the failure more precisely
+  // than `internal_auth_failed` (§0.3). A bare unknown bearer — no
+  // `X-Signature` header at all — is simply unidentified.
+  if (!signature.ok) {
+    if (input.signature === null && !constantTimeEquals(token, input.internalApiSecret)) {
+      return { ok: false, code: "internal_auth_failed" };
+    }
+    return signature;
+  }
+
+  if (!constantTimeEquals(token, input.internalApiSecret)) {
+    return { ok: false, code: "internal_auth_failed" };
+  }
+
+  return { ok: true };
 }
 
 /**

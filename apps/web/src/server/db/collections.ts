@@ -134,6 +134,12 @@ export const COLLECTIONS = {
    * build worker (ADR-0794 §5).
    */
   downloadJobs: "downloadJobs",
+  /**
+   * Worker liveness rows (OP-135, contract §10.3.2; ADR-0829 §3). One row per
+   * worker process, refreshed by every heartbeat and expired by TTL; platform
+   * scope because a worker serves every tenant (§10.2).
+   */
+  workerHeartbeats: "workerHeartbeats",
 } as const;
 
 /** The name of any registered collection. */

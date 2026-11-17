@@ -5,7 +5,9 @@
   `apps/web/src/server/attendee/selfie-submit.ts`; pinned by §2's own arm in
   `apps/web/src/test/integration/liveness-selfie-submit.test.ts` (added by
   [ADR-0828](ADR-0828-op132-purged-asset-reuse-reset-pins.md); no decision here
-  is edited).
+  is edited). The withdrawal's deletion of a profile's selfies and matches is
+  also **cited by** `apps/web/src/test/integration/internal-worker-endpoints.test.ts`
+  (OP-135 discards a report that lands after the withdrawal).
 - **Lane:** the shared attendee block `0780`–`0798` (row
   `OP-129 attendee identity lane`), of which this record is the last number.
   `Next free` re-read as `0798` at this branch's head (`4f0cfbd`, cut from
