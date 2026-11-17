@@ -551,3 +551,171 @@ describe("pipeline-indexed-check: the OP-126 batch arm", () => {
     expect(summaries[0]?.payload.batchId).toBe(batchId);
   });
 });
+
+/** The §4.7 summary key for a batch that settled with at least one failed file. */
+const BATCH_COMPLETED_WITH_ERRORS_EVENT = "upload.batch.completed_with_errors";
+
+/** The counters of an event the §4.1 table derives as `partial_failure`. */
+const PARTIAL_FAILURE_COUNTERS: ProcessingCounts = {
+  imageCount: 3,
+  processedImageCount: 1,
+  failedImageCount: 2,
+};
+
+/** The counters of an event the §4.1 table derives as `delayed`. */
+const ALL_FAILED_COUNTERS: ProcessingCounts = {
+  imageCount: 2,
+  processedImageCount: 0,
+  failedImageCount: 2,
+};
+
+/**
+ * Integration / contract — the OP-126 batch arm for the **non-indexed terminal**
+ * states (ADR-0859; follow-up to case I7/I8 of ADR-0852).
+ *
+ * ## Why this block exists
+ *
+ * I7/I8 pin the arm only for an event whose derived status is `indexed`. The
+ * job card scopes the arm to "the batches of **each candidate** event", and
+ * `delayed` (every photo failed) and `partial_failure` (some failed) are the
+ * other all-terminal states §4.1 names. A batch that settles as
+ * `complete_with_errors` inside a partly-failed event must still tell its
+ * uploader its batch finished with errors — that is exactly the summary the
+ * uploader would otherwise never receive, because the event is deliberately not
+ * announced as searchable.
+ *
+ * So the pins here are the negative control's complement: the same run that must
+ * stay silent about `pipeline.event.indexed` must still emit the batch summary,
+ * and a re-run must still add none.
+ *
+ * ## How to read them
+ *
+ * `derivePipelineStatus` is the oracle for the event status, so a case first
+ * proves the seeded shape derives the state it claims, and only then asserts
+ * anything about the outbox. Rows are seeded with the raw driver (the worker's
+ * own end state); neither the completion route nor `emitDomainEvent` runs
+ * between the seed and the assertion.
+ */
+describe("pipeline-indexed-check: the batch arm for the non-indexed terminal events", () => {
+  /**
+   * Seed one event whose single batch the worker already settled, with the
+   * given per-image pipeline statuses and one completed session per image.
+   *
+   * @param counters - The event counters, which are the §4.1 table's whole input.
+   * @param statuses - Each image's `processing.status`, in sequence order.
+   * @returns The event, the batch id and the batch's uploader.
+   */
+  async function seedSettledFailingBatch(
+    counters: ProcessingCounts,
+    statuses: readonly string[]
+  ): Promise<{
+    readonly event: SeededEvent;
+    readonly batchId: string;
+    readonly uploader: ObjectId;
+  }> {
+    const event = await seedEvent(counters);
+    const batchId = new ObjectId().toHexString();
+    const uploader = new ObjectId();
+    let sequence = 0;
+    for (const status of statuses) {
+      sequence += 1;
+      await seedCompletedSession(event, {
+        batchId,
+        createdByUserId: uploader,
+        contentHash: hashFor(`op136-batch-arm-${String(sequence)}`),
+        fileName: `DSC_1${String(sequence).padStart(3, "0")}.JPG`,
+      });
+      await seedBatchImage(event, { batchId, status, sequence });
+    }
+    return { event, batchId, uploader };
+  }
+
+  it("I9: a settled batch with a failed file inside a partial_failure event emits one errors summary", async () => {
+    // Arrange — one image indexed, two failed: the §4.1 table says partial_failure.
+    const { event, batchId, uploader } = await seedSettledFailingBatch(PARTIAL_FAILURE_COUNTERS, [
+      "done",
+      "failed",
+      "failed",
+    ]);
+    expect(derivePipelineStatus(PARTIAL_FAILURE_COUNTERS)).toBe("partial_failure");
+
+    // Act — the every-5-minutes tick, one run.
+    await runJob(NOW);
+
+    // Assert — the uploader is told its batch finished with errors, exactly once…
+    const summaries = await outboxFor(BATCH_COMPLETED_WITH_ERRORS_EVENT);
+    expect(summaries).toHaveLength(1);
+    const summary = summaries[0];
+    expect(summary?.tenantId).toBe(event.tenantKey);
+    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.payload.batchId).toBe(batchId);
+    expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
+    expect(summary?.payload.fileCount).toBe(3);
+
+    // …and the same batch is never summarised as a clean completion…
+    expect(
+      await outboxFor(BATCH_COMPLETED_EVENT),
+      "a batch with a failed file is not a clean completion"
+    ).toHaveLength(0);
+
+    // …while the event itself is still not announced as searchable (§4.1).
+    expect(await indexedRowsFor(event.eventId)).toHaveLength(0);
+  });
+
+  it("I10: a settled batch whose every photo failed inside a delayed event emits one errors summary", async () => {
+    // Arrange — every photo failed: the §4.1 table says delayed.
+    const { event, batchId, uploader } = await seedSettledFailingBatch(ALL_FAILED_COUNTERS, [
+      "failed",
+      "failed",
+    ]);
+    expect(derivePipelineStatus(ALL_FAILED_COUNTERS)).toBe("delayed");
+
+    // Act
+    await runJob(NOW);
+
+    // Assert — one errors summary for the batch, addressed to its uploader.
+    const summaries = await outboxFor(BATCH_COMPLETED_WITH_ERRORS_EVENT);
+    expect(summaries).toHaveLength(1);
+    const summary = summaries[0];
+    expect(summary?.tenantId).toBe(event.tenantKey);
+    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.payload.batchId).toBe(batchId);
+    expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
+    expect(summary?.payload.fileCount).toBe(2);
+
+    // …no clean completion for the same batch…
+    expect(
+      await outboxFor(BATCH_COMPLETED_EVENT),
+      "a batch every photo of which failed is not a clean completion"
+    ).toHaveLength(0);
+
+    // …and no index announcement for the event.
+    expect(await indexedRowsFor(event.eventId)).toHaveLength(0);
+  });
+
+  it("I11: a second run seven hours later adds no second summary for either event", async () => {
+    // Arrange — one partial_failure batch and one delayed batch, both settled.
+    const partial = await seedSettledFailingBatch(PARTIAL_FAILURE_COUNTERS, [
+      "done",
+      "failed",
+      "failed",
+    ]);
+    const delayed = await seedSettledFailingBatch(ALL_FAILED_COUNTERS, ["failed", "failed"]);
+    await runJob(NOW);
+    const firstRun = await outboxFor(BATCH_COMPLETED_WITH_ERRORS_EVENT);
+    expect(firstRun).toHaveLength(2);
+    expect(firstRun.map((row) => row.payload.batchId).sort()).toEqual(
+      [partial.batchId, delayed.batchId].sort()
+    );
+
+    // Act — the next bucket's tick, 7 h later, over the same rows.
+    await runJob(new Date(NOW.getTime() + NEXT_BUCKET_MS));
+
+    // Assert — one batch is one summary, whichever run observes it.
+    const summaries = await outboxFor(BATCH_COMPLETED_WITH_ERRORS_EVENT);
+    expect(summaries).toHaveLength(2);
+    expect(summaries.filter((row) => row.payload.batchId === partial.batchId)).toHaveLength(1);
+    expect(summaries.filter((row) => row.payload.batchId === delayed.batchId)).toHaveLength(1);
+    expect(await outboxFor(BATCH_COMPLETED_EVENT)).toHaveLength(0);
+  });
+});
