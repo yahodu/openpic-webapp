@@ -1,3 +1,9 @@
+## [1.65.6](https://github.com/yahodu/openpic-webapp/compare/v1.65.5...v1.65.6) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 bound and parallelise the indexed check's batch arm ([#661](https://github.com/yahodu/openpic-webapp/issues/661)) ([d28cddd](https://github.com/yahodu/openpic-webapp/commit/d28cddd13ac68f968b62fa57bcf398b5956efd84))
+
 ## [1.65.5](https://github.com/yahodu/openpic-webapp/compare/v1.65.4...v1.65.5) (2026-11-17)
 
 ### Bug Fixes
