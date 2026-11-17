@@ -19,4 +19,37 @@ regexTarget = "secret"
 regexes = [
   '''insightface-antelopev2-2026-03''',
   '''e2e-unsubscribe-signing-secret-0123456789abcd''',
+  # The OP-115 event access-link alphabet (ADR-0520): a public constant
+  # exported from @/server/events/slug and mirrored by the integration spec's
+  # own SLUG_ALPHABET copy. It is a character set, not a secret — gitleaks'
+  # generic-api-key entropy heuristic flags it, so the exact non-secret value
+  # is allowlisted (the same treatment the docs' modelKey example receives).
+  '''abcdefghjkmnpqrstuvwxyz23456789''',
+  # The OP-117 `upload-window:extend` unlimited-plan fixture's subscription key
+  # (ADR-0602, pin E7). It is a plan identifier, not a secret — gitleaks'
+  # generic-api-key entropy heuristic flags it, so the exact non-secret value is
+  # allowlisted (the same treatment the entries above receive).
+  '''op117-unlimited''',
+  # The OP-135 worker-endpoint spec's opaque-derivative fixtures (ADR-0829 §5,
+  # ADR-0830 §5, ADR-0835 §1): the `hnd_` handles the processor sends in place of
+  # an object key, and the per-case `op135-` tags the spec derives asset content
+  # hashes from. The `objectKeyRef` name and the entropy of the values match
+  # gitleaks' generic-api-key heuristic, but a handle is by definition not a key
+  # and the tags are suite-local labels — the exact non-secret values are
+  # allowlisted (the same treatment the entries above receive).
+  '''hnd_9f2c1d4b7a6e5f80''',
+  '''hnd_1a2b3c4d5e6f7081''',
+  '''hnd_6b1e4c9a2f7d3085''',
+  '''op135-deriv-thumb''',
+  '''op135-deriv-rawkey''',
+  '''op135-f2-handle''',
+  '''op135-f4-lease-race''',
+  # The OP-136 observability pins' plan key (ADR-0864): a plan identifier the
+  # suite seeds and the tenant's subscription points at, not a secret. The
+  # constant's `PLAN_KEY` name and the value's entropy match generic-api-key, so
+  # the exact non-secret value is allowlisted. The first entry is the literal the
+  # branch's pre-rename commit still carries (gitleaks scans the whole push
+  # range), the second the renamed fixture's value, exactly as OP-99's entry did.
+  '''op136-observability-plan''',
+  '''op136-observability''',
 ]

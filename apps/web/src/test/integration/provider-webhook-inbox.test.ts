@@ -1,0 +1,1545 @@
+import { createHash } from "node:crypto";
+
+import { ObjectId, type Db, type Document } from "mongodb";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * `next/server`'s `after` is the seam this suite observes for the "respond
+ * first, project after" half of the contract (§10.1 step 5/6, the GREEN card's
+ * §3). The mock is hoisted above the module graph so
+ * `@/server/domain/domain-events` and the inbox route both bind to it on import;
+ * the default is inert (`vi.fn()`), which is what lets a spec assert the
+ * *scheduling* call and then decide whether to run the deferred work — exactly
+ * the pattern `domain-events-after-trigger.test.ts` established.
+ */
+const afterMock = vi.hoisted(() => vi.fn<(callback: () => unknown) => void>());
+
+vi.mock("next/server", () => ({ after: afterMock }));
+
+import { POST as receiveWebhook } from "@/app/api/v1/webhooks/[provider]/route";
+import { projectProviderWebhookEvent } from "@/server/billing/webhook-projection";
+import { COLLECTIONS } from "@/server/db/collections";
+import { ensureIndexes } from "@/server/db/indexes";
+import { createLogger, getLogger, memoryTransport, setLogger } from "@/server/logging";
+import type {
+  ProviderRef,
+  SubscriptionStatus,
+  WebhookHeaders,
+} from "@/server/payments/payment-provider";
+import {
+  invalidatePlatformSettings,
+  PLATFORM_SETTINGS_DEFAULTS,
+} from "@/server/settings/platform-settings";
+
+import { body } from "../helpers/auth-requests";
+import { APP_ORIGIN, startTestApp, type TestApp } from "../helpers/authed-app";
+import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
+import { expectNoSecretsInLogs } from "../helpers/log-assertions";
+import {
+  makeCashfreeWebhookBody,
+  makeCashfreeWebhookHeaders,
+  TEST_CASHFREE_WEBHOOK_SECRET,
+} from "../factories/payment";
+
+/**
+ * Integration / contract — `POST /api/v1/webhooks/{provider}` (OP-108 RED,
+ * contract §10.1; ADR-0440).
+ *
+ * The user story: *as the platform I want provider webhooks verified,
+ * deduplicated, acknowledged quickly and projected transactionally so that
+ * billing state is correct even under replays and delays.*
+ *
+ * The route is one generic inbox: verify the signature over the **raw** bytes,
+ * insert once into `providerWebhookEvents` (the unique index *is* the dedupe),
+ * answer `200` before any domain work, and only then project the event into
+ * `billingTransactions` + `subscriptions` in one transaction:
+ *
+ *   I1  a valid signed activation is `200 {"status":"received"}`; the
+ *       subscription is **still `incomplete`** when the response returns and
+ *       becomes `active` with a succeeded `authorization` row once the deferred
+ *       projection runs;
+ *   I2  a replay is `200 duplicate_ignored` and adds nothing — by provider event
+ *       id when the payload carries one, and by payload hash when it does not —
+ *       while two *different* id-less events both project (the partial unique
+ *       indexes of §18.4);
+ *   I3  a bad, missing or stale signature is `401` (`invalid_signature` /
+ *       `stale_signature`) with **zero rows written**;
+ *   I4  an event for another provider environment is `ignored`, never projected;
+ *   I6  a failed charge is `past_due` with the grace deadline read from
+ *       `platformSettings.dunning.gracePeriodDays` (14 by default, 7 after an
+ *       operator changes it, `pendingDueMinor` = the amount attempted);
+ *   I7  a failure that arrives *after* a later success does not roll the
+ *       subscription back — the projector orders by the provider's `occurredAt`.
+ *
+ * Around those, the ordinary behaviour §10.1 implies: the `$or` id/payload-hash
+ * identity, the §18.4 row shape, the timestamps, the deferral contract, the
+ * `after()`-free sweep seam OP-111 reuses, and an inbox for a provider this
+ * deployment has no adapter for.
+ *
+ * ## Contract expected of the implementation
+ *
+ * - `@/app/api/v1/webhooks/[provider]/route` exports `POST`, declared
+ *   `defineRoute({ route: "/api/v1/webhooks/:provider", … })` with **no**
+ *   `rateLimit` stage (§0.11: `/webhooks/**` is not rate limited) and no declared
+ *   request `body` schema — the handler reads the raw bytes itself
+ *   (`ctx.request.text()`), because JSON re-serialisation breaks the HMAC
+ *   (§10.1.1). The `{provider}` segment selects the payment adapter whose
+ *   normalized events say `provider === <segment>`; anything else is refused
+ *   with no write. The response body is exactly the §10.1 step 5 receipt:
+ *   `{"status": "received" | "duplicate_ignored"}`.
+ * - Verification produces the Appendix A codes `invalid_signature` /
+ *   `stale_signature` (both `401`, both writing nothing). The timestamp window
+ *   is the port's ±300 s, so the route needs the `x-webhook-timestamp` itself;
+ *   a *missing* timestamp or signature is `invalid_signature`.
+ * - The inbox row is the §18.4 document (`provider`, `env`, `eventType`,
+ *   `providerEventId`, `payloadHash`, `signatureValid`, `rawPayload`,
+ *   `receivedAt`, `processedAt`, `processResult`, `processError`, `expireAt`);
+ *   `expireAt` is `receivedAt + platformSettings.retention.webhookDays`.
+ * - The projection is deferred through `after()` (the GREEN card's §3) and is
+ *   also exported as `projectProviderWebhookEvent(eventId: ObjectId | string,
+ *   { db?, clock? })` from `@/server/billing/webhook-projection`, so OP-111's
+ *   `webhook-projection-sweep` re-projects `processedAt: null` rows.
+ * - The ledger row carries §14.4's `rawPayloadRef` → the inbox row's `_id`, so
+ *   the raw payload is referenced, never copied.
+ * - `billingTransactions` is registered in `COLLECTIONS` as
+ *   `"billing_transactions"`.
+ *
+ * ## Assumptions recorded in the handoff (ADR-0440)
+ *
+ * - The route is driven with `PAYMENT_PROVIDER=cashfree` + the four
+ *   `CASHFREE_*` variables (the OP-107 wiring), so MSW-fail-closed proves the
+ *   webhook path makes **no** upstream call — verification is offline HMAC.
+ * - `eventType` stores the **normalized** kind: §10.1.1 keeps vendor event names
+ *   inside the adapter, and the port's `NormalizedProviderEvent` exposes `kind`
+ *   and nothing vendor-shaped.
+ * - §18.4's `payloadHash` form is `sha256:<hex>`; the spec strips an optional
+ *   `sha256:` prefix and compares the digest, so the *value* is pinned exactly
+ *   and the prefix convention stays the implementation's choice.
+ * - The row's `receivedAt`/`expireAt` are pinned as bounded intervals
+ *   (`[before, after]`) rather than exact instants, so no assertion depends on
+ *   how long the request took.
+ * - The projection's ordering watermark is a §14.3 field of the implementation's
+ *   choosing (the schema has none today); the tests assert only that an older
+ *   event is ignored.
+ */
+
+const WEBHOOKS_PATH = "/api/v1/webhooks";
+
+/** The payments selection this suite drives the inbox with (OP-107's wiring). */
+const PAYMENTS_ENV: Record<string, string> = {
+  PAYMENT_PROVIDER: "cashfree",
+  CASHFREE_CLIENT_ID: "test-client-id",
+  CASHFREE_CLIENT_SECRET: "test-client-secret",
+  CASHFREE_API_VERSION: "2025-01-01",
+  CASHFREE_WEBHOOK_SECRET: TEST_CASHFREE_WEBHOOK_SECRET,
+};
+
+/** The vendor subscription id every fixture body addresses. */
+const SUBSCRIPTION_REF_ID = "sub_test_001";
+
+/** The §18.4 retention the TTL assertions are bounded by. */
+const WEBHOOK_TTL_DAYS = PLATFORM_SETTINGS_DEFAULTS.retention.webhookDays;
+
+/** One day in milliseconds. */
+const MS_PER_DAY = 86_400_000;
+
+/** The replay-window edge a stale/future timestamp is signed at (§10.1 step 2). */
+const REPLAY_WINDOW_MS = 300_000;
+
+/** The client IP the invalid-signature log pin refuses to echo in the clear. */
+const CLIENT_IP = "203.0.113.7";
+
+/** The `subscription_details.subscription_status` an auth-success body carries. */
+const VENDOR_ACTIVE = "ACTIVE";
+
+/** The subscription ref a seeded row must carry for a fixture body to match it. */
+const SUBSCRIPTION_REF: ProviderRef = {
+  provider: "cashfree",
+  env: "sandbox",
+  kind: "subscription",
+  id: SUBSCRIPTION_REF_ID,
+};
+
+/** The §14.3 `subscriptions` row this suite seeds. */
+interface SubscriptionRow {
+  readonly _id: ObjectId;
+  readonly tenantId: string;
+  readonly subscribedPlanKey: string;
+  readonly subscribedPlanVersion: number;
+  readonly activePlanKey: string;
+  readonly status: SubscriptionStatus;
+  readonly priceKey: string;
+  readonly paymentMethodKind: string;
+  readonly mandateStatus: string;
+  readonly billingCycle: string;
+  readonly currentPeriodStart: Date | null;
+  readonly currentPeriodEnd: Date | null;
+  readonly nextChargeAt: Date | null;
+  readonly gracePeriodEndsAt: Date | null;
+  readonly pendingDueMinor: number;
+  readonly currency: string;
+  readonly dunning: {
+    readonly attemptCount: number;
+    readonly lastAttemptAt: Date | null;
+    readonly remindersSent: readonly string[];
+    readonly nextReminderAt: Date | null;
+  };
+  /**
+   * The ordering watermark the projection persists (§10.1 step 6). The §14.3
+   * schema carries no such field today, so it lives under this leaf; only the
+   * observable outcome is contractual (ADR-0440 §6).
+   */
+  readonly lastProviderEventAt?: Date | null;
+  readonly externalRefs: readonly ProviderRef[];
+}
+
+/** The §18.4 `providerWebhookEvents` row as this suite reads it. */
+interface WebhookEventRow {
+  readonly _id: unknown;
+  readonly provider: string;
+  readonly env: string;
+  readonly eventType: string;
+  readonly providerEventId: string | null;
+  readonly payloadHash: string | null;
+  readonly signatureValid: boolean;
+  readonly rawPayload: unknown;
+  readonly receivedAt: Date;
+  readonly processedAt: Date | null;
+  readonly processResult: string | null;
+  readonly processError: string | null;
+  readonly expireAt: Date;
+}
+
+/** The §14.4 `billingTransactions` row as this suite reads it. */
+interface BillingTransactionRow {
+  readonly _id: unknown;
+  readonly tenantId: string;
+  readonly subscriptionId: unknown;
+  readonly kind: string;
+  readonly status: string;
+  readonly amountMinor: number;
+  readonly currency: string;
+  readonly failure: { readonly code?: string; readonly category?: string } | null;
+  readonly idempotencyKey: string;
+  readonly externalRefs: readonly ProviderRef[];
+  readonly occurredAt: Date;
+  readonly settledAt: Date | null;
+  readonly periodCovered: { readonly start: Date; readonly end: Date } | null;
+  readonly invoiceNumber: string | null;
+  readonly rawPayloadRef: unknown;
+}
+
+let app: TestApp;
+
+/** The process logger in place before the log-hygiene spec replaces it. */
+let ambientLogger: ReturnType<typeof getLogger>;
+
+beforeAll(async () => {
+  app = await startTestApp({ prefix: "op108-webhooks", env: PAYMENTS_ENV });
+  // The unique indexes of §18.4 **are** the deduplication, so the suite builds
+  // the declared registry against its private database first. Without this a
+  // replay inserts twice and every dedupe pin is vacuous.
+  await ensureIndexes(app.db);
+  ambientLogger = getLogger();
+}, MONGO_READY_HOOK_TIMEOUT_MS);
+
+afterAll(async () => {
+  await app.cleanup();
+});
+
+beforeEach(async () => {
+  afterMock.mockClear();
+  // Each case owns its slice of the database. The whole file shares one booted
+  // app, and every case seeds a subscription carrying the same
+  // `sub_test_001` ref and re-delivers the same `providerEventId`s, so without
+  // this the `providerWebhookEvents` rows accumulate across cases and a later
+  // case is either swallowed as `duplicate_ignored` or projects against an
+  // earlier case's subscription. The `domain_events` outbox must clear too: its
+  // unique partial `dedupeKey` index makes a repeated emit (the same event
+  // identity in two cases) abort the projection transaction, which would leave
+  // the subscription unpatched while the route still answers `200`. This is the
+  // `notification-fanout-cron-route` idiom: delete every collection the
+  // contract touches.
+  await Promise.all([
+    app.db.collection(COLLECTIONS.providerWebhookEvents).deleteMany({}),
+    app.db.collection(COLLECTIONS.subscriptions).deleteMany({}),
+    app.db.collection(COLLECTIONS.billingTransactions).deleteMany({}),
+    app.db.collection(COLLECTIONS.domainEvents).deleteMany({}),
+  ]);
+  // The `platformSettings` singleton is process-cached and shared by the whole
+  // file: drop the document and the cache so each case starts from the
+  // documented defaults (14 grace days, 90-day webhook retention).
+  await settingsCollection().deleteMany({});
+  invalidatePlatformSettings();
+});
+
+afterEach(() => {
+  setLogger(ambientLogger);
+});
+
+/** The origin-relative URL of one provider's inbox. */
+function webhookUrl(provider = "cashfree"): string {
+  return new URL(`${WEBHOOKS_PATH}/${provider}`, APP_ORIGIN).toString();
+}
+
+/** A `POST` to the inbox: a raw body, its signature headers, and no session. */
+function webhookRequest(options: {
+  readonly rawBody: string;
+  readonly headers?: Record<string, string>;
+  readonly provider?: string;
+}): Request {
+  return new Request(webhookUrl(options.provider ?? "cashfree"), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...options.headers,
+    },
+    body: options.rawBody,
+  });
+}
+
+/** The `platformSettings` singleton document: a string `_id` plus the settings tree. */
+type StoredSettings = Document & { readonly _id: string };
+
+/** Open the `platformSettings` singleton with its string `_id` typed (the OP-82 precedent). */
+function settingsCollection() {
+  return app.db.collection<StoredSettings>("platformSettings");
+}
+
+/** The factory's optional-valued header map as the plain record a `Request` accepts. */
+function asHeaders(headers: WebhookHeaders): Record<string, string> {
+  return { ...headers } as Record<string, string>;
+}
+
+/** Sign `rawBody` the Cashfree way, at the given epoch-ms instant. */
+function signedHeaders(rawBody: string, timestampMs: number = Date.now()): Record<string, string> {
+  return asHeaders(
+    makeCashfreeWebhookHeaders(TEST_CASHFREE_WEBHOOK_SECRET, String(timestampMs), rawBody)
+  );
+}
+
+/** An ISO instant a fixed number of minutes before now. */
+function minutesAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000).toISOString();
+}
+
+/** A `SUBSCRIPTION_AUTH_STATUS` success body — the mandate authorization (§10.1.2). */
+function activationBody(eventTime = minutesAgo(5)): string {
+  return makeCashfreeWebhookBody("SUBSCRIPTION_AUTH_STATUS", {
+    subscriptionDetails: { subscription_status: VENDOR_ACTIVE },
+    authorizationDetails: { authorization_status: "SUCCESS" },
+    eventTime,
+    extraData: {
+      payment_id: "ab-auth-001",
+      cf_payment_id: "49988825",
+      payment_type: "AUTH",
+      payment_status: "SUCCESS",
+      payment_amount: 2,
+      payment_currency: "INR",
+    },
+  });
+}
+
+/** A `SUBSCRIPTION_PAYMENT_SUCCESS` body for one charge (₹499 → `49900`). */
+function paymentSucceededBody(paymentId: string, eventTime = minutesAgo(5)): string {
+  return makeCashfreeWebhookBody("SUBSCRIPTION_PAYMENT_SUCCESS", {
+    subscriptionDetails: { subscription_status: VENDOR_ACTIVE },
+    eventTime,
+    extraData: {
+      payment_id: `ab-${paymentId}`,
+      cf_payment_id: paymentId,
+      payment_type: "CHARGE",
+      payment_status: "SUCCESS",
+      payment_amount: 499,
+      payment_currency: "INR",
+    },
+  });
+}
+
+/** A `SUBSCRIPTION_PAYMENT_FAILED` body for one charge, with a mapped category. */
+function paymentFailedBody(
+  paymentId: string,
+  options: { readonly eventTime?: string; readonly failureReason?: string } = {}
+): string {
+  return makeCashfreeWebhookBody("SUBSCRIPTION_PAYMENT_FAILED", {
+    subscriptionDetails: { subscription_status: VENDOR_ACTIVE },
+    eventTime: options.eventTime ?? minutesAgo(5),
+    extraData: {
+      payment_id: `ab-${paymentId}`,
+      cf_payment_id: paymentId,
+      payment_type: "CHARGE",
+      payment_status: "FAILED",
+      payment_amount: 499,
+      payment_currency: "INR",
+      failure_details: { failure_reason: options.failureReason ?? "MANDATE_REVOKED" },
+    },
+  });
+}
+
+/** A `SUBSCRIPTION_STATUS_CHANGED` body — carries no provider event id (§10.1 step 3). */
+function statusChangedBody(vendorStatus: string, eventTime = minutesAgo(5)): string {
+  return makeCashfreeWebhookBody("SUBSCRIPTION_STATUS_CHANGED", {
+    subscriptionDetails: { subscription_status: vendorStatus },
+    eventTime,
+  });
+}
+
+/** A random hex tenant id: the inbox is platform-scoped, so no tenant row is needed. */
+function newTenantId(): string {
+  return new ObjectId().toHexString();
+}
+
+/** Seed one `subscriptions` row (schema §14.3) and return its id. */
+async function seedSubscription(options: {
+  readonly tenantId: string;
+  readonly status?: SubscriptionStatus;
+  readonly mandateStatus?: string;
+  readonly refs?: readonly ProviderRef[];
+  readonly currentPeriodEnd?: Date | null;
+}): Promise<ObjectId> {
+  const _id = new ObjectId();
+  const row: SubscriptionRow = {
+    _id,
+    tenantId: options.tenantId,
+    subscribedPlanKey: "starter",
+    subscribedPlanVersion: 1,
+    activePlanKey: "starter",
+    status: options.status ?? "incomplete",
+    priceKey: "starter-monthly-inr",
+    paymentMethodKind: "mandate_upi",
+    mandateStatus: options.mandateStatus ?? "pending",
+    billingCycle: "monthly",
+    currentPeriodStart: new Date("2026-10-01T00:00:00.000Z"),
+    currentPeriodEnd: options.currentPeriodEnd ?? null,
+    nextChargeAt: null,
+    gracePeriodEndsAt: null,
+    pendingDueMinor: 0,
+    currency: "INR",
+    dunning: { attemptCount: 0, lastAttemptAt: null, remindersSent: [], nextReminderAt: null },
+    externalRefs: options.refs ?? [SUBSCRIPTION_REF],
+  };
+  await app.db.collection(COLLECTIONS.subscriptions).insertOne({ ...row });
+  return _id;
+}
+
+/** Read the seeded subscription back, failing loudly when the row vanished. */
+async function readSubscription(subscriptionId: ObjectId): Promise<SubscriptionRow> {
+  const row = await app.db.collection(COLLECTIONS.subscriptions).findOne({ _id: subscriptionId });
+  expect(row).not.toBeNull();
+  return row as unknown as SubscriptionRow;
+}
+
+/** Every `providerWebhookEvents` row this suite wrote, oldest first. */
+async function webhookRows(): Promise<readonly WebhookEventRow[]> {
+  const rows = await app.db
+    .collection(COLLECTIONS.providerWebhookEvents)
+    .find({ provider: "cashfree" })
+    .sort({ receivedAt: 1 })
+    .toArray();
+  return rows as unknown as WebhookEventRow[];
+}
+
+/** The most recently received inbox row, failing loudly when there is none. */
+async function latestWebhookRow(): Promise<WebhookEventRow> {
+  const rows = await webhookRows();
+  const last = rows.at(-1);
+  if (last === undefined) {
+    throw new Error("expected at least one providerWebhookEvents row");
+  }
+  return last;
+}
+
+/** The `billingTransactions` rows for one tenant, oldest first. */
+async function ledgerRows(tenantId: string): Promise<readonly BillingTransactionRow[]> {
+  const rows = await app.db
+    .collection(COLLECTIONS.billingTransactions)
+    .find({ tenantId })
+    .sort({ occurredAt: 1 })
+    .toArray();
+  return rows as unknown as BillingTransactionRow[];
+}
+
+/** The `sha256` digest of a raw body, whatever prefix convention the row uses. */
+function digestOf(rawBody: string): string {
+  return createHash("sha256").update(rawBody).digest("hex");
+}
+
+/**
+ * Run every callback the route deferred, exactly as Next.js does once the
+ * response has been sent.
+ */
+async function drainDeferredProjections(): Promise<void> {
+  const callbacks = afterMock.mock.calls.map((call) => call[0]);
+  afterMock.mockClear();
+  // Run the deferred work in the order it was scheduled. Two deliveries drained
+  // concurrently would project the same subscription in parallel against a
+  // snapshot taken before either write; the ordering watermark is read outside
+  // the transaction, so the older event's patch could land last and regress the
+  // status. The cases pin *delivery order* (and its watermark), not a concurrent
+  // write race, so the drain is sequential.
+  for (const callback of callbacks) {
+    await callback();
+  }
+}
+
+/** A one-shot signal: `promise` settles the first time `resolve()` is called. */
+interface Deferred {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+}
+
+/** Build a {@link Deferred}. */
+function deferred(): Deferred {
+  const state: { resolve: () => void } = { resolve: () => undefined };
+  const promise = new Promise<void>((settle) => {
+    state.resolve = () => {
+      settle();
+    };
+  });
+  return {
+    promise,
+    resolve: () => {
+      state.resolve();
+    },
+  };
+}
+
+/**
+ * The interleaving seam for the concurrent-projection pin.
+ *
+ * `read` settles once the gated projection has read the pre-write subscription
+ * row; `hold` is what the spec resolves to let that read return.
+ */
+interface SubscriptionReadGate {
+  readonly read: Deferred;
+  readonly hold: Deferred;
+}
+
+/**
+ * A `Db` seam that makes the concurrent-projection interleaving deterministic.
+ *
+ * **The hazard.** `projectProviderWebhookEvent` reads the subscription and
+ * checks the `lastProviderEventAt` watermark *outside* `withTransaction`, then
+ * applies an **unconditional** `$set` inside it. Two projections for one
+ * subscription that both read the pre-write row therefore both pass the
+ * watermark check, and whichever transaction commits last wins — so the *older*
+ * event's patch can land last and regress `status` / `lastProviderEventAt`.
+ * The route schedules each projection through `after()`, so two
+ * near-simultaneous deliveries for one subscription produce two concurrent
+ * projections in the same process, and §10.1 step 6 ("orders by the provider's
+ * `occurredAt`, never by arrival") is not honoured.
+ *
+ * **Why a wrapper.** A bare `Promise.all` of two projections is a race that can
+ * pass by luck. This wrapper forces the losing interleaving on every run: the
+ * gated projection's `subscriptions.findOne` captures the pre-write row and
+ * then **holds** before returning it, so the spec can run the *newer* projection
+ * to completion (its transaction commits first) and only then release the
+ * older one. On the pre-fix head the older call's unconditional `$set` then
+ * overwrites the newer patch; once the projection guards the write atomically
+ * the older call is reported `ignored`.
+ *
+ * Only the `subscriptions` collection is gated, and only its `findOne`; every
+ * other handle is the real one, so the transaction, the ledger and the outbox
+ * are untouched.
+ */
+function gatedSubscriptionDb(base: Db, gate: SubscriptionReadGate): Db {
+  return new Proxy(base, {
+    get(target, property) {
+      if (property !== "collection") {
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return (name: string) => {
+        const collection = target.collection(name);
+        if (name !== COLLECTIONS.subscriptions) {
+          return collection;
+        }
+        return new Proxy(collection, {
+          get(inner, innerProperty) {
+            if (innerProperty === "findOne") {
+              return async (filter: Document, options?: Document) => {
+                const found: unknown = await inner.findOne(filter, options);
+                gate.read.resolve();
+                await gate.hold.promise;
+                return found;
+              };
+            }
+            const value: unknown = Reflect.get(inner, innerProperty);
+            return typeof value === "function" ? value.bind(inner) : value;
+          },
+        });
+      };
+    },
+  });
+}
+
+describe("POST /api/v1/webhooks/{provider} — acknowledgement and projection", () => {
+  it("I1: a valid signed activation is 200 received, and the subscription is active only after the deferred projection", async () => {
+    // Arrange
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = activationBody();
+    const before = Date.now();
+
+    // Act — the provider's POST.
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    const after = Date.now();
+
+    // Assert — §10.1 step 5: acknowledged first, with the pinned receipt body.
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+
+    // …and the projection has not run yet: accessing state is the second step.
+    expect(afterMock).toHaveBeenCalledTimes(1);
+    expect(await readSubscription(subscriptionId)).toMatchObject({ status: "incomplete" });
+    expect(await ledgerRows(tenantId)).toEqual([]);
+
+    // The §18.4 inbox row is written before the response: identity, signature
+    // verdict, retention and the raw payload the sweep re-projects from.
+    const recorded = await latestWebhookRow();
+    expect(recorded).toMatchObject({
+      provider: "cashfree",
+      env: "sandbox",
+      eventType: "subscription_activated",
+      providerEventId: "49988825",
+      signatureValid: true,
+      processedAt: null,
+      processResult: null,
+    });
+    expect(recorded.receivedAt).toBeInstanceOf(Date);
+    expect(recorded.expireAt.getTime()).toBeGreaterThanOrEqual(
+      before + WEBHOOK_TTL_DAYS * MS_PER_DAY
+    );
+    expect(recorded.expireAt.getTime()).toBeLessThanOrEqual(after + WEBHOOK_TTL_DAYS * MS_PER_DAY);
+    expect(JSON.stringify(recorded.rawPayload)).toContain(SUBSCRIPTION_REF_ID);
+
+    // Act — the post-response projection.
+    await drainDeferredProjections();
+
+    // Assert — money and access moved together (§23).
+    expect(await readSubscription(subscriptionId)).toMatchObject({
+      status: "active",
+      mandateStatus: "active",
+    });
+    const activated = await readSubscription(subscriptionId);
+    expect(activated.currentPeriodStart).toBeInstanceOf(Date);
+    expect(activated.currentPeriodEnd).toBeInstanceOf(Date);
+    expect(activated.nextChargeAt).toBeInstanceOf(Date);
+    expect(activated.currentPeriodEnd?.getTime()).toBeGreaterThan(
+      activated.currentPeriodStart?.getTime() ?? 0
+    );
+
+    const ledger = await ledgerRows(tenantId);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      kind: "authorization",
+      status: "succeeded",
+      amountMinor: 200,
+      currency: "INR",
+    });
+    expect(String(ledger[0]?.subscriptionId)).toBe(subscriptionId.toHexString());
+    // §14.4: the ledger *references* the raw payload instead of copying it.
+    expect(String(ledger[0]?.rawPayloadRef)).toBe(String(recorded._id));
+
+    const processed = await latestWebhookRow();
+    expect(processed.processedAt).toBeInstanceOf(Date);
+    expect(processed.processResult).toBe("applied");
+    expect(processed.processError ?? null).toBeNull();
+  });
+
+  it("I2: a replayed payment payload is 200 duplicate_ignored and never reprocesses", async () => {
+    // Arrange — one subscription, one charge, delivered twice byte-identically.
+    const tenantId = newTenantId();
+    await seedSubscription({ tenantId, status: "active", mandateStatus: "active" });
+    const rawBody = paymentSucceededBody("49914526");
+
+    // Act
+    const first = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+    const second = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert
+    expect(first.status).toBe(200);
+    expect(await body(first)).toEqual({ status: "received" });
+    expect(second.status).toBe(200);
+    expect(await body(second)).toEqual({ status: "duplicate_ignored" });
+    expect(await webhookRows()).toHaveLength(1);
+    expect(await ledgerRows(tenantId)).toHaveLength(1);
+    expect((await latestWebhookRow()).processResult).toBe("applied");
+  });
+
+  it("I2: an id-less event is deduplicated by its payload hash", async () => {
+    // Arrange — a status change carries no vendor event id (§10.1 step 3), so
+    // identity is `sha256(rawBody)`.
+    const tenantId = newTenantId();
+    await seedSubscription({ tenantId });
+    const rawBody = statusChangedBody("BANK_APPROVAL_PENDING");
+
+    // Act
+    const first = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+    const second = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert
+    expect(await body(first)).toEqual({ status: "received" });
+    expect(await body(second)).toEqual({ status: "duplicate_ignored" });
+    expect(await webhookRows()).toHaveLength(1);
+    const recorded = await latestWebhookRow();
+    expect(recorded.providerEventId).toBeNull();
+    // The hash *value* is pinned exactly; the `sha256:` prefix convention of
+    // §18.4's example stays the implementation's choice.
+    expect(String(recorded.payloadHash).replace(/^sha256:/, "")).toBe(digestOf(rawBody));
+  });
+
+  it("I2: two different id-less events both insert and both project", async () => {
+    // Arrange — `{provider, providerEventId}` may only be unique for payloads
+    // that *carry* an id (§18.4); the id-less rows are held apart by the payload
+    // hash. A plain unique index here would swallow every second status change.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const approved = statusChangedBody("BANK_APPROVAL_PENDING", minutesAgo(30));
+    const cancelled = statusChangedBody("CUSTOMER_CANCELLED", minutesAgo(10));
+
+    // Act
+    const first = await receiveWebhook(
+      webhookRequest({ rawBody: approved, headers: signedHeaders(approved) })
+    );
+    const second = await receiveWebhook(
+      webhookRequest({ rawBody: cancelled, headers: signedHeaders(cancelled) })
+    );
+    await drainDeferredProjections();
+
+    // Assert
+    expect(await body(first)).toEqual({ status: "received" });
+    expect(await body(second)).toEqual({ status: "received" });
+    expect(await webhookRows()).toHaveLength(2);
+    expect((await webhookRows()).map((row) => row.processResult)).toEqual(["applied", "applied"]);
+    expect(await readSubscription(subscriptionId)).toMatchObject({ status: "cancelled" });
+  });
+
+  it("the exported projection seam re-projects a row the route left unprocessed", async () => {
+    // Arrange — the route records and defers; here the deferred run is dropped,
+    // which is exactly the state OP-111's `webhook-projection-sweep` picks up.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = activationBody();
+    await receiveWebhook(webhookRequest({ rawBody, headers: signedHeaders(rawBody) }));
+
+    const recorded = await latestWebhookRow();
+    expect(recorded.processedAt).toBeNull();
+
+    // Act — the sweep's entry point, with an explicit database seam.
+    await projectProviderWebhookEvent(String(recorded._id), { db: app.db });
+
+    // Assert
+    expect(await readSubscription(subscriptionId)).toMatchObject({ status: "active" });
+    expect(await ledgerRows(tenantId)).toHaveLength(1);
+    expect((await latestWebhookRow()).processResult).toBe("applied");
+  });
+
+  it("an inbox for a provider this deployment has no adapter for refuses the request and writes nothing", async () => {
+    // Arrange
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = activationBody();
+    const rowsBefore = (await webhookRows()).length;
+
+    // Act — "stripe" is not a registered payment adapter.
+    const response = await receiveWebhook(
+      webhookRequest({ provider: "stripe", rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — an unroutable provider is a client error, never a crash, and the
+    // inbox stays empty either way.
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBeLessThan(500);
+    expect(await webhookRows()).toHaveLength(rowsBefore);
+    expect(await readSubscription(subscriptionId)).toMatchObject({ status: "incomplete" });
+    expect(await ledgerRows(tenantId)).toEqual([]);
+  });
+});
+
+describe("POST /api/v1/webhooks/{provider} — signature verification", () => {
+  it("I3: a body that was modified after signing is 401 invalid_signature and writes nothing", async () => {
+    // Arrange
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = activationBody();
+    const tampered = rawBody.replace(SUBSCRIPTION_REF_ID, "sub_test_999");
+    const rowsBefore = (await webhookRows()).length;
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody: tampered, headers: signedHeaders(rawBody) })
+    );
+
+    // Assert
+    expect(response.status).toBe(401);
+    expect(await body(response)).toMatchObject({ error: { code: "invalid_signature" } });
+    expect(await webhookRows()).toHaveLength(rowsBefore);
+    expect(await readSubscription(subscriptionId)).toMatchObject({ status: "incomplete" });
+    expect(await ledgerRows(tenantId)).toEqual([]);
+  });
+
+  it("I3: a body signed with another secret is 401 invalid_signature and writes nothing", async () => {
+    // Arrange
+    const tenantId = newTenantId();
+    await seedSubscription({ tenantId });
+    const rawBody = activationBody();
+    const rowsBefore = (await webhookRows()).length;
+    const forged = makeCashfreeWebhookHeaders(
+      "not-the-webhook-secret",
+      String(Date.now()),
+      rawBody
+    );
+
+    // Act
+    const response = await receiveWebhook(webhookRequest({ rawBody, headers: asHeaders(forged) }));
+
+    // Assert
+    expect(response.status).toBe(401);
+    expect(await body(response)).toMatchObject({ error: { code: "invalid_signature" } });
+    expect(await webhookRows()).toHaveLength(rowsBefore);
+    expect(await ledgerRows(tenantId)).toEqual([]);
+  });
+
+  it("I3: a request with no signature headers at all is 401 invalid_signature and writes nothing", async () => {
+    // Arrange
+    const tenantId = newTenantId();
+    await seedSubscription({ tenantId });
+    const rowsBefore = (await webhookRows()).length;
+
+    // Act
+    const response = await receiveWebhook(webhookRequest({ rawBody: activationBody() }));
+
+    // Assert
+    expect(response.status).toBe(401);
+    expect(await body(response)).toMatchObject({ error: { code: "invalid_signature" } });
+    expect(await webhookRows()).toHaveLength(rowsBefore);
+    expect(await ledgerRows(tenantId)).toEqual([]);
+  });
+
+  it("I3: a correctly signed body outside the ±300 s replay window is 401 stale_signature", async () => {
+    // Arrange — both directions of the window, so neither is a silent pass.
+    const tenantId = newTenantId();
+    await seedSubscription({ tenantId });
+    const staleBody = activationBody();
+    const futureBody = activationBody(minutesAgo(-5));
+    const rowsBefore = (await webhookRows()).length;
+
+    // Act
+    const stale = await receiveWebhook(
+      webhookRequest({
+        rawBody: staleBody,
+        headers: signedHeaders(staleBody, Date.now() - REPLAY_WINDOW_MS - 60_000),
+      })
+    );
+    const future = await receiveWebhook(
+      webhookRequest({
+        rawBody: futureBody,
+        headers: signedHeaders(futureBody, Date.now() + REPLAY_WINDOW_MS + 60_000),
+      })
+    );
+
+    // Assert
+    expect(stale.status).toBe(401);
+    expect(await body(stale)).toMatchObject({ error: { code: "stale_signature" } });
+    expect(future.status).toBe(401);
+    expect(await body(future)).toMatchObject({ error: { code: "stale_signature" } });
+    expect(await webhookRows()).toHaveLength(rowsBefore);
+    expect(await ledgerRows(tenantId)).toEqual([]);
+  });
+
+  it("I3: a rejected signature warns with the provider and never logs the payload or the client IP", async () => {
+    // Arrange — the fixture body carries a real customer email and phone; the
+    // §0.15 / CONVENTIONS §5.3 rules apply to the log sink as much as to a body.
+    const sink = memoryTransport();
+    setLogger(
+      createLogger({
+        level: "trace",
+        transports: [sink],
+        service: "openpic-web",
+        env: "test",
+        version: "test-sha",
+        base: { requestId: "req-op108-invalid-signature" },
+      })
+    );
+    const tenantId = newTenantId();
+    await seedSubscription({ tenantId });
+    const rawBody = activationBody();
+    // The request must be *rejected* for the warning to be the one under test:
+    // it carries the signed originals' signature over a body that was modified
+    // after signing, so the HMAC fails (`invalid_signature`). The
+    // `x-forwarded-for` header the hygiene assertions are about is kept.
+    const tampered = rawBody.replace(SUBSCRIPTION_REF_ID, "sub_test_999");
+    const rowsBefore = (await webhookRows()).length;
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({
+        rawBody: tampered,
+        headers: { ...signedHeaders(rawBody), "x-forwarded-for": CLIENT_IP },
+      })
+    );
+
+    // Assert
+    expect(response.status).toBe(401);
+    const warnings = sink.entries.filter((entry) => entry.level === "warn");
+    expect(warnings).toContainEqual(expect.objectContaining({ provider: "cashfree" }));
+    expectNoSecretsInLogs(sink);
+    expect(JSON.stringify(sink.entries)).not.toContain(CLIENT_IP);
+    expect(await webhookRows()).toHaveLength(rowsBefore);
+  });
+});
+
+describe("POST /api/v1/webhooks/{provider} — environment isolation", () => {
+  it("I4: a sandbox event for a production subscription is recorded and ignored, never projected", async () => {
+    // Arrange — §11.1: every ref carries its environment, and a sandbox event
+    // must never reach a production subscription's state.
+    const tenantId = newTenantId();
+    const productionRef: ProviderRef = {
+      provider: "cashfree",
+      env: "production",
+      kind: "subscription",
+      id: SUBSCRIPTION_REF_ID,
+    };
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "incomplete",
+      refs: [productionRef],
+    });
+    const rawBody = activationBody();
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — the inbox keeps the raw record, the projection refuses the move.
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    expect(await readSubscription(subscriptionId)).toMatchObject({
+      status: "incomplete",
+      mandateStatus: "pending",
+    });
+    expect(await ledgerRows(tenantId)).toEqual([]);
+    const recorded = await latestWebhookRow();
+    expect(recorded.processResult).toBe("ignored");
+    expect(recorded.processedAt).toBeInstanceOf(Date);
+  });
+});
+
+describe("POST /api/v1/webhooks/{provider} — dunning from settings", () => {
+  it("I6: a failed charge is past_due with the default 14-day grace and the amount attempted", async () => {
+    // Arrange
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      mandateStatus: "active",
+    });
+    const rawBody = paymentFailedBody("49914527");
+    const before = Date.now();
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    // The grace deadline is computed by the *deferred* projection, so the upper
+    // bound `after` must be read once that work has run — reading it before the
+    // drain would bound the deadline by an instant that is already in its past.
+    await drainDeferredProjections();
+    const after = Date.now();
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    const dunned = await readSubscription(subscriptionId);
+    expect(dunned).toMatchObject({
+      status: "past_due",
+      pendingDueMinor: 49_900,
+      dunning: { attemptCount: 1 },
+    });
+    expect(dunned.gracePeriodEndsAt).toBeInstanceOf(Date);
+    expect(dunned.gracePeriodEndsAt?.getTime()).toBeGreaterThanOrEqual(before + 14 * MS_PER_DAY);
+    expect(dunned.gracePeriodEndsAt?.getTime()).toBeLessThanOrEqual(after + 14 * MS_PER_DAY);
+
+    const ledger = await ledgerRows(tenantId);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      kind: "charge",
+      status: "failed",
+      amountMinor: 49_900,
+      currency: "INR",
+      failure: { category: "mandate_revoked" },
+    });
+    expect((await latestWebhookRow()).processResult).toBe("applied");
+  });
+
+  it("I6: after the operator sets gracePeriodDays to 7 the same event duns for 7 days", async () => {
+    // Arrange — the tunable is data, not a constant (§9.10, CONVENTIONS §6):
+    // write the singleton, invalidate the read cache, and drive the same event.
+    await settingsCollection().insertOne({
+      _id: "singleton",
+      ...PLATFORM_SETTINGS_DEFAULTS,
+      dunning: {
+        ...PLATFORM_SETTINGS_DEFAULTS.dunning,
+        gracePeriodDays: 7,
+        reminderDays: [1, 5],
+      },
+      updatedAt: new Date().toISOString(),
+      updatedByUserId: null,
+    });
+    invalidatePlatformSettings();
+
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      mandateStatus: "active",
+    });
+    const rawBody = paymentFailedBody("49914527");
+    const before = Date.now();
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    // See the default-grace case: the upper bound is read after the deferred
+    // projection, which is what computes the deadline.
+    await drainDeferredProjections();
+    const after = Date.now();
+
+    // Assert
+    expect(response.status).toBe(200);
+    const dunned = await readSubscription(subscriptionId);
+    expect(dunned).toMatchObject({ status: "past_due" });
+    expect(dunned.gracePeriodEndsAt).toBeInstanceOf(Date);
+    expect(dunned.gracePeriodEndsAt?.getTime()).toBeGreaterThanOrEqual(before + 7 * MS_PER_DAY);
+    expect(dunned.gracePeriodEndsAt?.getTime()).toBeLessThanOrEqual(after + 7 * MS_PER_DAY);
+  });
+});
+
+describe("POST /api/v1/webhooks/{provider} — out-of-order delivery", () => {
+  it("I7: a failure that arrives after a later success does not roll the subscription back", async () => {
+    // Arrange — a paid-up row, then a renewal success at T+1h and a charge
+    // failure *for an earlier instant* arriving later (§10.1 step 6 orders by
+    // the provider's `occurredAt`, never by arrival).
+    const tenantId = newTenantId();
+    const seededPeriodEnd = new Date(Date.now() + 10 * MS_PER_DAY);
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      mandateStatus: "active",
+      currentPeriodEnd: seededPeriodEnd,
+    });
+    const successBody = paymentSucceededBody("49914526", minutesAgo(60));
+    const lateFailureBody = paymentFailedBody("49914527", { eventTime: minutesAgo(120) });
+
+    // Act — the later success first…
+    const success = await receiveWebhook(
+      webhookRequest({ rawBody: successBody, headers: signedHeaders(successBody) })
+    );
+    await drainDeferredProjections();
+    const renewed = await readSubscription(subscriptionId);
+
+    // …then the older failure.
+    const lateFailure = await receiveWebhook(
+      webhookRequest({ rawBody: lateFailureBody, headers: signedHeaders(lateFailureBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert
+    expect(await body(success)).toEqual({ status: "received" });
+    expect(renewed.status).toBe("active");
+    expect(renewed.currentPeriodEnd?.getTime()).toBeGreaterThan(seededPeriodEnd.getTime());
+
+    expect(await body(lateFailure)).toEqual({ status: "received" });
+    const afterLateFailure = await readSubscription(subscriptionId);
+    expect(afterLateFailure).toMatchObject({
+      status: "active",
+      gracePeriodEndsAt: null,
+      pendingDueMinor: 0,
+    });
+    expect((await latestWebhookRow()).processResult).toBe("ignored");
+    const failures = (await ledgerRows(tenantId)).filter((row) => row.status === "failed");
+    expect(failures).toEqual([]);
+  });
+});
+
+describe("POST /api/v1/webhooks/{provider} — concurrent projections for one subscription", () => {
+  it("I8: an older event projecting concurrently with a newer one cannot apply out of order", async () => {
+    // Arrange — one subscription, two id-less status changes: an older
+    // `BANK_APPROVAL_PENDING` (30 min ago) and a newer `CUSTOMER_CANCELLED`
+    // (10 min ago). §10.1 step 6 orders by the provider's `occurredAt`, never by
+    // arrival — including when the two projections run *concurrently*, which is
+    // exactly what the route's `after()` scheduling produces for two
+    // near-simultaneous deliveries.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const olderAt = new Date(Date.now() - 30 * 60_000);
+    const newerAt = new Date(Date.now() - 10 * 60_000);
+    const olderBody = statusChangedBody("BANK_APPROVAL_PENDING", olderAt.toISOString());
+    const newerBody = statusChangedBody("CUSTOMER_CANCELLED", newerAt.toISOString());
+
+    // Deliver both so the §18.4 inbox rows exist, then drop the deferred
+    // callbacks: this case drives the exported projection seam itself, with the
+    // interleaving gate below (the sequential `drainDeferredProjections` pins
+    // delivery order; this case pins the concurrent write race).
+    await receiveWebhook(webhookRequest({ rawBody: olderBody, headers: signedHeaders(olderBody) }));
+    await receiveWebhook(webhookRequest({ rawBody: newerBody, headers: signedHeaders(newerBody) }));
+    afterMock.mockClear();
+
+    const rows = await webhookRows();
+    const olderRow = rows.find((row) => row.eventType === "mandate_pending");
+    const newerRow = rows.find((row) => row.eventType === "subscription_cancelled");
+    if (olderRow === undefined || newerRow === undefined) {
+      throw new Error("expected both status-change inbox rows to be recorded");
+    }
+
+    // Act — force the losing interleaving deterministically (see
+    // `gatedSubscriptionDb`): the older projection reads the pre-write row and
+    // is held there while the newer projection runs to completion, so the
+    // newer event's transaction commits first; only then is the older one
+    // released to apply its patch.
+    const gate: SubscriptionReadGate = { read: deferred(), hold: deferred() };
+    const olderProjection = projectProviderWebhookEvent(String(olderRow._id), {
+      db: gatedSubscriptionDb(app.db, gate),
+    });
+    await gate.read.promise;
+    await projectProviderWebhookEvent(String(newerRow._id), { db: app.db });
+    gate.hold.resolve();
+    await olderProjection;
+
+    // Assert — (1) the newer event wins, whatever order the two commits landed
+    // in, and (2) the watermark is the newer event's instant, not the older's.
+    const finalRow = await readSubscription(subscriptionId);
+    expect(finalRow).toMatchObject({ status: "cancelled" });
+    expect(finalRow.lastProviderEventAt).toEqual(newerAt);
+
+    // (3) the older event is reported out-of-order, never applied.
+    const olderAfter = await app.db
+      .collection(COLLECTIONS.providerWebhookEvents)
+      .findOne({ _id: new ObjectId(String(olderRow._id)) });
+    expect(olderAfter?.processResult).toBe("ignored");
+
+    // (4) nothing from the older event's regression persists. Neither status
+    // change carries a ledger transaction, so the ledger stays empty; the
+    // discriminating half is the outbox, which keeps only the newer event's
+    // domain event (`billing.subscription.cancelled`) and none of the older
+    // event's (`billing.mandate.pending`).
+    expect(await ledgerRows(tenantId)).toEqual([]);
+    const outbox = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ "subjectRef.id": subscriptionId.toHexString() })
+      .toArray();
+    expect(outbox.map((row) => row.eventKey)).toEqual(["billing.subscription.cancelled"]);
+  });
+});
+
+/**
+ * Characterization pins — the projection's four **no-write** exits (§10.1 step 6,
+ * ADR-0443 §4).
+ *
+ * Every case above drives the applier down a path that writes something. These
+ * pin the paths that write *nothing*, which the module carries as defensive
+ * guards and which no spec exercised:
+ *
+ *   - a decision whose `subscriptionPatch` is `null` — the `refund_processed`
+ *     row, the one ADR-0443 §4 makes a written claim about (money moves, the
+ *     subscription does not, and **no watermark advances**);
+ *   - `unregistered_provider` — a stored row this deployment has no adapter for;
+ *   - `no_subscription_ref` — a parseable event whose payload addresses no
+ *     subscription;
+ *   - `nothing_to_apply` — a decision the reducer itself reports as `ignored`.
+ *
+ * All four are **shipped** behaviour, so these cases are green on arrival and
+ * have no GREEN sibling; they exist so a future edit that makes the guard fire
+ * on the null-patch path, advances the watermark there, or lets an ignore path
+ * write cannot land silently.
+ */
+describe("POST /api/v1/webhooks/{provider} — the projection's no-write exits", () => {
+  /**
+   * A `SUBSCRIPTION_REFUND_STATUS` body: money moves, the subscription does not
+   * (§10.1.2). The refund is the decision whose `subscriptionPatch` is `null`,
+   * so it is the only event that reaches the guard's false side.
+   *
+   * @param options - The instant, the vendor refund id and whether the payload
+   *   carries the `subscription_details.subscription_id` a match needs.
+   * @returns The raw JSON body — the exact bytes the signature covers.
+   */
+  function refundBody(
+    options: {
+      readonly eventTime?: string;
+      readonly refundId?: string;
+      readonly carrySubscriptionRef?: boolean;
+    } = {}
+  ): string {
+    return makeCashfreeWebhookBody("SUBSCRIPTION_REFUND_STATUS", {
+      eventTime: options.eventTime ?? minutesAgo(5),
+      // `undefined` is dropped by `JSON.stringify`, so the key is *absent* from
+      // the bytes: the adapter then reports no subscription ref at all.
+      subscriptionDetails:
+        options.carrySubscriptionRef === false ? { subscription_id: undefined } : {},
+      extraData: {
+        refund_id: `refund-${options.refundId ?? "001"}`,
+        cf_refund_id: options.refundId ?? "700001",
+        refund_status: "SUCCESS",
+        refund_amount: 499,
+        refund_currency: "INR",
+        cf_payment_id: "49914526",
+      },
+    });
+  }
+
+  /** The domain-event keys the outbox holds for one subscription, in order. */
+  async function emittedKeys(subscriptionId: ObjectId): Promise<readonly string[]> {
+    const rows = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ "subjectRef.id": subscriptionId.toHexString() })
+      .toArray();
+    return rows.map((row) => String(row.eventKey));
+  }
+
+  /** Read one `providerWebhookEvents` row back by id, whatever its provider key. */
+  async function webhookRowById(id: ObjectId): Promise<WebhookEventRow> {
+    const row = await app.db.collection(COLLECTIONS.providerWebhookEvents).findOne({ _id: id });
+    expect(row).not.toBeNull();
+    return row as unknown as WebhookEventRow;
+  }
+
+  it("a refund moves money only: the ledger row is written, the watermark does not move and the inbox records applied", async () => {
+    // Arrange — a paid-up subscription whose watermark already holds an earlier
+    // instant, so "unchanged" is a value and not merely an absent field.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      mandateStatus: "active",
+    });
+    const watermark = new Date(Date.now() - 30 * 60_000);
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne({ _id: subscriptionId }, { $set: { lastProviderEventAt: watermark } });
+    const rawBody = refundBody();
+
+    // Act — the provider's POST, then the deferred projection.
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — the §18.4 row records the normalized kind and the applied result:
+    // the refund is not an ignore, it is a decision with no subscription patch.
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    const recorded = await latestWebhookRow();
+    expect(recorded).toMatchObject({ eventType: "refund_processed", providerEventId: "700001" });
+    expect(recorded.processResult).toBe("applied");
+    expect(recorded.processedAt).toBeInstanceOf(Date);
+
+    // …the money is on the ledger (§14.4)…
+    const ledger = await ledgerRows(tenantId);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]).toMatchObject({
+      kind: "refund",
+      status: "succeeded",
+      amountMinor: 49_900,
+      currency: "INR",
+      failure: null,
+    });
+    expect(String(ledger[0]?.subscriptionId)).toBe(subscriptionId.toHexString());
+    expect(String(ledger[0]?.rawPayloadRef)).toBe(String(recorded._id));
+
+    // …and ADR-0443 §4 holds: a decision with `subscriptionPatch === null`
+    // advances no watermark, so the stored instant is exactly what it was —
+    // never this event's `occurredAt`.
+    const after = await readSubscription(subscriptionId);
+    expect(after.lastProviderEventAt).toEqual(watermark);
+    expect(after).toMatchObject({
+      status: "active",
+      mandateStatus: "active",
+      pendingDueMinor: 0,
+    });
+    expect(await emittedKeys(subscriptionId)).toEqual(["billing.refund.processed"]);
+  });
+
+  it("re-projecting the same refund row cannot double-post it: the ledger's unique idempotencyKey is the replay guard", async () => {
+    // Arrange — one applied refund, the state OP-111's sweep hands back to the
+    // applier when it retries a row.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      mandateStatus: "active",
+    });
+    const rawBody = refundBody();
+    await receiveWebhook(webhookRequest({ rawBody, headers: signedHeaders(rawBody) }));
+    await drainDeferredProjections();
+
+    const recorded = await latestWebhookRow();
+    const first = await ledgerRows(tenantId);
+    expect(first).toHaveLength(1);
+
+    // Act — the same inbox row through the applier again. The null-patch path
+    // advances no watermark, so no ordering guard can refuse this run: the
+    // ledger's unique `idempotencyKey` is the only thing standing between a
+    // retry and a second money row.
+    await projectProviderWebhookEvent(String(recorded._id), { db: app.db });
+
+    // Assert — no second posting, no mutation of the first, no duplicate emit.
+    expect(await ledgerRows(tenantId)).toEqual(first);
+    expect(await emittedKeys(subscriptionId)).toEqual(["billing.refund.processed"]);
+    const after = await readSubscription(subscriptionId);
+    expect(after.lastProviderEventAt ?? null).toBeNull();
+  });
+
+  it("an inbox row for a provider this deployment does not register is ignored and writes nothing", async () => {
+    // Arrange — a row the inbox *can* hold but this deployment's adapter cannot
+    // claim (the route refuses an unregistered `{provider}` segment with a 404
+    // and writes nothing, so a stored foreign row is the only way to reach the
+    // projection's own guard — e.g. a deployment that changed its registered
+    // provider mid-flight).
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = activationBody();
+    const foreign = await app.db.collection(COLLECTIONS.providerWebhookEvents).insertOne({
+      provider: "stripe",
+      env: "sandbox",
+      eventType: "subscription_activated",
+      providerEventId: "49988825",
+      payloadHash: null,
+      signatureValid: true,
+      rawPayload: JSON.parse(rawBody) as unknown,
+      receivedAt: new Date(),
+      processedAt: null,
+      processResult: null,
+      processError: null,
+      expireAt: new Date(Date.now() + WEBHOOK_TTL_DAYS * MS_PER_DAY),
+    });
+
+    // Act
+    await projectProviderWebhookEvent(foreign.insertedId, { db: app.db });
+
+    // Assert — recorded as an ignore (never an error, never a partial write),
+    // with the subscription, the ledger and the outbox untouched.
+    const recorded = await webhookRowById(foreign.insertedId);
+    expect(recorded.processResult).toBe("ignored");
+    expect(recorded.processedAt).toBeInstanceOf(Date);
+    expect(await ledgerRows(tenantId)).toEqual([]);
+    expect(await emittedKeys(subscriptionId)).toEqual([]);
+    expect(await readSubscription(subscriptionId)).toMatchObject({
+      status: "incomplete",
+      mandateStatus: "pending",
+    });
+  });
+
+  it("a parseable event whose payload carries no subscription ref is ignored and writes nothing", async () => {
+    // Arrange — a well-formed refund the adapter normalizes, whose payload
+    // addresses the refund and the payment only: no `subscription_id`.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = refundBody({ carrySubscriptionRef: false });
+
+    // The pin's own premise: without this the case could pass through the
+    // *no-match* exit while claiming to exercise the missing-ref guard.
+    expect(rawBody).not.toContain(SUBSCRIPTION_REF_ID);
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert
+    expect(response.status).toBe(200);
+    const recorded = await latestWebhookRow();
+    expect(recorded.eventType).toBe("refund_processed");
+    expect(recorded.processResult).toBe("ignored");
+    expect(await ledgerRows(tenantId)).toEqual([]);
+    expect(await emittedKeys(subscriptionId)).toEqual([]);
+    expect(await readSubscription(subscriptionId)).toMatchObject({
+      status: "incomplete",
+      mandateStatus: "pending",
+    });
+  });
+
+  it("a decision the reducer reports as ignored is recorded ignored and writes nothing", async () => {
+    // Arrange — `SUBSCRIPTION_PAYMENT_NOTIFICATION_INITIATED` is the vendor event
+    // §10.1.2 maps to the `ignored` kind. It carries a real subscription ref and
+    // matches the seeded row, so it clears the provider, ref and match guards and
+    // reaches the decision itself.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedSubscription({ tenantId });
+    const rawBody = makeCashfreeWebhookBody("SUBSCRIPTION_PAYMENT_NOTIFICATION_INITIATED", {
+      eventTime: minutesAgo(5),
+      extraData: {
+        payment_id: "ab-charge-001",
+        cf_payment_id: "49914526",
+        payment_type: "CHARGE",
+        payment_status: "INITIATED",
+        payment_amount: 499,
+        payment_currency: "INR",
+      },
+    });
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — the normalized kind is `ignored` and the decision wrote nothing:
+    // no subscription patch (so no watermark), no ledger row, no domain event.
+    expect(response.status).toBe(200);
+    const recorded = await latestWebhookRow();
+    expect(recorded.eventType).toBe("ignored");
+    expect(recorded.processResult).toBe("ignored");
+    expect(await ledgerRows(tenantId)).toEqual([]);
+    expect(await emittedKeys(subscriptionId)).toEqual([]);
+    const after = await readSubscription(subscriptionId);
+    expect(after).toMatchObject({ status: "incomplete", mandateStatus: "pending" });
+    expect(after.lastProviderEventAt ?? null).toBeNull();
+  });
+});
+
+describe("POST /api/v1/webhooks/{provider} — the reactivation boundary", () => {
+  /**
+   * The domain-event keys the outbox holds for one subscription, in order.
+   *
+   * The no-write-exits suite keeps its own copy of this helper for the same
+   * reason this one does: a helper scoped to the describe that uses it cannot
+   * leak into a sibling's setup.
+   */
+  async function emittedKeys(subscriptionId: ObjectId): Promise<readonly string[]> {
+    const rows = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ "subjectRef.id": subscriptionId.toHexString() })
+      .toArray();
+    return rows.map((row) => String(row.eventKey));
+  }
+
+  /**
+   * Seed a row whose *active* plan differs from the plan it subscribes to.
+   *
+   * `seedSubscription` seeds `activePlanKey === subscribedPlanKey === "starter"`,
+   * which makes a "the active plan did not change" assertion vacuous: a
+   * reactivation restores `subscribedPlanKey` (`"starter"`), so both outcomes
+   * read the same value. Pointing the active plan at a different key is what
+   * makes the boundary observable — a reactivation overwrites it with
+   * `"starter"`, and a boundary that holds leaves the downgraded key in place.
+   */
+  async function seedRecoveryRow(options: {
+    readonly tenantId: string;
+    readonly status: SubscriptionStatus;
+    readonly activePlanKey?: string;
+  }): Promise<ObjectId> {
+    const subscriptionId = await seedSubscription({
+      tenantId: options.tenantId,
+      status: options.status,
+    });
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne(
+        { _id: subscriptionId },
+        { $set: { activePlanKey: options.activePlanKey ?? "free" } }
+      );
+    return subscriptionId;
+  }
+
+  it("a payment_succeeded for a cancelled subscription does not resurrect it", async () => {
+    // Arrange — §3.3 and §10.1.2 ground reactivation on exactly two recovery
+    // paths (`past_due` and `downgraded`); a `cancelled` row is in neither, so a
+    // stray confirmation must not flip it back to `active`.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedRecoveryRow({ tenantId, status: "cancelled" });
+    const rawBody = paymentSucceededBody("49914530");
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — the payment is still recorded, but the cancelled row is not
+    // resurrected: the status and the active plan stay put and the
+    // restored-limit pair is not emitted.
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    const after = await readSubscription(subscriptionId);
+    expect(after.status).toBe("cancelled");
+    expect(after.activePlanKey).toBe("free");
+    const keys = await emittedKeys(subscriptionId);
+    expect(keys).toContain("billing.payment.succeeded");
+    expect(keys).not.toContain("billing.subscription.reactivated");
+    expect(keys).not.toContain("usage.limit.restored");
+  });
+
+  it("a payment_succeeded for an incomplete subscription does not resurrect it", async () => {
+    // Arrange — `incomplete` is the pre-activation state, not a recovery path
+    // either: the activation event (`SUBSCRIPTION_AUTH_STATUS`) is what moves it
+    // to `active`, so a stray charge confirmation must leave it alone.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedRecoveryRow({ tenantId, status: "incomplete" });
+    const rawBody = paymentSucceededBody("49914531");
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    const after = await readSubscription(subscriptionId);
+    expect(after.status).toBe("incomplete");
+    expect(after.activePlanKey).toBe("free");
+    const keys = await emittedKeys(subscriptionId);
+    expect(keys).toContain("billing.payment.succeeded");
+    expect(keys).not.toContain("billing.subscription.reactivated");
+    expect(keys).not.toContain("usage.limit.restored");
+  });
+
+  it("a payment_succeeded for a past_due subscription reactivates it and restores the limits", async () => {
+    // Arrange — the OP-110 I3 requirement: a retry from `past_due` **is** a
+    // recovery path (§3.3), so this control must stay green.
+    const tenantId = newTenantId();
+    const subscriptionId = await seedRecoveryRow({ tenantId, status: "past_due" });
+    const rawBody = paymentSucceededBody("49914532");
+
+    // Act
+    const response = await receiveWebhook(
+      webhookRequest({ rawBody, headers: signedHeaders(rawBody) })
+    );
+    await drainDeferredProjections();
+
+    // Assert — `active` with `activePlanKey = subscribedPlanKey` and the pair of
+    // restored events alongside the payment receipt.
+    expect(response.status).toBe(200);
+    expect(await body(response)).toEqual({ status: "received" });
+    const after = await readSubscription(subscriptionId);
+    expect(after.status).toBe("active");
+    expect(after.activePlanKey).toBe("starter");
+    expect(await emittedKeys(subscriptionId)).toEqual([
+      "billing.payment.succeeded",
+      "billing.subscription.reactivated",
+      "usage.limit.restored",
+    ]);
+  });
+});

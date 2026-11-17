@@ -5,6 +5,8 @@ import { z } from "zod";
 import { createAuth, type AuthLike } from "@/server/auth";
 import { resolvePrincipal, requireAuth, type AuthLabel } from "@/server/auth/guards";
 import { otpInbox } from "@/server/auth/otp-inbox";
+import { hashAttendeeSessionToken } from "@/server/attendee/session-token";
+import { COLLECTIONS } from "@/server/db/collections";
 import { closeMongoClient } from "@/server/db/mongo";
 import { defineRoute, type RouteHandler } from "@/server/http/define-route";
 import {
@@ -15,12 +17,15 @@ import {
   type MemoryTransport,
 } from "@/server/logging";
 
+import * as attendeeSessionsRoute from "@/app/api/v1/p/attendee-sessions/route";
+
 import {
   MONGO_READY_HOOK_TIMEOUT_MS,
   createTestDb,
   setupMongoTestEnv,
   type TestDb,
 } from "../helpers/db";
+import { startTestApp, type TestApp } from "../helpers/authed-app";
 import { authPost, body, cookiePair, sessionCookie } from "../helpers/auth-requests";
 
 /**
@@ -616,5 +621,146 @@ describe("guard denial logging (security_and_logging_requirements)", () => {
     } finally {
       setLogger(previous);
     }
+  });
+});
+
+describe("attendee label (§0.3, §1.5)", () => {
+  /**
+   * **F3 — the guard's default must authenticate a real attendee.**
+   *
+   * `requireAuth("attendee", { auth, database })` is the form every other
+   * attendee-labelled route uses, and it injects **no** `attendeeResolver`, so
+   * the guard falls back to the OP-129 port's default (today the OP-86
+   * `noAttendeeSessions` stub, which resolves nothing). The real resolver is
+   * built only by `…/attendee-sessions/current/route.ts`, so every other route
+   * answers `401 authentication_required` to a genuine attendee.
+   *
+   * These cases are **RED by design**: they pin the intended contract, and the
+   * gated GREEN (`t_a909e641`) satisfies them by building the default resolver
+   * from the `database` the guard is already given. The contract each case
+   * states:
+   *
+   *   - a real `op_att` cookie resolves to `{ kind: "attendee", sessionId,
+   *     eventId }` with the stored row's id, **without** an injected resolver;
+   *   - `requireAuth("attendee")` therefore **admits** that request;
+   *   - the default keeps the shipped expiry semantics — a lapsed row is
+   *     `401 attendee_session_expired` with `details.recreateUrl`, not a silent
+   *     anonymous request and not `authentication_required`;
+   *   - an `op_att` token that matches no row stays `401
+   *     authentication_required` (this one is green today and must stay green,
+   *     so the fix cannot admit everything).
+   *
+   * The rows are seeded **through the shipped POST route**, so no case invents
+   * a document shape: the suite boots its own app (`startTestApp`) because that
+   * route reads the process `getDb()` singleton, which must therefore be the
+   * database handed to the guard. `startTestApp` rebinds the process
+   * environment and the Mongo client, so this block stays **last** in the file —
+   * every earlier spec uses the per-spec `withHarness` database.
+   */
+
+  let attendeeApp: TestApp;
+
+  beforeAll(async () => {
+    attendeeApp = await startTestApp({ prefix: "op129-attendee-guard" });
+  }, MONGO_READY_HOOK_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await attendeeApp.cleanup();
+  });
+
+  /** The guard options a real attendee-labelled route passes — no resolver. */
+  function attendeeHarness(): Harness {
+    return { auth: attendeeApp.auth, database: attendeeApp.db };
+  }
+
+  /** Mint a real session through the shipped POST route and return its token. */
+  async function createAttendeeToken(): Promise<string> {
+    const response = await attendeeSessionsRoute.POST(
+      new Request(new URL("/api/v1/p/attendee-sessions", APP_ORIGIN), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: APP_ORIGIN,
+          "user-agent": "OpenPic-Guard-Contract/1.0",
+          "x-forwarded-for": "203.0.113.201",
+          "accept-language": "en-IN,en;q=0.9",
+        },
+        body: JSON.stringify({}),
+      })
+    );
+    if (response.status !== 201) {
+      throw new Error(`expected the create route to answer 201, got ${String(response.status)}`);
+    }
+    const created = (await response.json()) as { readonly sessionToken: string };
+    return created.sessionToken;
+  }
+
+  /** The stored row's id for a raw token, failing loudly when none exists. */
+  async function storedSessionId(token: string): Promise<string> {
+    const row = await attendeeApp.db
+      .collection(COLLECTIONS.attendeeSessions)
+      .findOne({ tokenHash: hashAttendeeSessionToken(token) });
+    if (row === null) {
+      throw new Error("no attendeeSessions row carries the SHA-256 of the minted token");
+    }
+    return String(row._id);
+  }
+
+  it("F3: the default resolver resolves a real op_att cookie to an attendee principal", async () => {
+    const token = await createAttendeeToken();
+    const expectedSessionId = await storedSessionId(token);
+
+    const principal = await resolvePrincipal(
+      requestWith({ cookie: `op_att=${token}` }),
+      attendeeHarness()
+    );
+
+    expect(principal).toMatchObject({
+      kind: "attendee",
+      sessionId: expectedSessionId,
+      eventId: null,
+    });
+  });
+
+  it("F3: requireAuth admits a real attendee with no attendeeResolver injected", async () => {
+    const token = await createAttendeeToken();
+
+    const response = await requestGuardRoute(
+      guardRoute(attendeeHarness(), "attendee"),
+      `op_att=${token}`
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("F3: a lapsed session with the default resolver is 401 attendee_session_expired", async () => {
+    const token = await createAttendeeToken();
+    await attendeeApp.db
+      .collection(COLLECTIONS.attendeeSessions)
+      .updateOne(
+        { tokenHash: hashAttendeeSessionToken(token) },
+        { $set: { expireAt: new Date(Date.now() - 1_000) } }
+      );
+
+    const response = await requestGuardRoute(
+      guardRoute(attendeeHarness(), "attendee"),
+      `op_att=${token}`
+    );
+
+    expect(response.status).toBe(401);
+    const envelope = (await body(response)) as unknown as ErrorEnvelope;
+    expect(envelope.error.code).toBe("attendee_session_expired");
+    expect(typeof envelope.error.details?.recreateUrl).toBe("string");
+  });
+
+  it("F3: an op_att cookie that matches no row is still 401 authentication_required", async () => {
+    const response = await requestGuardRoute(
+      guardRoute(attendeeHarness(), "attendee"),
+      "op_att=opat_never-issued-000"
+    );
+
+    expect(response.status).toBe(401);
+    const envelope = (await body(response)) as unknown as ErrorEnvelope;
+    expect(envelope.error.code).toBe("authentication_required");
   });
 });

@@ -189,3 +189,79 @@ describe("ensureIndexes", () => {
     });
   });
 });
+
+/**
+ * Review round 1 (card `t_32869a83`) — P5: the bootstrap must reconcile a
+ * **definition**, not only a name (schema §15.2).
+ *
+ * OP-117 changed `event_organizers_active_event_unique` from
+ * `{tenantId, eventId}` to `{tenantId, eventId, userId}` while keeping the
+ * name. A bootstrap that skips every spec whose name is already present can
+ * therefore never repair an existing database: the legacy two-key index stays
+ * live, and the second (co-organizer) row of an event collides with the first
+ * — `E11000` — so no event could ever carry a co-organizer after deploy.
+ */
+describe("ensureIndexes — definition reconciliation (schema §15.2)", () => {
+  const ORGANIZERS_INDEX = "event_organizers_active_event_unique";
+
+  /** The pre-OP-117 two-key definition, created under the spec's own name. */
+  async function createDriftedOrganizersIndex(test: TestDb): Promise<void> {
+    await test.db
+      .collection(COLLECTIONS.eventOrganizers)
+      .createIndex(
+        { tenantId: 1, eventId: 1 },
+        { name: ORGANIZERS_INDEX, unique: true, partialFilterExpression: { revokedAt: null } }
+      );
+  }
+
+  /** The key specification `INDEX_SPECS` declares for one index name. */
+  function declaredKeys(name: string): Record<string, number> {
+    const spec = INDEX_SPECS.find((entry) => entry.name === name);
+    if (spec === undefined) {
+      throw new Error(`expected INDEX_SPECS to declare ${name}`);
+    }
+    return Object.fromEntries(spec.keys);
+  }
+
+  it("R5a: replaces a drifted definition that already carries the spec's name", async () => {
+    await withTestDb(async (test) => {
+      await createDriftedOrganizersIndex(test);
+      await ensureIndexes(test.db);
+
+      const indexes = await test.db.collection(COLLECTIONS.eventOrganizers).listIndexes().toArray();
+      const live = indexes.find((entry) => entry.name === ORGANIZERS_INDEX);
+      if (live === undefined) {
+        throw new Error(`expected ${ORGANIZERS_INDEX} to exist after ensureIndexes`);
+      }
+
+      expect(live.key).toEqual(declaredKeys(ORGANIZERS_INDEX));
+    });
+  });
+
+  it("R5b: a co-organizer row inserts after the drifted definition is reconciled", async () => {
+    await withTestDb(async (test) => {
+      await createDriftedOrganizersIndex(test);
+      await ensureIndexes(test.db);
+
+      const organizers = test.db.collection(COLLECTIONS.eventOrganizers);
+      await organizers.insertOne({
+        tenantId: "tenant-1",
+        eventId: "event-1",
+        userId: "user-1",
+        revokedAt: null,
+      });
+
+      // The organizer and a co-organizer of the SAME event are distinct rows
+      // under `{tenantId, eventId, userId}`; the legacy two-key index refused
+      // this insert with E11000.
+      const coOrganizer = await organizers.insertOne({
+        tenantId: "tenant-1",
+        eventId: "event-1",
+        userId: "user-2",
+        revokedAt: null,
+      });
+
+      expect(coOrganizer.insertedId).toBeDefined();
+    });
+  });
+});

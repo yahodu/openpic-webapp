@@ -1,6 +1,7 @@
 import type { Db, Document } from "mongodb";
 import { ObjectId } from "mongodb";
 
+import { claimAttendeeSession } from "@/server/attendee/claim";
 import { getRateLimitConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import {
@@ -195,12 +196,16 @@ interface ResolvedDeps {
 }
 
 /**
- * The default claim seam.
+ * The default claim seam: the real §6.7 claim service over the hook's database.
  *
- * The §6.7 claim service is owned by a later card; until it exists this seam is
- * a no-op so the session-created hook can be wired without blocking a sign-in.
+ * A sign-in whose request still carries `op_att` claims that session for the
+ * account that just signed in, so the attendee's photos are already in her
+ * account before the sign-in response is served (OP-134, ADR-0815). The service
+ * logs its own `attendee.claimed` / `attendee.claim_conflict` records.
  */
-const noopClaim: ClaimAttendeeSession = () => Promise.resolve();
+function defaultClaim(db: Db): ClaimAttendeeSession {
+  return (input) => claimAttendeeSession({ db, userId: input.userId, token: input.token });
+}
 
 /** Narrow a string to a usable ObjectId, or `null` when it is malformed. */
 function toObjectId(value: string): ObjectId | null {
@@ -271,7 +276,7 @@ function resolveDeps(deps: IdentityHookDeps): ResolvedDeps {
     db: deps.db,
     clock: deps.clock ?? systemClock,
     emit: deps.emit ?? emitDomainEvent,
-    claim: deps.claim ?? noopClaim,
+    claim: deps.claim ?? defaultClaim(deps.db),
   };
 }
 

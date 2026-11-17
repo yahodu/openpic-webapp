@@ -29,6 +29,8 @@ export interface TenantScope {
   readonly tenantId: ObjectId;
   /** The caller's role in that workspace. */
   readonly role: TenantRole;
+  /** The acting account's Better Auth user id, as the hex string the stage read. */
+  readonly userId: string;
 }
 
 /**
@@ -42,9 +44,9 @@ export interface TenantScope {
  * @returns The resolved workspace id and the caller's role.
  */
 export function requireTenantScope(ctx: HandlerContext): TenantScope {
-  const { tenantId, tenantRole } = ctx;
-  if (tenantId === undefined || tenantRole === undefined) {
+  const { tenantId, tenantRole, principal } = ctx;
+  if (tenantId === undefined || tenantRole === undefined || principal === undefined) {
     throw appError("internal_error");
   }
-  return { tenantId: new ObjectId(tenantId), role: tenantRole };
+  return { tenantId: new ObjectId(tenantId), role: tenantRole, userId: principal };
 }

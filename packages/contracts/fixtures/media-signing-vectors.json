@@ -1,0 +1,46 @@
+{
+  "description": "Shared test vectors for the pic.openpic.in signed media URL scheme (OP-113, API Contract §5.6–§5.7). The signature is base64url(HMAC-SHA256(secret, METHOD + \"\\n\" + PATH + \"\\n\" + EXPIRY)) where PATH is the URL pathname only (never the query) and EXPIRY is the decimal ?exp= value verbatim. The web signer and the Cloudflare Worker must both reproduce every sig below for the same secret/path/exp; each vector's 'url' is the full signed URL the Worker would receive.",
+  "scheme": {
+    "algorithm": "HMAC-SHA256",
+    "encoding": "base64url",
+    "preimage": "METHOD\nPATH\nEXPIRY",
+    "method": "GET",
+    "baseUrl": "https://pic.openpic.in"
+  },
+  "secret": "test-media-signing-secret-v1",
+  "vectors": [
+    {
+      "label": "original JPEG (15-minute TTL)",
+      "kind": "original",
+      "contentHash": "3f2c1d8899aa55bb66cc77dd88ee99ff00112233445566778899aabbccddeeff",
+      "ext": "jpg",
+      "path": "/o/3f2c1d8899aa55bb66cc77dd88ee99ff00112233445566778899aabbccddeeff.jpg",
+      "exp": 4102444800,
+      "ttlSeconds": 900,
+      "sig": "tmsDiTYVKyAo5Ywg2ivOwrl8N05JPNVj3gV5T8OP0Rw",
+      "url": "https://pic.openpic.in/o/3f2c1d8899aa55bb66cc77dd88ee99ff00112233445566778899aabbccddeeff.jpg?exp=4102444800&sig=tmsDiTYVKyAo5Ywg2ivOwrl8N05JPNVj3gV5T8OP0Rw"
+    },
+    {
+      "label": "thumbnail WEBP (24-hour TTL)",
+      "kind": "thumbnail",
+      "contentHash": "3f2c1d8899aa55bb66cc77dd88ee99ff00112233445566778899aabbccddeeff",
+      "ext": "webp",
+      "path": "/t/3f2c1d8899aa55bb66cc77dd88ee99ff00112233445566778899aabbccddeeff.webp",
+      "exp": 4102444800,
+      "ttlSeconds": 86400,
+      "sig": "dqy1ZQFH2gCQkOWjNPEuqzRpbtZ3JSwYi9RB_julsL8",
+      "url": "https://pic.openpic.in/t/3f2c1d8899aa55bb66cc77dd88ee99ff00112233445566778899aabbccddeeff.webp?exp=4102444800&sig=dqy1ZQFH2gCQkOWjNPEuqzRpbtZ3JSwYi9RB_julsL8"
+    },
+    {
+      "label": "preview WEBP (2-hour TTL)",
+      "kind": "preview",
+      "contentHash": "3f2c1d8899aa55bb66cc77dd88ee99ff00112233445566778899aabbccddeeff",
+      "ext": "webp",
+      "path": "/p/3f2c1d8899aa55bb66cc77dd88ee99ff00112233445566778899aabbccddeeff.webp",
+      "exp": 4102444800,
+      "ttlSeconds": 7200,
+      "sig": "IGRf-QJ57hBrIz1P1bWIsDkymDjMQJvn19oac_24ogU",
+      "url": "https://pic.openpic.in/p/3f2c1d8899aa55bb66cc77dd88ee99ff00112233445566778899aabbccddeeff.webp?exp=4102444800&sig=IGRf-QJ57hBrIz1P1bWIsDkymDjMQJvn19oac_24ogU"
+    }
+  ]
+}

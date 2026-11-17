@@ -5,6 +5,11 @@
 - **Design:** §19.4 (`notifications`), §21 (indexes), §22 (retention/TTL), §4 rule 6/7 (OTP secrecy, `in_app` never opt-outable), §20.4 (`platformSettings.notifications`) · **Contract:** §7.1 (in-app feed), §7.2 (unread count), §0.10 (ETag/304), §0.15 (never-return)
 - **Supersedes / amends:** none. Implements the OP-97 feed lane and carries the `PRE-1` finding routed by ADR-0128.
 - **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_08538ff6` (branch `OP-97-task-in-app-feed-read-state-red`)
+- **Consumers:** the in-app feed route, the specs that pin it and the e2e journey that
+  exercises it — modules `apps/web/src/app/api/v1/me/notifications/route.ts`,
+  `apps/web/src/instrumentation.ts`; specs `apps/web/src/test/integration/notification-feed.test.ts`,
+  `apps/web/src/test/integration/notification-read-state.test.ts`,
+  `apps/web/e2e/billing-checkout.spec.ts`.
 
 ## Context
 
@@ -63,9 +68,9 @@ filter-derived `from` with `now − min(windowDays, 90) days` and leaves `to`
 untouched; it is ignored for `archived` (the band is fixed) and for a
 non-positive value. The 90-day cap is the TTL horizon — nothing older exists.
 
-**`composeUnreadEtag`** returns `weakETag(\`${unreadCount}-${highestSeverity ??
-"none"}-${epochSeconds}\`)` — matching the §7.2 example
-(`W/"3-important-1790086920"`). `epochSeconds`is the greatest`updatedAt`(whole seconds) among the counted rows,`0` when nothing is counted, so any
+**`composeUnreadEtag`** returns ``weakETag(`${unreadCount}-${highestSeverity ??
+"none"}-${epochSeconds}`)`` — matching the §7.2 example
+(`W/"3-important-1790086920"`). `epochSeconds` is the greatest `updatedAt` (whole seconds) among the counted rows, `0` when nothing is counted, so any
 mutation of the unread set changes the token without a separate counter.
 
 **`buildUnreadCountFilter`** returns exactly

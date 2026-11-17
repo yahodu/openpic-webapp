@@ -107,6 +107,7 @@ Five credential types. Every endpoint below declares exactly one **Auth** requir
 - Every handler under `/tenants/{tenantId}/` must (a) verify `tenantMembers` or `eventMembers` grants access, and (b) include `tenantId` in every Mongo filter. A nested resource whose stored `tenantId` ≠ path `tenantId` → **`404 not_found`** (never `403` — do not confirm existence across tenants).
 - Non-tenant-scoped namespaces: `/me/*` (user scope), `/p/*` (public/attendee), `/plans`, `/admin/*`, `/internal/*`, `/webhooks/*`, `/invitations/*`.
 - The **only** permitted cross-tenant read is `GET /api/v1/me/events` (§6.7), and it may only ever return rows whose `subject.userId` equals the caller.
+- The claim's re-point of an anonymous session's `attendeeEventProfiles` rows onto one account (§6.7) is the one deliberate cross-tenant **write**; it is whitelisted as `crossTenantWrites` in `apps/web/src/server/repos/cross-tenant.ts`, beside the `crossTenantReads` whitelist.
 
 ## 0.5 Response envelopes
 
@@ -291,23 +292,24 @@ All other `PATCH` endpoints are last-write-wins and do not require `If-Match`.
 
 Enforced in `middleware.ts` via Upstash Ratelimit (sliding window). Keyed as documented; the stricter of the listed limits applies.
 
-| Class                | Endpoints                                                       | Limit                                                                                                                          |
-| -------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `auth.otp`           | Better Auth OTP send                                            | **5 / hour / contact**, 15 / hour / IP — aligns with the `auth.otp.*` throttle in notification §4.1                            |
-| `auth.verify`        | OTP verify                                                      | 10 / 10 min / contact, then exponential lockout → `auth.suspicious.blocked`                                                    |
-| `read.hot`           | `GET /me/notifications/unread-count`, `GET /p/events/{slug}/me` | 60 / min / principal                                                                                                           |
-| `read.normal`        | all other `GET`                                                 | 300 / min / principal                                                                                                          |
-| `write.normal`       | all other `POST`/`PATCH`/`DELETE`                               | 60 / min / principal                                                                                                           |
-| `upload.resolve`     | `POST /uploads/batch-resolve`                                   | 60 / min / user, max 500 hashes per call                                                                                       |
-| `upload.sign`        | `GET .../multipart/{id}/{partNumber}`                           | **900 / min / user** — deliberately high; Uppy signs every part and re-signs on retry                                          |
-| `upload.complete`    | multipart complete, single params                               | 600 / min / user                                                                                                               |
-| `selfie.submit`      | `POST /p/events/{slug}/selfies`                                 | 6 / hour / attendee-session, 20 / hour / IP. Independent of the `selfies.per_attendee` entitlement (3), which is the hard cap. |
-| `liveness.challenge` | `POST /p/events/{slug}/liveness/challenges`                     | 12 / hour / attendee-session                                                                                                   |
-| `public.gallery`     | `/p/**` reads                                                   | 120 / min / attendee-session, 600 / min / IP                                                                                   |
-| `media.sign`         | `POST /media/signed-urls`                                       | 120 / min / principal, max 200 items per call                                                                                  |
-| `admin`              | `/admin/**`                                                     | 300 / min / admin                                                                                                              |
-| `webhook`            | `/webhooks/**`                                                  | **not rate limited**; protected by signature verification + `providerWebhookEvents` unique index                               |
-| `internal`           | `/internal/**`                                                  | 600 / min / secret                                                                                                             |
+| Class                | Endpoints                                                                                                       | Limit                                                                                                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth.otp`           | Better Auth OTP send                                                                                            | **5 / hour / contact**, 15 / hour / IP — aligns with the `auth.otp.*` throttle in notification §4.1                                                                       |
+| `auth.verify`        | OTP verify                                                                                                      | 10 / 10 min / contact, then exponential lockout → `auth.suspicious.blocked`                                                                                               |
+| `read.hot`           | `GET /me/notifications/unread-count`, `GET /p/events/{slug}/me`                                                 | 60 / min / principal                                                                                                                                                      |
+| `read.normal`        | all other `GET`                                                                                                 | 300 / min / principal                                                                                                                                                     |
+| `write.normal`       | all other `POST`/`PATCH`/`DELETE`                                                                               | 60 / min / principal                                                                                                                                                      |
+| `upload.resolve`     | `POST /uploads/batch-resolve`                                                                                   | 60 / min / user, max 500 hashes per call                                                                                                                                  |
+| `upload.sign`        | `GET .../multipart/{id}/{partNumber}`                                                                           | **900 / min / user** — deliberately high; Uppy signs every part and re-signs on retry                                                                                     |
+| `upload.complete`    | multipart complete, single params                                                                               | 600 / min / user                                                                                                                                                          |
+| `attendee.session`   | `POST /p/attendee-sessions`                                                                                     | **60 / hour / IP** — the endpoint is public, so the bucket is the client IP alone (no principal or contact exists)                                                        |
+| `selfie.submit`      | `POST /p/events/{slug}/selfies`, `POST /p/events/{slug}/selfies/uploads`, `POST /p/events/{slug}/selfies:reuse` | 6 / hour / attendee-session, 20 / hour / IP. Independent of the `selfies.per_attendee` entitlement (3), which is the hard cap; a reuse is charged as one of its attempts. |
+| `liveness.challenge` | `POST /p/events/{slug}/liveness/challenges`                                                                     | 12 / hour / attendee-session                                                                                                                                              |
+| `public.gallery`     | `/p/**` reads                                                                                                   | 120 / min / attendee-session, 600 / min / IP                                                                                                                              |
+| `media.sign`         | `POST /media/signed-urls`                                                                                       | 120 / min / principal, max 200 items per call                                                                                                                             |
+| `admin`              | `/admin/**`                                                                                                     | 300 / min / admin                                                                                                                                                         |
+| `webhook`            | `/webhooks/**`                                                                                                  | **not rate limited**; protected by signature verification + `providerWebhookEvents` unique index                                                                          |
+| `internal`           | `/internal/**`                                                                                                  | 600 / min / secret                                                                                                                                                        |
 
 Response on limit:
 
@@ -598,7 +600,7 @@ The mechanism behind _"attendees must be able to upload a selfie without logging
 
 ### `POST /api/v1/p/attendee-sessions`
 
-Auth `public` · Rate 60 / hour / IP
+Auth `public` · Rate 60 / hour / IP (class `attendee.session`, §0.11)
 
 Body: `{ "eventSlug": "k7m2xq9p" }` (optional; appends to `eventIds`).
 
@@ -865,6 +867,8 @@ Auth `public` — read-only preview so the landing page can render before sign-i
 Auth `user` + event role `organizer` — remove an **accepted** co-organizer.
 
 Sets `eventMembers.status = "removed"` and the originating `invitations.status = "revoked"` (so the PRD's "must not be able to accept after removal" holds structurally). Emits `collab.member.removed` (to the removed user, in-app + email — they lose access to content they uploaded) and `collab.member.removed.ack` (to the organizer, in-app only).
+
+Removal is **idempotent**: removing a member who is already removed answers `204` and writes nothing further — no second `collab.member.removed`/`.ack` pair — so a retried or double-clicked `DELETE` is safe. `404 not_found` therefore means no `eventMembers` row exists for that `(eventId, userId)` at all (never a member, or another tenant's), not that the member has already been removed.
 
 `409 cannot_remove_organizer` if the target holds `role: "organizer"` — guarded by the unique partial index enforcing exactly one organizer per event.
 
@@ -1992,7 +1996,7 @@ Client contract:
 
 # Part 6 — Attendee (public) surface
 
-Namespace `/api/v1/p/**`. Auth is `attendee` (anonymous session or logged-in user) unless stated. Every route is scoped by the event's **active** access-link `slug`, resolved through the unique partial index on `accessLinks.slug` where `active: true`.
+Namespace `/api/v1/p/**`. Auth is `attendee` (anonymous session or logged-in user) unless stated. Every route is scoped by the event's **active** access-link `slug`, resolved through the plain non-partial `{"accessLinks.slug":1}` index (`events_active_slug_lookup`): the `$elemMatch` slug + `active: true` predicate cannot use the unique partial index on `accessLinks.slug` where `active: true`, which instead governs slug uniqueness (one active slug globally, and the create-route E11000 collision retry).
 
 ## 6.1 Public event resolution
 
@@ -2008,6 +2012,7 @@ The attendee landing page. Must render fully from this one call.
   "event": {
     "id": "6702ff...",
     "name": "Rahul & Priya's Wedding",
+    "description": "Reception on the lawn, dinner at 8",
     "startAt": "...",
     "endAt": "...",
     "displayTimeZone": "Asia/Kolkata",
@@ -2061,8 +2066,15 @@ Error states the frontend must handle:
 Auth `attendee` · Rate `write.normal`
 
 ```json
-{ "purpose": "biometric_processing", "policyVersion": "biometric-2026-03", "granted": true }
+{
+  "purpose": "biometric_processing",
+  "policyVersion": "biometric-2026-03",
+  "granted": true,
+  "ageConfirmed": true
+}
 ```
+
+`ageConfirmed` records that the attendee confirmed they are old enough to give consent; a missing or `false` value is `422 age_confirmation_required` (Appendix A.7), refused before any row is written.
 
 Writes a `consents` row with `policyVersion`, `policyDocumentHash`, `grantedAt`, and `evidence { ipHash, uaHash, method: "checkbox", locale }` — the fields that make consent _demonstrable_ years later (schema §15.4).
 
@@ -2102,11 +2114,16 @@ Auth `attendee` · Rate `liveness.challenge` · Precondition: consent granted
   "challengeId": "6706bb...",
   "challengeKind": "gesture",
   "spec": { "sequence": ["look_left", "blink", "look_center"], "timeoutMs": 15000 },
+  "nonce": "9f2c41d7b6e0...",
   "expiresAt": "2026-09-25T09:20:00.000Z"
 }
 ```
 
+`nonce` is 32 lowercase hex characters and is the only thing that binds the challenge to its evidence: the submit must echo it in `livenessEvidence.nonce` (compared case-insensitively), and a challenge the caller does not hold is a `mismatch`. A challenge is **single-use** — the submit that presents it spends it — and it lives **60 seconds** from issue, `expiresAt` being that inclusive deadline.
+
 `412 consent_required` with `details.requiredPolicyVersion` if consent is missing.
+
+`410 gallery_expired` with `details.expiredAt` once the event's `retentionExpiresAt` has elapsed; no challenge is issued.
 
 ### `POST /api/v1/p/events/{slug}/selfies/uploads`
 
@@ -2116,20 +2133,25 @@ Auth `attendee` · Rate `selfie.submit`
 
 `201` → same presign envelope as §5.3 (`method`, `url`, `headers`, `expiresAt`, `confirmUrl`). Selfies are always single-PUT.
 
+`410 gallery_expired` with `details.expiredAt` once `retentionExpiresAt` has elapsed — no upload URL is minted.
+
+A declared `size` above `platformSettings.upload.maxFileBytes` → `413 file_too_large` (`details.maxBytes`, `details.actualBytes`).
+
 ### `POST /api/v1/p/events/{slug}/selfies`
 
 Auth `attendee` · **Idempotency required** · Rate `selfie.submit` · Entitlements `selfies.per_attendee`
 
 ```json
 {
-  "uploadSessionId": "6706cc...",
   "hash": "b4c7e9...",
   "challengeId": "6706bb...",
-  "livenessFrameHashes": ["...", "...", "..."]
+  "livenessEvidence": { "nonce": "9f2c41d7b6e0...", "frameHashes": ["...", "...", "..."] }
 }
 ```
 
-Server: verifies the object, verifies the liveness challenge is unexpired and unused, creates/updates `attendeeEventProfiles` (creating with `subject.kind: "anonymous"` or `"user"`), inserts `selfies` with `processing.status: "queued"`, `processing.priority: "high"` (PRD: attendee selfies are high priority), enqueues to `q:selfie`.
+`hash` is the lowercase 64-hex SHA-256 of the bytes already PUT to the single-PUT presign of `…/selfies/uploads`; the object is addressed by nothing else, so the body carries **no upload-session id**. `livenessEvidence` echoes the challenge's `nonce` and carries at least one per-frame hash. Unknown properties are ignored; a body without `livenessEvidence` is `422 validation_failed`.
+
+Server: verifies the object, verifies the liveness challenge is the caller's, unexpired and unused (and that the evidence echoes its nonce), creates/updates `attendeeEventProfiles` (creating with `subject.kind: "anonymous"` or `"user"`), inserts `selfies` with `processing.status: "queued"`, `processing.priority: "high"` (PRD: attendee selfies are high priority), enqueues to `q:selfie`.
 
 `202` →
 
@@ -2147,19 +2169,53 @@ Server: verifies the object, verifies the liveness challenge is unexpired and un
 
 Failure paths:
 
-| Condition                         | Response                                                             |
-| --------------------------------- | -------------------------------------------------------------------- |
-| Consent missing                   | `412 consent_required`                                               |
-| Liveness challenge expired/reused | `409 liveness_challenge_invalid`                                     |
-| Selfie attempts exhausted         | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`) |
-| Upload window / gallery closed    | `409 gallery_closed`                                                 |
-| File too large                    | `413 file_too_large`                                                 |
+| Condition                                                     | Response                                                                                      |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Consent missing                                               | `412 consent_required`                                                                        |
+| Object absent from storage                                    | `404 not_found` (`details.resource: "selfie"`)                                                |
+| Challenge expired, spent, not the caller's, or nonce mismatch | `409 liveness_challenge_invalid` (`details.reason` `expired` \| `already_used` \| `mismatch`) |
+| Selfie attempts exhausted                                     | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`)                          |
+| Object being purged after a withdrawal                        | `409 conflict` (`details.reason: "selfie_purged"`)                                            |
+| Gallery retention elapsed                                     | `410 gallery_expired` (`details: { expiredAt }`)                                              |
+
+The retention check runs after consent and before the object, liveness and budget checks, so a refusal writes nothing — no `selfies` row, no `q:selfie` pointer, no attempt charged, the challenge stays unspent; bytes the client already PUT are the purge lane's business (ADR-0796/0798), not this gate's.
 
 The **outcome** of detection/liveness is asynchronous (`attendee.selfie.accepted` / `attendee.selfie.rejected`, notification §4.8) and observed through §6.4. `attendee.selfie.rejected` emails only when the attendee is identified **and** has failed twice consecutively.
 
-### `GET /api/v1/p/selfies/reusable`
+**Submission is two-step.** A submit only queues an attempt: the `selfies` row is `queued` and inactive, the profile stays `processing`, `activeSelfieId` is not moved, `matchCount` is not updated and no notification is emitted. Until the confirmation below, the selfie is invisible, uncounted and unnotified.
 
-Auth `user` (identified only) — the PRD's "reuse a previous selfie".
+### `POST /api/v1/p/events/{slug}/selfies/{selfieId}/confirm`
+
+Auth `attendee` · Precondition: consent granted · No body
+
+The second step of the two-step submission, and **the only publisher that ships today**. It activates the addressed row (`isActive: true`, the profile's other selfies deactivated, `activeSelfieId` set), writes `attendeeEventProfiles.status` and `matchCount` (the profile's `faceMatches` count once the embedding is on the row, `0` before), and emits one `attendee.matches.new` for the selfie when it produced at least one row — `payload.count` is the number of rows **that selfie** produced, not the profile's `matchCount`, and the outbox row is deduped on `attendee.matches.new:{eventId}:{profileId}:{selfieId}`.
+
+`200` → the same seven-key envelope as the submit above:
+
+```json
+{
+  "selfieId": "6706dd...",
+  "profileId": "6706ee...",
+  "status": "ready",
+  "pollUrl": "/api/v1/p/events/k7m2xq9p/me",
+  "pollIntervalMs": 2000,
+  "attemptsUsed": 1,
+  "attemptsRemaining": 2
+}
+```
+
+`status` is `ready` once the worker's embedding is on the row; before that the row still activates, the answer is `200` with `status: "processing"`, and nothing is published. A repeat confirmation answers the same `200` and emits nothing further — the dedupe key admits one `attendee.matches.new` per selfie. `GET …/me` (§6.4) is read-only, so a `face_matches` row that arrives after the activation is announced by no shipped endpoint; ADR-0808 owns that publication. The confirm is **not** gated by retention: after the instant it still answers its `200` envelope, and its row's erasure belongs to the purge.
+
+| Condition                                           | Response                                       |
+| --------------------------------------------------- | ---------------------------------------------- |
+| Consent missing                                     | `412 consent_required`                         |
+| `selfieId` malformed, unknown, or another subject's | `404 not_found` (`details.resource: "selfie"`) |
+
+### `GET /api/v1/p/selfies/reusable?cursor=&limit=`
+
+Auth `user` (identified only) · Rate `read.normal` (§0.11's `GET` catch-all) — the PRD's "reuse a previous selfie".
+
+Request: `?cursor=<opaque>&limit=<1..100>` (§0.8). Default `limit` **40**, maximum **100**; a value above 100 is clamped. An unparseable or foreign `cursor` → `400 invalid_cursor`; a non-integer or `< 1` `limit` → `422 validation_failed`.
 
 ```json
 {
@@ -2170,11 +2226,35 @@ Auth `user` (identified only) — the PRD's "reuse a previous selfie".
       "previewUrl": "https://pic.openpic.in/t/....webp?exp=...&sig=...",
       "quality": { "accepted": true }
     }
-  ]
+  ],
+  "page": { "nextCursor": "eyJjIjoi...", "hasMore": true, "limit": 40 }
 }
 ```
 
-Returns **crops/previews only**, never the embedding. Reuse: `POST /p/events/{slug}/selfies:reuse` with `{ "selfieId": "..." }` → `202`, same envelope as above, skipping upload and liveness.
+Sorted `createdAt` **desc**, `_id` desc as the tiebreak — keyset pagination, so a page boundary never repeats or skips a row that shares a `createdAt`. `nextCursor` is `null` when `hasMore` is `false`. There is **no `page.total`**: §0.8 forbids a total that would need an aggregation. A client that previews only the newest selfies may ignore `page`; a client that lists every reusable selfie must follow `nextCursor` until it is `null`. (ADR-0810.)
+
+Returns **crops/previews only**, never the embedding. Only an activated selfie is listed.
+
+### `POST /api/v1/p/events/{slug}/selfies:reuse`
+
+Auth `attendee` · Rate `selfie.submit` · Entitlements `selfies.per_attendee` · Precondition: consent granted for the addressed event
+
+`{ "selfieId": "6706dd..." }` — one of the caller's active selfies from the listing above. Upload and liveness are skipped.
+
+For a well-formed body, precedence is fixed: consent **for the addressed event** first (a reuse without it is `412` even when the source selfie does not exist), then ownership of the source selfie, then that the source still exists.
+
+`202` → the same seven-key envelope as the submit above, `status: "processing"`. The reuse creates this event's profile and its own unconfirmed selfie row, so **the confirmation above is still required** before anything is published.
+
+Failure paths:
+
+| Condition                                     | Response                                                                    |
+| --------------------------------------------- | --------------------------------------------------------------------------- |
+| Consent missing for the addressed event       | `412 consent_required`                                                      |
+| `selfieId` not 24 hex                         | `422 validation_failed`                                                     |
+| Source selfie foreign, unknown or withdrawn   | `404 not_found` (`details.resource: "selfie"`)                              |
+| Selfie attempts exhausted                     | `403 plan_limit_exceeded` (`entitlementKey: "selfies.per_attendee"`)        |
+| Source object being purged after a withdrawal | `409 conflict` (`details.reason: "selfie_purged"`)                          |
+| Retention elapsed for the addressed event     | `410 gallery_expired` (`details: { expiredAt }`), nothing minted or charged |
 
 ## 6.4 Participation status (polling)
 
@@ -2277,11 +2357,13 @@ Auth `attendee` · `{ "seenAt": "2026-09-25T09:20:00.000Z" }` (optional; default
 
 Sets `attendeeEventProfiles.lastSeenGalleryAt` and stamps `faceMatches.seenAt` for unseen rows. `204`. This is what dismisses the "New" badge; it must be a separate explicit call, not a side effect of `GET`, so a prefetch never clears the badge.
 
-### `POST /api/v1/p/matches/{matchId}/hide` · `.../unhide`
+### `POST /api/v1/p/matches/{matchId}/hide`
 
 Auth `attendee` + owns the profile
 
-Sets/clears `faceMatches.hiddenAt`. **Never deletes the row** — a false positive is a model-quality signal, and deleting it would make the next incremental match run re-insert it (schema §17.5). `204`.
+Sets `faceMatches.hiddenAt` to now. **Never deletes the row** — a false positive is a model-quality signal, and deleting it would make the next incremental match run re-insert it (schema §17.5). `204`.
+
+No `unhide` counterpart ships in this release: a hidden match stays hidden until the retention purge. The pair was cut deliberately — `hide` carries the ownership case (ADR-0793), and `unhide` is listed "Out of scope, not silently dropped" (ADR-0794).
 
 Optional body `{ "reason": "not_me" | "poor_quality" | "other" }` feeds abuse/quality review.
 
@@ -2328,9 +2410,9 @@ Auth `attendee` + owner
 
 ### `POST /api/v1/me/attendee-sessions:claim`
 
-Auth `user` · Body `{ "sessionToken": "opat_9f2c..." }` (or omitted, reading the `op_att` cookie)
+Auth `user` · Body `{ "sessionToken": "opat_9f2c..." }` (or omitted — or sent empty — reading the `op_att` cookie)
 
-The PRD's _"she doesn't have to re-visit and re-upload"_. Re-points every `attendeeEventProfiles` row from `subject.kind: "anonymous"` to `subject.kind: "user"` in a **single atomic update per profile** (schema §15.3). **No data moves. No selfie re-upload. No reprocessing.**
+The PRD's _"she doesn't have to re-visit and re-upload"_. Re-points every `attendeeEventProfiles` row from `subject.kind: "anonymous"` to `subject.kind: "user"` in a **single atomic update per profile** (schema §15.3). **No data moves. No selfie re-upload. No reprocessing.** This re-point crosses tenants by construction: it is the one deliberate cross-tenant **write**, whitelisted as `crossTenantWrites` in `apps/web/src/server/repos/cross-tenant.ts` (§0.3).
 
 `200` →
 
@@ -3572,8 +3654,8 @@ Every `error.code` in v1. **Clients branch on `code` only.** Codes are append-on
 | ------------------------------- | ------ | --------- | --------------------------------------------------- |
 | `consent_required`              | 412    | no        | `{ purpose, requiredPolicyVersion, policyUrl }`     |
 | `policy_version_stale`          | 422    | no        | `{ currentPolicyVersion, policyUrl }`               |
+| `age_confirmation_required`     | 422    | no        | —                                                   |
 | `liveness_challenge_invalid`    | 409    | no        | `{ reason: "expired"\|"already_used"\|"mismatch" }` |
-| `gallery_closed`                | 409    | no        | `{ closedAt }`                                      |
 | `gallery_expired`               | 410    | no        | `{ expiredAt }`                                     |
 | `download_expired`              | 410    | no        | `{ rerequestUrl }`                                  |
 | `session_claimed_by_other_user` | 409    | no        | —                                                   |
@@ -3717,8 +3799,8 @@ export type ErrorCode =
   | "not_failed"
   | "consent_required"
   | "policy_version_stale"
+  | "age_confirmation_required"
   | "liveness_challenge_invalid"
-  | "gallery_closed"
   | "gallery_expired"
   | "download_expired"
   | "session_claimed_by_other_user"
@@ -4096,8 +4178,12 @@ export type ProcessingStatus = "queued" | "processing" | "done" | "failed" | "sk
 export interface EventImage {
   id: Id;
   sequence: number;
-  thumbnailUrl: string;
-  thumbnailUrlExpiresAt: IsoDateTime;
+  /**
+   * Null until the thumbnail derivative exists: a just-completed upload is
+   * listed (and rendered as a reserved grid cell) before the pipeline runs.
+   */
+  thumbnailUrl: string | null;
+  thumbnailUrlExpiresAt: IsoDateTime | null;
   width: number;
   height: number;
   orientation: number;
@@ -4164,6 +4250,9 @@ export interface PublicEvent {
   event: {
     id: Id;
     name: string;
+    // The landing page renders the description; the create route stores "" for
+    // an event that has none (§4.1).
+    description: string;
     startAt: IsoDateTime;
     endAt: IsoDateTime;
     displayTimeZone: IanaTimeZone;
@@ -4515,7 +4604,7 @@ Every read path must be served by an existing index. If a route here has no matc
 | `GET .../uploads/batches/{b}`             | `uploadSessions`, `eventImages`                                         | `{eventId:1, batchId:1, status:1}`                                                                                |
 | `POST .../uploads/batch-resolve`          | `mediaAssets`, `uploadSessions`                                         | **`{tenantId:1, contentHash:1}` unique** · `{tenantId:1, createdByUserId:1, contentHash:1}`                       |
 | `POST .../uploads/.../complete`           | `mediaAssets`, `eventImages`, `usageCounters`                           | **`{eventId:1, assetId:1}` unique** (dedupe race guard)                                                           |
-| `GET /p/events/{slug}`                    | `events`                                                                | **`{"accessLinks.slug":1}` unique partial** on `active: true`                                                     |
+| `GET /p/events/{slug}`                    | `events`                                                                | **`{"accessLinks.slug":1}` plain** (lookup); uniqueness on the partial unique index                               |
 | `GET /p/events/{slug}/me`                 | `attendeeEventProfiles`, `selfies`                                      | `{eventId:1,"subject.userId":1}` / `{eventId:1,"subject.attendeeSessionId":1}` unique partial                     |
 | `GET /p/events/{slug}/gallery`            | `faceMatches`, `eventImages`, `mediaAssets`                             | **`{profileId:1, createdAt:-1}`**                                                                                 |
 | gallery "New" badge                       | `faceMatches`                                                           | `{profileId:1, seenAt:1, createdAt:-1}` partial on `seenAt: null`                                                 |

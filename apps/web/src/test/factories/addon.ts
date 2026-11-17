@@ -23,6 +23,15 @@ export interface StoredAddon {
   readonly description: string;
   /** The entitlement this add-on grants (`delta`) when bought, e.g. `storage.bytes`. */
   readonly entitlementKey: string;
+  /**
+   * The entitlement delta one ordered `quantity` unit grants (OP-110,
+   * ADR-0480). ADR-0320's schema of record named the entitlement and the
+   * orderable quantity bounds but carried no amount, so a purchase could not be
+   * projected into a `entitlementGrants.delta`; this field is that amount, in
+   * the entitlement's own unit (bytes for `storage.bytes`). The grant a
+   * purchase writes is `quantity × grantDelta`.
+   */
+  readonly grantDelta: number;
   /** The unit a `quantity` is counted in, e.g. `GB`. */
   readonly unit: string;
   /** Orderable quantity bounds (integer units). */
@@ -69,6 +78,7 @@ export function makeAddon(overrides: Partial<StoredAddon> = {}): StoredAddon {
     name: "50 GB storage",
     description: "Add 50 GB of storage to any plan.",
     entitlementKey: "storage.bytes",
+    grantDelta: 53_687_091_200,
     unit: "GB",
     quantity: { min: 1, max: 10 },
     prices: [makeAddonPrice()],

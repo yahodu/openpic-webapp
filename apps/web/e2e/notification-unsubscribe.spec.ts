@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 
+import { clientIpFor } from "./client-ip";
 import { E2E_BASE_URL } from "./ports";
 import { mintE2eUnsubscribeToken } from "./unsubscribe-token";
+
+const CLIENT_IP = clientIpFor("notification-unsubscribe.spec.ts");
 
 /**
  * E1 — the one-click unsubscribe journey over the deployed HTTP surface (OP-99,
@@ -61,7 +64,7 @@ test.describe("one-click unsubscribe (E1)", () => {
 
     // Sign in through the real email-OTP handshake.
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
-      headers: { origin: E2E_BASE_URL },
+      headers: { origin: E2E_BASE_URL, "x-forwarded-for": CLIENT_IP },
       data: { email, type: "sign-in" },
     });
     expect(sent.status()).toBe(200);

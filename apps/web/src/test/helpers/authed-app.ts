@@ -44,12 +44,23 @@ export interface SignedInUser {
   readonly identity: TestIdentity;
 }
 
+/** Extra headers a sign-in carries (OP-134: the `op_att` cookie). */
+export interface SignInOptions {
+  /**
+   * Headers sent on both auth calls, so a sign-in can present the anonymous
+   * attendee credential the browser would still be holding. A sign-in carrying
+   * `cookie: "op_att=…"` is what makes the identity hook claim that session
+   * (contract §6.7); a sign-in without it leaves the session unclaimed.
+   */
+  readonly headers?: Record<string, string>;
+}
+
 /** A booted app: the database, the auth surface and the sign-in helper. */
 export interface TestApp {
   readonly db: Db;
   readonly auth: AuthLike;
   /** Sign in a fresh identity (or the supplied one) and return its session. */
-  signIn(identity?: TestIdentity): Promise<SignedInUser>;
+  signIn(identity?: TestIdentity, options?: SignInOptions): Promise<SignedInUser>;
   /** Drop the private database and release the singleton client. */
   cleanup(): Promise<void>;
 }
@@ -130,8 +141,11 @@ export async function startTestApp(options: {
   await waitForMongoReady();
 
   /** Sign in via the real email-OTP handshake and resolve the stored user row. */
-  const signIn = async (identity = makeIdentity(options.prefix)): Promise<SignedInUser> => {
-    const forward = { "x-forwarded-for": identity.ip };
+  const signIn = async (
+    identity = makeIdentity(options.prefix),
+    signInOptions: SignInOptions = {}
+  ): Promise<SignedInUser> => {
+    const forward = { "x-forwarded-for": identity.ip, ...signInOptions.headers };
 
     const sent = await authPost(
       auth,

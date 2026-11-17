@@ -9,17 +9,22 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1156.0",
+    "@aws-sdk/s3-request-presigner": "^3.1156.0",
     "@openpic/contracts": "workspace:*",
     "better-auth": "^1.7.7",
     "mongodb": "^6.12.0",
     "next": "^15.5.27",
+    "pdf-lib": "^1.17.1",
     "pino": "^10.3.1",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "^4.6.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "mongodb-memory-server": "^10.1.2",

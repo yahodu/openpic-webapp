@@ -34,7 +34,13 @@ import { getPlatformSettings } from "@/server/settings/platform-settings";
  */
 
 /** The registered analytics-only event keys (no notification type) — contract §7.7. */
-export const ANALYTICS_ONLY_EVENT_KEYS: readonly string[] = ["event.viewed"];
+export const ANALYTICS_ONLY_EVENT_KEYS: readonly string[] = [
+  "event.viewed",
+  // OP-117 (ADR-0580): the ordered purge for the OP-132 purge job — a queue
+  // consumer key with no notification type, emitted synchronously when an
+  // organizer confirms a delete.
+  "event.purge.scheduled",
+];
 
 /** The payload keys that must never reach the outbox (ADR-0029 §3). */
 const FORBIDDEN_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
@@ -257,6 +263,25 @@ function scheduleNotificationFanOut(): void {
   } catch {
     // No Next.js request scope; the cron route drains the outbox instead.
   }
+}
+
+/** The event key an activation result is announced under (§7.6). */
+const MATCHES_NEW_EVENT_KEY = "attendee.matches.new";
+
+/**
+ * The one delivery identity of an activation result (ADR-0808 §3).
+ *
+ * The confirmation and the worker both announce the same result, so the key is
+ * minted in exactly one place: whoever publishes first owns the row and the
+ * other publisher is deduped by `domain_events`' unique partial index.
+ *
+ * @param eventId - The event the matches belong to.
+ * @param profileId - The announced attendee profile.
+ * @param selfieId - The selfie whose activation produced the rows.
+ * @returns `` `attendee.matches.new:<eventId>:<profileId>:<selfieId>` ``.
+ */
+export function matchesNewDedupeKey(eventId: string, profileId: string, selfieId: string): string {
+  return `${MATCHES_NEW_EVENT_KEY}:${eventId}:${profileId}:${selfieId}`;
 }
 
 /**

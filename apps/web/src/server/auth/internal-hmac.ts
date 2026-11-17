@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import { getConfig } from "@/server/config/env";
 import { appError } from "@/server/http/errors";
 import type { RouteStage } from "@/server/http/define-route";
 import { requestLogger } from "@/server/logging";
@@ -78,6 +79,17 @@ export interface AuthorizeInternalRequestInput {
   readonly internalApiSecret: string;
   /** The shared secret Vercel Cron presents as a bearer. */
   readonly cronSecret: string;
+  /**
+   * Accept the `CRON_SECRET` bearer for **any** method under the cron prefix.
+   *
+   * Defaults to `false` — the shipped cron exception: a `GET` under
+   * `/api/v1/internal/cron/**` may present the bearer with an empty, unsigned
+   * body (Vercel Cron issues GETs and cannot sign one), and every other request
+   * must carry `INTERNAL_API_SECRET` plus a valid HMAC. §10.2's billing crons are
+   * `POST` routes driven by a hosted scheduler pinging with the same secret
+   * header, so those routes opt in explicitly (`billing-cron` route wiring).
+   */
+  readonly cronBearerAnyMethod?: boolean;
   /** The allowed absolute skew in seconds; defaults to 300. */
   readonly maxSkewSeconds?: number;
 }
@@ -90,6 +102,8 @@ export interface InternalAuthStageOptions {
   readonly cronSecret: string;
   /** The clock the timestamp window is measured against; defaults to the wall clock. */
   readonly clock?: Clock;
+  /** Accept the `CRON_SECRET` bearer for any method under the cron prefix (default `false`). */
+  readonly cronBearerAnyMethod?: boolean;
   /** The allowed absolute skew in seconds; defaults to 300. */
   readonly maxSkewSeconds?: number;
 }
@@ -165,7 +179,9 @@ function isCronPath(path: string): boolean {
  * is accepted with an empty, unsigned body (Vercel Cron issues GETs and cannot
  * sign one). Every other request needs `Bearer <INTERNAL_API_SECRET>` and a
  * valid signature; a `CRON_SECRET` bearer anywhere else (including a non-GET
- * cron request) is refused so the exception cannot be replayed.
+ * cron request) is refused so the exception cannot be replayed. When neither
+ * header is ours the answer names the more specific failure: a signature that
+ * does not verify is `invalid_signature`, a missing one is `internal_auth_failed`.
  *
  * @param input - Method, path, the credential headers, `now` and both secrets.
  * @returns `{ ok: true }` or a coded denial.
@@ -173,17 +189,21 @@ function isCronPath(path: string): boolean {
 export function authorizeInternalRequest(input: AuthorizeInternalRequestInput): InternalAuthResult {
   const token = bearerToken(input.authorization);
 
-  if (input.method === "GET" && isCronPath(input.path)) {
+  if (isCronPath(input.path) && (input.method === "GET" || input.cronBearerAnyMethod === true)) {
     if (token !== null && constantTimeEquals(token, input.cronSecret)) {
       return { ok: true };
     }
   }
 
-  if (token === null || !constantTimeEquals(token, input.internalApiSecret)) {
+  // No bearer, or the cron secret where its one exception does not apply: the
+  // caller has not identified itself at all, so the answer is the bearer — and
+  // never a signature verdict, or the cron secret could be replayed onto a
+  // route by signing with it.
+  if (token === null || constantTimeEquals(token, input.cronSecret)) {
     return { ok: false, code: "internal_auth_failed" };
   }
 
-  return verifyInternalSignature({
+  const signature = verifyInternalSignature({
     secret: input.internalApiSecret,
     body: input.body,
     signature: input.signature,
@@ -191,6 +211,23 @@ export function authorizeInternalRequest(input: AuthorizeInternalRequestInput): 
     now: input.now,
     ...(input.maxSkewSeconds === undefined ? {} : { maxSkewSeconds: input.maxSkewSeconds }),
   });
+
+  // An unknown bearer that carries a signature did sign this body, just not
+  // with our secret, so `invalid_signature` names the failure more precisely
+  // than `internal_auth_failed` (§0.3). A bare unknown bearer — no
+  // `X-Signature` header at all — is simply unidentified.
+  if (!signature.ok) {
+    if (input.signature === null && !constantTimeEquals(token, input.internalApiSecret)) {
+      return { ok: false, code: "internal_auth_failed" };
+    }
+    return signature;
+  }
+
+  if (!constantTimeEquals(token, input.internalApiSecret)) {
+    return { ok: false, code: "internal_auth_failed" };
+  }
+
+  return { ok: true };
 }
 
 /**
@@ -221,6 +258,9 @@ export function internalAuthStage(options: InternalAuthStageOptions): RouteStage
       now: clock.now(),
       internalApiSecret: options.internalApiSecret,
       cronSecret: options.cronSecret,
+      ...(options.cronBearerAnyMethod === undefined
+        ? {}
+        : { cronBearerAnyMethod: options.cronBearerAnyMethod }),
       ...(options.maxSkewSeconds === undefined ? {} : { maxSkewSeconds: options.maxSkewSeconds }),
     });
 
@@ -235,3 +275,19 @@ export function internalAuthStage(options: InternalAuthStageOptions): RouteStage
     return undefined;
   };
 }
+
+/**
+ * The `auth:` stage of the four internal M2M routes (§0.3, §10.3.2).
+ *
+ * One definition for all of them: {@link internalAuthStage} with the deployed
+ * secret pair. The secrets are read **inside** the stage, never at import time,
+ * because `getConfig()` validates the environment and `next build` runs without
+ * it.
+ *
+ * @returns The pipeline stage the route's `auth:` option takes.
+ */
+export const internalRouteAuth: RouteStage = (ctx, request) =>
+  internalAuthStage({
+    internalApiSecret: getConfig().internal.apiSecret,
+    cronSecret: getConfig().cron.secret,
+  })(ctx, request);

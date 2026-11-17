@@ -48,10 +48,22 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
  * codes are appended to the client-facing enum ({@link API_ERROR_CODES}) and
  * transported from their own table so both remain exact. Append-only, like
  * every other code.
+ *
+ * OP-129 appends `attendee_session_expired` (contract §1.5 / Appendix A.1,
+ * `401`, details `{ recreateUrl }`): an anonymous attendee token whose session
+ * lapsed is a distinct failure from a missing one, so the client can tell "your
+ * 30 days are up, re-create" from "you sent nothing" (ADR-0781).
+ *
+ * OP-134 appends `session_claimed_by_other_user` (contract §6.7, `409`): a
+ * second account presenting an `op_att` token whose data subject's photos are
+ * already claimed must be refused by name, never silently accepted — the code
+ * exists in no Appendix A row, so this lane owns its transport (ADR-0815).
  */
 export const AUTH_ERROR_CODES = [
   "authentication_required",
   "session_expired",
+  "attendee_session_expired",
+  "session_claimed_by_other_user",
   "account_incomplete",
   "admin_2fa_required",
   "account_banned",
@@ -70,8 +82,25 @@ export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[number];
  * Appendix A rows the HTTP-pipeline story enumerated. They are appended to the
  * client-facing enum ({@link API_ERROR_CODES}) and transported from their own
  * table (both `422`, non-retryable) so both stay exact. Append-only.
+ *
+ * OP-115 appends the two create-event request-shape refusals of contract §4.1 /
+ * Appendix A.2 in the same shape: `invalid_date_range` (`422`, details
+ * `{ startAt, endAt }` — `endAt` must come after `startAt`) and
+ * `start_too_far_past` (`422`, the `startAt` guard at now − 30 days; details
+ * unpinned by the card) (ADR-0520).
+ *
+ * OP-119 appends `range_too_large` (contract §4.5 / Appendix A.2, `422`,
+ * `{ maxDays }`): the tenant analytics read refuses a window longer than the
+ * 366-day ceiling. Appendix A.2 documents it and the document's `ErrorCode`
+ * union carries it, but the executable catalogue did not (ADR-0642).
  */
-export const REQUEST_SHAPE_ERROR_CODES = ["unknown_timezone", "forbidden_field"] as const;
+export const REQUEST_SHAPE_ERROR_CODES = [
+  "unknown_timezone",
+  "forbidden_field",
+  "invalid_date_range",
+  "start_too_far_past",
+  "range_too_large",
+] as const;
 
 /** A member of the closed {@link REQUEST_SHAPE_ERROR_CODES} set. */
 export type RequestShapeErrorCode = (typeof REQUEST_SHAPE_ERROR_CODES)[number];
@@ -155,6 +184,184 @@ export const ENTITLEMENT_ERROR_CODES = ["plan_limit_exceeded", "feature_not_avai
 export type EntitlementErrorCode = (typeof ENTITLEMENT_ERROR_CODES)[number];
 
 /**
+ * Event-lifecycle codes (contract §4.1, Appendix A "Table 3553").
+ *
+ * `event_deleting` (`409`, `{ purgeScheduledAt }`) refuses any write once a
+ * delete has been confirmed and the ordered purge is scheduled, and
+ * `event_already_started` (`409`) refuses a `startAt` move once the event has
+ * begun. Both are contract catalogue rows that are **not** members of
+ * {@link ERROR_CODES}, which the server error catalogue pins to exactly the
+ * base Appendix A table — so they are appended to the client-facing enum
+ * ({@link API_ERROR_CODES}) and transported from their own table, in the same
+ * append-only shape as `cannot_demote_owner` (OP-117, ADR-0580).
+ *
+ * OP-117's review round 1 appends `retention_would_expire_immediately` (`422`,
+ * `{ computedRetentionExpiresAt }`) — a date edit whose recomputed gallery
+ * retention lands in the past, so the write would purge the gallery at once
+ * (§4.1, Appendix A line 3556).
+ *
+ * OP-130 appends `event_gone` (`410`) — the public landing call's refusal for
+ * an event whose ordered purge has started (§6.1). It is distinct from
+ * `event_deleting` (`409`): the attendee's QR must say the content is gone, not
+ * that a write is refused.
+ */
+export const EVENT_ERROR_CODES = [
+  "event_deleting",
+  "event_already_started",
+  "retention_would_expire_immediately",
+  "access_link_revoked",
+  "event_gone",
+] as const;
+
+/** A member of the closed {@link EVENT_ERROR_CODES} set. */
+export type EventErrorCode = (typeof EVENT_ERROR_CODES)[number];
+
+/**
+ * Biometric-consent codes (contract §6.2/§6.3, Appendix A.7).
+ *
+ * `consent_required` (`412`, `{ purpose, requiredPolicyVersion, policyUrl }`)
+ * is the gate every selfie endpoint calls; `policy_version_stale` (`422`,
+ * `{ currentPolicyVersion, policyUrl }`) refuses a grant naming a policy the
+ * platform no longer serves; `age_confirmation_required` (`422`) refuses a grant
+ * whose age confirmation is missing or false. Like the event and collaboration
+ * rows they are contract catalogue codes that are **not** members of
+ * {@link ERROR_CODES}, which the server error catalogue pins to exactly the base
+ * Appendix A table; they are appended to the client-facing enum
+ * ({@link API_ERROR_CODES}) and transported from their own table (OP-131,
+ * ADR-0790). Append-only, like every other code.
+ */
+export const CONSENT_ERROR_CODES = [
+  "consent_required",
+  "policy_version_stale",
+  "age_confirmation_required",
+] as const;
+
+/** A member of the closed {@link CONSENT_ERROR_CODES} set. */
+export type ConsentErrorCode = (typeof CONSENT_ERROR_CODES)[number];
+
+/**
+ * Billing-checkout codes (contract §3.3, Appendix A.2/A.4).
+ *
+ * The seven refusals `POST /tenants/{tenantId}/billing/{checkout,upgrade,downgrade}`
+ * documents: `invalid_return_url` (`422`, `{ allowedOrigins }`) for a
+ * `returnUrl` off the allow-list, `plan_not_self_serve` (`422`,
+ * `{ contactSalesUrl }`) for a sales-assisted tier, `subscription_already_active`
+ * (`409`, `{ subscriptionId, status }`) for a workspace that already subscribes,
+ * `upstream_unavailable` (`502`, retryable, `{ provider, retryAfterSeconds }`)
+ * for a payment-provider failure, `not_an_upgrade` (`422`,
+ * `{ currentTierRank, targetTierRank, downgradeUrl }`) for an upgrade whose
+ * target rank is not higher than the current one, `not_a_downgrade` (`422`,
+ * `{ currentTierRank, targetTierRank, upgradeUrl }`) for the mirror case — a
+ * downgrade whose target rank is not strictly lower — and
+ * `acknowledgement_required` (`422`, `{ consequences }`) for a downgrade that
+ * has not acknowledged its computed consequences. Like the tenancy and
+ * entitlement rows they are contract catalogue codes that are **not** members of
+ * {@link ERROR_CODES}, which the server error catalogue
+ * (`@/server/http/catalog`) pins to exactly the base Appendix A table. They are
+ * appended to the client-facing enum ({@link API_ERROR_CODES}) and transported
+ * from their own table so both stay exact. Append-only, like every other code
+ * (ADR-0421).
+ *
+ * OP-110 appends the two self-serve refusals of §3.3 / Appendix A.4:
+ * `no_pending_due` (`409`, nothing outstanding to charge) and
+ * `mandate_not_chargeable` (`409`, `{ mandateStatus, recoveryAction }` for a
+ * revoked or expired mandate) — the same append-only shape (ADR-0480 §7).
+ */
+export const BILLING_ERROR_CODES = [
+  "invalid_return_url",
+  "plan_not_self_serve",
+  "subscription_already_active",
+  "upstream_unavailable",
+  "not_an_upgrade",
+  "not_a_downgrade",
+  "acknowledgement_required",
+  "no_pending_due",
+  "mandate_not_chargeable",
+] as const;
+
+/** A member of the closed {@link BILLING_ERROR_CODES} set. */
+export type BillingErrorCode = (typeof BILLING_ERROR_CODES)[number];
+
+/**
+ * Media-upload codes (contract Appendix A.2).
+ *
+ * `file_too_large` (`413`, `{ maxBytes, actualBytes }`) is documented in
+ * Appendix A.2 — the size refusal of the one byte-accepting endpoint, the
+ * branding asset upload — but is not a member of {@link ERROR_CODES}, which
+ * the server error catalogue pins to exactly the base Appendix A rows. It is
+ * appended to the client-facing enum ({@link API_ERROR_CODES}) and transported
+ * from its own table (both `413`, non-retryable) so both stay exact.
+ * `upload_window_closed` (`409`, `{ uploadWindowEndsAt, canExtend }`) is the
+ * OP-123 pre-check refusal for an event whose upload window has closed
+ * (Appendix A row 3562; ADR-0701) and is appended in the same shape.
+ * `size_mismatch` (`409`, `{ declaredBytes, storedBytes }`) is the OP-124
+ * completion refusal for a stored object whose size differs from the declared
+ * `bytes` by more than 1 % (contract §5.3; ADR-0721 D4).
+ * Append-only, like every other code (ADR-0540).
+ */
+export const MEDIA_ERROR_CODES = [
+  "file_too_large",
+  "upload_window_closed",
+  "size_mismatch",
+  // OP-125 (ADR-0741): a multipart completion that acknowledges fewer parts than
+  // the declared size slices into (contract §5.4); the client re-sends the gap.
+  "parts_missing",
+  // OP-125 (ADR-0741): the provider no longer holds the multipart series (the
+  // 7-day lifecycle rule aborted it), so the client restarts from batch-resolve.
+  "upload_expired",
+  // OP-127 (ADR-0762 D8): a single-image reprocess of an image that is not
+  // `failed` (contract §4.4); only a failed image is reprocessable.
+  "not_failed",
+] as const;
+
+/** A member of the closed {@link MEDIA_ERROR_CODES} set. */
+export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];
+
+/**
+ * Collaboration codes (contract §2.3, Appendix A.5).
+ *
+ * The co-organizer invitation surface refuses three states that Appendix A.5
+ * documents: `invitation_already_pending` (`409`, one live invitation already
+ * holds the seat and the redeemable link), `cannot_invite_self` (`422`, the
+ * organizer named their own account — by user id, email or phone) and
+ * `already_member` (`409`, the invitee is already an active co-organizer, so an
+ * invitation would be a second row for one membership). None is a member of
+ * {@link ERROR_CODES}, which the server error catalogue pins to exactly the base
+ * Appendix A table, so they are appended to the client-facing enum
+ * ({@link API_ERROR_CODES}) and transported from their own table, in the same
+ * append-only shape as `cannot_demote_owner` (OP-120, ADR-0661).
+ */
+export const COLLABORATION_ERROR_CODES = [
+  "invitation_already_pending",
+  "cannot_invite_self",
+  "already_member",
+  // OP-121 (§2.3, Appendix A.5): the decision surface's four refusals.
+  "invitation_revoked",
+  "invitation_expired",
+  "invitation_not_for_you",
+  "cannot_remove_organizer",
+] as const;
+
+/** A member of the closed {@link COLLABORATION_ERROR_CODES} set. */
+export type CollaborationErrorCode = (typeof COLLABORATION_ERROR_CODES)[number];
+
+/**
+ * Selfie / liveness codes (contract §6.3, Appendix A row 3587).
+ *
+ * `liveness_challenge_invalid` (`409`, `{ reason: "expired" | "already_used" |
+ * "mismatch" }`) refuses a submit whose liveness challenge is spent, expired, or
+ * bound to different evidence. Like the event, consent and collaboration rows it
+ * is a contract catalogue code that is **not** a member of {@link ERROR_CODES},
+ * which the server error catalogue pins to exactly the base Appendix A table, so
+ * it is appended to the client-facing enum ({@link API_ERROR_CODES}) and
+ * transported from its own table (OP-132, ADR-0792). Append-only.
+ */
+export const SELFIE_ERROR_CODES = ["liveness_challenge_invalid", "gallery_expired"] as const;
+
+/** A member of the closed {@link SELFIE_ERROR_CODES} set. */
+export type SelfieErrorCode = (typeof SELFIE_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -219,6 +426,12 @@ export const API_ERROR_CODES = [
   ...NOTIFICATION_ERROR_CODES,
   ...TENANCY_ERROR_CODES,
   ...ENTITLEMENT_ERROR_CODES,
+  ...BILLING_ERROR_CODES,
+  ...MEDIA_ERROR_CODES,
+  ...EVENT_ERROR_CODES,
+  ...COLLABORATION_ERROR_CODES,
+  ...CONSENT_ERROR_CODES,
+  ...SELFIE_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -238,7 +451,13 @@ export type AppErrorCode =
   | AccountErrorCode
   | NotificationErrorCode
   | TenancyErrorCode
-  | EntitlementErrorCode;
+  | EntitlementErrorCode
+  | BillingErrorCode
+  | MediaErrorCode
+  | EventErrorCode
+  | CollaborationErrorCode
+  | ConsentErrorCode
+  | SelfieErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);

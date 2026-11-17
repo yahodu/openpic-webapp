@@ -50,7 +50,7 @@ ADR-0085 assumption 6 explicitly permits "an equivalent escaping renderer", and
 the required behaviour (HTML-escape subject **and** body, reject triple-stash /
 `{{&`, reject a missing declared value, reject an undeclared supplied value,
 locale fallback to `en-IN`) is a few rules not worth a dependency. Escaping uses
-the Handlebars escape set (`& < > " ' \` =`).
+the Handlebars escape set (``& < > " ' ` =``).
 
 - Triple-stash `{{{` and `{{&` are rejected outright — no partial whitelist
   exists yet (security requirement, U23).

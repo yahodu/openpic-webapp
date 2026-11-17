@@ -102,6 +102,25 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
+  // upload_sessions — expire automatically once their window passes (§16.2,
+  // §22). OP-124 is the first lane to write a session row (ADR-0721 D2).
+  {
+    collection: COLLECTIONS.uploadSessions,
+    name: "upload_sessions_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+  // upload_sessions — the §5.5 batch read and its transition check tally one
+  // client-generated batch by status (OP-126; ADR-0760 A5).
+  {
+    collection: COLLECTIONS.uploadSessions,
+    name: "upload_sessions_event_batch_status",
+    keys: [
+      ["eventId", 1],
+      ["batchId", 1],
+      ["status", 1],
+    ],
+  },
   // invitations — "my pending invitations": the caller's pending count on the
   // `GET /me` bootstrap and the §1.2 feed read `{ "invitee.userId", status }`
   // newest-first, so the compound index must carry all three keys in this
@@ -115,6 +134,49 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["createdAt", -1],
     ],
   },
+  // invitations — token redemption: the public preview hashes the raw token and
+  // reads the row by that hash, so the hash must be unique across every tenant
+  // (§13.6).
+  {
+    collection: COLLECTIONS.invitations,
+    name: "invitations_token_hash_unique",
+    keys: [["tokenHash", 1]],
+    unique: true,
+  },
+  // invitations — "one live invitation per invitee per event": the partial
+  // filter keeps only `pending` rows in the index, so a revoked, rejected or
+  // expired invitation frees the slot for a re-invite (§13.6). One index per
+  // invitee kind, because the stored contact lives in a kind-specific field.
+  {
+    collection: COLLECTIONS.invitations,
+    name: "invitations_pending_event_email_unique",
+    keys: [
+      ["eventId", 1],
+      ["invitee.email", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { status: "pending", "invitee.email": { $type: "string" } },
+  },
+  {
+    collection: COLLECTIONS.invitations,
+    name: "invitations_pending_event_user_unique",
+    keys: [
+      ["eventId", 1],
+      ["invitee.userId", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { status: "pending", "invitee.userId": { $type: "string" } },
+  },
+  {
+    collection: COLLECTIONS.invitations,
+    name: "invitations_pending_event_phone_unique",
+    keys: [
+      ["eventId", 1],
+      ["invitee.phoneE164", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { status: "pending", "invitee.phoneE164": { $type: "string" } },
+  },
 
   // audit_logs — 400-day retention, swept by the TTL monitor (§22).
   {
@@ -124,16 +186,34 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     expireAfterSeconds: 0,
   },
 
-  // event_organizers — one active organizer per event (revoked rows excluded).
+  // event_organizers — one active membership row per (event, user); an event
+  // may carry its organizer plus any number of co-organizers (schema §15.2:
+  // `{eventId, userId}` unique). Revoked rows are excluded from uniqueness.
   {
     collection: COLLECTIONS.eventOrganizers,
     name: "event_organizers_active_event_unique",
     keys: [
       ["tenantId", 1],
       ["eventId", 1],
+      ["userId", 1],
     ],
     unique: true,
     partialFilterExpression: { revokedAt: null },
+  },
+
+  // event_organizers — exactly one active ORGANIZER per event (schema §15.2:
+  // `{eventId, role}` unique partial on `{role:"organizer"}`). Co-organizer
+  // rows carry a different role, so this never blocks them.
+  {
+    collection: COLLECTIONS.eventOrganizers,
+    name: "event_organizers_active_organizer_unique",
+    keys: [
+      ["tenantId", 1],
+      ["eventId", 1],
+      ["role", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { role: "organizer", revokedAt: null },
   },
 
   // notification_dispatches — one dispatch per dedupeKey (null keys excluded).
@@ -241,6 +321,17 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     ],
     unique: true,
   },
+  // event_images — the §5.5 batch read tallies one upload batch's rows (§16.3;
+  // OP-126, ADR-0760 A5).
+  {
+    collection: COLLECTIONS.eventImages,
+    name: "event_images_tenant_event_batch",
+    keys: [
+      ["tenantId", 1],
+      ["eventId", 1],
+      ["uploadBatchId", 1],
+    ],
+  },
 
   // access_links — one active link per slug (revoked rows excluded).
   {
@@ -254,15 +345,63 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     partialFilterExpression: { revokedAt: null },
   },
 
-  // media_assets — content-addressed dedupe within a tenant (§16.1).
+  // events — the embedded public-link slot is globally unique per active slug
+  // (schema §15.1, OP-115 ADR-0520). `accessLinks` is embedded, so the unique
+  // multikey index keyed on `accessLinks.slug` restricted to rows that carry an
+  // active link is what the create-route collision retry (I5) runs on: a
+  // second event drawing an occupied slug is rejected with E11000 and the
+  // route regenerates.
+  {
+    collection: COLLECTIONS.events,
+    name: "events_active_slug_unique",
+    keys: [["accessLinks.slug", 1]],
+    unique: true,
+    partialFilterExpression: { "accessLinks.active": true },
+  },
+  // events — the public attendee create route resolves a slug with
+  // `{accessLinks: {$elemMatch: {slug, active: true}}}` (ADR-0781 F1). The
+  // partial index above cannot serve it: the planner's subset check does not
+  // accept an ELEM_MATCH_VALUE predicate. This plain non-partial index on the
+  // same path bounds the slug equality; the `$elemMatch` still runs in the
+  // FETCH stage, so the unauthenticated route stops full-scanning `events`.
+  // Single-key on purpose: the U1 tenant-prefix rule governs compound indexes,
+  // and a `tenantId`-led variant was measured as a COLLSCAN — it cannot serve
+  // this filter. Uniqueness stays on the partial index above.
+  {
+    collection: COLLECTIONS.events,
+    name: "events_active_slug_lookup",
+    keys: [["accessLinks.slug", 1]],
+  },
+
+  // media_assets — content-addressed dedupe within a tenant (§16.1). `kind` is
+  // part of the identity: a selfie and an organizer upload of the same bytes
+  // are two assets with different lifecycles, and the selfie row deliberately
+  // carries no `storage` descriptor (§16.1's `kind` row; ADR-0796 §3, ADR-0801).
+  // The name predates `kind`: renaming it would leave the drifted two-key
+  // index live on any database whose bootstrap never runs again, so the
+  // definition is drop-rebuilt under the same name (`ensureIndexes`).
   {
     collection: COLLECTIONS.mediaAssets,
     name: "media_assets_tenant_content_hash_unique",
     keys: [
       ["tenantId", 1],
+      ["kind", 1],
       ["contentHash", 1],
     ],
     unique: true,
+  },
+
+  // media_assets — the QR export cache lookup by its render-free key (OP-118
+  // ADR-0623). Non-unique: the key addresses at most one row per tenant, but
+  // the `(tenantId, kind, contentHash)` unique index is the only hard invariant.
+  {
+    collection: COLLECTIONS.mediaAssets,
+    name: "media_assets_tenant_kind_qr_cache_key",
+    keys: [
+      ["tenantId", 1],
+      ["kind", 1],
+      ["qrCacheKey", 1],
+    ],
   },
 
   // face_matches — one match row per (profile, image, face); makes the
@@ -277,8 +416,55 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     ],
     unique: true,
   },
+  // face_matches — the newest-first order the gallery reads and the newest
+  // match the poll hands out as `latestMatchCursor` (§17.5; OP-133).
+  {
+    collection: COLLECTIONS.faceMatches,
+    name: "face_matches_profile_created",
+    keys: [
+      ["profileId", 1],
+      ["createdAt", -1],
+    ],
+  },
+  // face_matches — the "New" badge set: the unseen rows of one profile, so
+  // §6.4's `newMatchCount` never scans the seen ones (§17.5; OP-133).
+  {
+    collection: COLLECTIONS.faceMatches,
+    name: "face_matches_profile_unseen",
+    keys: [
+      ["profileId", 1],
+      ["seenAt", 1],
+      ["createdAt", -1],
+    ],
+    partialFilterExpression: { seenAt: null },
+  },
 
-  // provider_webhook_events — webhook replay protection (§21).
+  // downloadJobs — a finished job and its link expire on their own (§6.6,
+  // §22; OP-133).
+  {
+    collection: COLLECTIONS.downloadJobs,
+    name: "downloadJobs_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
+  // selfies — the biometric probe image is minimised by the TTL monitor, not by
+  // a purge job (§16.4's `{expireAt: 1}` TTL 0 in the index list; §22's
+  // `selfies` row: `createdAt + 90 d` or event retention, whichever first).
+  // The submit route stamps `expireAt`; this index is what enforces it
+  // (OP-132 F-A3, ADR-0801).
+  {
+    collection: COLLECTIONS.selfies,
+    name: "selfies_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
+  // provider_webhook_events — webhook replay protection with zero application
+  // logic (§18.4, §21). The index is **partial on a string `providerEventId`**:
+  // a payload that carries no vendor event id has no competing id, and a plain
+  // unique index would collide every id-less delivery on `(provider, null)` —
+  // silently swallowing every second status change (ADR-0441 §2).
   {
     collection: COLLECTIONS.providerWebhookEvents,
     name: "provider_webhook_events_provider_event_unique",
@@ -287,6 +473,32 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["providerEventId", 1],
     ],
     unique: true,
+    partialFilterExpression: { providerEventId: { $type: "string" } },
+  },
+  // provider_webhook_events — the second identity shape of §18.4: two payloads
+  // that carry no event id are held apart by their content hash, and a byte
+  // replay of one of them collides here (ADR-0441 §2).
+  {
+    collection: COLLECTIONS.providerWebhookEvents,
+    name: "provider_webhook_events_provider_payload_unique",
+    keys: [
+      ["provider", 1],
+      ["payloadHash", 1],
+    ],
+    unique: true,
+    partialFilterExpression: { providerEventId: null },
+  },
+  // provider_webhook_events — OP-111's `webhook-projection-sweep` reads every
+  // unprocessed row oldest-first; the partial index keeps it sized to the
+  // backlog rather than to the whole 90-day window (§10.2, §18.4).
+  {
+    collection: COLLECTIONS.providerWebhookEvents,
+    name: "provider_webhook_events_unprocessed_received",
+    keys: [
+      ["processedAt", 1],
+      ["receivedAt", 1],
+    ],
+    partialFilterExpression: { processedAt: null },
   },
   // provider_webhook_events — 90-day retention (§22).
   {
@@ -294,6 +506,60 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     name: "provider_webhook_events_expire_at_ttl",
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
+  },
+
+  // billing_transactions — the append-only ledger (§14.4). The unique
+  // `idempotencyKey` is what lets a re-projection after a crash write the same
+  // row instead of a second one. The collection is deliberately NOT in
+  // `TENANT_SCOPED_COLLECTIONS`: its `{subscriptionId, kind, occurredAt}` index
+  // is a legitimate per-subscription scan (a subscription already identifies
+  // one tenant), not a cross-tenant query (§14.4, ADR-0441 §4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_idempotency_key_unique",
+    keys: [["idempotencyKey", 1]],
+    unique: true,
+  },
+  // billing_transactions — the tenant's statement, newest-first (§14.4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_tenant_occurred",
+    keys: [
+      ["tenantId", 1],
+      ["occurredAt", -1],
+    ],
+  },
+  // billing_transactions — one subscription's history by kind (§14.4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_subscription_kind_occurred",
+    keys: [
+      ["subscriptionId", 1],
+      ["kind", 1],
+      ["occurredAt", -1],
+    ],
+  },
+  // billing_transactions — reconciliation resolves a vendor transaction id back
+  // to our row, so the partial multikey pair is the lookup (§11.1, §14.4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_external_refs",
+    keys: [
+      ["externalRefs.provider", 1],
+      ["externalRefs.id", 1],
+    ],
+    partialFilterExpression: { externalRefs: { $exists: true } },
+  },
+  // billing_transactions — the pending-status sweep scans only unsettled rows
+  // (§14.4).
+  {
+    collection: COLLECTIONS.billingTransactions,
+    name: "billing_transactions_status_pending",
+    keys: [
+      ["status", 1],
+      ["occurredAt", 1],
+    ],
+    partialFilterExpression: { status: "pending" },
   },
 
   // idempotency_keys — one claim per (key, scope, principal); the unique index
@@ -380,6 +646,27 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     keys: [["primaryTenantId", 1]],
   },
 
+  // attendee_sessions — the anonymous attendee credential, hashed at rest
+  // (schema §13.5). The digest is the only lookup key a request presents, and
+  // the TTL index bounds how long an unclaimed selfie key survives.
+  {
+    collection: COLLECTIONS.attendeeSessions,
+    name: "attendee_sessions_token_hash_unique",
+    keys: [["tokenHash", 1]],
+    unique: true,
+  },
+  {
+    collection: COLLECTIONS.attendeeSessions,
+    name: "attendee_sessions_claimed_by_user",
+    keys: [["claimedByUserId", 1]],
+  },
+  {
+    collection: COLLECTIONS.attendeeSessions,
+    name: "attendee_sessions_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
   // session_devices — the new-device decision reads one user's recent sightings
   // newest-first; the compound index makes that a bounded, indexed scan (§13.5;
   // ADR-0041 §2).
@@ -397,6 +684,15 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
   {
     collection: COLLECTIONS.sessionDevices,
     name: "session_devices_expire_at_ttl",
+    keys: [["expireAt", 1]],
+    expireAfterSeconds: 0,
+  },
+
+  // workerHeartbeats — one row per worker process, so the TTL keeps the
+  // liveness board to the workers that reported recently (§10.3.2, ADR-0829 §3).
+  {
+    collection: COLLECTIONS.workerHeartbeats,
+    name: "worker_heartbeats_expire_at_ttl",
     keys: [["expireAt", 1]],
     expireAfterSeconds: 0,
   },
@@ -501,14 +797,40 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["validFrom", 1],
     ],
   },
+
+  // analytics_daily — one rollup row per (scope, day); the unique index is what
+  // makes the nightly job's per-day write idempotent, and it is the index the
+  // tenant analytics read uses (`scope.kind`, `scope.id`, `dateKey` range;
+  // schema §20.1; ADR-0642). It deliberately does not lead with `tenantId`:
+  // the aggregate is identified by `scope`, which is a tenant, an event or the
+  // platform, so the collection is not one of `TENANT_SCOPED_COLLECTIONS` and
+  // the U1 prefix lint does not apply.
+  {
+    collection: COLLECTIONS.analyticsDaily,
+    name: "analytics_daily_scope_date_unique",
+    keys: [
+      ["scope.kind", 1],
+      ["scope.id", 1],
+      ["dateKey", -1],
+    ],
+    unique: true,
+  },
+  // analytics_daily — the retention/audit sweep walks the rollups by day.
+  {
+    collection: COLLECTIONS.analyticsDaily,
+    name: "analytics_daily_date",
+    keys: [["dateKey", -1]],
+  },
 ];
 
-/** The outcome of a bootstrap run: which indexes were built and which existed. */
+/** The outcome of a bootstrap run: which indexes were built, repaired and found. */
 export interface IndexBootstrapReport {
   /** Names of the indexes created by this run. */
   readonly created: readonly string[];
-  /** Names of the declared indexes that were already present. */
+  /** Names the run found present and already matching their declaration. */
   readonly existing: readonly string[];
+  /** Names the run dropped and rebuilt because the definition had drifted. */
+  readonly reconciled: readonly string[];
 }
 
 /** MongoDB server error code for a missing collection/namespace. */
@@ -524,14 +846,14 @@ function isMissingNamespace(error: unknown): boolean {
   );
 }
 
-/**
- * Narrow an untyped driver result to an array.
- *
- * `listIndexes()` is typed `any[]` by the driver, so the result is funnelled
- * through `unknown` and re-narrowed here rather than trusting the broad type.
- */
-function asArray(value: unknown): readonly unknown[] {
-  return Array.isArray(value) ? (value as readonly unknown[]) : [];
+/** One live index description, narrowed to the parts a spec can declare. */
+interface LiveIndex {
+  readonly name: string;
+  /** The keys in index order, as the server reports them. */
+  readonly key?: Readonly<Record<string, unknown>>;
+  readonly unique?: boolean;
+  readonly partialFilterExpression?: unknown;
+  readonly expireAfterSeconds?: unknown;
 }
 
 /** True when `value` is an index description carrying a string `name`. */
@@ -542,6 +864,102 @@ function hasStringName(value: unknown): value is { readonly name: string } {
     "name" in value &&
     typeof (value as { name?: unknown }).name === "string"
   );
+}
+
+/**
+ * Narrow an untyped driver result to an array.
+ *
+ * `listIndexes()` is typed `any[]` by the driver, so the result is funnelled
+ * through `unknown` and re-narrowed here rather than trusting the broad type.
+ */
+function asArray(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? (value as readonly unknown[]) : [];
+}
+
+/** True when `value` is an object that can be read as a live index. */
+function isLiveIndex(value: unknown): value is LiveIndex {
+  if (!hasStringName(value)) {
+    return false;
+  }
+  const candidate = value as { readonly key?: unknown };
+  return (
+    candidate.key === undefined || (typeof candidate.key === "object" && candidate.key !== null)
+  );
+}
+
+/**
+ * Index definitions already present on a collection, keyed by name.
+ *
+ * A collection that does not exist yet has no indexes: MongoDB answers with a
+ * "namespace not found" error, which is treated as an empty map so the caller
+ * can proceed to create them.
+ */
+async function listLiveIndexes(db: Db, collection: string): Promise<Map<string, LiveIndex>> {
+  try {
+    const raw: unknown = await db.collection(collection).listIndexes().toArray();
+    const indexes = new Map<string, LiveIndex>();
+    for (const entry of asArray(raw)) {
+      if (isLiveIndex(entry)) {
+        indexes.set(entry.name, entry);
+      }
+    }
+    return indexes;
+  } catch (error) {
+    if (isMissingNamespace(error)) {
+      return new Map();
+    }
+    throw error;
+  }
+}
+
+/**
+ * A deterministic rendering of one index-definition fragment.
+ *
+ * The server reports `partialFilterExpression` with its own key order, so a
+ * structural comparison must sort keys to avoid reporting a false drift.
+ */
+function canonicalDefinition(value: unknown): string {
+  return JSON.stringify(value, (_key, entry: unknown) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return entry;
+    }
+    return Object.fromEntries(
+      Object.entries(entry as Record<string, unknown>).sort(([left], [right]) =>
+        left < right ? -1 : left > right ? 1 : 0
+      )
+    );
+  });
+}
+
+/**
+ * Whether a live index disagrees with its declaration.
+ *
+ * The comparison covers the whole definition a spec can declare — the ordered
+ * key list, uniqueness, the partial filter and the TTL — because MongoDB
+ * refuses to change any of them on an existing index: a name-only check leaves
+ * a drifted definition live forever (schema §15.2).
+ */
+function definitionDiffers(spec: IndexSpec, live: LiveIndex): boolean {
+  const liveKeys = live.key === undefined ? [] : Object.entries(live.key);
+  if (liveKeys.length !== spec.keys.length) {
+    return true;
+  }
+  for (const [position, [field, direction]] of spec.keys.entries()) {
+    const liveKey = liveKeys[position];
+    if (liveKey?.[0] !== field || Number(liveKey[1]) !== direction) {
+      return true;
+    }
+  }
+  if ((live.unique === true) !== (spec.unique === true)) {
+    return true;
+  }
+  if (
+    canonicalDefinition(live.partialFilterExpression) !==
+    canonicalDefinition(spec.partialFilterExpression)
+  ) {
+    return true;
+  }
+  return (live.expireAfterSeconds ?? null) !== (spec.expireAfterSeconds ?? null);
 }
 
 /** Turn the ordered key list into the driver's index specification document. */
@@ -568,44 +986,24 @@ function toIndexOptions(spec: IndexSpec): CreateIndexesOptions {
 }
 
 /**
- * List the index names already present on a collection.
- *
- * A collection that does not exist yet has no indexes: MongoDB answers with a
- * "namespace not found" error, which is treated as an empty set so the caller
- * can proceed to create them.
- */
-async function listIndexNames(db: Db, collection: string): Promise<Set<string>> {
-  try {
-    const raw: unknown = await db.collection(collection).listIndexes().toArray();
-    const names = new Set<string>();
-    for (const entry of asArray(raw)) {
-      if (hasStringName(entry)) {
-        names.add(entry.name);
-      }
-    }
-    return names;
-  } catch (error) {
-    if (isMissingNamespace(error)) {
-      return new Set();
-    }
-    throw error;
-  }
-}
-
-/**
- * Create every index in {@link INDEX_SPECS} that is not already present.
+ * Create every index in {@link INDEX_SPECS}, reconciling a drifted definition.
  *
  * Idempotent: a second run against the same database creates nothing and
- * reports every declared index as `existing`. Indexes present in the database
- * but absent from the registry are never dropped — the bootstrap only ever adds
- * (a destructive drop is a deliberate, separate operator action).
+ * reports every declared index as `existing`. An index whose **name** is
+ * present but whose **definition** disagrees with its declaration is dropped
+ * and rebuilt, because MongoDB refuses to alter an existing index's keys,
+ * uniqueness, filter or TTL — a name-only check would leave a drifted
+ * definition live forever (schema §15.2). Indexes present in the database but
+ * absent from the registry are never dropped: the bootstrap only ever adds or
+ * repairs what it declares.
  *
  * @param db - The database to build indexes on.
- * @returns The report of created and already-existing index names.
+ * @returns The report of created, reconciled and already-present index names.
  */
 export async function ensureIndexes(db: Db): Promise<IndexBootstrapReport> {
   const created: string[] = [];
   const existing: string[] = [];
+  const reconciled: string[] = [];
 
   const specsByCollection = new Map<string, IndexSpec[]>();
   for (const spec of INDEX_SPECS) {
@@ -618,22 +1016,37 @@ export async function ensureIndexes(db: Db): Promise<IndexBootstrapReport> {
   }
 
   for (const [collection, specs] of specsByCollection) {
-    const present = await listIndexNames(db, collection);
+    const present = await listLiveIndexes(db, collection);
     for (const spec of specs) {
-      if (present.has(spec.name)) {
-        existing.push(spec.name);
-      } else {
+      const live = present.get(spec.name);
+      if (live === undefined) {
         await db
           .collection(collection)
           .createIndex(toIndexSpecification(spec.keys), toIndexOptions(spec));
         created.push(spec.name);
+        continue;
       }
+      if (!definitionDiffers(spec, live)) {
+        existing.push(spec.name);
+        continue;
+      }
+      await db.collection(collection).dropIndex(spec.name);
+      await db
+        .collection(collection)
+        .createIndex(toIndexSpecification(spec.keys), toIndexOptions(spec));
+      reconciled.push(spec.name);
     }
   }
 
   if (created.length > 0) {
     getLogger().info("db.indexes.created", { event: "db.indexes.created", names: created });
   }
+  if (reconciled.length > 0) {
+    getLogger().info("db.indexes.reconciled", {
+      event: "db.indexes.reconciled",
+      names: reconciled,
+    });
+  }
 
-  return { created, existing };
+  return { created, existing, reconciled };
 }

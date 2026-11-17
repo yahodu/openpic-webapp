@@ -4,6 +4,7 @@ import { ObjectId } from "mongodb";
 import type { AuthErrorCode } from "@openpic/contracts";
 
 import type { AuthLike } from "@/server/auth";
+import { createAttendeeSessionResolver } from "@/server/attendee/session-resolver";
 import { appError } from "@/server/http/errors";
 import type { RouteStage } from "@/server/http/define-route";
 import { requestLogger } from "@/server/logging";
@@ -228,6 +229,43 @@ export function evaluateAuth(label: GuardLabel, facts: GuardFacts): AuthDecision
   return { allowed: true };
 }
 
+/**
+ * Apply the table for `label` and, on a denial, emit one `warn` `auth.denied`
+ * carrying the label and reason code — never the credential — then throw the
+ * catalogue `AppError` (Appendix A.1 status and details).
+ *
+ * This is the action {@link requireAuth} takes on a denial, factored out so a
+ * route that resolves its own principal (`POST /api/v1/media/signed-urls` is
+ * `public`-labelled so per-item authorization can answer an anonymous caller)
+ * refuses through the same seam instead of duplicating it.
+ *
+ * @param label - The label whose rules apply.
+ * @param facts - The resolved credential and the injected clock.
+ * @param request - The request the log line is scoped to.
+ * @param route - The matched route template, for the log line.
+ */
+export function enforceAuth(
+  label: GuardLabel,
+  facts: GuardFacts,
+  request: Request,
+  route: string
+): void {
+  const decision = evaluateAuth(label, facts);
+  if (decision.allowed) {
+    return;
+  }
+
+  requestLogger(request, { route }).warn("auth request denied", {
+    event: "auth.denied",
+    label,
+    reason: decision.code,
+  });
+  throw appError(
+    decision.code,
+    decision.details === undefined ? {} : { details: decision.details }
+  );
+}
+
 /** A structural view of the `userProfiles` fields the resolver reads (schema §13.2). */
 interface UserProfileDocument {
   readonly status?: unknown;
@@ -244,17 +282,13 @@ const GET_SESSION_PATH = "/api/auth/get-session";
 /**
  * A port for resolving anonymous attendee sessions (OP-129 owns the real one).
  *
- * Until OP-129 lands, the default resolver never resolves an attendee, so the
- * `attendee` label behaves exactly as `user` for a real request.
+ * A route that injects no port gets the real resolver built from the
+ * `database` the guard is already given, so every `attendee`-labelled route
+ * admits a genuine `op_att` cookie — not just `…/attendee-sessions/current`.
  */
 export interface AttendeeSessionResolver {
   resolve(request: Request): Promise<AttendeePrincipal | null>;
 }
-
-/** The default attendee resolver: no attendee sessions exist yet. */
-export const noAttendeeSessions: AttendeeSessionResolver = {
-  resolve: () => Promise.resolve(null),
-};
 
 /** Options accepted by {@link resolvePrincipal}. */
 export interface ResolvePrincipalOptions {
@@ -262,7 +296,7 @@ export interface ResolvePrincipalOptions {
   readonly auth: AuthLike;
   /** The database holding `userProfiles`. */
   readonly database: Db;
-  /** Attendee-session port; defaults to the OP-129 stub. */
+  /** Attendee-session port; defaults to the real resolver over `database`. */
   readonly attendeeResolver?: AttendeeSessionResolver;
 }
 
@@ -397,7 +431,11 @@ function resolveAttendee(
   request: Request,
   options: ResolvePrincipalOptions
 ): Promise<Principal | null> {
-  return (options.attendeeResolver ?? noAttendeeSessions).resolve(request);
+  // Built per call, never at module scope: `getDb()`/`getAuth()` read
+  // validated configuration and `next build`'s page-data pass runs without it.
+  const resolver =
+    options.attendeeResolver ?? createAttendeeSessionResolver({ database: options.database });
+  return resolver.resolve(request);
 }
 
 /** Options accepted by {@link requireAuth}. */
@@ -410,7 +448,7 @@ export interface RequireAuthOptions {
   readonly allowBanned?: boolean;
   /** Set on the §1.4 deletion-cancel route (see {@link GuardFacts}). */
   readonly allowDeletionPending?: boolean;
-  /** Attendee-session port; defaults to the OP-129 stub. */
+  /** Attendee-session port; defaults to the real resolver over `database`. */
   readonly attendeeResolver?: AttendeeSessionResolver;
 }
 
@@ -444,24 +482,17 @@ export function requireAuth(label: AuthLabel, options: RequireAuthOptions): Rout
         : { attendeeResolver: options.attendeeResolver }),
     });
 
-    const decision = evaluateAuth(label, {
-      principal,
-      now: systemClock.now(),
-      ...(options.allowBanned === true ? { allowBanned: true } : {}),
-      ...(options.allowDeletionPending === true ? { allowDeletionPending: true } : {}),
-    });
-
-    if (!decision.allowed) {
-      requestLogger(request, { route: ctx.route }).warn("auth request denied", {
-        event: "auth.denied",
-        label,
-        reason: decision.code,
-      });
-      throw appError(
-        decision.code,
-        decision.details === undefined ? {} : { details: decision.details }
-      );
-    }
+    enforceAuth(
+      label,
+      {
+        principal,
+        now: systemClock.now(),
+        ...(options.allowBanned === true ? { allowBanned: true } : {}),
+        ...(options.allowDeletionPending === true ? { allowDeletionPending: true } : {}),
+      },
+      request,
+      ctx.route
+    );
 
     if (principal !== null && principal.kind === "user") {
       Object.assign(ctx, {

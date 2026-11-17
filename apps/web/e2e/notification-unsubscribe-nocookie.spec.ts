@@ -1,7 +1,10 @@
 import { expect, test } from "@playwright/test";
 
+import { clientIpFor } from "./client-ip";
 import { E2E_BASE_URL } from "./ports";
 import { mintE2eUnsubscribeToken } from "./unsubscribe-token";
+
+const CLIENT_IP = clientIpFor("notification-unsubscribe-nocookie.spec.ts");
 
 /**
  * E2 — the one-click unsubscribe as a mail client sends it: a **cookie-less**
@@ -58,7 +61,7 @@ test.describe("cookie-less one-click unsubscribe (E2)", () => {
 
     // Sign in through the real email-OTP handshake (as E1 does).
     const sent = await request.post("/api/auth/email-otp/send-verification-otp", {
-      headers: { origin: E2E_BASE_URL },
+      headers: { origin: E2E_BASE_URL, "x-forwarded-for": CLIENT_IP },
       data: { email, type: "sign-in" },
     });
     expect(sent.status()).toBe(200);

@@ -41,6 +41,18 @@ class TransactionRetryLimitError extends Error {
 }
 
 /**
+ * True when `error` is the wrapper's own exhausted-retry signal.
+ *
+ * A caller that can answer a settled non-5xx when it loses a write race (for
+ * example a route that may answer `409`) tests this instead of catching the
+ * driver's transient error, so a genuine callback failure still propagates
+ * unchanged.
+ */
+export function isTransactionRetryLimitError(error: unknown): boolean {
+  return error instanceof TransactionRetryLimitError;
+}
+
+/**
  * Run `fn` inside a single MongoDB transaction.
  *
  * @param fn - The transaction body; every operation must pass `{ session }`.

@@ -1,3 +1,520 @@
+## [1.65.10](https://github.com/yahodu/openpic-webapp/compare/v1.65.9...v1.65.10) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 stamp the checked triple after the row's batch-arm work ([#670](https://github.com/yahodu/openpic-webapp/issues/670)) ([40b6530](https://github.com/yahodu/openpic-webapp/commit/40b65309970a006af95310071c4c8e2c9fca8e5b)), closes [#668](https://github.com/yahodu/openpic-webapp/issues/668)
+
+## [1.65.9](https://github.com/yahodu/openpic-webapp/compare/v1.65.8...v1.65.9) (2026-11-17)
+
+### Bug Fixes
+
+- **images:** OP-136 warn when a reprocess enqueue is refused ([#667](https://github.com/yahodu/openpic-webapp/issues/667)) ([268c842](https://github.com/yahodu/openpic-webapp/commit/268c842e1585567a0330557437b10bab002b1cff)), closes [#666](https://github.com/yahodu/openpic-webapp/issues/666)
+
+## [1.65.8](https://github.com/yahodu/openpic-webapp/compare/v1.65.7...v1.65.8) (2026-11-17)
+
+### Bug Fixes
+
+- **deps:** OP-135 govern the picomatch ReDoS audit advisory ([#669](https://github.com/yahodu/openpic-webapp/issues/669)) ([47d3661](https://github.com/yahodu/openpic-webapp/commit/47d3661715c9613ded6da764e212d9ee7b521d4b))
+
+## [1.65.7](https://github.com/yahodu/openpic-webapp/compare/v1.65.6...v1.65.7) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 warn on a refused sweep enqueue and cache the entitlement verdict ([#663](https://github.com/yahodu/openpic-webapp/issues/663)) ([7b97a58](https://github.com/yahodu/openpic-webapp/commit/7b97a584cb20c4adbbe53981a559c06e65a57031))
+
+## [1.65.6](https://github.com/yahodu/openpic-webapp/compare/v1.65.5...v1.65.6) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 bound and parallelise the indexed check's batch arm ([#661](https://github.com/yahodu/openpic-webapp/issues/661)) ([d28cddd](https://github.com/yahodu/openpic-webapp/commit/d28cddd13ac68f968b62fa57bcf398b5956efd84))
+
+## [1.65.5](https://github.com/yahodu/openpic-webapp/compare/v1.65.4...v1.65.5) (2026-11-17)
+
+### Bug Fixes
+
+- **internal:** OP-135 recount the event's processing counters from the report ([#658](https://github.com/yahodu/openpic-webapp/issues/658)) ([a099340](https://github.com/yahodu/openpic-webapp/commit/a099340e41286cbbad295256d8316b65fa6b3932))
+
+## [1.65.4](https://github.com/yahodu/openpic-webapp/compare/v1.65.3...v1.65.4) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 drain the indexed check's scan window so events beyond limit are reached ([#655](https://github.com/yahodu/openpic-webapp/issues/655)) ([848b1d5](https://github.com/yahodu/openpic-webapp/commit/848b1d547b28d191736f911e5b16aafeb9ae8ca1))
+
+## [1.65.3](https://github.com/yahodu/openpic-webapp/compare/v1.65.2...v1.65.3) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 derive, latch and batch-arm the indexed check ([#635](https://github.com/yahodu/openpic-webapp/issues/635)) ([b62256b](https://github.com/yahodu/openpic-webapp/commit/b62256b8d38ab844469eb8f9298d0ff183b2522d))
+
+## [1.65.2](https://github.com/yahodu/openpic-webapp/compare/v1.65.1...v1.65.2) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 make each sweep's state change and its outbox row one unit ([#636](https://github.com/yahodu/openpic-webapp/issues/636)) ([7b4b07d](https://github.com/yahodu/openpic-webapp/commit/7b4b07d74c5a9903ac3b47f06b24af47690df124)), closes [#635](https://github.com/yahodu/openpic-webapp/issues/635)
+
+## [1.65.1](https://github.com/yahodu/openpic-webapp/compare/v1.65.0...v1.65.1) (2026-11-17)
+
+### Bug Fixes
+
+- **internal:** OP-135 carry the profile pointer in the selfie arm's write filter ([#630](https://github.com/yahodu/openpic-webapp/issues/630)) ([2c59ad3](https://github.com/yahodu/openpic-webapp/commit/2c59ad30ad985c11e984d9f2202b9e959548ff66))
+
+## [1.65.0](https://github.com/yahodu/openpic-webapp/compare/v1.64.2...v1.65.0) (2026-11-17)
+
+### Features
+
+- **jobs:** OP-136 implement the pipeline, window, retention, deletion and lifecycle sweeps ([#625](https://github.com/yahodu/openpic-webapp/issues/625)) ([c762840](https://github.com/yahodu/openpic-webapp/commit/c7628400d989fb73a2d73c5e96137d8a58386aa5))
+
+## [1.64.2](https://github.com/yahodu/openpic-webapp/compare/v1.64.1...v1.64.2) (2026-11-17)
+
+### Bug Fixes
+
+- **internal:** OP-135 harden the internal worker boundary and dedupe the auth thunk ([#626](https://github.com/yahodu/openpic-webapp/issues/626)) ([5db2238](https://github.com/yahodu/openpic-webapp/commit/5db2238013e960a5e8e0ec927f092b7824ddc5f1))
+
+## [1.64.1](https://github.com/yahodu/openpic-webapp/compare/v1.64.0...v1.64.1) (2026-11-17)
+
+### Bug Fixes
+
+- **internal:** OP-135 keep a superseded selfie's report off the active profile ([#623](https://github.com/yahodu/openpic-webapp/issues/623)) ([13d5bb4](https://github.com/yahodu/openpic-webapp/commit/13d5bb4da6fd26e8ad61cc8452822ddebd1911aa))
+
+## [1.64.0](https://github.com/yahodu/openpic-webapp/compare/v1.63.6...v1.64.0) (2026-11-17)
+
+### Features
+
+- **internal:** OP-135 add the worker M2M endpoints and their mappers ([#616](https://github.com/yahodu/openpic-webapp/issues/616)) ([a8856bc](https://github.com/yahodu/openpic-webapp/commit/a8856bc2dccd808b76e68db363d58b89f75385e4))
+
+## [1.63.6](https://github.com/yahodu/openpic-webapp/compare/v1.63.5...v1.63.6) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 reset a reused asset's purge marker on submit ([#604](https://github.com/yahodu/openpic-webapp/issues/604)) ([76d3315](https://github.com/yahodu/openpic-webapp/commit/76d3315c3cd07aac602edfa705345fa35d6493a7))
+
+## [1.63.5](https://github.com/yahodu/openpic-webapp/compare/v1.63.4...v1.63.5) (2026-11-13)
+
+### Bug Fixes
+
+- **collaboration:** OP-121 answer simultaneous invitation accepts from the settled invitation ([#597](https://github.com/yahodu/openpic-webapp/issues/597)) ([e8a1fd3](https://github.com/yahodu/openpic-webapp/commit/e8a1fd3f8135d510c9eb844b29ccb2ec9f055ed6))
+
+## [1.63.4](https://github.com/yahodu/openpic-webapp/compare/v1.63.3...v1.63.4) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 budget the confirm's transaction for a burst of four ([#581](https://github.com/yahodu/openpic-webapp/issues/581)) ([659c0ed](https://github.com/yahodu/openpic-webapp/commit/659c0edda96365f4f319f2590d3684d76e78a6a2)), closes [574/#575](https://github.com/574/openpic-webapp/issues/575)
+
+## [1.63.3](https://github.com/yahodu/openpic-webapp/compare/v1.63.2...v1.63.3) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-134 return "" for galleryUrl when the event has no active access link ([#579](https://github.com/yahodu/openpic-webapp/issues/579)) ([ad5b1ce](https://github.com/yahodu/openpic-webapp/commit/ad5b1cea2b0b1fc290d7e41c3759716c9b1bbc42)), closes [#565](https://github.com/yahodu/openpic-webapp/issues/565)
+
+## [1.63.2](https://github.com/yahodu/openpic-webapp/compare/v1.63.1...v1.63.2) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 make two simultaneous confirms answer 200 twice ([#571](https://github.com/yahodu/openpic-webapp/issues/571)) ([a49599c](https://github.com/yahodu/openpic-webapp/commit/a49599c73a68dbe77a88b19275a63eaf60ba0f74))
+
+## [1.63.1](https://github.com/yahodu/openpic-webapp/compare/v1.63.0...v1.63.1) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 refuse the biometric write surface after retention ([#569](https://github.com/yahodu/openpic-webapp/issues/569)) ([442e01a](https://github.com/yahodu/openpic-webapp/commit/442e01a623753316e6520220c837bc8a759d0ced)), closes [#565](https://github.com/yahodu/openpic-webapp/issues/565) [#570](https://github.com/yahodu/openpic-webapp/issues/570)
+
+## [1.63.0](https://github.com/yahodu/openpic-webapp/compare/v1.62.1...v1.63.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-134 claim an anonymous session and read my events ([#565](https://github.com/yahodu/openpic-webapp/issues/565)) ([0d57e95](https://github.com/yahodu/openpic-webapp/commit/0d57e95d908d41cf5ef86c14dc4d4fe819e12cde))
+
+## [1.62.1](https://github.com/yahodu/openpic-webapp/compare/v1.62.0...v1.62.1) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 name the selfie resource in the submit's object-miss refusal ([#561](https://github.com/yahodu/openpic-webapp/issues/561)) ([bd3f8f6](https://github.com/yahodu/openpic-webapp/commit/bd3f8f66b630ea45499691815c9e843a2f5292fd))
+
+## [1.62.0](https://github.com/yahodu/openpic-webapp/compare/v1.61.4...v1.62.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-132 bound the reusable selfie listing and page it by cursor ([#562](https://github.com/yahodu/openpic-webapp/issues/562)) ([3170f6a](https://github.com/yahodu/openpic-webapp/commit/3170f6a148f83a441cba9f3e790bffb0866bb9af))
+
+## [1.61.4](https://github.com/yahodu/openpic-webapp/compare/v1.61.3...v1.61.4) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 publish the confirmation once, count the new matches and recover a late worker result ([#557](https://github.com/yahodu/openpic-webapp/issues/557)) ([fa350d3](https://github.com/yahodu/openpic-webapp/commit/fa350d3d6269812cba8375ce7284b84446740028))
+
+## [1.61.3](https://github.com/yahodu/openpic-webapp/compare/v1.61.2...v1.61.3) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 charge reuse against the attempt cap and close the submit TOCTOU ([#554](https://github.com/yahodu/openpic-webapp/issues/554)) ([982608f](https://github.com/yahodu/openpic-webapp/commit/982608f3a74ea17046cd03b094b99068736e4a4f))
+
+## [1.61.2](https://github.com/yahodu/openpic-webapp/compare/v1.61.1...v1.61.2) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 enforce the selfies TTL index and the kind-aware asset dedupe ([#553](https://github.com/yahodu/openpic-webapp/issues/553)) ([13bb8f5](https://github.com/yahodu/openpic-webapp/commit/13bb8f5c04085ad5aa45b66a4a54179359a677c0))
+
+## [1.61.1](https://github.com/yahodu/openpic-webapp/compare/v1.61.0...v1.61.1) (2026-11-13)
+
+### Bug Fixes
+
+- **attendee:** OP-132 make a failed selfie purge retryable ([#550](https://github.com/yahodu/openpic-webapp/issues/550)) ([4c31808](https://github.com/yahodu/openpic-webapp/commit/4c31808573359325d573a063112dbfde74ddcced))
+
+## [1.61.0](https://github.com/yahodu/openpic-webapp/compare/v1.60.0...v1.61.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-133 implement participation polling, gallery, seen/hide and downloads ([#547](https://github.com/yahodu/openpic-webapp/issues/547)) ([c659947](https://github.com/yahodu/openpic-webapp/commit/c659947c2d64b0e72d7c3dfde1bb365b9bc8dbad))
+
+## [1.60.0](https://github.com/yahodu/openpic-webapp/compare/v1.59.0...v1.60.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-132 give the selfie an asset row, an expiry and a purge path ([#546](https://github.com/yahodu/openpic-webapp/issues/546)) ([90110ee](https://github.com/yahodu/openpic-webapp/commit/90110eeebbe4276922685c3135f75b9a35dfc95f)), closes [#543](https://github.com/yahodu/openpic-webapp/issues/543) [#545](https://github.com/yahodu/openpic-webapp/issues/545)
+
+## [1.59.0](https://github.com/yahodu/openpic-webapp/compare/v1.58.0...v1.59.0) (2026-11-13)
+
+### Features
+
+- **attendee:** OP-131 implement biometric consent grant and withdrawal ([#541](https://github.com/yahodu/openpic-webapp/issues/541)) ([3e69b30](https://github.com/yahodu/openpic-webapp/commit/3e69b30d3147b3a13db1d933ea6f79adbcde691f))
+
+## [1.58.0](https://github.com/yahodu/openpic-webapp/compare/v1.57.11...v1.58.0) (2026-11-12)
+
+### Features
+
+- **attendee:** OP-130 implement public event resolution ([#456](https://github.com/yahodu/openpic-webapp/issues/456)) ([ecbb743](https://github.com/yahodu/openpic-webapp/commit/ecbb743c9dc6df72be797da183cd45d7cbf68a20)), closes [#521](https://github.com/yahodu/openpic-webapp/issues/521)
+
+## [1.57.11](https://github.com/yahodu/openpic-webapp/compare/v1.57.10...v1.57.11) (2026-11-12)
+
+### Bug Fixes
+
+- **events:** OP-121 answer 204 when the removal retry budget is spent ([#528](https://github.com/yahodu/openpic-webapp/issues/528)) ([e2a4806](https://github.com/yahodu/openpic-webapp/commit/e2a480635ddb33ac5ddd519e510b505b9a0a5fc8))
+
+## [1.57.10](https://github.com/yahodu/openpic-webapp/compare/v1.57.9...v1.57.10) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 strip a dotted annotation suffix on a Consumers path token ([#522](https://github.com/yahodu/openpic-webapp/issues/522)) ([df6a199](https://github.com/yahodu/openpic-webapp/commit/df6a19994c355686e001ecd1b097dfa5f32cd491)), closes [#520](https://github.com/yahodu/openpic-webapp/issues/520)
+
+## [1.57.9](https://github.com/yahodu/openpic-webapp/compare/v1.57.8...v1.57.9) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 accept one trailing colon-suffix annotation on a path token ([#519](https://github.com/yahodu/openpic-webapp/issues/519)) ([8b6abe2](https://github.com/yahodu/openpic-webapp/commit/8b6abe2d146afb1fba174a2ba2a3d7308c3f741a)), closes [#506](https://github.com/yahodu/openpic-webapp/issues/506) [#516](https://github.com/yahodu/openpic-webapp/issues/516)
+
+## [1.57.8](https://github.com/yahodu/openpic-webapp/compare/v1.57.7...v1.57.8) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 peel marker tokens until the Consumers line stabilizes ([#514](https://github.com/yahodu/openpic-webapp/issues/514)) ([4a8fe73](https://github.com/yahodu/openpic-webapp/commit/4a8fe730d5399e363b1e4cfbbe9bf7e4270767f3))
+
+## [1.57.7](https://github.com/yahodu/openpic-webapp/compare/v1.57.6...v1.57.7) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 accept colon-bearing path tokens in the Consumers guard ([#506](https://github.com/yahodu/openpic-webapp/issues/506)) ([9e1bc2d](https://github.com/yahodu/openpic-webapp/commit/9e1bc2db12f2b358ae3fb7460b1e87d230be0afb))
+
+## [1.57.6](https://github.com/yahodu/openpic-webapp/compare/v1.57.5...v1.57.6) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 recognize an underscore-bold Consumers heading ([#509](https://github.com/yahodu/openpic-webapp/issues/509)) ([a96253b](https://github.com/yahodu/openpic-webapp/commit/a96253be782fa7987a4e3b36c8edd3d65a033894))
+
+## [1.57.5](https://github.com/yahodu/openpic-webapp/compare/v1.57.4...v1.57.5) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-96 read titled and angle-bracket ADR link targets ([#507](https://github.com/yahodu/openpic-webapp/issues/507)) ([59bcd35](https://github.com/yahodu/openpic-webapp/commit/59bcd35065bb6176ac7eb06bd86f3e0e4be8dd04))
+
+## [1.57.4](https://github.com/yahodu/openpic-webapp/compare/v1.57.3...v1.57.4) (2026-11-12)
+
+### Bug Fixes
+
+- **adr:** OP-128 recognize a Consumers heading after the blockquote peel ([#505](https://github.com/yahodu/openpic-webapp/issues/505)) ([25a5c52](https://github.com/yahodu/openpic-webapp/commit/25a5c524b48839c56435b524e2db8eeafacd0d94))
+
+## [1.57.3](https://github.com/yahodu/openpic-webapp/compare/v1.57.2...v1.57.3) (2026-11-12)
+
+### Bug Fixes
+
+- **collab:** OP-121 gate the removal log on the winner and answer 204 to a repeat ([#489](https://github.com/yahodu/openpic-webapp/issues/489)) ([c125b9f](https://github.com/yahodu/openpic-webapp/commit/c125b9f45e8f35ee612c3aa8df33b5aa3eb6468a))
+
+## [1.57.2](https://github.com/yahodu/openpic-webapp/compare/v1.57.1...v1.57.2) (2026-11-12)
+
+### Bug Fixes
+
+- **collaboration:** OP-121 make a concurrent double member removal notify once ([#485](https://github.com/yahodu/openpic-webapp/issues/485)) ([eadb35f](https://github.com/yahodu/openpic-webapp/commit/eadb35f16cfd319da1ec9d20f34b73caf71a3659))
+
+## [1.57.1](https://github.com/yahodu/openpic-webapp/compare/v1.57.0...v1.57.1) (2026-11-12)
+
+### Bug Fixes
+
+- **collaboration:** OP-121 pair the member-removal and reject writes atomically ([#483](https://github.com/yahodu/openpic-webapp/issues/483)) ([0013c8c](https://github.com/yahodu/openpic-webapp/commit/0013c8c0b65f4227535b741f953df9b8b00fc390))
+
+## [1.57.0](https://github.com/yahodu/openpic-webapp/compare/v1.56.0...v1.57.0) (2026-11-12)
+
+### Features
+
+- **adr:** OP-96 report a range-shaped ledger row that does not parse ([#481](https://github.com/yahodu/openpic-webapp/issues/481)) ([fc4ad00](https://github.com/yahodu/openpic-webapp/commit/fc4ad0033d11956b4641fe419aee7161e57e63b0))
+
+## [1.56.0](https://github.com/yahodu/openpic-webapp/compare/v1.55.1...v1.56.0) (2026-11-12)
+
+### Features
+
+- **rate-limit:** OP-129 enforce the attendee.session limit on the create route ([#451](https://github.com/yahodu/openpic-webapp/issues/451)) ([84952e3](https://github.com/yahodu/openpic-webapp/commit/84952e3808e49f7786be161e9e2fa2e59e839825)), closes [#446](https://github.com/yahodu/openpic-webapp/issues/446)
+
+## [1.55.1](https://github.com/yahodu/openpic-webapp/compare/v1.55.0...v1.55.1) (2026-11-12)
+
+### Bug Fixes
+
+- **db:** OP-129 make the attendee session slug lookup index-backed ([#478](https://github.com/yahodu/openpic-webapp/issues/478)) ([627436d](https://github.com/yahodu/openpic-webapp/commit/627436dd54b9ae62c84bb965b4d54ddd7adf4324))
+
+## [1.55.0](https://github.com/yahodu/openpic-webapp/compare/v1.54.1...v1.55.0) (2026-11-12)
+
+### Features
+
+- **collaboration:** OP-121 accept/reject invitations across channels and remove members ([#415](https://github.com/yahodu/openpic-webapp/issues/415)) ([93e4318](https://github.com/yahodu/openpic-webapp/commit/93e43184817c6b771b8ce1822d48862c6b511ee0)), closes [#414](https://github.com/yahodu/openpic-webapp/issues/414)
+
+## [1.54.1](https://github.com/yahodu/openpic-webapp/compare/v1.54.0...v1.54.1) (2026-11-12)
+
+### Bug Fixes
+
+- **attendee:** OP-129 bind attendee sessions only through active access links ([#469](https://github.com/yahodu/openpic-webapp/issues/469)) ([0b1eaa1](https://github.com/yahodu/openpic-webapp/commit/0b1eaa128ae5ebc8e3ba589299a371f28f75b68f))
+
+## [1.54.0](https://github.com/yahodu/openpic-webapp/compare/v1.53.0...v1.54.0) (2026-11-12)
+
+### Features
+
+- **uploads:** OP-123 land the phase-4 uploads and media lane (OP-123 to OP-128) ([bf8b441](https://github.com/yahodu/openpic-webapp/commit/bf8b441d171cfb935079c9642ea3d7b7233eabd2)), closes [#439](https://github.com/yahodu/openpic-webapp/issues/439)
+
+## [1.53.0](https://github.com/yahodu/openpic-webapp/compare/v1.52.2...v1.53.0) (2026-11-12)
+
+### Features
+
+- **adr:** OP-96 reject intersecting lane ranges and start blocks above the in-flight range end ([#448](https://github.com/yahodu/openpic-webapp/issues/448)) ([d85de6f](https://github.com/yahodu/openpic-webapp/commit/d85de6fac334ef9feb67a3a9c05219ece9718a7f))
+
+## [1.52.2](https://github.com/yahodu/openpic-webapp/compare/v1.52.1...v1.52.2) (2026-11-11)
+
+### Bug Fixes
+
+- **queue:** OP-122 move the retry to the back and contain a poison payload ([#427](https://github.com/yahodu/openpic-webapp/issues/427)) ([11103b7](https://github.com/yahodu/openpic-webapp/commit/11103b7739c971ed3e09bad3f68d4cd258d59b40))
+
+## [1.52.1](https://github.com/yahodu/openpic-webapp/compare/v1.52.0...v1.52.1) (2026-11-11)
+
+### Bug Fixes
+
+- **queue:** OP-122 validate the pointer before the wire and bound the Upstash request ([#421](https://github.com/yahodu/openpic-webapp/issues/421)) ([3a60f33](https://github.com/yahodu/openpic-webapp/commit/3a60f332625810872ef6d3d0f1c6fdca340e0f5f))
+
+## [1.52.0](https://github.com/yahodu/openpic-webapp/compare/v1.51.0...v1.52.0) (2026-11-11)
+
+### Features
+
+- **queue:** OP-122 implement the WorkQueue port, envelope and Upstash adapter ([#418](https://github.com/yahodu/openpic-webapp/issues/418)) ([5f28acd](https://github.com/yahodu/openpic-webapp/commit/5f28acd9345213caabbf55a37555f66e699943b5))
+
+## [1.51.0](https://github.com/yahodu/openpic-webapp/compare/v1.50.1...v1.51.0) (2026-11-11)
+
+### Features
+
+- **api:** OP-120 create, list, preview and revoke co-organizer invitations ([#411](https://github.com/yahodu/openpic-webapp/issues/411)) ([3678c57](https://github.com/yahodu/openpic-webapp/commit/3678c57d6eef17f2c9d64a1469c7e1b1fb1d0a12))
+
+## [1.50.1](https://github.com/yahodu/openpic-webapp/compare/v1.50.0...v1.50.1) (2026-11-11)
+
+### Bug Fixes
+
+- **api:** OP-119 resolve the member list current alias and make its projection total ([#408](https://github.com/yahodu/openpic-webapp/issues/408)) ([ea36f33](https://github.com/yahodu/openpic-webapp/commit/ea36f3359c1ad531a71367cd4def2e2fad9811bc))
+
+## [1.50.0](https://github.com/yahodu/openpic-webapp/compare/v1.49.4...v1.50.0) (2026-11-11)
+
+### Features
+
+- **api:** OP-119 serve tenant analytics and the event member list ([#405](https://github.com/yahodu/openpic-webapp/issues/405)) ([97f00b1](https://github.com/yahodu/openpic-webapp/commit/97f00b1b51b64abb40c3f0a27cc2e55bf707ae3b))
+
+## [1.49.4](https://github.com/yahodu/openpic-webapp/compare/v1.49.3...v1.49.4) (2026-11-04)
+
+### Bug Fixes
+
+- **events:** OP-118 rotation answers 409 instead of 500 under concurrency ([#391](https://github.com/yahodu/openpic-webapp/issues/391)) ([81e0b78](https://github.com/yahodu/openpic-webapp/commit/81e0b78d2f6c4ae5088902cc6037816d6429f35f))
+
+## [1.49.3](https://github.com/yahodu/openpic-webapp/compare/v1.49.2...v1.49.3) (2026-11-04)
+
+### Bug Fixes
+
+- **events:** OP-118 refuse the access-link rotation before it writes ([#400](https://github.com/yahodu/openpic-webapp/issues/400)) ([6227241](https://github.com/yahodu/openpic-webapp/commit/622724183e40ccedfc16d12aa47cc7baa6d58c4a))
+
+## [1.49.2](https://github.com/yahodu/openpic-webapp/compare/v1.49.1...v1.49.2) (2026-11-04)
+
+### Performance Improvements
+
+- **events:** OP-118 read the QR cache before rendering, kind-scope it and absorb the racing upsert ([#398](https://github.com/yahodu/openpic-webapp/issues/398)) ([1a22493](https://github.com/yahodu/openpic-webapp/commit/1a22493baa9b16e3c0189fd70730b184c68c55e4))
+
+## [1.49.1](https://github.com/yahodu/openpic-webapp/compare/v1.49.0...v1.49.1) (2026-11-03)
+
+### Bug Fixes
+
+- **ci:** OP-117 make the audit-dev check-run non-failing ([#389](https://github.com/yahodu/openpic-webapp/issues/389)) ([7fc7abf](https://github.com/yahodu/openpic-webapp/commit/7fc7abf04276b41f50a4019e5e9e1883e0ed0916))
+
+## [1.49.0](https://github.com/yahodu/openpic-webapp/compare/v1.48.1...v1.49.0) (2026-11-03)
+
+### Features
+
+- **events:** OP-118 rotate access links and cache QR exports ([#385](https://github.com/yahodu/openpic-webapp/issues/385)) ([1aeca52](https://github.com/yahodu/openpic-webapp/commit/1aeca5296cce14a5faf58693dd66f95e2753fa79))
+
+## [1.48.1](https://github.com/yahodu/openpic-webapp/compare/v1.48.0...v1.48.1) (2026-11-03)
+
+### Bug Fixes
+
+- **events:** OP-117 make the archive write conditional on the read row version ([#384](https://github.com/yahodu/openpic-webapp/issues/384)) ([d09b8cc](https://github.com/yahodu/openpic-webapp/commit/d09b8cc4f4c758102514976228647cc8f8f80b37))
+
+## [1.48.0](https://github.com/yahodu/openpic-webapp/compare/v1.47.0...v1.48.0) (2026-11-03)
+
+### Features
+
+- **events:** OP-117 update, archive and delete event ([#380](https://github.com/yahodu/openpic-webapp/issues/380)) ([858fe39](https://github.com/yahodu/openpic-webapp/commit/858fe39c2fe2906e92f4b923012da2e3ef1f2ca3))
+
+## [1.47.0](https://github.com/yahodu/openpic-webapp/compare/v1.46.0...v1.47.0) (2026-10-26)
+
+### Features
+
+- OP-114 branding asset upload endpoint (the single byte-accepting endpoint) ([#371](https://github.com/yahodu/openpic-webapp/issues/371)) ([87e1170](https://github.com/yahodu/openpic-webapp/commit/87e1170bf8dcd1b8a67e529c31f0924403215c06)), closes [#x73](https://github.com/yahodu/openpic-webapp/issues/x73)
+
+## [1.46.0](https://github.com/yahodu/openpic-webapp/compare/v1.45.0...v1.46.0) (2026-10-26)
+
+### Features
+
+- **media:** OP-113 HMAC media URL signer with secret rotation ([#370](https://github.com/yahodu/openpic-webapp/issues/370)) ([f6782a3](https://github.com/yahodu/openpic-webapp/commit/f6782a336af46833da0fd9ebf68d640782b7dd93))
+
+## [1.45.0](https://github.com/yahodu/openpic-webapp/compare/v1.44.0...v1.45.0) (2026-10-26)
+
+### Features
+
+- **storage:** OP-112 object storage port with logical locations and opaque handles ([#367](https://github.com/yahodu/openpic-webapp/issues/367)) ([8d866d3](https://github.com/yahodu/openpic-webapp/commit/8d866d313b0c428a06b7af9b6f6f011d3b3e0045))
+
+## [1.44.0](https://github.com/yahodu/openpic-webapp/compare/v1.43.0...v1.44.0) (2026-10-26)
+
+### Features
+
+- **events:** OP-116 list and get events with cursor pages and ETag ([#374](https://github.com/yahodu/openpic-webapp/issues/374)) ([e874268](https://github.com/yahodu/openpic-webapp/commit/e874268a076e0b1b64be6e9fbb1316cb866472b3))
+
+## [1.43.0](https://github.com/yahodu/openpic-webapp/compare/v1.42.0...v1.43.0) (2026-10-26)
+
+### Features
+
+- **events:** OP-115 create event with materialised windows ([#372](https://github.com/yahodu/openpic-webapp/issues/372)) ([c3a00a4](https://github.com/yahodu/openpic-webapp/commit/c3a00a41ee34578e339c81fb662581435482d509))
+
+## [1.42.0](https://github.com/yahodu/openpic-webapp/compare/v1.41.0...v1.42.0) (2026-10-26)
+
+### Features
+
+- **billing:** OP-111 emit the §10.2 admin alerts and close the reconcile classes ([#365](https://github.com/yahodu/openpic-webapp/issues/365)) ([f61d425](https://github.com/yahodu/openpic-webapp/commit/f61d425712c91c14e6f1e5ae6c1df9104b26e5a0))
+
+## [1.41.0](https://github.com/yahodu/openpic-webapp/compare/v1.40.1...v1.41.0) (2026-10-26)
+
+### Features
+
+- **billing:** OP-111 billing cron jobs — dunning, reminders, renewals, scheduled changes, reconcile and the projection sweep ([#352](https://github.com/yahodu/openpic-webapp/issues/352)) ([5ecfc18](https://github.com/yahodu/openpic-webapp/commit/5ecfc1885a82c1de6cab2902a4519f81020f8ec8))
+- **git:** OP-110 guard the shared repo-local commit identity in every worktree ([#348](https://github.com/yahodu/openpic-webapp/issues/348)) ([2f5a080](https://github.com/yahodu/openpic-webapp/commit/2f5a080671585d43cb57d0c121a9715a9d51e92b))
+
+### Bug Fixes
+
+- **billing:** OP-110 narrow the reactivation predicate to the recovery pair ([#354](https://github.com/yahodu/openpic-webapp/issues/354)) ([2ac32c1](https://github.com/yahodu/openpic-webapp/commit/2ac32c147ba709095f42c55de2703ee0948e9e44))
+- **ci:** OP-110 configure a git identity for the semantic-release step ([#362](https://github.com/yahodu/openpic-webapp/issues/362)) ([f0d79d4](https://github.com/yahodu/openpic-webapp/commit/f0d79d42a8ef9aeb79577ea44abf73c32b9d77eb))
+- **git:** OP-110 report a failed core.hooksPath pin instead of swallowing it ([#356](https://github.com/yahodu/openpic-webapp/issues/356)) ([3950c22](https://github.com/yahodu/openpic-webapp/commit/3950c2232cd9321ae140368ef129f9496f497e9c))
+
+## [1.40.1](https://github.com/yahodu/openpic-webapp/compare/v1.40.0...v1.40.1) (2026-10-25)
+
+### Bug Fixes
+
+- **billing:** OP-110 make the invoice-number decode total ([#346](https://github.com/yahodu/openpic-webapp/issues/346)) ([c2ebc58](https://github.com/yahodu/openpic-webapp/commit/c2ebc589098735a31f3be0aa7b5be4c5e3302317))
+
+## [1.40.0](https://github.com/yahodu/openpic-webapp/compare/v1.39.0...v1.40.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-110 retry charge, cancel, transactions, invoices and add-ons ([#339](https://github.com/yahodu/openpic-webapp/issues/339)) ([7ab9780](https://github.com/yahodu/openpic-webapp/commit/7ab97807f0763107ac6a3a4e2acd99c88fea1670))
+
+## [1.39.0](https://github.com/yahodu/openpic-webapp/compare/v1.38.0...v1.39.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-109 emit billing.plan.upgraded and refuse a non-lower downgrade target ([#340](https://github.com/yahodu/openpic-webapp/issues/340)) ([44ff384](https://github.com/yahodu/openpic-webapp/commit/44ff38420173742c61c96b67d71cab230a4836aa))
+
+## [1.38.0](https://github.com/yahodu/openpic-webapp/compare/v1.37.0...v1.38.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-109 upgrade, self-serve downgrade and scheduled-change cancel ([#334](https://github.com/yahodu/openpic-webapp/issues/334)) ([20fa9a5](https://github.com/yahodu/openpic-webapp/commit/20fa9a561de8cd019be699787c41ed2c9a33e278))
+
+## [1.37.0](https://github.com/yahodu/openpic-webapp/compare/v1.36.0...v1.37.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-108 provider webhook inbox and payment projection ([#311](https://github.com/yahodu/openpic-webapp/issues/311)) ([7d39082](https://github.com/yahodu/openpic-webapp/commit/7d390829894d13da5054a0e84d6e0bd83bc2801d))
+
+## [1.36.0](https://github.com/yahodu/openpic-webapp/compare/v1.35.2...v1.36.0) (2026-10-25)
+
+### Features
+
+- **lint:** OP-105 report no-expression template-literal vendor imports ([#326](https://github.com/yahodu/openpic-webapp/issues/326)) ([79a2f66](https://github.com/yahodu/openpic-webapp/commit/79a2f66a1f6fae20d5e34615753d193e6f307bd7))
+
+## [1.35.2](https://github.com/yahodu/openpic-webapp/compare/v1.35.1...v1.35.2) (2026-10-25)
+
+### Bug Fixes
+
+- **payments:** OP-105 refuse a Date-parseable but vendor-misshaped subscription_expiry_time (F-1) ([#324](https://github.com/yahodu/openpic-webapp/issues/324)) ([81dc1b7](https://github.com/yahodu/openpic-webapp/commit/81dc1b721e7d25fedb8f63c9ce7384c595487f88))
+
+## [1.35.1](https://github.com/yahodu/openpic-webapp/compare/v1.35.0...v1.35.1) (2026-10-25)
+
+### Bug Fixes
+
+- **payments:** OP-105 normalize createMandate().expiresAt to RFC 3339 UTC ms Z (F1) ([#317](https://github.com/yahodu/openpic-webapp/issues/317)) ([b317f8b](https://github.com/yahodu/openpic-webapp/commit/b317f8b159a7d27053465ba5ae973ce66b1d4050))
+
+## [1.35.0](https://github.com/yahodu/openpic-webapp/compare/v1.34.1...v1.35.0) (2026-10-25)
+
+### Features
+
+- **payments:** OP-105 project paymentMethodKind onto the create wire (F3/F5) ([#316](https://github.com/yahodu/openpic-webapp/issues/316)) ([841f342](https://github.com/yahodu/openpic-webapp/commit/841f3424c51b5de5883f10bb43b05f5d42f5939c))
+
+## [1.34.1](https://github.com/yahodu/openpic-webapp/compare/v1.34.0...v1.34.1) (2026-10-25)
+
+### Bug Fixes
+
+- **billing:** OP-107 satisfy the checkout follow-up pins (409 on a live row, customer fallbacks, retired-plan refusal) ([#314](https://github.com/yahodu/openpic-webapp/issues/314)) ([f35aac9](https://github.com/yahodu/openpic-webapp/commit/f35aac9cf1a93b3dba998dd131a8d1c8a6e92d51)), closes [#301](https://github.com/yahodu/openpic-webapp/issues/301) [#301](https://github.com/yahodu/openpic-webapp/issues/301)
+
+## [1.34.0](https://github.com/yahodu/openpic-webapp/compare/v1.33.0...v1.34.0) (2026-10-25)
+
+### Features
+
+- **lint:** OP-105 enforce the Cashfree adapter import boundary (F1) ([#310](https://github.com/yahodu/openpic-webapp/issues/310)) ([dd9a027](https://github.com/yahodu/openpic-webapp/commit/dd9a0278828bc4a30ba0b589f5763e6fec248927))
+
+## [1.33.0](https://github.com/yahodu/openpic-webapp/compare/v1.32.1...v1.33.0) (2026-10-25)
+
+### Features
+
+- **billing:** OP-107 checkout mandate creation ([#301](https://github.com/yahodu/openpic-webapp/issues/301)) ([38bad08](https://github.com/yahodu/openpic-webapp/commit/38bad08b40ceb59b8df6317b57da89f59ddab1f3))
+
+## [1.32.1](https://github.com/yahodu/openpic-webapp/compare/v1.32.0...v1.32.1) (2026-10-25)
+
+### Bug Fixes
+
+- **payments:** OP-105 emit the drift log for a vendor status outside the pinned table ([#297](https://github.com/yahodu/openpic-webapp/issues/297)) ([2669c30](https://github.com/yahodu/openpic-webapp/commit/2669c304cbea01f121d09e1c83396a99df3e7123))
+
+## [1.32.0](https://github.com/yahodu/openpic-webapp/compare/v1.31.0...v1.32.0) (2026-10-25)
+
+### Features
+
+- **payments:** OP-105 implement the in-process memory payment provider for e2e ([#296](https://github.com/yahodu/openpic-webapp/issues/296)) ([4c5a7eb](https://github.com/yahodu/openpic-webapp/commit/4c5a7eb961512e06a9aaa9780ee1218a6cc10ccb))
+
+## [1.31.0](https://github.com/yahodu/openpic-webapp/compare/v1.30.0...v1.31.0) (2026-10-25)
+
+### Features
+
+- **subscriptions:** OP-106 subscription read and status history ([#294](https://github.com/yahodu/openpic-webapp/issues/294)) ([68f73ff](https://github.com/yahodu/openpic-webapp/commit/68f73ff15d55130c59205a275c510997247c0e29))
+
+## [1.30.0](https://github.com/yahodu/openpic-webapp/compare/v1.29.3...v1.30.0) (2026-10-25)
+
+### Features
+
+- **payments:** OP-105 add the payment provider port and Cashfree adapter ([#292](https://github.com/yahodu/openpic-webapp/issues/292)) ([d0eb4a0](https://github.com/yahodu/openpic-webapp/commit/d0eb4a0ca827c1f27c0ab22b37d20d8cd3956e2a))
+
 ## [1.29.3](https://github.com/yahodu/openpic-webapp/compare/v1.29.2...v1.29.3) (2026-10-25)
 
 ### Bug Fixes

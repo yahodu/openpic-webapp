@@ -21,6 +21,7 @@ export type RateLimitClass =
   | "upload.resolve"
   | "upload.sign"
   | "upload.complete"
+  | "attendee.session"
   | "selfie.submit"
   | "liveness.challenge"
   | "public.gallery"
@@ -52,6 +53,7 @@ export const RATE_LIMIT_CLASSES: Readonly<Record<RateLimitClass, readonly RateLi
   "upload.resolve": [{ scope: "user", limit: 60, windowSeconds: 60 }],
   "upload.sign": [{ scope: "user", limit: 900, windowSeconds: 60 }],
   "upload.complete": [{ scope: "user", limit: 600, windowSeconds: 60 }],
+  "attendee.session": [{ scope: "ip", limit: 60, windowSeconds: 3600 }],
   "selfie.submit": [
     { scope: "attendee", limit: 6, windowSeconds: 3600 },
     { scope: "ip", limit: 20, windowSeconds: 3600 },
@@ -82,6 +84,7 @@ const FAIL_CLOSED_CLASSES: ReadonlySet<RateLimitClass> = new Set<RateLimitClass>
   "auth.verify",
   "selfie.submit",
   "liveness.challenge",
+  "attendee.session",
 ]);
 
 /**
@@ -95,8 +98,9 @@ export function isRateLimitBypassed(classKey: RateLimitClass): boolean {
 }
 
 /**
- * The failure policy for a class (§0.11): abuse-prone auth/selfie/liveness
- * classes fail closed, every ordinary read/write class fails open.
+ * The failure policy for a class (§0.11): abuse-prone auth/selfie/liveness and
+ * attendee-session classes fail closed, every ordinary read/write class fails
+ * open.
  *
  * @param classKey - The class to resolve.
  * @returns `"fail-closed"` or `"fail-open"`.

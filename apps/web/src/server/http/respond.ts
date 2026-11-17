@@ -132,8 +132,11 @@ export function errorResponse(
         error: {
           ...envelope.error,
           details: {
-            ...(envelope.error.details ?? {}),
+            // A route may supply a more specific `loginUrl` (the invitation
+            // link returns the invitee to the same token); the generic page is
+            // only the default.
             loginUrl: `${new URL(request.url).origin}/login`,
+            ...(envelope.error.details ?? {}),
           },
         },
       },

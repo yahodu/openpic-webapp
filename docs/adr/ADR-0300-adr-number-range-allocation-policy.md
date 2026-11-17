@@ -123,3 +123,254 @@ Adopt **per-lane reserved ranges** as the binding allocation policy for
 - **Keep "lowest free number at commit time"** — rejected: it is the status quo
   that produced four renumbers in a day and two `CONFLICTING` PRs; the check is
   unenforceable because it is stale the moment it is computed.
+
+## §8 — Same-lane concurrency: reserve at creation (rule A)
+
+_2026-10-25, card `t_e5485868` (orchestrator) — the OP-105 lane follow-up that
+closes the two same-lane number collisions._
+
+§7 makes an in-flight allocation count as **taken**, but it still leaves the
+number to be _derived by the worker_ from the `Next free` cell it reads at its
+branch cut. That value is a **snapshot of shared state**: two same-lane branches
+cut from the same `origin/main` read the same cell and mint the same number. On
+the OP-105 lane (`0380`–`0399`) that happened **twice** — first `0382` (two
+records cut off `2baaf14`), then `0383`+`0384` (the drift-log pair against the
+memory-provider pair, the same cut) — and each collision cost a review loop on
+the lane (card `t_e5485868`; see the two _number collision_ notes in
+[README](README.md)). Rule (A) replaces the snapshot with a reservation made
+**before the branch exists**, so there is no shared value left to race on.
+
+8. **Reserve at creation (rule A).** The **orchestrator is the allocator** (item
+   1): it allocates each ADR number **when it creates the card** and writes
+   `**Consumes: NNNN**` into that card's body — `none` for a card that mints no
+   number, such as this in-place amendment. The worker takes the reserved number
+   as given and **never** derives one from the `Next free` cell: not at its
+   branch cut, not immediately before committing, not to "advance the counter".
+   The cell becomes **informational** — it records the lane's reservation
+   high-water, and the card that lands a ledger row sets it to
+   `max(consumed)+1`. A card with no reserved number asks the allocator; it never
+   invents one. This supersedes the practice the §7 notes describe ("the cell's
+   value re-read at the branch cut immediately before committing"), which is what
+   produced both OP-105 collisions.
+9. **Pre-push re-read of trunk _and_ sibling reservations.** Immediately before
+   pushing, the worker re-reads (a) **trunk** — is `ADR-0NNN` already a file on
+   `origin/main`? — and (b) the lane's **in-flight reservations**: the
+   `**Consumes:**` values of the sibling cards, and any open branch/PR of the
+   lane carrying an `ADR-0NNN-…` file. Either hit is a collision on a _claimed_
+   number: the worker comments on the card and **blocks** — it never silently
+   renumbers. Renumbering is what hides the collision; the reservation is the
+   allocator's to re-issue.
+10. **A `README.md` ledger conflict resolves as a union.** When the only conflict
+    is `docs/adr/README.md`, resolve it by keeping **both** sides' rows in
+    ascending numeric order and setting the lane's `Next free` cell to
+    `max(consumed)+1` across both — **never pick-a-side**. A pick-a-side
+    resolution silently drops the lane's own row, which is how the first OP-105
+    collision presented as an ordinary index-only conflict; the union keeps both
+    rows, so a duplicate number stays visible to the guard and to the reviewer.
+    The mechanical half (a `prettier --write` to normalise the widened column
+    padding) is recorded in `docs/CONVENTIONS.md` §11.
+
+Rationale for (A) over serialising same-lane chains: rule (A) is closed under
+concurrency _by construction_ — no card computes its number from shared state —
+and it costs the allocator one field at card-creation time, where serialisation
+costs the lane wall-clock and depends on a cross-chain ordering edge being
+remembered. The choice is recorded on card `t_e5485868`.
+
+## §9 — In-flight-aware allocation (2026-10-25, card `t_6b5e0fc9`)
+
+_2026-10-25, card `t_6b5e0fc9` (orchestrator) — the OP-110 lane follow-up that
+closes the third same-class number collision._
+
+§7 makes an in-flight allocation count as **taken**; §8 (rule A) has the
+**allocator** reserve the number when it creates the card. Neither closed this
+collision, because **the reservation itself was derived from a snapshot**: two
+cards in one lane, each told to "re-read the lane `Next free` cell", read the same
+value on the same trunk and minted the same number. On the OP-110 lane
+(`0480`–`0499`) that happened with two independently-rooted **pin** cards:
+
+| pin card                             | branch                                  | commit               | record minted                                  |
+| ------------------------------------ | --------------------------------------- | -------------------- | ---------------------------------------------- |
+| `t_58320f19` (invoice-number decode) | `OP-110-task-invoice-number-decode-pin` | `2418ce7` @ 17:02:37 | `ADR-0482-op110-invoice-number-decode-pins.md` |
+| `t_ffec14e2` (reactivation boundary) | `OP-110-task-reactivation-boundary-pin` | `89dbfd7` @ 17:06:44 | `ADR-0482-op110-reactivation-boundary-pins.md` |
+
+The reactivation lane's gated GREEN (`t_805e17b6`) then minted a further record on
+top of its pin branch, so the collision is **two-deep** in a stacked pin→green
+pair. The invoice lane landed first (PR
+[#346](https://github.com/yahodu/openpic-webapp/pull/346) → squash `c2ebc589`,
+trunk `1d1943b`), making `0482` **trunk-owned**; the reactivation lane cannot land
+without renumbering both of its records — renumber card `t_c83556f9`, gated on
+`t_805e17b6`. That lane's renumbered numbers are still **in flight** and are
+deliberately not asserted here. The failure is **invisible on the incoming
+branch** — its own guard passes — and only reddens the **trunk's** unit job after
+the squash, when `checkAdrDirectory("docs/adr")` sees two `ADR-0482` files.
+
+This is the **third** recurrence of the class: OP-96 (`0147`, the §7 note) and
+OP-105 (`0382`; then `0383`+`0384`, the §8 note) came first — hence the durable fix.
+
+11. **In-flight-aware allocation (rule B).** Before the allocator hands a number
+    to any card it **enumerates the lane's in-flight reservations** and takes the
+    next free number **above the highest in-flight number** — never the number
+    named by the trunk `Next free` cell, and never a value derived from a snapshot
+    of shared state. The enumeration is:
+
+    - **every live worktree's ADR files** —
+      `for d in <repo>/.worktrees/*/; do ls "$d/docs/adr/" 2>/dev/null | grep -E '^ADR-0[0-9]{3}'; done`;
+    - **the `Consumes` values of the lane's non-`done` cards** (board DB /
+      `kanban_list`);
+    - **the lane's open remote refs** — `git ls-remote --heads origin "OP-<n>*"`,
+      reading `docs/adr/` at each head where reachable.
+
+    The rule binds **whoever mints a card**, not the orchestrator alone: on this
+    board reviewer and testcase-writer cards minted both colliding OP-110 pins. A
+    card that mints no number still writes `Consumes: none` (§8 rule A).
+
+12. **Pre-merge duplicate detection on the merged tree.** No ADR-carrying PR may
+    squash-merge until the guard has run **on the merged tree** — not on the
+    incoming branch — because a lone `docs/adr/README.md` conflict resolves cleanly
+    while hiding a duplicate **file**:
+
+    ```
+    git fetch origin
+    git worktree add --detach <scratch>/probe-adr-merge origin/main
+    cd <scratch>/probe-adr-merge && git merge --no-ff <incoming-head>
+    # symlink node_modules (root, apps/web, packages/contracts) from the main checkout, then:
+    ./node_modules/.bin/vitest run --project unit apps/web/src/test/unit/adr-numbering.test.ts   # must pass
+    ls docs/adr/ | grep -oE 'ADR-[0-9]{4}' | sort | uniq -d                                       # must be empty
+    ```
+
+    This is a **review-time obligation** (consistent with the guard's two
+    documented out-of-scope items in `docs/CONVENTIONS.md` §11), **not** a CI
+    change.
+
+**Rejected alternative — "reserve the pair, not the number" (candidate 1).** It
+covers only a pin+green pair riding **one** branch/PR. The OP-110 collision was
+between two independently-rooted follow-up pins (as was OP-105's): a pair
+reservation cannot see sibling pin B, which still reads the cell and re-mints A's
+number. It is also subsumed by in-flight enumeration — both the pin file and the
+reserved green number are visible to rule B — so it is recorded as a compatible
+special case **inside** rule B, not as the primary rule.
+
+**Rejected alternative — "land-then-renumber as primary" (candidate 3).** It does
+not prevent the collision; it only makes the loser's repair cheap, and adopting it
+as primary normalises a duplicate landing and shifts the cost onto the loser's
+lane. It remains the **fallback recovery**, invoked only when detection catches a
+duplicate: the existing `t_c83556f9` recipe already enumerates every field to
+rewrite — file name, H1, every `Consumes`/cross-reference, the two README index
+rows, the lane prose paragraph and the `Next free` cell; a `README.md` conflict
+resolves as a **union** (§8 item 10) — so it is the canonical checklist and needs
+no new script.
+
+Rationale for rule B over reserving at creation alone: rule (A) removes the
+_worker's_ snapshot but leaves the _allocator's_, and the allocator is not
+serialised either — two follow-up cards created minutes apart each read the same
+cell. Enumerating in-flight reservations before reserving makes the number a
+function of what is actually outstanding rather than of a stale counter, at the
+cost of one enumeration per card creation. The choice is recorded on card
+`t_6b5e0fc9`.
+
+## §10 — A block starts above the highest in-flight range END, and a range is exclusive (2026-11-12, finding F-L1, card `t_95e7ed1e`)
+
+_2026-11-12, finding F-L1 (`t_95e7ed1e` lineage) — the OP-129 lane's block was
+minted from the uploads lane's `Next free` cell and landed inside its range._
+
+§7 makes an in-flight allocation count as **taken**; §8 (rule A) has the
+allocator reserve a number **when it creates the card**; §9 (rule B) makes the
+allocator enumerate the lane's in-flight reservations first. All three govern
+**one lane's own** numbers. None of them said where a **new lane's block**
+starts, and §7 was read as licence to take any unminted number — the OP-129
+ledger note states the reading outright: _"a dependent ticket does not continue
+its parent's range (ADR-0300 §7)"_. This section **supersedes that reading**. A
+dependent ticket (one whose story builds on the holder's code — OP-127 and
+OP-128 on the OP-126 uploads lane) **does** continue its parent lane's range; an
+independent ticket gets a fresh block **above the highest in-flight range end**;
+and no lane may mint a number inside another lane's range, including a gap that
+holder has not consumed. The range **end**, not the `Next free` cell, is what
+bounds the board, because the cell is a consumed-number counter and the range is
+a reservation.
+
+| fact (measured 2026-11-12 on `origin`) | value                                                                                                                                                                                                                             |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OP-126 uploads lane row                | `0760`–`0779`, `Next free` cell `0771` (branch `OP-128-task-account-status-gate-pins`, `cfed101`)                                                                                                                                 |
+| OP-129 attendee-identity lane row      | `0769`–`0788`, `Next free` cell `0770` (PR [#444](https://github.com/yahodu/openpic-webapp/pull/444), branch `OP-129-task-anonymous-attendee-sessions-red-fix`)                                                                   |
+| the two rows intersect                 | `0769`–`0779` — eleven numbers reserved twice                                                                                                                                                                                     |
+| the collision it produced in flight    | `ADR-0770` exists twice: `ADR-0770-op129-anonymous-attendee-sessions-green.md` and `ADR-0770-op128-account-status-gate-green.md`                                                                                                  |
+| why the block started at `0769`        | the allocator note says the lane drew "the allocator's unallocated pool `0769`–`0788`" because `0768` was the uploads cell at the time — i.e. `0769 = 0768 + 1`, a **consumed number plus one**, not the uploads range end `0779` |
+
+13. **A block starts above the highest in-flight range END.** A new lane's block
+    starts at **`max(end of every reserved range in flight) + 1`** — never
+    `max(consumed number) + 1`, never the `unallocated` cursor alone, never the
+    tail of the index. A `Next free` cell is a consumed-number counter: reading
+    it and adding one (`0768` → `0769`) mints inside a range that is still open,
+    which is exactly how F-L1 happened.
+14. **A reserved range is exclusive to its holder.** No other lane may mint a
+    number inside it, _including a gap the holder has not consumed_. A gap is
+    cheap; a revoked range is not — re-cutting a reserved row means renumbering
+    files that are already in flight and rewriting every citation of them.
+15. **Dependent versus independent tickets.** A **dependent** ticket — one whose
+    story builds on the holder's code (OP-127 and OP-128 on OP-126 uploads) —
+    **continues its parent lane's range** and takes the next number inside it.
+    An **independent** ticket gets its own block and never extends into another
+    lane's range. This supersedes "a dependent ticket does not continue its
+    parent's range", which is the sentence the OP-129 allocation relied on.
+16. **The cursor follows the ranges.** The `unallocated (future lanes)` cursor
+    is `max(closed range end) + 1`; the same commit that adds or re-cuts a row
+    moves the cursor. A cursor left below a closed range end invites the next
+    lane to start inside it.
+17. **The mechanical half.** `checkAdrDirectory`'s `lane-range-overlap` check
+    ([ADR-0302](ADR-0302-adr-number-guard-contract.md) §6) reports every pair of
+    reserved rows whose **closed** ranges intersect, so an intersecting row is a
+    CI failure rather than a review miss. It also reports a range-shaped ledger
+    row it cannot parse (`lane-range-malformed`), so a ledger typo is a CI
+    failure rather than a silent hole that quietly disables the check. It is the
+    only half a tool can enforce: a _file_ numbered inside a foreign range
+    remains a review-time defect, because the guard has no file→lane map.
+
+**Rejected alternative — a `reserved:` list inside the README.** Already
+rejected in §8/§9 for the same reason: a branch-local marker is a second source
+of truth that goes stale the moment the ledger row changes, and a parser keyed
+on it fails open when the marker is forgotten.
+
+**Rejected alternative — a per-file lane annotation.** Naming the owning lane in
+each ADR file (front matter or the H1) would let a tool check membership, but it
+is a second source of truth that drifts from both the ledger and the file name,
+and it must be written by the worker whose number is in question — the same
+actor the check exists to constrain.
+
+Rationale for keying the rule on the range **end**: the failure was not a
+missing check but a wrong _reference value_. The allocator had a legitimate
+question ("what is the highest number in use?") and answered it from the nearest
+number-shaped cell in the file, which is a consumed count. The range end is the
+only value in the ledger that is a reservation bound, and it is readable from
+the same row, so the correct rule costs the allocator nothing extra to apply.
+The choice is recorded on card `t_95e7ed1e`.
+
+## §11 — An exhausted block draws from the pool; its cell is never repaired (2026-11-17, card `t_949d96c2`, ADR-0314)
+
+**The trigger.** The `OP-129 attendee identity lane` row's `Next free` cell read
+`0849` on `origin/main` `a5f06c85` while its range is `0780`–`0798`. The block is
+**exhausted**, so the cell named a number that could never be a legitimate value
+of that row and that the `unallocated (future lanes)` cursor already held. This
+section states the rule the practice needed; ADR-0314 §2 carries the measurement
+and moves no cell.
+
+18. **An exhausted block keeps its range and draws from the pool.** A lane whose
+    range is exhausted draws every further record from the `unallocated (future
+lanes)` cursor (item 16), exactly as a lane with no block would; each draw
+    advances **both** the lane cell and the pool cursor.
+19. **A cell outside its own range is a symptom, not an allocation.** A value
+    beyond the row's range end means "this block is exhausted". No consumer may
+    mint from it, and the range end stays the only bound (item 14), because the
+    guard (`lane-range-overlap`, item 17) compares reserved _ranges_ and cannot
+    see a cell.
+20. **The allocator never repairs a foreign cell.** Rewriting an exhausted cell
+    back inside its range would invite the next draw to mint a number the pool
+    already reserved, and a repair that renumbers landed records is out of
+    policy. The fact goes in the ledger note instead.
+21. **An exhausted-but-unrepaired cell is not licence to re-cut the range.** The
+    block stays reserved, gaps included, and dead to new draws.
+
+**Rejected alternative — treat the out-of-range cell as the lane's next number.**
+It is the cheapest reading of the ledger and it is the one that fails: the cell
+names a consumed pool number, so the next record would collide with the record
+that already holds it. The practice of drawing from the pool is already recorded
+ad hoc (ADR-0799, ADR-0800, ADR-0811, ADR-0818); items 18–21 give it a clause.

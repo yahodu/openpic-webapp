@@ -1,14 +1,24 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  makeTempAdrDir,
+  realAdrDir,
+  tempDirs,
+  writeFixtureFile,
+} from "../helpers/adr-guard-fixtures.js";
 import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/adr-numbering.js";
 
 /**
- * Unit contract — `src/test/helpers/adr-numbering.ts` (review finding R-1, OP-96).
+ * ADR guard, invariants (i) and (ii) — the guard's six invariants are tabulated
+ * once, in `ADR-0302` (`## Decision`, the six-row invariant table). This file
+ * owns the first two and the `checkAdrDirectory` composition that applies them
+ * to one directory:
+ *   (i)   no two in-scope files share an `ADR-NNNN` number;
+ *   (ii)  every in-scope `ADR-*.md` file name matches
+ *         `^ADR-(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`.
  *
  * **Why this exists.** ADR numbers used to be allocated by "take the lowest free
  * number at commit time", which no tool can enforce. On 2026-10-20 it burned a
@@ -19,17 +29,6 @@ import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/a
  * with per-lane reserved ranges; this spec pins the one *mechanical* half of
  * that policy, so the mistake is caught by CI instead of by a reviewer: no two
  * ADRs may share a number, and every ADR file name must be well-formed.
- *
- * **RED.** `src/test/helpers/adr-numbering.ts` does not exist yet, so this file
- * fails on import. That is the intended first state — the guard ships with the
- * implementation that satisfies these assertions.
- *
- * **Scope.** Exactly two invariants:
- *   (i)  no two in-scope files share an `ADR-NNNN` number;
- *   (ii) every in-scope `ADR-*.md` file name matches
- *        `^ADR-(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`.
- * Reserved-range bookkeeping is deliberately **out of scope**: it lives in the
- * prose ledger `docs/adr/README.md`, and parsing that prose is brittle.
  *
  * **Contract pinned here** (RED and GREEN must not diverge):
  *
@@ -78,7 +77,7 @@ import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/a
  * asking for a change):
  *   - the same file name passed twice is two group members, so the lone
  *     `duplicate` issue repeats the name (`["ADR-0146-a.md", "ADR-0146-a.md"]`);
- *   - `ADR-0000-x.md` and `ADR-9999-x.md` are well-formed: `parseAdrNumber`
+ *   - `ADR-000x.md` and `ADR-999x.md`-shaped names are well-formed: `parseAdrNumber`
  *     yields `0` / `9999`, and both are accepted when unique;
  *   - `checkAdrDirectory` on a missing directory throws (the TSDoc `@throws`
  *     branch), propagating the `node:fs` error with `code === "ENOENT"`;
@@ -86,20 +85,6 @@ import { checkAdrDirectory, checkAdrNumbers, parseAdrNumber } from "../helpers/a
  *     lstat-based, so a **symlinked** ADR file is silently skipped — the one way
  *     the guard can under-report. A symlink never contributes to a duplicate.
  */
-
-const repoRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
-const realAdrDir = join(repoRoot, "docs/adr");
-
-const tempDirs: string[] = [];
-
-function makeTempAdrDir(fileNames: string[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "adr-numbering-"));
-  tempDirs.push(dir);
-  for (const fileName of fileNames) {
-    writeFileSync(join(dir, fileName), "");
-  }
-  return dir;
-}
 
 describe("checkAdrNumbers — clean input", () => {
   afterEach(() => {
@@ -126,7 +111,7 @@ describe("checkAdrNumbers — clean input", () => {
 
   it("accepts the boundary numbers 0000 and 9999 when they are unique", () => {
     // Act — the strict four-digit pattern admits both extremes of the range.
-    const result = checkAdrNumbers(["ADR-0000-x.md", "ADR-9999-y.md"]);
+    const result = checkAdrNumbers(["ADR-0000-x.md", "ADR-9999-y.md"]); // adr-fixture
 
     // Assert
     expect(result).toEqual({ ok: true, issues: [] });
@@ -307,8 +292,8 @@ describe("parseAdrNumber", () => {
   });
 
   it.each<[string, number]>([
-    ["ADR-0000-x.md", 0],
-    ["ADR-9999-x.md", 9999],
+    ["ADR-0000-x.md", 0], // adr-fixture
+    ["ADR-9999-x.md", 9999], // adr-fixture
   ])("parses the boundary number %s as %s", (fileName, expected) => {
     // Act + Assert
     expect(parseAdrNumber(fileName)).toBe(expected);
@@ -353,8 +338,7 @@ describe("checkAdrDirectory", () => {
   it("reads only the given directory and never recurses into subdirectories", () => {
     // Arrange
     const dir = makeTempAdrDir(["ADR-0146-a.md"]);
-    mkdirSync(join(dir, "archive"));
-    writeFileSync(join(dir, "archive", "ADR-0146-a.md"), "");
+    writeFixtureFile(join(dir, "archive", "ADR-0146-a.md"), "");
 
     // Act
     const result = checkAdrDirectory(dir);

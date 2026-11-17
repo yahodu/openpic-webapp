@@ -44,6 +44,14 @@ export async function register(): Promise<void> {
           await import("./server/notifications/seed-notification-types");
         await seedNotificationTypes();
         await seedNotificationTemplates();
+
+        // The e2e database is equally empty of the pricing catalogue, which is
+        // code-owned policy (§14.1). A checkout resolves the sold price from
+        // `plans`, so without this seed the self-serve tiers have no plan to buy
+        // and `POST /billing/checkout` answers `422` (OP-107; ADR-0421). The
+        // seed is create-or-reconcile, so a boot re-run is a no-op.
+        const { seedPlans } = await import("./server/plans/seed-plans");
+        await seedPlans();
       }
     }
   }

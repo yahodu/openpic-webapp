@@ -210,13 +210,25 @@ const pipelineSchema = z.object({
   sweepIntervalSeconds: z.number().int().positive(),
   backlogWarnDepth: z.number().int().positive(),
   backlogWarnAgeMinutes: z.number().int().positive(),
+  /**
+   * The operator's pause switch (OP-135, contract §10.3.2; ADR-0829 §3): a
+   * worker that reads it true drains nothing new. Defaulted so a singleton
+   * seeded before the field existed still parses.
+   */
+  pauseRequested: z.boolean().default(false),
 });
 
-/** `upload` — size thresholds and the accepted MIME allow-list. */
+/** `upload` — size thresholds, the accepted MIME allow-list and the window grace. */
 const uploadSchema = z.object({
   multipartThresholdBytes: z.number().int().positive(),
   maxFileBytes: z.number().int().positive(),
   supportedMimeTypes: z.array(z.string().min(1)).min(1),
+  /**
+   * How long a session started before the upload window closed may still be
+   * completed (OP-124, contract §5.3, ADR-0721 A7): the window is a deadline
+   * for *starting*, not for finishing.
+   */
+  inflightGraceMinutes: z.number().int().positive(),
 });
 
 /** `notifications` — the poll cadence and digest throttles. */
@@ -240,6 +252,54 @@ const accountSchema = z.object({
   deletionGraceDays: z.number().int().positive(),
 });
 
+/**
+ * `selfie` — the attendee selfie tunables (contract §6.1/§6.3, ADR-0784 §3).
+ *
+ * `attemptsAllowed` is the **fallback** budget the landing page advertises: the
+ * per-plan gate is `selfies.per_attendee` (§14.1), and this value answers for a
+ * tenant whose active plan row does not gate the key.
+ */
+const selfieSchema = z.object({
+  attemptsAllowed: z.number().int().positive(),
+});
+
+/**
+ * `legal` — the current policy documents the attendee surface must name
+ * (contract §6.1/§6.2, ADR-0784 §3).
+ *
+ * A version and its URL move together, so consent evidence recorded against
+ * `biometricPolicyVersion` always resolves to the document it described.
+ */
+const legalSchema = z.object({
+  biometricPolicyVersion: z.string().min(1),
+  biometricPolicyUrl: z.url(),
+});
+
+/**
+ * `attendee` — the attendee surface's platform tunables (contract §6.5;
+ * ADR-0794 §8).
+ *
+ * `anonymousPreviewLimit` is how many of their matches an attendee who has not
+ * signed in may see before the gallery asks them to log in.
+ */
+const attendeeSchema = z.object({
+  anonymousPreviewLimit: z.number().int().positive(),
+});
+
+/** The documented `attendee` defaults (§6.5). */
+const ATTENDEE_SETTINGS_DEFAULTS: z.input<typeof attendeeSchema> = {
+  anonymousPreviewLimit: 10,
+};
+
+/** The documented `selfie` defaults — what a tenant with no gated plan gets. */
+const SELFIE_SETTINGS_DEFAULTS: z.input<typeof selfieSchema> = { attemptsAllowed: 3 };
+
+/** The current biometric policy the attendee surface names (contract §6.1). */
+const LEGAL_SETTINGS_DEFAULTS: z.input<typeof legalSchema> = {
+  biometricPolicyVersion: "biometric-2026-03",
+  biometricPolicyUrl: "https://openpic.in/legal/biometric/2026-03",
+};
+
 /** The full `platformSettings` singleton document (schema §20.4). */
 export const platformSettingsSchema = z.object({
   _id: z.literal(SINGLETON_ID),
@@ -250,6 +310,10 @@ export const platformSettingsSchema = z.object({
   upload: uploadSchema,
   notifications: notificationsSchema,
   account: accountSchema,
+  // Defaulted so a singleton seeded before these sections existed still parses.
+  selfie: selfieSchema.default(SELFIE_SETTINGS_DEFAULTS),
+  legal: legalSchema.default(LEGAL_SETTINGS_DEFAULTS),
+  attendee: attendeeSchema.default(ATTENDEE_SETTINGS_DEFAULTS),
   updatedAt: z.string(),
   updatedByUserId: z.string().nullable(),
 });
@@ -297,10 +361,12 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettingsValues = {
     sweepIntervalSeconds: 120,
     backlogWarnDepth: 5000,
     backlogWarnAgeMinutes: 15,
+    pauseRequested: false,
   },
   upload: {
     multipartThresholdBytes: 8_388_608,
     maxFileBytes: 104_857_600,
+    inflightGraceMinutes: 30,
     supportedMimeTypes: [
       "image/jpeg",
       "image/png",
@@ -320,6 +386,9 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettingsValues = {
   account: {
     deletionGraceDays: 14,
   },
+  selfie: { ...SELFIE_SETTINGS_DEFAULTS },
+  legal: { ...LEGAL_SETTINGS_DEFAULTS },
+  attendee: { ...ATTENDEE_SETTINGS_DEFAULTS },
 };
 
 /** A cached document and the instant its TTL elapses. */

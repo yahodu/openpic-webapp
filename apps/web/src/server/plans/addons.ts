@@ -33,6 +33,14 @@ export const storedAddonSchema = z.object({
   name: z.string().min(1),
   description: z.string(),
   entitlementKey: z.string().min(1),
+  /**
+   * The entitlement delta one ordered `quantity` unit grants (OP-110, ADR-0480
+   * §4). ADR-0320's schema of record named the entitlement and the orderable
+   * quantity bounds but carried no amount, so a purchase could not be projected
+   * into an `entitlementGrants.delta`; the grant a purchase writes is
+   * `quantity × grantDelta`, in the entitlement's own unit.
+   */
+  grantDelta: z.number(),
   unit: z.string().min(1),
   quantity: addonQuantitySchema,
   prices: z.array(priceSchema),

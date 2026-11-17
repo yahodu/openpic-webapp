@@ -165,6 +165,7 @@ A story is complete only when **all** of the following hold:
 - [ ] The relevant API contract section is referenced.
 - [ ] No hard-coded tunables — runtime knobs are read from `platformSettings`.
 - [ ] An ADR was added in `docs/adr/` for any new decision.
+- [ ] The ADR number is the `Consumes` value reserved in the card body — never derived from `docs/adr/README.md` — and no same-lane ADR-minting sibling card is in flight.
 
 This list is mirrored, copy-pasteably, in `.github/pull_request_template.md`.
 
@@ -181,12 +182,46 @@ resolution as an ADR so the next reader inherits the decision.
 
 ADR numbers are allocated in **per-lane reserved ranges**, never from a shared
 high-water mark. The orchestrator is the allocator: when it creates a lane's cards
-it assigns that lane a disjoint block of numbers and writes the block into every
-card body of the lane. A lane takes the **next free number inside its own block**
-and never consults the shared high-water mark, the tail of `docs/adr/README.md` or
-another lane's refs. Numbers allocated before the policy (`≤ 0145`) are frozen
-history and are never moved.
+it assigns the lane a disjoint block of numbers, and it reserves each ADR number
+**at card-creation time**, writing `**Consumes: NNNN**` into that card's body
+(`none` for a card that mints no number). The worker takes the reserved number as
+given and **never** derives one from the ledger — not from the block counter, not
+from the `Next free` cell, not from the shared high-water mark, not from the tail
+of `docs/adr/README.md`. The `Next free` cell is **informational**: the card that
+lands a ledger row sets it to `max(consumed)+1`. A card with no reserved number
+asks the allocator; it never invents one. Reserving at creation — rather than each
+worker deriving a number at its branch cut from a shared snapshot — is what makes
+a lane closed under concurrency. The authority for this rule, its rationale and
+the rejected alternatives are
+`docs/adr/ADR-0300-adr-number-range-allocation-policy.md` §8–§9. Numbers
+allocated before the policy (`≤ 0145`) are frozen history and are never moved.
 
+- **In-flight-aware allocation (ADR-0300 §9, rule B).** Before it hands a number
+  to any card the allocator **enumerates the lane's in-flight reservations** and
+  takes the next free number **above the highest in-flight one** — never the trunk
+  `Next free` cell, never a snapshot of shared state. Enumerate all three sources:
+  every live worktree's `docs/adr/` files, the lane's non-`done` cards' `Consumes`
+  values, and the lane's open remote refs (`git ls-remote --heads origin "OP-<n>*"`,
+  reading `docs/adr/` at each head where reachable). The rule binds **whoever mints
+  a card**, not the orchestrator alone. No ADR-carrying PR may squash-merge until
+  the duplicate check has run **on the merged tree** (merge the incoming head into
+  a throwaway worktree off `origin/main`, then run
+  `apps/web/src/test/unit/adr-*.test.ts` and `uniq -d` over the `ADR-NNNN`
+  prefixes there): a lone `docs/adr/README.md` conflict resolves cleanly while
+  hiding a duplicate **file**.
+- **Same-lane serialization by the task graph (ADR-0300 §9, rule C;
+  `docs/adr/ADR-0312-same-lane-adr-card-serialization.md`).** Two ADR-minting cards of
+  one lane's range are **never siblings**: the allocator chains them
+  (`parents=[<the earlier card>]`), so the successor is not `ready` until the
+  predecessor's ledger row has landed on `main` and reads its number off the merged
+  trunk — not off any shared snapshot, and with no concurrent sibling to enumerate under
+  rule B. Every card body carries `Consumes: NNNN` (or `none`) **and** a
+  `Same-lane ADR gate: serialized behind <card-id> | none` line. A worker that finds
+  `Consumes` missing or `TBD`, or a same-range sibling already minting its number,
+  **comments and blocks** the card back to the allocator — it never invents or renumbers
+  a value. A card body without `Consumes:` is a decomposition defect the reviewer returns
+  rather than works around; the ADR file's number must equal the body's `Consumes` value,
+  and the merged-tree duplicate check above is unchanged.
 - **The ledger.** The live range table is `docs/adr/README.md` § "ADR number
   allocation" (ADR-0300) — the single source of truth. Do not copy or re-derive
   the ranges anywhere else, including here. **The `Next free` column is a
@@ -199,7 +234,9 @@ history and are never moved.
   "next free" (ADR-0300 §7).
 - **The guard.** `pnpm test:unit` fails on a duplicate `ADR-NNNN` prefix or a
   malformed `ADR-*.md` name
-  (`apps/web/src/test/unit/adr-numbering.test.ts`). It is the mechanical backstop
+  (`apps/web/src/test/unit/adr-*.test.ts` — the guard is one spec per invariant,
+  see ADR-0302 (`## Decision`, the six-row invariant table) and §10). It is the
+  mechanical backstop
   for the rule above and a required pre-merge check; `docs/adr/README.md` and any
   other non-`ADR-*.md` file are ignored.
 - **Out of scope of the guard, by decision.** The guard does not check that a new
@@ -209,11 +246,14 @@ history and are never moved.
   obligations for the reviewer**, recorded here rather than mechanised.
 - **Index-only merge conflicts.** When a PR's only conflict is the ADR index
   (`docs/adr/README.md`, one row per lane), it resolves at merge time rather than
-  bouncing the card back to the implementer for a further round: take the base
-  version plus the lane's own index blocks (its table row and its lane note), then
-  `prettier --write` to normalise the widened column padding. The reviewer/merger
-  may perform that mechanical refresh; the lane's content, numbering and assertions
-  are untouched by it.
+  bouncing the card back to the implementer for a further round. The resolution is
+  a **union** — keep **both** sides' ledger rows in ascending numeric order and set
+  the lane's `Next free` cell to `max(consumed)+1` across both; **never
+  pick-a-side**, because a pick-a-side resolution silently drops a side's row, which
+  is how the first OP-105 collision presented as an ordinary index conflict. After
+  the union, `prettier --write` normalises the widened column padding. The
+  reviewer/merger may perform that mechanical refresh; the lane's content, numbering
+  and assertions are untouched by it.
 - **Rejected alternatives** (letters follow ADR-0300, where (a) is the adopted rule
   stated above).
   - **(b) Merger-owned finalisation** — the merger assigns the number when the

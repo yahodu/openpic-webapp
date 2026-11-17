@@ -3,6 +3,14 @@
 - **Status:** Accepted · **Date:** 2026-10-05
 - **Card:** OP-84 RED (`t_5bf8fd6d`) · **Relates to:** [ADR-0014](ADR-0014-plans-catalogue-schema-and-seed.md) (the sibling seed pattern), [ADR-0015](ADR-0015-plans-seed-concurrency-atomic-upsert.md) (atomic upsert)
 - **Schema:** §19.1, §19.2, §4 (matrix), §1.1 (mobile group), §6 (dedupe/digest) · **Contract:** §7.6 (normative type catalogue)
+- **Consumers:** the notification routing-matrix modules and the specs that pin them —
+  modules `apps/web/src/server/notifications/notification-templates.ts`,
+  `apps/web/src/server/notifications/notification-templates.values.ts`,
+  `apps/web/src/server/notifications/notification-types.ts`,
+  `apps/web/src/server/notifications/notification-types.values.ts`; specs
+  `apps/web/src/server/notifications/notification-matrix.test.ts`,
+  `apps/web/src/server/notifications/notification-templates.test.ts`,
+  `apps/web/src/server/notifications/notification-types.channel-groups.test.ts`.
 
 ## Context
 

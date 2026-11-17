@@ -1,81 +1,49 @@
-import { readdirSync } from "node:fs";
-
 /**
- * Mechanical ADR-number guard for `docs/adr/` (review finding R-1, OP-96).
+ * The ADR-number guard's public entry point and frozen barrel (`0302` §10).
  *
- * **Why this exists.** ADR numbers used to be allocated by "take the lowest free
- * number at commit time", a rule no tool can enforce. On 2026-10-20 that cost a
- * day of rebases — four renumbers in one afternoon and a genuine collision on
- * `0144` that left PR #225 CONFLICTING. ADR-0300 replaces the rule with per-lane
- * reserved ranges (`docs/adr/README.md` § "ADR number allocation"); this module
- * pins the one *mechanical* half of that policy so CI catches the mistake
- * instead of a reviewer:
+ * **Why the guard exists.** ADR numbers used to be allocated by "take the lowest
+ * free number at commit time", a rule no tool can enforce. On 2026-10-20 that
+ * cost a day of rebases — four renumbers in one afternoon and a genuine
+ * collision on `0144` that left PR #225 CONFLICTING. ADR-0300 replaces the rule
+ * with per-lane reserved ranges (`docs/adr/README.md` § "ADR number
+ * allocation"); this module pins the first two invariants of the mechanical half
+ * of that policy and composes the third into the directory read:
  *
  *   1. no two in-scope files share an `ADR-NNNN` number;
- *   2. every in-scope `ADR-*.md` file name is well-formed.
+ *   2. every in-scope `ADR-*.md` file name is well-formed;
+ *   3. the ledger's reserved ranges are disjoint, and a range-shaped row that
+ *      does not parse is reported rather than skipped (`0300` §10) — the rows
+ *      are read by {@link parseLaneRanges} and reported by
+ *      {@link checkAdrDirectory}.
  *
- * Everything else — whether a number sits inside its lane's reserved range, and
- * whether the number is already used on `origin/main` — stays a review-time
- * obligation: the range ledger is prose in `docs/adr/README.md`, and parsing
- * prose in CI is brittle.
+ * The six invariants, and the module each one lives in, are tabulated once, in
+ * `0302` (`## Decision`, the six-row invariant table). Every other invariant is
+ * implemented in its own module and re-exported below.
+ *
+ * **The barrel is frozen.** New invariants are imported from their own module
+ * and are added to this barrel only if an external caller needs them. The
+ * re-exports at the bottom exist because the specs and the `0300` §12 pre-merge
+ * command import from this path — not because appending here is how the guard
+ * grows. A new invariant is a new module, its own spec, and one row in that
+ * six-row table.
  *
  * @see docs/CONVENTIONS.md §11 (ADR numbering)
  * @see docs/adr/ADR-0300-adr-number-range-allocation-policy.md
+ * @see docs/adr/ADR-0302-adr-number-guard-contract.md
  * @see apps/web/src/test/unit/adr-numbering.test.ts
+ * @see apps/web/src/test/unit/adr-lane-ranges.test.ts
+ * @see apps/web/src/test/unit/adr-source-references.test.ts
+ * @see apps/web/src/test/unit/adr-consumers.test.ts
+ * @see apps/web/src/test/unit/adr-record-links.test.ts
  */
 
-/**
- * The strict, canonical ADR file name: a four-digit number and a lowercase
- * `[a-z0-9]`-only dashed slug ending in `.md`. Deliberately anchored — a wrong
- * number length, an uppercase slug or another extension is malformed.
- */
-const ADR_FILE_NAME_PATTERN = /^ADR-(\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
-/**
- * The scope predicate: which file names the guard even looks at. Case-sensitive,
- * so a lowercase `adr-…` is not an ADR reference; `docs/adr/README.md` and any
- * other non-ADR markdown are ignored silently.
- */
-const IN_SCOPE_ADR_NAME_PATTERN = /^ADR-.*\.md$/;
-
-/** A single numbering defect found by {@link checkAdrNumbers}. */
-export interface AdrNumberIssue {
-  /**
-   * `duplicate` — two or more well-formed file names share one number;
-   * `malformed` — one in-scope file name does not match the strict pattern.
-   */
-  code: "duplicate" | "malformed";
-
-  /** The shared four-digit prefix, e.g. `"0146"`; `null` when unparseable. */
-  number: string | null;
-
-  /** The file names that triggered the issue, sorted ascending. */
-  files: string[];
-}
-
-/** The report shape returned by {@link checkAdrNumbers} and {@link checkAdrDirectory}. */
-export interface AdrCheckResult {
-  /** `true` exactly when {@link AdrCheckResult.issues} is empty. */
-  ok: boolean;
-
-  /** The defects found, deterministically ordered (see {@link checkAdrNumbers}). */
-  issues: AdrNumberIssue[];
-}
-
-/**
- * Extract the four-digit prefix of a *well-formed* ADR file name.
- *
- * @param fileName - A bare file name (no directory), e.g. `ADR-0146-a.md`.
- * @returns The four-digit prefix as written, e.g. `"0146"`; `null` when the name
- * does not match the strict pattern.
- */
-function adrDigitsOf(fileName: string): string | null {
-  const match = ADR_FILE_NAME_PATTERN.exec(fileName);
-  if (match === null) {
-    return null;
-  }
-  return match[1] ?? null;
-}
+import type { AdrCheckResult, AdrNumberIssue } from "./adr-guard-types.js";
+import { adrDigitsOf, compareStrings, IN_SCOPE_ADR_NAME_PATTERN } from "./adr-guard-types.js";
+import { findLaneRangeOverlaps, scanLaneLedger } from "./adr-lane-ranges.js";
+import { readDirectoryEntries, readTextFile } from "./adr-source-references.js";
 
 /**
  * Parse the number of a *well-formed* ADR file name, leading zeros dropped.
@@ -97,14 +65,6 @@ export function parseAdrNumber(fileName: string): number | null {
     return null;
   }
   return Number.parseInt(digits, 10);
-}
-
-/** Deterministic, locale-independent string order (CI logs must be stable). */
-function compareStrings(left: string, right: string): number {
-  if (left === right) {
-    return 0;
-  }
-  return left < right ? -1 : 1;
 }
 
 /**
@@ -198,6 +158,12 @@ export function checkAdrNumbers(fileNames: string[]): AdrCheckResult {
  * dropped, so a nested `archive/` copy of an ADR cannot produce a phantom
  * duplicate.
  *
+ * When the directory carries a `README.md`, its reserved-range ledger is parsed
+ * as well: one `lane-range-overlap` issue per intersecting pair and one
+ * `lane-range-malformed` issue per range-shaped row that does not parse (see
+ * {@link parseLaneRanges}). A malformed row never feeds the overlap predicate. A
+ * missing README, or one with no parseable row, adds nothing.
+ *
  * @param dir - Absolute or relative path to the ADR directory to check.
  * @returns The same report shape as {@link checkAdrNumbers}.
  * @throws If `dir` cannot be read (missing directory, permission denied).
@@ -207,9 +173,51 @@ export function checkAdrNumbers(fileNames: string[]): AdrCheckResult {
  * ```
  */
 export function checkAdrDirectory(dir: string): AdrCheckResult {
-  const fileNames = readdirSync(dir, { withFileTypes: true })
+  const fileNames = readDirectoryEntries(dir)
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name);
 
-  return checkAdrNumbers(fileNames);
+  const numbering = checkAdrNumbers(fileNames);
+  const readmePath = join(dir, "README.md");
+  if (!existsSync(readmePath)) {
+    return numbering;
+  }
+
+  const scan = scanLaneLedger(readTextFile(readmePath));
+  const issues = [
+    ...numbering.issues,
+    ...findLaneRangeOverlaps(scan.ranges),
+    ...scan.malformedHolders.map((holder) => ({
+      code: "lane-range-malformed" as const,
+      number: null,
+      files: [holder],
+    })),
+  ];
+  issues.sort(compareIssues);
+
+  return { ok: issues.length === 0, issues };
 }
+
+/*
+ * The frozen barrel (`0302` §10). Sorted by module, then by name; the union of
+ * these names is the guard's public surface and must not grow without a caller.
+ */
+
+export type {
+  AdrCheckResult,
+  AdrNumberIssue,
+  AdrRecordLinkFileText,
+  AdrRecordLinkIssue,
+  AdrRecordLinkResult,
+  AdrRecordText,
+  SourceAdrConsumerIssue,
+  SourceAdrConsumerResult,
+  SourceAdrReferenceIssue,
+  SourceAdrReferenceResult,
+  SourceFileText,
+} from "./adr-guard-types.js";
+export type { LaneRange } from "./adr-lane-ranges.js";
+export { parseLaneRanges } from "./adr-lane-ranges.js";
+export { checkAdrRecordLinks, checkRepositoryAdrLinks } from "./adr-record-links.js";
+export { checkRepositoryAdrReferences, checkSourceAdrReferences } from "./adr-source-references.js";
+export { checkRepositoryAdrConsumers, checkSourceAdrConsumers } from "./adr-consumers.js";

@@ -163,6 +163,7 @@ async function main(): Promise<void> {
     event: "db.indexes.bootstrap",
     created: report.created.length,
     existing: report.existing.length,
+    reconciled: report.reconciled.length,
   });
 
   await reportUndeclaredIndexes(db);

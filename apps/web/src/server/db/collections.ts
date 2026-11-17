@@ -19,10 +19,31 @@ export const COLLECTIONS = {
   eventOrganizers: "event_organizers",
   eventImages: "event_images",
   attendeeEventProfiles: "attendee_event_profiles",
+  /**
+   * Anonymous attendee sessions (schema §13.5): the `op_att` token's SHA-256,
+   * the device fingerprint and the TTL. App-owned identity, so it follows the
+   * `userProfiles` naming rather than the snake_case domain block (ADR-0781).
+   */
+  attendeeSessions: "attendeeSessions",
   subscriptions: "subscriptions",
+  /**
+   * The append-only billing ledger (schema §14.4). One row per money movement,
+   * written in the same transaction as the `subscriptions` patch it belongs to
+   * (§23); the unique `idempotencyKey` is what makes a re-projection after a
+   * crash write the same row rather than a second one (ADR-0441).
+   */
+  billingTransactions: "billing_transactions",
   dispatches: "notification_dispatches",
   accessLinks: "access_links",
   mediaAssets: "media_assets",
+  /**
+   * Upload sessions (schema §16.2; OP-123, ADR-0701): one row per
+   * `{tenantId, createdByUserId, contentHash}` attempt, read by the
+   * `batch-resolve` pre-check to resume an interrupted multipart upload. The
+   * provider's upload id lives in `externalRefs`; parts are never stored here
+   * (the live `ListParts` answer is the only part truth).
+   */
+  uploadSessions: "upload_sessions",
   faceMatches: "face_matches",
   providerWebhookEvents: "provider_webhook_events",
   idempotencyKeys: "idempotency_keys",
@@ -85,6 +106,40 @@ export const COLLECTIONS = {
    * delta, never a mutation of the plan (ADR-0341).
    */
   entitlementGrants: "entitlementGrants",
+  /**
+   * Pre-aggregated dashboard rollups (schema §20.1, OP-119). One row per
+   * `{ scope, dateKey }`; the nightly `analytics-rollup` job writes it and
+   * `GET /tenants/{tenantId}/analytics` reads **only** this collection, so the
+   * read never aggregates a transactional collection at request time
+   * (ADR-0642).
+   */
+  analyticsDaily: "analyticsDaily",
+  /**
+   * Biometric consent records (schema §15.4). One row per grant, carrying the
+   * policy version, the document digest and the hashed evidence; a withdrawal
+   * stamps `withdrawnAt` rather than deleting, because the record of consent is
+   * the evidence (OP-131, ADR-0789).
+   */
+  consents: "consents",
+  /**
+   * Attendee selfies (schema §16.4). The row carries the face vector, the
+   * liveness and quality verdicts and the `profileId` a withdrawal deletes by
+   * (OP-131, ADR-0790).
+   */
+  selfies: "selfies",
+  /**
+   * Attendee download jobs (contract §6.6, OP-133). Addressed by their id alone
+   * — `GET /p/downloads/{id}` carries no event — so, like `attendeeSessions`,
+   * the row lives outside a tenant boundary; `tenantId` travels as data for the
+   * build worker (ADR-0794 §5).
+   */
+  downloadJobs: "downloadJobs",
+  /**
+   * Worker liveness rows (OP-135, contract §10.3.2; ADR-0829 §3). One row per
+   * worker process, refreshed by every heartbeat and expired by TTL; platform
+   * scope because a worker serves every tenant (§10.2).
+   */
+  workerHeartbeats: "workerHeartbeats",
 } as const;
 
 /** The name of any registered collection. */

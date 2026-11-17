@@ -149,7 +149,7 @@ const PROVIDER_SPECS: readonly ProviderSpec[] = [
   { key: "RATE_LIMIT_PROVIDER", values: ["memory", "redis"] },
   { key: "STORAGE_PROVIDER", values: ["memory", "s3"] },
   { key: "QUEUE_PROVIDER", values: ["memory", "mongo"] },
-  { key: "PAYMENT_PROVIDER", values: ["memory", "stripe"] },
+  { key: "PAYMENT_PROVIDER", values: ["memory", "stripe", "cashfree"] },
   { key: "MESSAGE_TRANSPORT", values: ["memory", "ses"] },
 ];
 
@@ -519,6 +519,183 @@ export function getRateLimitConfig(): RateLimitRuntimeConfig {
     upstashToken,
     salt: process.env.RATE_LIMIT_SALT ?? DEFAULT_RATE_LIMIT_SALT,
   };
+}
+
+/**
+ * Runtime wiring for the payment-provider adapters (OP-107, ADR-0421).
+ *
+ * Kept outside the frozen {@link AppConfig} shape (which its own specs assert
+ * exactly) because it is operational wiring — the Cashfree credentials and the
+ * pinned vendor API version — exactly as {@link getNovuRuntimeConfig} and
+ * {@link getRateLimitConfig} are. The adapter itself receives these values as
+ * an explicit object; this accessor is the single place they are read from the
+ * environment, so no adapter touches `process.env` (the `no-restricted-
+ * properties` boundary).
+ *
+ * Fails closed: when `cashfree` is selected, all four credential names must be
+ * present and non-blank. A deploy that selects the vendor without credentials
+ * must refuse the request rather than call it half-configured.
+ */
+export interface PaymentsRuntimeConfig {
+  /** The selected `PAYMENT_PROVIDER` (`memory` | `stripe` | `cashfree`). */
+  readonly provider: string;
+  /** The Cashfree credentials when `cashfree` is selected, else `null`. */
+  readonly cashfree: {
+    readonly clientId: string;
+    readonly clientSecret: string;
+    readonly apiVersion: string;
+    readonly webhookSecret: string;
+  } | null;
+}
+
+/**
+ * Runtime wiring for the object-storage provider (OP-114, ADR-0540 §4).
+ *
+ * Kept outside the frozen {@link AppConfig} shape because it is operational
+ * wiring (a vendor endpoint, region, an access-key pair and the deployment's
+ * physical bucket names) rather than a deploy contract. When `s3` is
+ * selected this accessor is the single place the `R2_*` names are read from
+ * the environment; any missing/blank name is refused with a `ConfigError`
+ * listing only those names (mirroring `getPaymentsRuntimeConfig`).
+ */
+export interface StorageRuntimeConfig {
+  /**
+   * The R2/S3-compatible wiring when `s3` is selected, else `null`.
+   *
+   * `buckets` is the logical-location → physical-bucket map the OP-112
+   * adapter resolves through `bucketForLocation` (ADR-0520 §3): the four
+   * contract locations `originals`/`thumbnails`/`exports`/`branding` must
+   * each name a bucket, or the adapter refuses with a `ConfigError`.
+   */
+  readonly r2: {
+    readonly endpoint: string;
+    readonly region: string;
+    readonly credentials: {
+      readonly accessKeyId: string;
+      readonly secretAccessKey: string;
+    };
+    readonly buckets: Readonly<Record<string, string>>;
+  } | null;
+}
+
+/**
+ * Read the object-storage runtime wiring from the environment.
+ *
+ * @returns The R2 wiring when `STORAGE_PROVIDER=s3` (otherwise `null`).
+ * @throws {ConfigError} When `s3` is selected and one of the `R2_*` names is
+ *   unset or blank. Only the key names are reported.
+ */
+export function getStorageRuntimeConfig(): StorageRuntimeConfig {
+  const provider = process.env.STORAGE_PROVIDER ?? DEFAULT_PROVIDER;
+  if (provider !== "s3") {
+    return { r2: null };
+  }
+
+  const required = (key: string): string => process.env[key]?.trim() ?? "";
+  const endpoint = required("R2_ENDPOINT");
+  const region = required("R2_REGION");
+  const accessKeyId = required("R2_ACCESS_KEY_ID");
+  const secretAccessKey = required("R2_SECRET_ACCESS_KEY");
+  const buckets: Record<string, string> = {
+    originals: required("R2_BUCKET_ORIGINALS"),
+    thumbnails: required("R2_BUCKET_THUMBNAILS"),
+    exports: required("R2_BUCKET_EXPORTS"),
+    branding: required("R2_BUCKET_BRANDING"),
+  };
+
+  const missing: string[] = [];
+  for (const [key, value] of [
+    ["R2_ENDPOINT", endpoint],
+    ["R2_REGION", region],
+    ["R2_ACCESS_KEY_ID", accessKeyId],
+    ["R2_SECRET_ACCESS_KEY", secretAccessKey],
+    ["R2_BUCKET_ORIGINALS", buckets.originals],
+    ["R2_BUCKET_THUMBNAILS", buckets.thumbnails],
+    ["R2_BUCKET_EXPORTS", buckets.exports],
+    ["R2_BUCKET_BRANDING", buckets.branding],
+  ] as const) {
+    if (value === "") {
+      missing.push(key);
+    }
+  }
+  if (missing.length > 0) {
+    throw new ConfigError(missing);
+  }
+
+  return { r2: { endpoint, region, credentials: { accessKeyId, secretAccessKey }, buckets } };
+}
+
+/**
+ * Read the queue runtime wiring from the environment (OP-124, ADR-0721 D5).
+ *
+ * The `WorkQueue` composition root needs the selected provider plus the Upstash
+ * REST credentials for the non-memory selection. Fails closed: a selection
+ * other than `memory` without both names refuses the request instead of
+ * silently degrading to the per-process queue, which no worker drains.
+ *
+ * @returns The provider selection and, for a non-memory provider, the Upstash
+ *   credentials (always present on that arm).
+ * @throws {ConfigError} Naming the missing `UPSTASH_*` variables.
+ */
+export type QueueRuntimeConfig =
+  | { readonly provider: "memory" }
+  | { readonly provider: string; readonly upstashUrl: string; readonly upstashToken: string };
+
+/** @see QueueRuntimeConfig */
+export function getQueueRuntimeConfig(): QueueRuntimeConfig {
+  const provider = process.env.QUEUE_PROVIDER ?? DEFAULT_PROVIDER;
+  if (provider === "memory") {
+    return { provider };
+  }
+
+  const upstashUrl = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  if (!upstashUrl || !upstashToken) {
+    throw new ConfigError([
+      ...(upstashUrl ? [] : ["UPSTASH_REDIS_REST_URL"]),
+      ...(upstashToken ? [] : ["UPSTASH_REDIS_REST_TOKEN"]),
+    ]);
+  }
+  return { provider, upstashUrl, upstashToken };
+}
+
+/**
+ * Read the payment-provider runtime wiring from the environment.
+ *
+ * @returns The provider selection, and the Cashfree credentials when it is
+ *   `cashfree` (otherwise `null`).
+ * @throws {ConfigError} When `cashfree` is selected and one of the four
+ *   `CASHFREE_*` names is unset or blank. Only the key names are reported.
+ */
+export function getPaymentsRuntimeConfig(): PaymentsRuntimeConfig {
+  const provider = process.env.PAYMENT_PROVIDER ?? DEFAULT_PROVIDER;
+  if (provider !== "cashfree") {
+    return { provider, cashfree: null };
+  }
+
+  const clientId = process.env.CASHFREE_CLIENT_ID ?? "";
+  const clientSecret = process.env.CASHFREE_CLIENT_SECRET ?? "";
+  const apiVersion = process.env.CASHFREE_API_VERSION ?? "";
+  const webhookSecret = process.env.CASHFREE_WEBHOOK_SECRET ?? "";
+
+  const missing: string[] = [];
+  if (clientId.trim() === "") {
+    missing.push("CASHFREE_CLIENT_ID");
+  }
+  if (clientSecret.trim() === "") {
+    missing.push("CASHFREE_CLIENT_SECRET");
+  }
+  if (apiVersion.trim() === "") {
+    missing.push("CASHFREE_API_VERSION");
+  }
+  if (webhookSecret.trim() === "") {
+    missing.push("CASHFREE_WEBHOOK_SECRET");
+  }
+  if (missing.length > 0) {
+    throw new ConfigError(missing);
+  }
+
+  return { provider, cashfree: { clientId, clientSecret, apiVersion, webhookSecret } };
 }
 
 /** Recursively freeze an object graph so callers cannot mutate configuration. */
