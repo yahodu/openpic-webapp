@@ -193,7 +193,7 @@ Every production file was restored byte-identically after each run (sha256 `75ac
 ## Consequences
 
 - **One file, appended.** `apps/web/src/test/integration/internal-worker-endpoints.test.ts` grows by
-  the eleven new cases (+523 lines) plus two import-line additions (`vi`, `Collection`) and
+  the eleven new cases (+519 lines) plus two import-line additions (`vi`, `Collection`) and
   `getPlatformSettings` in the existing import block. No existing case, helper, fixture or mock is
   edited; the frozen 31 stay green (`35 passed` of the 42 includes them).
 - `tsc -p apps/web/tsconfig.json --noEmit` exit `0` at the pinned head; `prettier --check` clean;
