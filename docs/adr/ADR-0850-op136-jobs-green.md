@@ -181,15 +181,27 @@ row's identity is `{tenantId, entitlementKey, periodKey}`", while contract §6.1
 serves those rows raw "for support and reconciliation". Both are data loss
 dressed as a pass.
 
-**Proposed correction (test-side, one line):** scope the read to the period the
-case seeded —
+**Proposed correction (test-side, small):** give the helper the period the case
+seeded instead of letting `findOne` answer the index's first row. The same helper
+serves the `storage.bytes` cases, whose row is `periodKey: "lifetime"`, so a
+constant `periodKey("monthly", NOW)` would break them — the period must be a
+parameter:
 
 ```ts
-findOne({ tenantId: TENANT, entitlementKey, periodKey: periodKey("monthly", NOW) });
+async function latch(entitlementKey: string, period: string): Promise<unknown> {
+  const row = await app.db
+    .collection(COLLECTIONS.usageCounters)
+    .findOne({ tenantId: TENANT, entitlementKey, periodKey: period });
+  return row?.thresholdsNotified;
+}
 ```
 
-`periodKey` is already imported by the file. Left red on purpose; no test,
-fixture or helper was edited.
+with `latch("storage.bytes", "lifetime")` at the I6 call sites and
+`latch("events.active", periodKey("monthly", NOW))` at this case's (the helper's
+three I6 calls pass `lifetime`, this case's one call passes the current month;
+`periodKey` is already imported by the file). Left red on purpose; no test,
+fixture or helper was edited, and the repair was routed to the Test Author as its
+own card rather than made here.
 
 ### 6. Cron registration
 
