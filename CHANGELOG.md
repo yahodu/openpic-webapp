@@ -1,3 +1,9 @@
+## [1.64.0](https://github.com/yahodu/openpic-webapp/compare/v1.63.6...v1.64.0) (2026-11-17)
+
+### Features
+
+- **internal:** OP-135 add the worker M2M endpoints and their mappers ([#616](https://github.com/yahodu/openpic-webapp/issues/616)) ([a8856bc](https://github.com/yahodu/openpic-webapp/commit/a8856bc2dccd808b76e68db363d58b89f75385e4))
+
 ## [1.63.6](https://github.com/yahodu/openpic-webapp/compare/v1.63.5...v1.63.6) (2026-11-13)
 
 ### Bug Fixes
