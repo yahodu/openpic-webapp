@@ -283,6 +283,11 @@ written.
   same four-line `internalAuthStage({...})`. Routed as refactor `t_cf154d43`.
   `cron/notification-fanout/route.ts` legitimately differs (its secret is
   method-dependent, ADR-0106 §3) and was excluded from the routing.
+- **Info — §"Evidence"'s case arithmetic does not add up.** The paragraph reads
+  "the 31 frozen cases, the superseded-selfie case, and ADR-0834's 11 pins"
+  against `42 passed (42)`; 31 + 1 + 11 is 43, and the frozen set is 30. Routed as
+  docs `t_db2ea107`; the decomposition in this section's first bullet is the
+  correct one.
 - **Info, recorded not routed:** three literal `.gitleaks.toml` allowlist entries
   for synthetic fixtures (§"Consequences") — narrow, literal values, no regex
   widening, and the secret scan is green on the reviewed head and the merge sha;
@@ -310,7 +315,8 @@ live defects.
   card's instruction was not behaviour-neutral there and the implementer disputed
   it with a measured `6 failed | 13 passed` before restoring the file
   byte-identically.
-- **Open, recorded only:** F-B — the refusal precedence is unchanged and unpinned;
-  it needs a pin before any code change.
+- **Open, with cards:** F-B — the refusal precedence is unchanged and unpinned;
+  the pin is `t_715cc420` (a code change needs it first), and the §"Evidence"
+  arithmetic is `t_db2ea107`.
 - **Open, no card:** the two Info items (the `.gitleaks` entries are accepted as
   they stand; the retry path stays unexercised until a pin needs it).
