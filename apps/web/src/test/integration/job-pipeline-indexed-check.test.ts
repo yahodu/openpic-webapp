@@ -745,12 +745,13 @@ describe("pipeline-indexed-check: the batch arm for the non-indexed terminal eve
  *
  * ## Which cases are RED at the RED head
  *
- * `I12`, `I13` and `I14` are the pins: at the RED head the third event is never
- * reached, so its announcement (and its batch summary) never exists. `I15` is a
- * **characterization arm**, green on arrival: it is the discriminator against a
- * "finish" that completes an un-indexed event by marking it done — a shape whose
- * windows all latched — which is why it asserts the `delayed` → `indexed`
- * transition rather than the window's tail.
+ * `I12`, `I13`, `I14` and `I16` are the pins: at the RED head the third event is
+ * never reached, so its announcement (and, for `I14`, its batch summary) never
+ * exists. `I16` is the sharpest of them: it puts the starved event behind two
+ * `delayed` rows, which never latch, so a window scoped to the latch holds its
+ * page for ever. `I15` is a **characterization arm**, green on arrival: it
+ * asserts the `delayed` → `indexed` transition, which reddens a "finish" that
+ * completes an un-indexed event by marking every evaluated row done.
  */
 describe("pipeline-indexed-check: the scan window advances past the first page", () => {
   /**
@@ -894,5 +895,31 @@ describe("pipeline-indexed-check: the scan window advances past the first page",
     const rows = await indexedRowsFor(event.eventId);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.payload.notifyByEmail).toBe(true);
+  });
+
+  it("I16: an event behind two never-latching rows is still announced", async () => {
+    // Arrange — two `delayed` events ahead of the only indexable one. A `delayed`
+    // row never latches, so a window whose filter is the latch holds these two
+    // slots for ever and the third event is never reached.
+    const failedOne = await seedEvent(ALL_FAILED);
+    const failedTwo = await seedEvent(ALL_FAILED);
+    const indexable = await seedEvent(ALL_PROCESSED);
+    expect(derivePipelineStatus(ALL_FAILED)).toBe("delayed");
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+
+    // Act — three ticks of the every-5-minutes job, each bounded to two events.
+    await runJobWithLimit(NOW, 2);
+    await runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 2);
+    await runJobWithLimit(new Date(NOW.getTime() + 2 * NEXT_BUCKET_MS), 2);
+
+    // Assert — the event behind them is announced, exactly once…
+    expect(await indexedRowsFor(indexable.eventId)).toHaveLength(1);
+
+    // …the two `delayed` events are never announced at all…
+    expect(await indexedRowsFor(failedOne.eventId)).toHaveLength(0);
+    expect(await indexedRowsFor(failedTwo.eventId)).toHaveLength(0);
+
+    // …and nothing else was announced in their place.
+    expect(await outboxFor(INDEXED_EVENT)).toHaveLength(1);
   });
 });
