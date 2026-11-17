@@ -216,3 +216,101 @@ behaviour-neutral) so it has no probe; the four `I5` refusal cases are its regre
 green. Gates at this head: `tsc -p apps/web/tsconfig.json --noEmit` exit `0`, `eslint` 0 errors,
 `prettier --check` clean, the `adr-*` guards green (3 files / 149 cases), the `unit` project
 `183 files / 3001 passed | 3 skipped`, and the `integration` project `132 files / 1398 passed`.
+
+## Review sign-off (round 1, artifact lens) — APPROVED WITH FINDINGS
+
+Reviewed and shipped at PR #626. The implementer had already squash-merged it
+(`5db22380`) when the review ran, so the reviewer **verified** rather than
+re-merged: the branch head `b4899bc3`'s tree and the squash's tree are both
+`b50d9bbf…`, and `git diff` between them is empty — the bytes reviewed are the
+bytes on the trunk.
+
+### The acceptance criteria, each mapped to the check that proved them
+
+- **The pins this GREEN carries are green on the merged tree** — the lane spec
+  `42 passed (42)`: the frozen 30, ADR-0832's superseded-selfie case and
+  ADR-0834's 11 pins. F7 has no pin by design; the four `I5` refusals are its
+  regression lock and stayed green.
+- **The record obeys the allocation policy** — `adr-numbering` `29 passed (29)`
+  over 343 trunk records, with no duplicate `ADR-NNNN`; the lane cell moved
+  `0835` → `0836` in this record's own entry.
+- **The tree compiles and is formatted** — `tsc` for `apps/web` exits `0`,
+  `eslint` 0 errors, `prettier --check` clean on both ADRs and the README.
+- **The PR shipped clean** — 15/15 PR checks green on the reviewed head, and main
+  `CI` success on the merge sha.
+- **Each guard is load-bearing, measured not assumed** — the reviewer's own revert
+  probe, run against the merged tree and then undone: the lease keys removed from
+  `leaseFilter` gives `1 failed | 41 passed (42)`, the failure being the F4a pin
+  (`applies exactly one and never lets the loser overwrite the winner`) and no
+  other case. The route was restored byte-identically (`sha256 80e14b91…`). This
+  is the same probe shape as the six in §"Evidence", reproduced independently.
+
+### The F6 deviation is accepted
+
+§4 ships a **one-sided** forward window (`+24 h`) where the card said `±24 h`.
+§4's reasoning and
+[ADR-0834](ADR-0834-op135-internal-worker-boundary-pins.md) §5's counterfactual
+are the measurement that settles it: the symmetric form reddens four **frozen**
+cases (`10 failed | 32 passed (42)`) because the lane's own `domainEvent()`
+fixture posts a fixed instant 52.92 days before the run, and this card forbids
+editing them. Said plainly: **the card's wording was unsatisfiable beside the
+frozen 30**, the deviation is the only faithful reading, and a past instant is a
+legitimate worker backlog while the future direction is the one that inflates
+`expireAt`.
+
+### Findings raised
+
+By card id only — the records these cards owe did not exist when this section was
+written.
+
+- **F-A (Low) — the profile pointer is read outside the transaction.** The
+  profile's `activeSelfieId` was read at `report/route.ts:156-174`, before
+  `withTransaction` (`:212`), and the profile write filters on the profile id
+  alone (`:249`). A confirm that lands between the read and the
+  commit therefore lets a report for a selfie the profile no longer names
+  overwrite the live one — the class ADR-0833 closed sequentially, reopened inside
+  the new transaction. Routed as pin `t_6c7cc100` + GREEN `t_e69c0e41` (a change
+  requires the pin first).
+- **F-B (Low) — the batch's two refusals are ordered by accident.** The
+  forward-window check precedes the unknown-key resolution, so an item that is
+  **both** future-dated and unknown answers `occurred_at_out_of_window` where §4
+  says `unknown_event_key`'s per-item behaviour, indices and reasons are
+  unchanged. Unpinned, and not fixed here: it changes an answer, which needs its
+  own pin.
+- **F-C (Low) — the thunk F7 deduped still has three copies.**
+  `cron/_lib/run-cron-route.ts:37`,
+  `cron/_lib/run-billing-cron-route.ts:47` and `cron/sample/route.ts:47` carry the
+  same four-line `internalAuthStage({...})`. Routed as refactor `t_cf154d43`.
+  `cron/notification-fanout/route.ts` legitimately differs (its secret is
+  method-dependent, ADR-0106 §3) and was excluded from the routing.
+- **Info, recorded not routed:** three literal `.gitleaks.toml` allowlist entries
+  for synthetic fixtures (§"Consequences") — narrow, literal values, no regex
+  widening, and the secret scan is green on the reviewed head and the merge sha;
+  `worker.report_discarded` (§3) is logged inside the `withTransaction` callback,
+  so a retried attempt can log it more than once; and **F4b**'s pin rejects the
+  profile write with a non-retryable error, so `withTransaction`'s three-attempt
+  retry path stays unexercised.
+
+Nothing here is a blocker: every finding is a coverage gap or a hygiene item that
+belongs to its own pin, and nothing in §1–§5 is retracted.
+
+### Post-review status
+
+Written after this record's merge, so the frozen text does not read as a list of
+live defects.
+
+- **Addressed and merged:** F-A —
+  [ADR-0837](ADR-0837-op135-superseded-pointer-race-pin.md)'s pin,
+  [ADR-0838](ADR-0838-op135-superseded-pointer-write-filter-green.md)'s GREEN (the
+  pointer rides the write filter) and
+  [ADR-0839](ADR-0839-op135-pointer-race-failed-verdict-pin.md)'s failed-verdict
+  pin; F-C — two of the three runners now take `internalRouteAuth`, and the
+  billing runner was **correctly left inline**: its stage carries
+  `cronBearerAnyMethod: true` (ADR-0500's `POST` + `CRON_SECRET` leg), so the
+  card's instruction was not behaviour-neutral there and the implementer disputed
+  it with a measured `6 failed | 13 passed` before restoring the file
+  byte-identically.
+- **Open, recorded only:** F-B — the refusal precedence is unchanged and unpinned;
+  it needs a pin before any code change.
+- **Open, no card:** the two Info items (the `.gitleaks` entries are accepted as
+  they stand; the retry path stays unexercised until a pin needs it).
