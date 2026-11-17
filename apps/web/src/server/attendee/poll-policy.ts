@@ -63,17 +63,21 @@ export function nextPollAfter(now: Date, intervalMs: number): Date {
 export interface EventIndexingCounters {
   readonly imageCount: number;
   readonly processedImageCount: number;
+  readonly failedImageCount: number;
 }
 
 /**
- * Whether the event's pipeline has processed every image (§6.4).
+ * Whether every image has left the queue (§6.4; ADR-0314 §5).
  *
  * §6.4 calls this a property of the event, not of the attendee, so the poll and
- * the gallery summary read the same answer from the same place.
+ * the gallery summary read the same answer from the same place. A permanently
+ * failed image has drained too: it is not still queued, so it counts toward the
+ * answer — the rule the public landing page and `derivePipelineStatus` already
+ * use, which keeps the two attendee readers from disagreeing.
  *
  * @param counters - The event's cached counters.
- * @returns `true` once every uploaded image has been processed.
+ * @returns `true` once every uploaded image has been processed or has failed.
  */
 export function eventIndexingComplete(counters: EventIndexingCounters): boolean {
-  return counters.processedImageCount >= counters.imageCount;
+  return counters.processedImageCount + counters.failedImageCount >= counters.imageCount;
 }

@@ -497,6 +497,8 @@ async function findFaceMatchById(matchId: string, db: Db = getDb()): Promise<Own
 export interface OwnedWorkItemRow {
   readonly _id: ObjectId;
   readonly tenantId: string;
+  /** The event an `event_images` row belongs to; the report's recount key (ADR-0314 §1). */
+  readonly eventId?: ObjectId;
   readonly profileId?: ObjectId;
   readonly processing?: {
     readonly status?: string;
@@ -516,6 +518,9 @@ export interface OwnedMediaAssetRow {
 /**
  * One work item by its id alone, for the worker's report (OP-135, §10.3.2).
  *
+ * `eventId` rides the projection because a `done` image's event is what the
+ * report recounts its counters from (ADR-0314 §1).
+ *
  * @param kind - The collection the id addresses.
  * @param id - The 24-hex work item id.
  * @param db - The database handle; defaults to the shared client.
@@ -534,7 +539,7 @@ async function findWorkItemById(
     .collection(collection)
     .findOne(
       { _id: new ObjectId(id) },
-      { projection: { tenantId: 1, profileId: 1, processing: 1 } }
+      { projection: { tenantId: 1, eventId: 1, profileId: 1, processing: 1 } }
     )) as OwnedWorkItemRow | null;
 }
 

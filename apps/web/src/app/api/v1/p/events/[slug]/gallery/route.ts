@@ -108,7 +108,11 @@ interface AssetRow {
 
 /** The `events` fields the summary reads (§15.1). */
 interface EventRow {
-  readonly counters: { readonly imageCount: number; readonly processedImageCount: number };
+  readonly counters: {
+    readonly imageCount: number;
+    readonly processedImageCount: number;
+    readonly failedImageCount: number;
+  };
   readonly retentionExpiresAt?: Date | null;
 }
 
@@ -352,7 +356,7 @@ export const GET = defineRoute({
               ? null
               : eventRow.retentionExpiresAt.toISOString(),
           indexingComplete: eventIndexingComplete(
-            eventRow?.counters ?? { imageCount: 0, processedImageCount: 0 }
+            eventRow?.counters ?? { imageCount: 0, processedImageCount: 0, failedImageCount: 0 }
           ),
         },
         ...(truncated ? { truncatedForAnonymous: true, loginUrl: LOGIN_URL } : {}),

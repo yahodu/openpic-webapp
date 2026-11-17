@@ -1,4 +1,4 @@
-import type { Document } from "mongodb";
+import type { Document, ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { internalRouteAuth } from "@/server/auth/internal-hmac";
@@ -35,6 +35,12 @@ import { getPlatformSettings } from "@/server/settings/platform-settings";
  *   - **A withdrawn profile's late result is discarded.** A withdrawal deletes
  *     the selfie rows and their matches (§6.2), so a report that lands
  *     afterwards must not re-create them.
+ *   - **The event's processing counters are recounted, not incremented.** After
+ *     the items are applied, each distinct event that had an applied
+ *     `event_image` item has `counters.processedImageCount`/`failedImageCount`
+ *     recomputed from source (ADR-0314 §1). A recount is idempotent, so a replay
+ *     or a reprocess re-entry self-corrects where a `$inc` would double-count
+ *     and tell an attendee a still-queued gallery is complete.
  */
 
 const ROUTE = "/api/v1/internal/worker/report";
@@ -117,6 +123,9 @@ export const POST = defineRoute<
     const rejected: z.infer<typeof rejectedItemSchema>[] = [];
     let applied = 0;
     let leaseLost = 0;
+    // ADR-0314 §1: one recount per distinct event that had an applied image
+    // item. Keyed by hex, because two reads of one event are distinct ids.
+    const recounted = new Map<string, { tenantId: string; eventId: ObjectId }>();
 
     /** Count and report a lease this reporter no longer holds. */
     const loseLease = (kind: string, id: string): void => {
@@ -206,6 +215,12 @@ export const POST = defineRoute<
           loseLease(item.kind, item.id);
           continue;
         }
+        if (row.eventId !== undefined) {
+          recounted.set(row.eventId.toHexString(), {
+            tenantId: row.tenantId,
+            eventId: row.eventId,
+          });
+        }
       } else {
         const kept = await withTransaction(async (session) => {
           const written = await tenant.collection(COLLECTIONS.selfies).updateOne(
@@ -275,6 +290,25 @@ export const POST = defineRoute<
       }
 
       applied += 1;
+    }
+
+    // The recount runs after the items, never per item and never inside their
+    // transactions: two counts per distinct event on the `{ eventId }` index
+    // prefix, and a crash before it leaves a stale counter the next report or
+    // the nightly `counter-reconcile` repairs (ADR-0314 §1, §3).
+    for (const { tenantId, eventId } of recounted.values()) {
+      const tenant = tenantRepo(tenantId, db);
+      const images = tenant.collection(COLLECTIONS.eventImages);
+      const [done, failed] = await Promise.all([
+        images.countDocuments({ eventId, deletedAt: null, "processing.status": "done" }),
+        images.countDocuments({ eventId, deletedAt: null, "processing.status": "failed" }),
+      ]);
+      await tenant
+        .collection(COLLECTIONS.events)
+        .updateOne(
+          { _id: eventId },
+          { $set: { "counters.processedImageCount": done, "counters.failedImageCount": failed } }
+        );
     }
 
     return { body: { applied, leaseLost, rejected } };

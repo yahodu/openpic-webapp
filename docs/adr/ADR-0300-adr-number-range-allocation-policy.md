@@ -343,3 +343,34 @@ number-shaped cell in the file, which is a consumed count. The range end is the
 only value in the ledger that is a reservation bound, and it is readable from
 the same row, so the correct rule costs the allocator nothing extra to apply.
 The choice is recorded on card `t_95e7ed1e`.
+
+## §11 — An exhausted block draws from the pool; its cell is never repaired (2026-11-17, card `t_949d96c2`, ADR-0314)
+
+**The trigger.** The `OP-129 attendee identity lane` row's `Next free` cell read
+`0849` on `origin/main` `a5f06c85` while its range is `0780`–`0798`. The block is
+**exhausted**, so the cell named a number that could never be a legitimate value
+of that row and that the `unallocated (future lanes)` cursor already held. This
+section states the rule the practice needed; ADR-0314 §2 carries the measurement
+and moves no cell.
+
+18. **An exhausted block keeps its range and draws from the pool.** A lane whose
+    range is exhausted draws every further record from the `unallocated (future
+lanes)` cursor (item 16), exactly as a lane with no block would; each draw
+    advances **both** the lane cell and the pool cursor.
+19. **A cell outside its own range is a symptom, not an allocation.** A value
+    beyond the row's range end means "this block is exhausted". No consumer may
+    mint from it, and the range end stays the only bound (item 14), because the
+    guard (`lane-range-overlap`, item 17) compares reserved _ranges_ and cannot
+    see a cell.
+20. **The allocator never repairs a foreign cell.** Rewriting an exhausted cell
+    back inside its range would invite the next draw to mint a number the pool
+    already reserved, and a repair that renumbers landed records is out of
+    policy. The fact goes in the ledger note instead.
+21. **An exhausted-but-unrepaired cell is not licence to re-cut the range.** The
+    block stays reserved, gaps included, and dead to new draws.
+
+**Rejected alternative — treat the out-of-range cell as the lane's next number.**
+It is the cheapest reading of the ledger and it is the one that fails: the cell
+names a consumed pool number, so the next record would collide with the record
+that already holds it. The practice of drawing from the pool is already recorded
+ad hoc (ADR-0799, ADR-0800, ADR-0811, ADR-0818); items 18–21 give it a clause.

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { nextPollAfter, pollIntervalMs, type AttendeeStatus } from "@/server/attendee/poll-policy";
+import {
+  eventIndexingComplete,
+  nextPollAfter,
+  pollIntervalMs,
+  type AttendeeStatus,
+} from "@/server/attendee/poll-policy";
 
 /**
  * Unit contract — the adaptive poll-interval policy table
@@ -112,5 +117,56 @@ describe("nextPollAfter", () => {
     nextPollAfter(now, INDEXING_MS);
 
     expect(now.getTime()).toBe(before);
+  });
+});
+
+/* ─────────── P5 — one drained predicate for both attendee readers ─────────── */
+
+/**
+ * The three `events.counters` fields indexing progress is read from (§15.1),
+ * stated here as one object so a case can pass the event's own counters to the
+ * predicate unchanged (ADR-0314 §Decision item 1).
+ */
+interface IndexingCounters {
+  readonly imageCount: number;
+  readonly processedImageCount: number;
+  readonly failedImageCount: number;
+}
+
+/**
+ * P5 of ADR-0314 — `eventIndexingComplete` counts the images that **failed**,
+ * not only the ones that were processed.
+ *
+ * The flag is the event's own progress (ADR-0793 §10), and two shipped
+ * readers already answer it that way: `GET /api/v1/p/events/{slug}`
+ * (`processedImageCount + failedImageCount >= imageCount`) and
+ * `derivePipelineStatus`. This predicate counted `processedImageCount` alone, so
+ * an event whose remaining images were permanently failed never settled for the
+ * attendee — `4 + 1 >= 5` is never `4 >= 5` — and `/me` kept
+ * `pollIntervalMs: 15000` for the rest of the event's life. A permanently failed
+ * image drains the event: `partial_failure`/`delayed` is a pipeline *state*, not
+ * "still indexing" (ADR-0314 §Decision item 5, which supersedes the earlier
+ * predicate arithmetic while keeping its intent).
+ */
+describe("eventIndexingComplete — the drained predicate (ADR-0314 §5)", () => {
+  it.each<readonly [IndexingCounters, boolean]>([
+    [{ imageCount: 5, processedImageCount: 4, failedImageCount: 1 }, true],
+    [{ imageCount: 5, processedImageCount: 4, failedImageCount: 0 }, false],
+    [{ imageCount: 5, processedImageCount: 5, failedImageCount: 0 }, true],
+    [{ imageCount: 0, processedImageCount: 0, failedImageCount: 0 }, true],
+  ])("answers %o with %s", (counters, expected) => {
+    expect(eventIndexingComplete(counters)).toBe(expected);
+  });
+
+  it("drains an event whose only remaining image failed, so the gallery settles", () => {
+    // The shipped failure: five images, four processed, one permanently failed.
+    // The gallery is as complete as it will ever be, so the poll must settle.
+    const counters: IndexingCounters = {
+      imageCount: 5,
+      processedImageCount: 4,
+      failedImageCount: 1,
+    };
+
+    expect(eventIndexingComplete(counters)).toBe(true);
   });
 });

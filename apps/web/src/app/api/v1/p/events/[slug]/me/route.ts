@@ -42,7 +42,11 @@ import { getPlatformSettings } from "@/server/settings/platform-settings";
 
 /** The `events` fields the poll reads (§15.1). */
 interface EventRow {
-  readonly counters: { readonly imageCount: number; readonly processedImageCount: number };
+  readonly counters: {
+    readonly imageCount: number;
+    readonly processedImageCount: number;
+    readonly failedImageCount: number;
+  };
   readonly retentionExpiresAt?: Date | null;
 }
 
@@ -234,7 +238,7 @@ export const GET = defineRoute({
       ]);
 
     const indexingComplete = eventIndexingComplete(
-      eventRow?.counters ?? { imageCount: 0, processedImageCount: 0 }
+      eventRow?.counters ?? { imageCount: 0, processedImageCount: 0, failedImageCount: 0 }
     );
     // §15.3's stored union has no `no_selfie`: a profile that has never submitted
     // a selfie is stored `selfie_pending` (the consent route's choice, pinned by
