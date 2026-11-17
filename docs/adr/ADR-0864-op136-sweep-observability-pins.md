@@ -109,6 +109,12 @@ committed bytes, and `git status --porcelain` shows the new spec only.
 - Coverage: the new spec drives `pipeline-sweep.ts`'s two `enqueueWork` call
   sites (the `enqueued: false` branches) and `usage-threshold-check.ts`'s cache
   hit and miss arms, so both touched modules' branch coverage rises.
+- `.gitleaks.toml` gains two allowlist entries for the fixture's plan key
+  (`op136-observability-plan`, the literal the branch's pre-rename commit still
+  carries, and `op136-observability`, the current one). The constant's `PLAN_KEY`
+  name plus the value's entropy match gitleaks' `generic-api-key` heuristic, and
+  a plan identifier is not a secret; the entries follow the OP-99 and OP-117
+  precedents in the same file. This is the only non-test change in the diff.
 
 ## Consequences and known limits
 
