@@ -4,7 +4,7 @@
 - **Card:** OP-135 TEST (Medium, F5) `t_0c7de7eb` · **Branch:** `OP-135-task-report-counter-pins` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_ca95e452`
 - **Lane:** board-wide / process (orchestrator), reserved range `0300`–`0319` · **Consumes:** `0314`
 - **Relates to:** [ADR-0829](ADR-0829-op135-internal-worker-endpoints-red.md) §6 and [ADR-0830](ADR-0830-op135-internal-worker-endpoints-green.md) §9 (the deferral this record supersedes), [ADR-0762](ADR-0762-op127-event-images-management-red.md), [ADR-0763](ADR-0763-op127-event-images-management-green.md) and [ADR-0764](ADR-0764-op127-event-images-followup-pins.md) (the two counters left to the nightly `counter-reconcile`), [ADR-0793](ADR-0793-op133-attendee-gallery-red.md) §10 and [ADR-0794](ADR-0794-op133-attendee-gallery-green.md) §1 (the predicate this record corrects), [ADR-0784](ADR-0784-op130-public-event-resolution-red.md) §5 (the `+ failed` rule it adopts), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §11 (the exhausted-block clause added by this record)
-- **Consumers:** `apps/web/src/test/integration/event-indexing-counters.test.ts` and `apps/web/src/test/unit/attendee-poll-policy.test.ts`
+- **Consumers:** `apps/web/src/app/api/v1/internal/worker/report/route.ts`, `apps/web/src/server/attendee/poll-policy.ts`, `apps/web/src/server/repos/cross-tenant.ts`, `apps/web/src/test/integration/event-indexing-counters.test.ts` and `apps/web/src/test/unit/attendee-poll-policy.test.ts`
 - **Schema:** `docs/Notification and Database Design.md` §15.1 `events.counters` — read, no shape change · **Contract:** §6.4 (the flag keeps its documented meaning) and §10.3.2 (the report's answer is unchanged)
 
 ## Context
@@ -234,3 +234,194 @@ cases. The GREEN records the matching revert probes in its own section.
 - This record's `Consumers:` field must gain every source file that cites
   `ADR-0314` after the GREEN lands; the `adr-consumers` guard compares the field
   against the tree and reddens on a missing name.
+
+## Implementation (GREEN)
+
+Measured at the GREEN head, branch `OP-135-task-report-counter-recount`, whose
+base is the pin head `d3e48ad9` merged with `origin/main` `e04d07d6`. The pin
+card's two spec files are byte-identical at this head
+(`git diff d3e48ad9 -- apps/web/src/test/integration/event-indexing-counters.test.ts apps/web/src/test/unit/attendee-poll-policy.test.ts`
+is empty); `docs/adr/README.md` is byte-identical against the pin head, because
+the ledger moved once, in the pin card.
+
+### The four changes, and why each file
+
+| file                                                                             | change                                                                                                                                                                          | why                                                                                                                                 |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/server/repos/cross-tenant.ts`                                      | `OwnedWorkItemRow` gains `eventId`, and `findWorkItemById` projects `eventId: 1`                                                                                                | the recount is keyed by the event a reported image belongs to; the projection carried `tenantId`, `profileId` and `processing` only |
+| `apps/web/src/app/api/v1/internal/worker/report/route.ts`                        | a `Map` collects each distinct `(tenantId, eventId)` whose `event_image` write matched the lease; after the item loop, two counts and one `$set` per entry                      | §Decision item 1 — the fact is written where it is produced                                                                         |
+| `apps/web/src/server/attendee/poll-policy.ts`                                    | `EventIndexingCounters` gains `failedImageCount`; the predicate becomes `processedImageCount + failedImageCount >= imageCount`; the TSDoc says "every image has left the queue" | §Decision item 5 — one drained predicate for both attendee readers                                                                  |
+| `apps/web/src/app/api/v1/p/events/[slug]/me/route.ts` and `.../gallery/route.ts` | the projected `counters` type gains `failedImageCount`, and the empty-fallback object carries `failedImageCount: 0`                                                             | the two readers call the widened predicate; the wire shapes are unchanged                                                           |
+
+The item loop's per-item semantics are untouched: the lease filter, the
+`reduceReportItem` decision, the selfie arm's transaction and the
+`applied`/`leaseLost`/`rejected` bookkeeping are byte-identical to the pin
+head. The `Map` is filled only after an `event_image` write matched the lease,
+so a rejected or lease-lost item contributes no event to the recount — "each
+distinct event that had at least one **applied** `event_image` item", verbatim.
+
+### The recount
+
+```ts
+for (const { tenantId, eventId } of recounted.values()) {
+  const tenant = tenantRepo(tenantId, db);
+  const images = tenant.collection(COLLECTIONS.eventImages);
+  const [done, failed] = await Promise.all([
+    images.countDocuments({ eventId, deletedAt: null, "processing.status": "done" }),
+    images.countDocuments({ eventId, deletedAt: null, "processing.status": "failed" }),
+  ]);
+  await tenant
+    .collection(COLLECTIONS.events)
+    .updateOne(
+      { _id: eventId },
+      { $set: { "counters.processedImageCount": done, "counters.failedImageCount": failed } }
+    );
+}
+```
+
+**Per distinct event per batch, after the items, never per item and never an
+increment.** The loop runs once per map entry, so two done items of one event in
+one batch cost one recount (P6), and a replay or a reprocess re-entry rewrites
+the same figure instead of moving it (P2, P3). `counters.imageCount` and
+`counters.storageBytes` are never written here (P1).
+
+**Outside every transaction.** The `event_image` arm has no transaction of its
+own, and the selfie arm's `withTransaction` stays scoped to the selfie and
+profile rows. The recount therefore runs after the batch, not inside an item
+transaction: widening one over `event_images` and `events` to protect a cache
+would make every report a two-collection transaction. A crash between the item
+writes and the recount leaves a stale counter, and the next report for that
+event or the nightly `counter-reconcile` repairs it (§Consequences, "Residual
+drift windows stay").
+
+### Cost — two counts per distinct event, on the `{ eventId }` prefix
+
+`explain` on a throwaway `mongod` (7.0.24) seeded with 50 events × 200
+`event_images` rows and the shipped index (`event_images_event_asset_unique`,
+`{ eventId: 1, assetId: 1 }`, unique). The report's own query, `verbosity:
+"queryPlanner"`, for the `done` arm:
+
+```text
+COUNT → FETCH (filter: deletedAt {$eq: null}, processing.status {$eq: "done"})
+      → IXSCAN indexName: "event_images_event_asset_unique"
+               keyPattern: { eventId: 1, assetId: 1 }
+               indexBounds.eventId: ["[ObjectId('6afc84c5…'), ObjectId('6afc84c5…')]"]
+               indexBounds.assetId: ["[MinKey, MaxKey]"]
+```
+
+and the `failed` arm is the same plan with `processing.status {$eq: "failed"}` in
+the filter. So each count is one index seek on the event's own prefix, then the
+event's rows are fetched and filtered on `deletedAt`/`processing.status` — the
+shape the organizer images list already runs twice per request
+(`images/route.ts:128-129`, this record's §Decision item 3), and the counts
+agreed with the seeded data (`count(done) = 160`, `count(failed) = 20` for the
+sampled event).
+
+### P1–P6 — green
+
+`npx vitest run --project integration apps/web/src/test/integration/event-indexing-counters.test.ts`:
+
+```text
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+```
+
+and `npx vitest run --project unit apps/web/src/test/unit/attendee-poll-policy.test.ts`:
+
+```text
+ Test Files  1 passed (1)
+      Tests  24 passed (24)
+```
+
+### Revert probes — one per mechanism
+
+Each probe was applied to the GREEN head, run, and then undone with
+`git checkout -- <file>`; after every probe `git status --short` printed
+nothing, so the tree was byte-identical before the next one.
+
+**1. Drop the recount (delete the post-loop block).** Pasted:
+
+```text
+ × (P1) recounts processedImageCount from source and leaves imageCount alone
+   AssertionError: expected +0 to be 1 // Object.is equality
+ × (P2) refuses the replay as leaseLost and keeps processedImageCount at one
+   AssertionError: expected +0 to be 1 // Object.is equality
+ × (P3) keeps processedImageCount at the live done rows, never two
+   AssertionError: expected +0 to be 1 // Object.is equality
+ × (P4) advances failedImageCount and drains the event
+   AssertionError: expected +0 to be 1 // Object.is equality
+ × (P6) recounts the event once and reports both rows as processed
+   AssertionError: expected +0 to be 2 // Object.is equality
+      Tests  5 failed | 1 passed (6)
+```
+
+Wider than the pin's own discrimination note ("P1/P4/P6 red"): P2 and P3 also
+start from a report that no longer writes anything, so they redden too. P5 stays
+green because it seeds `events.counters` directly and reads the predicate.
+
+**2. Swap the recount for a bare `$inc` of the item's own status.** Pasted:
+
+```text
+ × (P3) keeps processedImageCount at the live done rows, never two
+   AssertionError: expected 2 to be 1 // Object.is equality
+      Tests  1 failed | 5 passed (6)
+```
+
+Only P3 reddens, exactly as this record predicts: P1, P2, P4 and P6 hold the
+same total under an increment, and the reprocess re-entry is the case that
+separates the two mechanisms.
+
+**3. Restore `poll-policy.ts:78` to `processedImageCount >= imageCount`.** Pasted:
+
+```text
+ × (P4) advances failedImageCount and drains the event
+   AssertionError: expected false to be true // Object.is equality
+ × (P5) answers one indexingComplete for /me and the public landing page
+   AssertionError: expected false to be true // Object.is equality
+      Tests  2 failed | 4 passed (6)
+
+ × eventIndexingComplete > answers { imageCount: 5, processedImageCount: 4, failedImageCount: 1 } with true
+   AssertionError: expected false to be true // Object.is equality
+ × eventIndexingComplete > drains an event whose only remaining image failed, so the gallery settles
+   AssertionError: expected false to be true // Object.is equality
+      Tests  2 failed | 22 passed (24)
+```
+
+P4 reddens as well as P5, because P4 ends by calling `eventIndexingComplete` on
+the counters it just read — the unit cases are the same mechanism twice.
+
+**4. Recount per item instead of per event.** Two shapes were measured, and the
+card's stated outcome holds for the second one only:
+
+- **A faithful per-item recount** (the same two event-scoped counts, moved
+  inside the `event_image` arm after each item's write): `Tests  6 passed (6)`.
+  It does not redden P6 — after the second item's write the event's done count
+  is already `2`, so a per-item recount converges on the same figure. The cost
+  is what differs (two counts per item, not per event), not the result.
+- **A per-item `$set` of that item's own contribution** (the count scoped to
+  the reported row instead of the event, which is the shape P6's own comment
+  names): pasted
+
+  ```text
+   × (P4) advances failedImageCount and drains the event
+     AssertionError: expected +0 to be 1 // Object.is equality
+   × (P6) recounts the event once and reports both rows as processed
+     AssertionError: expected 1 to be 2 // Object.is equality
+        Tests  2 failed | 4 passed (6)
+  ```
+
+  P6 reddens with `1` where the event has `2` done rows, which is the
+  under-report the case exists for; P4 reddens because the row-scoped failed
+  count overwrites the event's processed figure with `0`. The per-item
+  contribution is the mechanism P6 discriminates, and the recorded premise
+  "recount per item → P6 red" is imprecise about which of the two shapes it
+  means — this record states the measured answer for both.
+
+### Guard results at this head
+
+`tsc -p apps/web/tsconfig.json --noEmit` exit `0`, `eslint` on the five changed
+files `no issues found`, `prettier --check` clean, and the six `adr-*` guards
+(`adr-numbering`, `adr-record-links`, `adr-consumers`, `adr-source-references`,
+`adr-inline-code-spans`, `adr-lane-ranges`) green. This record's `Consumers:`
+field now names all five files that cite `ADR-0314`: the three source files
+above and the pin card's two specs.
