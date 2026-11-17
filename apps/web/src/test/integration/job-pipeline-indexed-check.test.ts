@@ -719,3 +719,180 @@ describe("pipeline-indexed-check: the batch arm for the non-indexed terminal eve
     expect(await outboxFor(BATCH_COMPLETED_EVENT)).toHaveLength(0);
   });
 });
+
+/**
+ * Integration / contract — the scan window advances past the first page
+ * (ADR-0860; finding **H1** of the review of the OP-136 GREEN `t_16239628`).
+ *
+ * ## Why this block exists
+ *
+ * One run reads at most `limit` events. The shipped page is a fixed slice —
+ * `find({ "counters.imageCount": { $gt: 0 } }).limit(limit)`, no sort and no
+ * predicate the job's own work clears — and the per-event latch is applied only
+ * *inside* the loop, so the same first `limit` rows hold their slots for ever.
+ * An event that sits behind them is never announced and its batches are never
+ * summarised, however many ticks pass. These cases seed exactly **three**
+ * eligible events against a page of **two**, the smallest shape that exposes it.
+ *
+ * ## How to read them
+ *
+ * Every assertion is an observable: the `pipeline.event.indexed` outbox rows
+ * that name an event, the run's own `details.indexed`, and the
+ * `upload.batch.completed` summary of a batch the worker settled. No case names
+ * the marker, the sort key, the query, `scanned` or `skipped`, so any
+ * implementation that drains the window satisfies them — an ordered cursor, a
+ * change-scoped marker or anything else that stops starving the tail.
+ *
+ * ## Which cases are RED at the RED head
+ *
+ * `I12`, `I13` and `I14` are the pins: at the RED head the third event is never
+ * reached, so its announcement (and its batch summary) never exists. `I15` is a
+ * **characterization arm**, green on arrival: it is the discriminator against a
+ * "finish" that completes an un-indexed event by marking it done — a shape whose
+ * windows all latched — which is why it asserts the `delayed` → `indexed`
+ * transition rather than the window's tail.
+ */
+describe("pipeline-indexed-check: the scan window advances past the first page", () => {
+  /**
+   * Run the job once at one instant, over a caller-chosen page size.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @param limit - The per-run cap the run is asked for.
+   * @returns The §10.2 run envelope.
+   */
+  async function runJobWithLimit(
+    at: Date,
+    limit: number
+  ): Promise<Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>> {
+    return pipelineIndexedCheckJob.run({
+      requestedLimit: limit,
+      clock: fixedClock(at),
+      logger: recordingLogger(),
+    });
+  }
+
+  /**
+   * Give one event a batch of two files whose images the worker already
+   * finished (§16.2, §16.3).
+   *
+   * The completion route is never called: the sessions are already `completed`
+   * and the images already `done`, which is the state the OP-126 arm reads.
+   *
+   * @param event - The event that owns the batch.
+   * @returns The batch id and the batch's uploader.
+   */
+  async function seedSettledBatchOf(event: SeededEvent): Promise<{
+    readonly batchId: string;
+    readonly uploader: ObjectId;
+  }> {
+    const batchId = new ObjectId().toHexString();
+    const uploader = new ObjectId();
+    let sequence = 0;
+    for (const name of ["op136-scan-window-one", "op136-scan-window-two"]) {
+      sequence += 1;
+      await seedCompletedSession(event, {
+        batchId,
+        createdByUserId: uploader,
+        contentHash: hashFor(name),
+        fileName: `DSC_2${String(sequence).padStart(3, "0")}.JPG`,
+      });
+      await seedBatchImage(event, { batchId, status: "done", sequence });
+    }
+    return { batchId, uploader };
+  }
+
+  it("I12: a second run announces the event the first page could not hold", async () => {
+    // Arrange — three events that all derive `indexed`, against a page of two.
+    const one = await seedEvent(ALL_PROCESSED);
+    const two = await seedEvent(ALL_PROCESSED);
+    const three = await seedEvent(ALL_PROCESSED);
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+
+    // Act — two ticks of the every-5-minutes job, each bounded to two events.
+    const first = await runJobWithLimit(NOW, 2);
+    const second = await runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 2);
+
+    // Assert — the first page announced its two events…
+    expect(first.details?.indexed).toBe(2);
+
+    // …and the next tick announces the one that was behind them, not a repeat.
+    expect(second.details?.indexed).toBe(1);
+
+    // …so every event, the third included, is announced exactly once.
+    expect(await indexedRowsFor(one.eventId)).toHaveLength(1);
+    expect(await indexedRowsFor(two.eventId)).toHaveLength(1);
+    expect(await indexedRowsFor(three.eventId)).toHaveLength(1);
+    expect(await outboxFor(INDEXED_EVENT)).toHaveLength(3);
+  });
+
+  it("I13: a third run announces nothing for the page the drain already passed", async () => {
+    // Arrange — three indexed events over a page of two, drained by two runs.
+    const one = await seedEvent(ALL_PROCESSED);
+    const two = await seedEvent(ALL_PROCESSED);
+    const three = await seedEvent(ALL_PROCESSED);
+    await runJobWithLimit(NOW, 2);
+    await runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 2);
+    expect(
+      await outboxFor(INDEXED_EVENT),
+      "two runs must have announced all three events"
+    ).toHaveLength(3);
+
+    // Act — the tick after the drain.
+    const thirdRun = await runJobWithLimit(new Date(NOW.getTime() + 2 * NEXT_BUCKET_MS), 2);
+
+    // Assert — nothing is announced again, and the window does not wrap onto
+    // the page it already passed.
+    expect(thirdRun.details?.indexed).toBe(0);
+    expect(await outboxFor(INDEXED_EVENT)).toHaveLength(3);
+    expect(await indexedRowsFor(one.eventId)).toHaveLength(1);
+    expect(await indexedRowsFor(two.eventId)).toHaveLength(1);
+    expect(await indexedRowsFor(three.eventId)).toHaveLength(1);
+  });
+
+  it("I14: the batch arm summarises a settled batch on an event behind the first page", async () => {
+    // Arrange — two plain indexed events and one whose batch the worker settled.
+    await seedEvent(ALL_PROCESSED);
+    await seedEvent(ALL_PROCESSED);
+    const batched = await seedEvent(ALL_PROCESSED);
+    const { batchId, uploader } = await seedSettledBatchOf(batched);
+
+    // Act — two ticks, each bounded to two events.
+    await runJobWithLimit(NOW, 2);
+    await runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 2);
+
+    // Assert — one §4.7 summary for the batch, addressed to its uploader.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(summaries).toHaveLength(1);
+    const summary = summaries[0];
+    expect(summary?.tenantId).toBe(batched.tenantKey);
+    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.payload.batchId).toBe(batchId);
+    expect(summary?.payload.eventId).toBe(batched.eventId.toHexString());
+    expect(summary?.payload.fileCount).toBe(2);
+
+    // …and a batch with no failure is never an errors summary.
+    expect(
+      await outboxFor(BATCH_COMPLETED_WITH_ERRORS_EVENT),
+      "a batch with no failure is not an errors summary"
+    ).toHaveLength(0);
+  });
+
+  it("I15: an event that passes through delayed is announced once it reaches indexed", async () => {
+    // Arrange — every photo failed, so the event derives `delayed`: nothing is searchable.
+    const event = await seedEvent(ALL_FAILED);
+    expect(derivePipelineStatus(ALL_FAILED)).toBe("delayed");
+    const first = await runJobWithLimit(NOW, 2);
+    expect(first.details?.indexed).toBe(0);
+    expect(await indexedRowsFor(event.eventId)).toHaveLength(0);
+
+    // Act — the photos are processed again and now all index.
+    await growCounters(event, ALL_PROCESSED);
+    const second = await runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 2);
+
+    // Assert — the transition to `indexed` is announced once, as a first completion.
+    expect(second.details?.indexed).toBe(1);
+    const rows = await indexedRowsFor(event.eventId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.payload.notifyByEmail).toBe(true);
+  });
+});
