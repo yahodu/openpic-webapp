@@ -85,7 +85,7 @@ ends of every point (`U1`) and the two audiences' point sets stay disjoint.
   `usageCounters` row it reads. Because the row's identity is
   `{tenantId, entitlementKey, periodKey}`, a new period is a new row with no
   latch. `CronResult.details.notified` counts the run's deliveries.
-- **`event-windos-sweep`:** the delivery key is
+- **`event-window-sweep`:** the delivery key is
   `event.upload_window.closing:<eventId>:<point>`, honoured by the outbox's
   unique partial index. A second run is deduped, so no separate latch field is
   needed.
@@ -96,9 +96,18 @@ ends of every point (`U1`) and the two audiences' point sets stay disjoint.
 ### 4. The erasure is ordered, counted and resumable
 
 `retentionPurgeJob` handles every event whose `retentionExpiresAt < now` **or**
-whose `status` is `deleting`. Per event it writes one
-`retention.purge.step` info line per step (`{ event, step, count }`), which is
-the DSR evidence, and persists `event.purge = { step, counts, completedAt }`.
+whose `status` is `deleting` — a user-initiated delete is never gated on the
+retention clock, and its `retentionExpiresAt` may still be in the future. Per
+event it writes one `retention.purge.step` info line per step, which is the DSR
+evidence, and persists `event.purge = { step, counts, completedAt }`. **Two line
+shapes**, and they are not interchangeable:
+
+- an **erase step** (`storage` … `profiles`) logs `{ event, step, count }` — a
+  single number: how many rows or objects that step removed;
+- the two **job-level legs** log their own `retention.purge.step` lines with
+  `{ event, step, counts }` — an object, because a leg bounds several
+  collections at once (`expiredSelfies` → `{ selfies, embeddings, matches }`,
+  `anonymousSessions` → `{ sessions, selfies, profiles }`).
 
 - `step` is the **last completed** step, so `nextEraseStep` resumes on the next
   one; the final value is the sentinel `"done"`.
@@ -109,7 +118,8 @@ the DSR evidence, and persists `event.purge = { step, counts, completedAt }`.
   job decrements `refCount` instead.
 - The event's own `selfies` (with their `embedding`) are erased by the
   `selfies` step and their profiles by the `profiles` step; consents are never
-  touched.
+  touched — a `consents` row is the demonstrable record the DSR rests on, so the
+  purge keeps it after every other row for the event is gone.
 - Two job-level phases follow the events, each its own
   `retention.purge.step` line: `expiredSelfies` (an unconfirmed selfie past its
   own `expireAt`, with its embedding, its provisional `faceMatches` and its
@@ -126,13 +136,20 @@ the DSR evidence, and persists `event.purge = { step, counts, completedAt }`.
   re-enqueue; `queued` older than 5 min with no broker ack → re-enqueue;
   `attempts >= maxAttempts` → `failed` + one `pipeline.image.failed`; then the
   incremental run). `details = { requeued, failed, incremental }`. A selfie
-  drains `q:selfie` at `high`; an incremental run is a `match_incremental`
+  drains `q:selfie` at `high`; a requeued image is `kind: "event_image"` at
+  `normal` priority, i.e. `q:image` — `queueKeyFor` owns the mapping, so the
+  sweep never crosses the two; an incremental run is a `match_incremental`
   envelope whose `id` is the **profile** id. The run advances the profile's
   `lastMatchRunAt` to the run instant, which is what makes the next 2-minute
   tick silent.
 - **`event-window-sweep`:** `closing` carries `{ hoursRemaining, mobile }` with
   `mobile: true` only at T-24h; `closed`, `startingSoon` and `ended` are the
-  other three counters.
+  other three counters. **The status write is `resolveEventStatus`'s alone:**
+  the T-24h run announces `event.starting_soon` and leaves a `published` event
+  `published`; the status becomes `live` at `startAt` and `ended` at `endAt`,
+  and only the terminal transition is announced (`event.ended`). The warning and
+  the transition are therefore two separate schedule points, and the sweep
+  writes no status it cannot derive from the clock.
 - **`invitation-expiry`:** a `pending` row past `expiresAt` becomes `expired`
   and emits `collab.invite.expired`; the later
   `POST /api/v1/invitations/{token}/accept` answers `410 invitation_expired`.
@@ -140,10 +157,14 @@ the DSR evidence, and persists `event.purge = { step, counts, completedAt }`.
   (`details = { expired, reminded }`).
 - **`account-deletion-purge`:** the predicate is exactly
   `status: "deletion_pending"` **and** `deletionScheduledAt <= now`. The purge
-  stamps `purgeStartedAt`, marks the profile `deleted`, revokes the Better Auth
-  `session` rows, retains the last known contact in the new platform-scope
-  `accountDeletionTombstones` collection and emits one
-  `account.deletion.completed` whose payload is exactly `{ userId }`.
+  stamps `purgeStartedAt`, marks the profile `deleted`, **anonymizes** the
+  account — the Better Auth `user` row keeps no `email` of its own and loses its
+  `name`, and the profile's `displayName` and `avatarAssetId` are cleared —
+  revokes the Better Auth `session` rows, retains the last known contact in the
+  new platform-scope `accountDeletionTombstones` collection and emits one
+  `account.deletion.completed` whose payload is exactly `{ userId }`. The
+  tombstone is the **only** place the contact survives: no other document in the
+  database may still hold the address.
 
 ## Rejected alternatives
 
@@ -163,19 +184,22 @@ the DSR evidence, and persists `event.purge = { step, counts, completedAt }`.
 ## Consequences
 
 - The GREEN card carries the specs unchanged; its work is eight modules, one
-  new platform collection (`accountDeletionTomstones`) and a `vercel.json`
+  new platform collection (`accountDeletionTombstones`) and a `vercel.json`
   registration row per job.
 - `pipeline-sweep`'s watermark write means a worker report that lands **before**
   the sweep sees `processing`, and the sweep then enqueues a run that the report
   already covered; the report's own `matchRunStartedAt` is the authority for the
   announcement key, so the two paths cannot double-announce (ADR-0808 §3).
-- The `event-windos-sweep` status write adds two values (`live`, `ended`) that
+- The `event-window-sweep` status write adds two values (`live`, `ended`) that
   the event DTO schema does not yet admit. The GREEN must widen that enum; no
   spec in this card asserts on the DTO, so the change is free.
 - `imageFaces` becomes a name the erasure must know even though nothing writes
   it yet; the purge pins it by its §10.2 literal name.
 
 ## Evidence (RED)
+
+_(The measurements below are from the first delivery; the corrected head's figures
+are in "Review round 1" at the end, and the unit file now carries 76 cases.)_
 
 Run in the worktree `t_b25b384f` (`wt/t_b25b384f`, cut from `main` `a8856bc2`):
 
@@ -222,9 +246,58 @@ length of 1 but got +0`.
 1. `imageFaces` has no registered collection and no writer. The erasure pins it
    by its §10.2 literal name; if the GREEN registers
    `COLLECTIONS.imageFaces`, the specs keep passing.
-2. The contact that `account.deletion.completted` is addressed at is retained in
-   `accountDeletionTomstones` (`{ userId, email }`). No shipped code names that
+2. The contact that `account.deletion.completed` is addressed at is retained in
+   `accountDeletionTombstones` (`{ userId, email }`). No shipped code names that
    collection, so the name is this card's decision.
 3. `event.purge.counts` counts rows **erased**, not rows touched. The shared
    `mediaAssets` row is therefore absent from the tally although its `refCount`
    moved.
+
+## Review round 1 — the corrections and their evidence
+
+The reviewer's seven items are resolved without editing any implementation file
+(the worktree ships no production code) and each corrected pin was re-measured.
+
+| Item                                                                                      | Resolution                                                                                                                                                                                             | Pin                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F1 `account-deletion-purge` claimed anonymization, asserted none                          | §5 now names the rule: the `user` row keeps no `email` of its own and loses `name`; `userProfiles.displayName` and `avatarAssetId` are cleared; the tombstone is the only document holding the address | `job-account-lifecycle.test.ts` → _anonymizes the account, leaving the tombstone as the only copy of the email_ (a whole-database scan, `collectionsHolding`)        |
+| F2 `status: "deleting"` and "consents survive" were stated, never seeded                  | §4 now says the `deleting` arm is not gated on the retention clock and that a `consents` row outlives every other row of its event                                                                     | two new cases: _purges an event in status deleting although its retention has not expired_, _keeps a consent row as evidence when its event is erased_               |
+| F3 the integration case wanted `live` at T-24h, `resolveEventStatus` answers `null` there | **Rule chosen: (a) `live` at `startAt`.** The T-24h run announces `event.starting_soon` and moves **no** status; the transition is the pure function's alone (§5)                                      | the case is renamed and asserts `status === "published"` after the run; a new case _moves a published event to live once its startAt has passed_ pins the transition |
+| F4 the requeued image envelope was pinned by `id` only                                    | §5 records the mapping (`queueKeyFor`: `normal` → `q:image`)                                                                                                                                           | I1 now asserts `queueKey === "q:image"` and `envelope.kind === "event_image"` — the repo's §10.4 kind literal is `event_image`, not `image`                          |
+| F5 the row labelled "selfies done" passed `{ step: "profiles" }`                          | —                                                                                                                                                                                                      | the row now reads `{ step: "selfies" } → "profiles"`, and the terminal row is relabelled _profiles done_                                                             |
+| F6 ADR typos                                                                              | `event-window-sweep`, `accountDeletionTombstones`, `account.deletion.completed`                                                                                                                        | —                                                                                                                                                                    |
+| F7 `count` vs `counts`                                                                    | §4 now states both line shapes: erase steps log `{ event, step, count }`; the job-level legs log `{ event, step, counts }`                                                                             | —                                                                                                                                                                    |
+
+The earlier 74/75 count discrepancy is resolved: the unit file had 75 cases and
+the near-fix pass read `75 passed`; with the missing `selfies → profiles` row it
+now has **76**.
+
+### Re-measured (this worktree, at the corrected head)
+
+- **Unit, faithful probe of the two pure modules:** `76 passed (76)`.
+- **Unit, one-anchor mutation** (`nextEraseStep({ step: "selfies" })` → `null`):
+  `1 failed | 75 passed (76)`, the failure being exactly
+  _answers profiles for selfies done_ — F5's pin is load-bearing.
+- **Integration, faithful probes of `event-window-sweep` and
+  `account-deletion-purge`** (the other five jobs left as zero-value stubs):
+  `9 passed | 1 failed (10)` — the single failure is the zero-stub
+  `verification-nudge` (`expected +0 to be 2`). So F1's and F3's pins are
+  satisfiable by the contract as written.
+- **Mutation A** (`starting_soon` also writes `status: "live"`):
+  `1 failed | 5 passed (6)` with `expected 'live' to be 'published'` on
+  _announces event.starting_soon at startAt-24h and leaves the event published_.
+- **Mutation B** (the purge leaves `user.email` in place):
+  `expected [ 'accountDeletionTombstones', 'user' ] to deeply equal
+[ 'accountDeletionTombstones' ]`.
+- **Integration, zero-value stubs for `retention-purge` and `pipeline-sweep`:**
+  `13 failed | 1 passed (14)`, every failure at assertion level, including the
+  two new retention cases (`expected +0 to be 1`; `expected { …(9) } to be
+null`). The pass is the negative control _keeps a confirmed selfie inside its
+  retention window_.
+- `tsc -p apps/web/tsconfig.json --noEmit` with the probes in place: exit `0`.
+  The probes were then deleted with explicit `rm -f`; `git status --short` lists
+  only the five spec files and this record.
+
+Note for the GREEN: F2's consent pin does **not** require the erase to skip the
+`profiles` step — consents live in `consents`, so "profiles deleted, consents
+kept" is one query per collection, not a conditional.

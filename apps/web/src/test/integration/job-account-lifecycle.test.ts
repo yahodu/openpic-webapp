@@ -40,7 +40,9 @@ import { recordingLogger } from "../helpers/recording-logger";
  *   **and** `deletionScheduledAt <= now` — a future-scheduled profile is
  *   untouched, which is the cancellation window;
  * - the purge stamps `purgeStartedAt`, marks the profile `deleted`, anonymizes
- *   it, revokes the user's sessions, retains the last known contact in the
+ *   the account — the Better Auth `user` row loses its `email` and `name`, and
+ *   the profile's `displayName` / `avatarAssetId` are cleared — revokes the
+ *   user's sessions, retains the last known contact in the
  *   `accountDeletionTombstones` platform collection (the only place the email
  *   survives) and emits one `account.deletion.completed` whose payload carries
  *   `{ userId }` and nothing else;
@@ -57,6 +59,11 @@ const TOMBSTONES = "accountDeletionTombstones";
 
 let app: TestApp;
 
+/** The email `seedUser` stores for one user id. */
+function userEmail(userId: ObjectId): string {
+  return `user-${userId.toHexString()}@example.com`;
+}
+
 /** Seed one Better Auth user row. */
 async function seedUser(options: {
   readonly emailVerified: boolean;
@@ -65,13 +72,31 @@ async function seedUser(options: {
   const userId = new ObjectId();
   await app.db.collection("user").insertOne({
     _id: userId,
-    email: `user-${userId.toHexString()}@example.com`,
+    email: userEmail(userId),
     emailVerified: options.emailVerified,
     name: `user-${userId.toHexString()}`,
     createdAt: options.createdAt,
     updatedAt: options.createdAt,
   });
   return userId;
+}
+
+/**
+ * The collections of the test database that hold `value` in any document.
+ *
+ * @param value - The string to look for (an email, in this file).
+ * @returns The collection names that hold at least one copy, sorted.
+ */
+async function collectionsHolding(value: string): Promise<string[]> {
+  const collections = await app.db.listCollections().toArray();
+  const holdings: string[] = [];
+  for (const { name } of collections) {
+    const rows = await app.db.collection(name).find({}).toArray();
+    if (rows.some((row) => JSON.stringify(row).includes(value))) {
+      holdings.push(name);
+    }
+  }
+  return holdings.sort();
 }
 
 /** Seed the `userProfiles` row a user is projected through. */
@@ -304,5 +329,40 @@ describe("account-deletion-purge", () => {
     // ── Assert: idempotent — one receipt, no second tally ──
     expect(again.details?.purged).toBe(0);
     expect(await eventsFor("account.deletion.completed", dueUser.toHexString())).toHaveLength(1);
+  });
+
+  it("anonymizes the account, leaving the tombstone as the only copy of the email", async () => {
+    const userId = await seedUser({
+      emailVerified: true,
+      createdAt: new Date(NOW.getTime() - 60 * DAY_MS),
+    });
+    const email = userEmail(userId);
+    const profileId = await seedProfile(userId, {
+      status: "deletion_pending",
+      deletionScheduledAt: new Date(NOW.getTime() - DAY_MS),
+      displayName: "Due Person",
+      avatarAssetId: new ObjectId(),
+    });
+
+    // ── Act ──
+    await accountDeletionPurgeJob.run({
+      requestedLimit: null,
+      clock: fixedClock(NOW),
+      logger: recordingLogger(),
+    });
+
+    // ── Assert: no copy of the contact survives outside the tombstone ──
+    expect(await collectionsHolding(email)).toEqual([TOMBSTONES]);
+
+    const user = await app.db.collection("user").findOne({ _id: userId });
+    expect(user?.email ?? null).not.toBe(email);
+    expect(user?.name ?? null).toBeNull();
+
+    const profile = await app.db.collection(COLLECTIONS.userProfiles).findOne({ _id: profileId });
+    expect(profile?.displayName ?? null).toBeNull();
+    expect(profile?.avatarAssetId ?? null).toBeNull();
+
+    const tombstone = await app.db.collection(TOMBSTONES).findOne({ userId: userId.toHexString() });
+    expect(tombstone?.email).toBe(email);
   });
 });

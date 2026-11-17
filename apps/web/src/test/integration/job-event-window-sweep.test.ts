@@ -26,9 +26,10 @@ import { recordingLogger } from "../helpers/recording-logger";
  *   `event.upload_window.closing` carrying `{ hoursRemaining: 24, mobile: true }`;
  *   at `-72h` the same key carries `{ hoursRemaining: 72, mobile: false }`
  *   (§10.2: "mobile only at T-24h").
- * - At `startAt - 24h` it emits `event.starting_soon` and moves a `published`
- *   event to `live`; past `endAt` it emits `event.ended` and moves it to
- *   `ended`.
+ * - `event.starting_soon` fires at `startAt - 24h` and moves **no** status: the
+ *   only status decision is `resolveEventStatus`, so a `published` event becomes
+ *   `live` at `startAt` and `ended` at `endAt` (announced by `event.ended`).
+ *   The warning and the transition are therefore two separate instants.
  * - A second run over the same rows emits nothing again — every message is
  *   keyed per event **and per schedule point**, so a duplicate is impossible
  *   even if the dedupeKey write is the only latch.
@@ -160,7 +161,7 @@ describe("event-window-sweep: the upload window", () => {
 });
 
 describe("event-window-sweep: the event lifecycle", () => {
-  it("moves published to live at startAt-24h and announces event.starting_soon once", async () => {
+  it("announces event.starting_soon at startAt-24h and leaves the event published", async () => {
     const eventId = await seedEvent({
       uploadWindowEndsAt: null,
       startAt: DAY_MS,
@@ -179,10 +180,38 @@ describe("event-window-sweep: the event lifecycle", () => {
     });
 
     const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
-    expect(row?.status).toBe("live");
+    expect(row?.status).toBe("published");
     expect(await messages("event.starting_soon", eventId)).toHaveLength(1);
     expect(first.details?.startingSoon).toBe(1);
     expect(second.details?.startingSoon).toBe(0);
+  });
+
+  it("moves a published event to live once its startAt has passed", async () => {
+    const eventId = await seedEvent({
+      uploadWindowEndsAt: null,
+      startAt: -HOUR_MS,
+      endAt: 2 * DAY_MS,
+    });
+
+    await eventWindowSweepJob.run({
+      requestedLimit: null,
+      clock: fixedClock(NOW),
+      logger: recordingLogger(),
+    });
+    const second = await eventWindowSweepJob.run({
+      requestedLimit: null,
+      clock: fixedClock(NOW),
+      logger: recordingLogger(),
+    });
+
+    // ── Assert: the clock, not the warning, owns the status ──
+    const row = await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId });
+    expect(row?.status).toBe("live");
+    expect(await messages("event.starting_soon", eventId)).toHaveLength(0);
+    expect(second.details?.startingSoon).toBe(0);
+    expect((await app.db.collection(COLLECTIONS.events).findOne({ _id: eventId }))?.status).toBe(
+      "live"
+    );
   });
 
   it("moves a published event past its endAt to ended and announces event.ended once", async () => {

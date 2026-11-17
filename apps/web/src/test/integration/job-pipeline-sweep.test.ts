@@ -253,6 +253,12 @@ describe("pipeline-sweep: expired leases", () => {
     expect(processing.leaseExpiresAt).toBeNull();
     expect(processing.workerId).toBeNull();
     expect(queuedFor(imageHex)).toBe(1);
+
+    // ── Assert: the requeued envelope is the image work type on the image queue ──
+    const requeued = queue().outbox.filter((message) => message.envelope.id === imageHex);
+    expect(requeued).toHaveLength(1);
+    expect(requeued[0]?.queueKey).toBe("q:image");
+    expect(requeued[0]?.envelope.kind).toBe("event_image");
     expect(first.job).toBe("pipeline-sweep");
     expect(first.details?.requeued).toBe(1);
 
