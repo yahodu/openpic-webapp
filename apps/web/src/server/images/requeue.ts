@@ -1,6 +1,7 @@
 import type { Db, ObjectId } from "mongodb";
 
 import { COLLECTIONS } from "@/server/db/collections";
+import type { Logger } from "@/server/logging";
 import { enqueueWork } from "@/server/queue/enqueue-work";
 import { getWorkQueue } from "@/server/queue/get-work-queue";
 import { tenantRepo } from "@/server/repos";
@@ -25,6 +26,8 @@ export interface RequeueImagesInput {
   /** The face space the pipeline runs in (`platformSettings.face.activeSpaceKey`). */
   readonly spaceKey: string;
   readonly requestId: string;
+  /** Carries the request's logger so a refused enqueue still warns (§18.1). */
+  readonly logger?: Logger;
 }
 
 /**
@@ -55,6 +58,7 @@ export async function requeueImages(input: RequeueImagesInput): Promise<void> {
         traceId: input.requestId,
         priority: processing.priority === "high" ? "high" : "normal",
       },
+      logger: input.logger,
     });
   }
 }
