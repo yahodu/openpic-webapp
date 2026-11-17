@@ -228,3 +228,11 @@ Every production file was restored byte-identically after each run (sha256 `75ac
 - **Whether the past direction needs a floor.** If the outbox later gains one (e.g. "older than the
   retention is dead on arrival"), it must come with a fixture change to the frozen batch cases or a
   rule that leaves their fixed instant accepted; the pin as written does not constrain it.
+
+## Note — carried forward unchanged into ADR-0835's GREEN
+
+The eleven cases this record pins are carried forward unchanged into
+[ADR-0835](ADR-0835-op135-internal-worker-boundary-hardening-green.md)'s GREEN, and they are green
+there (`42 passed (42)`); this record stays the **RED evidence**, and the review that followed that
+GREEN is recorded in ADR-0835 §"Review sign-off (round 1, artifact lens)". Nothing in §1–§6 is
+restated or retracted here.
