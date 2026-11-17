@@ -51,13 +51,16 @@ its tree does carry the ignore, and its `CI` run reports `audit: success`. A
 pointer that moves is exactly why an **old run** cannot be refreshed by rerunning
 it: the run does not follow the pointer.
 
-Two open PRs have no `CI` evidence at all: `git ls-remote origin 'refs/pull/545/*'
-'refs/pull/668/*'` returns a `head` and **no `merge`** ref for either, because a
-push made while the PR is `CONFLICTING` builds no merge commit and therefore
-starts no `pull_request` run ([ADR-0305](ADR-0305-ci-evidence-conflicting-pr-suppression.md)
-§1 already records this suppression). A merge ref left over from an earlier
-mergeable moment survives — that is why `#272`, also `CONFLICTING`, still has
-one — but it is stale, and it is not evidence of the current head.
+Two PRs in the parent scan had no `CI` evidence at all: `git ls-remote origin
+'refs/pull/545/*' 'refs/pull/668/*'` returns a `head` and **no `merge`** ref for
+either, because a push made while the PR is `CONFLICTING` builds no merge commit
+and therefore starts no `pull_request` run ([ADR-0305](ADR-0305-ci-evidence-conflicting-pr-suppression.md)
+§1 already records this suppression). Both were closed unmerged by the backlog
+triage minutes after that measurement (`#668` 20:52:26Z, `#545` 20:55:50Z). The
+two remaining open `CONFLICTING` PRs, `#272` and `#279`, both carry stale-green
+`audit` records. A merge ref left over from an earlier mergeable moment survives
+— that is why `#272`, also `CONFLICTING`, still has one — but it is stale, and
+it is not evidence of the current head.
 
 ## Decision
 
@@ -89,8 +92,9 @@ it. If a refresh reddens a branch, the finding is the finding.
 
 ### 3. "No check" is "no evidence", never "green"
 
-A `CONFLICTING` PR can carry no `CI`/`audit` check at all (`#545`, `#668` today:
-no `refs/pull/N/merge`, so no `pull_request` run). Absence of a check is treated
+A `CONFLICTING` PR can carry no `CI`/`audit` check at all (`#545`, `#668` at the
+time of the parent scan: no `refs/pull/N/merge`, so no `pull_request` run — both
+were closed unmerged afterwards). Absence of a check is treated
 exactly as [ADR-0305](ADR-0305-ci-evidence-conflicting-pr-suppression.md) §1
 states: the head is **UNVERIFIED**. It is never read as passing, and it is never
 resolved by `gh run rerun` (there is no run to rerun). The only cure is
@@ -120,8 +124,10 @@ ADR neither pre-empts nor depends on that decision.
   uses are re-running a run that failed for an infrastructure reason (runner
   outage, flaky service) on a tree whose content is unchanged — and even then the
   new conclusion is a statement about that same tree.
-- The 15 open PRs carrying stale-green `audit` records (measured by `t_f4a45d1c`)
-  keep those records until they are next pushed. They are **not** evidence that
+- The 18 open PRs `t_f4a45d1c` scanned (15 with stale-green `audit` records,
+  `#545`/`#668` with none) keep those records until they are next pushed; the
+  open set has since shrunk to `#672` (fresh `audit`, 20:53:14Z), `#272` and
+  `#279` (both stale green, both `CONFLICTING`). They are **not** evidence that
   those branches pass today's gate, and they must not be "refreshed" by rerun.
 - Refreshing costs one push and one full `CI` run per PR; that cost is the point —
   it is the only way the gate gets a say about the current tree.
@@ -185,4 +191,8 @@ on any open PR — every surface stops at `0315`. This record advances the cell 
   `git show <merge>:pnpm-workspace.yaml | grep -c fc5q` → `2`; `CI` run
   `44165253363` reports `audit: success`.
 - `git ls-remote origin 'refs/pull/545/*' 'refs/pull/668/*'` → a `head` ref only,
-  no `merge` ref; `gh pr view 545|668 --json mergeable` → `CONFLICTING`.
+  no `merge` ref; `gh pr view 545|668 --json mergeable` → `CONFLICTING`. Both are
+  now `CLOSED` unmerged (20:55:50Z / 20:52:26Z, after this measurement).
+- `gh pr list --state open` at 2026-11-17T21:11:25Z → `#672` `MERGEABLE` `audit`
+  `SUCCESS` 20:53:14Z, `#279` `audit` `SUCCESS` 2026-10-25T02:28:30Z, `#272`
+  `audit` `SUCCESS` 2026-10-24T20:56:38Z (the latter two `CONFLICTING`).
