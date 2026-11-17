@@ -1589,6 +1589,7 @@ describe("when the worker reports a selfie outcome", () => {
    * key set instead (the logger's three envelope fields and the four call-site
    * fields), sorted so the assertion names the set rather than the emission
    * order, and repeats the absence per PII name so a failure names the field.
+   * ADR-0840 records this pin and the two mutations that prove it bites.
    */
   it("P5: logs the discard with exactly its eight non-PII fields and no profile id", async () => {
     // The P1 seed: this worker holds the lease, the profile's live result
