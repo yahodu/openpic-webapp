@@ -1,3 +1,9 @@
+## [1.65.3](https://github.com/yahodu/openpic-webapp/compare/v1.65.2...v1.65.3) (2026-11-17)
+
+### Bug Fixes
+
+- **jobs:** OP-136 derive, latch and batch-arm the indexed check ([#635](https://github.com/yahodu/openpic-webapp/issues/635)) ([b62256b](https://github.com/yahodu/openpic-webapp/commit/b62256b8d38ab844469eb8f9298d0ff183b2522d))
+
 ## [1.65.2](https://github.com/yahodu/openpic-webapp/compare/v1.65.1...v1.65.2) (2026-11-17)
 
 ### Bug Fixes
