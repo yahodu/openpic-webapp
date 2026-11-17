@@ -245,3 +245,109 @@ stage (the `runBillingCronRoute` shape: `CRON_SECRET` bearer accepted for a
   worker/OP-135 transport (ADR-0808 §3).
 - `docs/adr/README.md`'s OP-136 note claims both `0849` cells advanced; the
   OP-129 cell did not. That is card `t_d44c4094`, not this record.
+
+## Review — round 1 (artifact then execution lens)
+
+**Verdict: APPROVED WITH FINDINGS.** The delivery is PR #625, reviewed at head
+`a7dd1816` and squash-merged as `c7628400`. The reviewer made **zero edits** to
+the deliverable — no test, fixture, helper, production line or ADR body — and
+this append mints no number, renames no file and retracts nothing: §Context,
+§Decision (including §5's disputed pin, repaired test-side by ADR-0851 and left
+untouched here), §Evidence and §Out of scope stand as written. Every finding
+below is routed to its own card rather than fixed by this review.
+
+### The merge conflict was index-only
+
+`docs/adr/README.md` conflicted in three places after `main` advanced to
+`9db78584`. That trunk's highest record was `0836` and the lane's reserved range
+`0849`–`0868` is disjoint, so this was an integration conflict and not a
+renumbering: no record number was re-minted and no `ADR-*` file moved. Resolved
+as the union:
+
+- table — the trunk's cells kept (`OP-135 worker interface lane` reads `0837`,
+  not the branch's stale `0836`), the `OP-136 jobs lane` row added, the pool
+  cell `0869`;
+- index — both sides' rows kept, ascending (`main`'s `0836`, the lane's `0849`);
+- prose — every paragraph of both sides kept.
+
+`git diff 9db78584 a7dd1816 -- docs/adr/README.md` is **seven added lines and
+one deleted**: six new lines (the lane row, the `0849` index row, a blank
+separator and the lane's three prose paragraphs) and the pool cell's line
+rewritten in place (`0849` → `0869`). No other path is touched by the
+resolution.
+
+### The reviewed bytes are the shipped bytes
+
+`git rev-parse a7dd1816^{tree}` and `git rev-parse c7628400^{tree}` both return
+`b6f8d3651ce826b8d2e8b48aab30340dd235d54e`, so the squash carries the reviewed
+tree verbatim. Between the full-suite measurement at `b04e8a7e` and the merged
+head `a7dd1816` the only difference is the trunk merge `9db78584` (the OP-135
+superseded-selfie pins, ADR-0836 and its ledger rows); no production or spec line
+of this lane changes across it, so the measurement below applies to the shipped
+bytes.
+
+### Measured by this review, not carried over from the handoff
+
+| Check                                                                                                                                       | Result                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vitest run --project unit --project integration` at `b04e8a7e`                                                                             | **321 files, 4505 passed \| 3 skipped (4508)**, exit `0`, no red                                                                                      |
+| focused re-run on the merged tree `a7dd1816` (the five job specs, `sweep-decisions`, `adr-numbering`, `main`'s `internal-worker-endpoints`) | **8 files, 182 passed (182)**                                                                                                                         |
+| `tsc -p apps/web/tsconfig.json --noEmit` at `a7dd1816`                                                                                      | exit `0`                                                                                                                                              |
+| `prettier --check` on the touched paths                                                                                                     | clean                                                                                                                                                 |
+| ADR guard `adr-numbering`                                                                                                                   | 29 passed (29)                                                                                                                                        |
+| `gh pr checks 625` at `a7dd1816`                                                                                                            | 14/14 green, the aggregate `ci` included                                                                                                              |
+| honesty scan of every added line under `apps/web/src/app` and `apps/web/src/server`                                                         | no `process.env`, `NODE_ENV`, `console.`, `@ts-ignore`, `eslint-disable`, `.only`, `.skip` or `TODO`, no fixture-shaped hardcoding, no new dependency |
+| `apps/web/vercel.json`                                                                                                                      | 15 crons, the 11 OP-136 paths among them (11 rows added)                                                                                              |
+
+The §5 dispute is closed on the right side: ADR-0851 scopes the `latch()` helper
+to the seeded period and no production line moves, so this record's refusal to
+satisfy that assertion was correct.
+
+### Findings routed, by card
+
+- **F1 (High) + F2 (Medium) — `pipeline-indexed-check`.** The job announces
+  `pipeline.event.indexed` for the `delayed` and `partial_failure` states too,
+  not only for `indexed` — measured
+  `{"name":"allFailed","derived":"delayed","announced":true}` — because the
+  candidate query reads `counters.imageCount > 0` alone; and it re-announces
+  once per 6-hour bucket for ever, `rowsAfterFirst: 1` → `rowsAfterSecond: 2`,
+  because the dedupe key carries a wall-clock bucket and no per-event latch
+  exists. The OP-126 `checkUploadBatchTransition` arm this record's §Out of scope
+  names is not wired. Routed as the TEST card `t_7e31328b` and its GREEN
+  `t_16239628`.
+- **F3 (High) — the sweeps' write-then-emit windows.** The account purge's claim
+  flips the profile to `status: "deleted"` while the candidate predicate reads
+  `status: "deletion_pending"`, so one failed step after the claim loses the
+  deletion for ever: measured with an injected tombstone failure,
+  `profileStatus: "deleted"`, `tombstoneRows: 0`, `completionAfterFailure: 0`,
+  `retryScanned: 0` and no `account.deletion.completed` — a DSR obligation
+  silently unfinished. The same shape, at lower blast radius, sits in
+  `verification-nudge`, `invitation-expiry` and `event-window-sweep`. Routed as
+  the TEST card `t_535ab5d2` and its GREEN `t_8901d758`.
+- **F4 + F5 (Low) — `pipeline-sweep` observability and attempt accounting, and
+  the per-row entitlement read.** `enqueueWork` is called without a logger, so a
+  broker refusal leaves no `queue.enqueue_failed`; the re-enqueue path never
+  increments `processing.attempts`, so `attempts >= maxAttempts` can never fire
+  for an item no broker ever acks; and `usage-threshold-check` calls
+  `checkEntitlement` inside its loop over up to 4000 candidate rows, hourly.
+  Routed to card `t_bc01c854`.
+- **F6 (Low) — the ledger.** The OP-136 lane note claimed both `0849` cells
+  advanced while the `OP-129` cell still read `0849`, and the index carried no
+  row for `0850`/`0851`. Routed to `t_d44c4094`.
+- **Carried (Medium) — the elapsed-period arms of `usage-threshold-check`,**
+  carried from the earlier TEST review of this lane; routed to `t_4473eaf5`.
+- **Info, deliberately no card —** the 11 one-line routes reuse
+  `runBillingCronRoute` for non-billing jobs (naming only), and
+  `event-window-sweep` computes `hasMore: scanned === limit` where its siblings
+  use `>=` (the same value, since `scanned <= limit`).
+
+### Status of those findings at the time of this append
+
+Written against `origin/main` `62874617`. **Closed on `main`:** F1 and F2 by PR
+#635 (and the non-indexed terminal arms pinned by `t_71729b5e`, PR #644), F3 by
+PR #636, the carried elapsed-period finding by PR #632, and F6 by `t_d44c4094` —
+decided as option (a), advance the stale `OP-129 attendee identity lane` cell
+`0849` → `0869` (the pool cell's documented twin) plus the two missing index
+rows, and landed via `t_4ba209d5` as PR #643, squash `be3a6905`. **Still open:**
+F4 and F5, card `t_bc01c854`. Read the findings above as the round-1 record, not
+as live state; no record number minted by an unmerged card is asserted here.
