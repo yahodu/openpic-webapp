@@ -1,3 +1,9 @@
+## [1.65.1](https://github.com/yahodu/openpic-webapp/compare/v1.65.0...v1.65.1) (2026-11-17)
+
+### Bug Fixes
+
+- **internal:** OP-135 carry the profile pointer in the selfie arm's write filter ([#630](https://github.com/yahodu/openpic-webapp/issues/630)) ([2c59ad3](https://github.com/yahodu/openpic-webapp/commit/2c59ad30ad985c11e984d9f2202b9e959548ff66))
+
 ## [1.65.0](https://github.com/yahodu/openpic-webapp/compare/v1.64.2...v1.65.0) (2026-11-17)
 
 ### Features
