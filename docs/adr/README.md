@@ -72,7 +72,7 @@ the rejected alternatives are recorded in
 | OP-126 uploads lane                 | `0760`–`0779`                   | `0777`    |
 | OP-129 attendee identity lane       | `0780`–`0798`                   | `0849`    |
 | OP-135 worker interface lane        | `0829`–`0848`                   | `0841`    |
-| OP-136 jobs lane                    | `0849`–`0868`                   | `0858`    |
+| OP-136 jobs lane                    | `0849`–`0868`                   | `0860`    |
 | unallocated (future lanes)          | `0799`+ (20 per lane, in order) | `0869`    |
 
 _Frozen pre-policy numbers held by in-flight refs:_ `0143` (OP-96 F2, PR #221),
@@ -463,6 +463,7 @@ _The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-card-serializati
 | [0852](ADR-0852-op136-indexed-check-matrix-latch-batch-pins.md) | OP-136 TEST (**F1** + **F2**, High/Medium): the indexed check's eight pins — the §4.1 status matrix with `derivePipelineStatus` as the oracle (only the derived `indexed` event is announced, so `delayed` and `partial_failure` stop claiming "fully searchable"), the per-event latch (a second run 7 h later adds no row), the first-completion discriminator `notifyByEmail: true` (and only the first), and the OP-126 batch arm (a batch the worker settled emits exactly one `upload.batch.completed`, and a re-run emits none). RED 8/8 at `7d986972`, green under a throwaway near-fix, four single-anchor mutations reddening only their own cases. | Accepted (RED) |
 | [0855](ADR-0855-op136-indexed-check-derive-latch-batch-arm-green.md) | OP-136 GREEN (**F1** + **F2**, High): the indexed check now reads the shipped §4.1 table (`derivePipelineStatus`) instead of its local `processed + failed >= imageCount`, so `delayed` and `partial_failure` events are never announced as "fully searchable"; it latches on the event (`pipeline.indexedNotifiedAt`, written with the injected clock) and drops the six-hour bucket from its dedupe key (`pipeline.event.indexed:<eventId>`), so one event is announced once for ever and its first (only) announcement is the one that carries `notifyByEmail: true` (`email` is a `FORBIDDEN_PAYLOAD_KEYS` name); and it drives the OP-126 arm — per candidate event, the distinct `event_images.uploadBatchId` read through `tenantRepo`, one `checkUploadBatchTransition` per batch, bounded by the run's `limit` and counted as `details.batches` — so a batch the worker settled without a completion route emits its §4.7 summary once, for `delayed`/`partial_failure` events too (the `notifyByEmail` name and the broad arm are agreed with the pins and the reviewer). Evidence: ADR-0852's eight pins `8 passed (8)` with the spec byte-identical; `unit` `184 files / 3077 passed | 3 skipped`; full `integration` green; `tsc` exit `0`, `eslint` 0, `prettier --check` clean, six ADR guards green; the diff is the one job file, no test, fixture, helper or pin edited. Draws `0855` (the lane cell read `0853`, and the sweep found `0853`/`0854` in flight on `OP-136-task-sweep-failure-windows-pins` and `OP-136-task-usage-elapsed-period-pins`), advancing that cell to `0856`; the pool cells stay `0869`. | Accepted (GREEN) |
 | [0857](ADR-0857-op136-purge-post-claim-step-pins.md) | OP-136 TEST (**F3a**, Medium): the purge's three remaining post-claim windows, one injected failure each — the `session` `deleteMany`, the `account.deletion.completed` insert (gated on the document's own `eventKey`) and the `user` anonymize `updateOne` — after which the **next** run must still finish the deletion exactly as ADR-0853's pin 1 requires: one tombstone holding the last known email, one receipt whose `payload` is `{ userId }` only, a `deleted` profile, plus `sessions: 0` for the session window and no contact left on the account for the anonymize window. Green on arrival (`7 passed (7)`) because ADR-0856's `withTransaction` closed every step; the characterization is proven load-bearing by the F3a near-fix that passes the tombstone pin (`3 failed | 4 passed`), by one swallowed step at a time and by one step moved outside the transaction (each `1 failed | 6 passed`, reddening exactly its own pin). Draws `0857` (the lane cell's own value, no `ADR-0857*` on any surface), advancing that cell to `0858`; the pool cells stay `0869`. | Accepted (TEST) |
+| [0859](ADR-0859-op136-batch-arm-non-indexed-terminal-pins.md) | OP-136 TEST (**F1**, Low): the OP-126 batch arm for the **non-indexed terminal** events — a batch that settles as `complete_with_errors` (one failed image) inside a `partial_failure` event, and inside a `delayed` event, must each emit exactly **one** `upload.batch.completed_with_errors` addressed to the batch's uploader with its `batchId`/`fileCount`, never an `upload.batch.completed`, and a second run 7 h later adds none; `derivePipelineStatus` is the oracle, asserted before any outbox read. Three cases appended (+168/−0) beside ADR-0852's frozen eight, no existing case, fixture or helper touched. **Green on arrival** (`11 passed (11)`), proven load-bearing by narrowing the arm to the announced events (`3 failed / 8 passed`, reddening only `I9`–`I11`). | Accepted (TEST) |
 Template: Context · Decision · Consequences · Alternatives.
 
 _`0059` remains reserved for the last OP-90 lane in the binding allocation (`t_eb61c823` / `t_93d4774b`); its row lands when that PR merges._
@@ -1267,3 +1268,44 @@ shared-ledger hotspot: this row, this note and the lane cell merge as a union ke
 cell (`0841`). No number outside `0829`–`0848` is consumed._
 
 _The **OP-136** TEST card `t_b845ed28` (Medium; finding **F3a** of the review of the TEST card `t_535ab5d2`, and the follow-up of the merged GREEN `t_8901d758`) draws `0857` — the lane row's own `Next free` cell, re-read at this head (`51c439f0`); the sweep immediately before minting found no `ADR-0857*` file on the trunk, in any `.worktrees/*/docs/adr`, in `git rev-list --objects --all -- docs/adr` or on any of the seventeen open PR heads (`0849`–`0856` are the highest records anywhere) — and advances **only** the `OP-136 jobs lane` cell to `0858`; both `unallocated (future lanes)` cells stay `0869`. [ADR-0857](ADR-0857-op136-purge-post-claim-step-pins.md) appends **three** pins in a new `describe("when a purge step fails after the account is claimed")` to `apps/web/src/test/integration/job-sweep-failure-windows.test.ts` (+277/−0: no existing assertion, helper, fixture or mock edited, only the additive `failNextDeleteMany`, `deletionState`, `seedSession` and `purgeRun`). Each case injects **one** failure on **one** post-claim step of `account-deletion-purge` — the `session` `deleteMany`, the `account.deletion.completed` insert gated on the document's own `eventKey`, and the `user` anonymize `updateOne` (gated on the collection only, so the erase shape stays unprescribed) — arms it for one call, restores it in a `finally` before the retry, and asserts `fired() === 1` before any outcome, then requires the **next** run to finish the deletion as ADR-0853's pin 1 does: one tombstone holding the last known email, one receipt whose `payload` is `{ userId }` only, a `deleted` profile, plus `sessions: 0` for the session window and no contact left on the account for the anonymize window. **All three are GREEN on arrival** (`Tests  7 passed (7)`, the three new pins plus ADR-0853's four): ADR-0856's `withTransaction` closed all three windows, so this card is a characterization and its PR is a normal (not draft) test PR. The characterization is proven load-bearing by probe mutations of the job, each restored byte-identically (`sha256 2dd50c64…311139c`): the **F3a near-fix** that passes the tombstone pin (tombstone write first, claim after, no transaction) reddens exactly the three new pins (`3 failed | 4 passed`) with `run 2 must finish the deletion the failed session delete left unfinished (run 2 reported scanned: 0, errors: 0): expected { tombstones: 1, receipts: +0, …(1) } to match object { tombstones: 1, receipts: 1, …(1) }` and its two siblings; one swallowed step at a time reddens exactly its own pin at the report stroke (`expected +0 to be 1`); and one step moved outside the transaction reddens exactly its own pin at the outcome stroke (`sessions` survivor, `receipts: +0`, `the account keeps no contact of its own: expected 'user-…@example…' to be null`), each `1 failed | 6 passed`. `tsc -p apps/web/tsconfig.json --noEmit` exit `0`, `eslint` 0 issues, `prettier --check` clean, the six `adr-*` guards green. No production file in the diff. `docs/adr/README.md` is the shared-ledger hotspot: this index row, this note and the lane cell merge as a union keeping the highest cells (`0858` lane, `0869` pool). No number outside `0849`–`0868` is consumed._
+
+_The **OP-136** TEST card `t_71729b5e` (Low; finding **F1** of the review of the pin
+card `t_7e31328b`, whose pins shipped on PR #631, and the follow-up of the GREEN `t_16239628`,
+landed as `b62256b8`) draws `0859` — the lane row's own `Next free` cell read `0858` at this
+head (`718166ec`); the sweep immediately before minting found `ADR-0858*` in flight only, on the
+open PR #641 head (`OP-136-task-anonymize-injection-shape`, `de739d20`) and in the worktree
+`.worktrees/t_8901d758` that produced it, `ADR-0857` as the highest record on the trunk, and no
+`ADR-0859*` on any surface — and advances **only** the `OP-136 jobs lane` cell to `0860`; both
+`unallocated (future lanes)` cells stay `0869`.
+[ADR-0859](ADR-0859-op136-batch-arm-non-indexed-terminal-pins.md) closes the gap that
+ADR-0852's own "Out of scope" list recorded: the OP-126 arm was pinned only for a `done` batch
+inside an `indexed` event, so a batch that settles `complete_with_errors` inside a
+`partial_failure` or a `delayed` event — the uploader's **only** notification, because such an
+event is deliberately never announced as searchable — was unpinned, and a GREEN that drove the
+arm only for the events it announces would have passed all eight existing pins. **Three appended
+cases** in a new `describe` block of
+`apps/web/src/test/integration/job-pipeline-indexed-check.test.ts` (`+168/−0`: ADR-0852's eight
+cases, every helper, fixture and constant untouched, only an additive
+`seedSettledFailingBatch` and three constants): `I9` a `partial_failure` event (one `done` and
+two `failed` images, three `completed` sessions) must write exactly **one**
+`upload.batch.completed_with_errors` addressed to the batch's uploader with `payload.batchId`,
+`payload.eventId` and `payload.fileCount` 3, **no** `upload.batch.completed` and no index
+announcement; `I10` the same for a `delayed` event (two `failed` images, `fileCount` 2); `I11`
+both shapes seeded together, where a second run 7 h later adds no summary and each first-run row
+still names its own batch id. `derivePipelineStatus` is asserted as the **oracle** before any
+outbox read, and every row is seeded with the raw driver (the completion route never runs).
+**All three are GREEN on arrival** (`Tests  11 passed (11)`), which is what the arm as shipped in
+ADR-0855 §2 F2 gives; the characterization is proven load-bearing by a throwaway mutation that
+narrows the arm's loop to the announced events, reddening exactly `I9`–`I11`
+(`3 failed / 8 passed`, `expected [] to have a length of 1 but got +0` and its `length of 2`
+sibling) while ADR-0852's eight stay green — the finding reproduced — with
+`apps/web/src/server/jobs/pipeline-indexed-check.ts` restored byte-identically
+(`sha256 5eb913d4153cef1715c9a08bc1a07b1d430e85a7e1a2a4633e875f31c3ef00de`). `tsc -p
+apps/web/tsconfig.json --noEmit` exit `0`, `eslint` 0 issues, `prettier --check` clean, the six
+`adr-*` guards green, and no production file in the diff. Deliberately unpinned: the scan-window
+drain the parent's review routed to `t_07d09535` (each case seeds one or two events, far under
+the default limit), the arm's cost (`t_eeb212c2`), a failure-free batch inside a failed event,
+multiple uploaders in one batch, and `payload.durationMs`/`payload.files`/`failures[]`.
+`docs/adr/README.md` is the lane's hotspot: this index row, this lane cell and this note merge
+as a union against PR #641's `ADR-0858` (index-only, keeping the higher cells `0860` lane and
+`0869` pool). No number outside `0849`–`0868` is consumed._
