@@ -1575,6 +1575,82 @@ describe("when the worker reports a selfie outcome", () => {
       lastError: null,
     });
   });
+
+  /**
+   * P5 — the discard line's **field set**, not only the six fields P1 matches.
+   *
+   * ADR-0833 §2 decides that the withheld-write announcement carries the three
+   * non-PII identifiers (`kind`, `id`, `workerId`) plus the stable `reason` and
+   * nothing else: no profile id and no biometric field may ride it, because the
+   * line is shipped to the operator's log vendor. P1's `toMatchObject` cannot
+   * enforce that half of the decision — it permits extra keys — so a change that
+   * added `profileId`, an `embedding` handle or a contact to that `warn` would
+   * leave every other case in this file green. This case pins the entry's own
+   * key set instead (the logger's three envelope fields and the four call-site
+   * fields), sorted so the assertion names the set rather than the emission
+   * order, and repeats the absence per PII name so a failure names the field.
+   */
+  it("P5: logs the discard with exactly its eight non-PII fields and no profile id", async () => {
+    // The P1 seed: this worker holds the lease, the profile's live result
+    // belongs to a different selfie, so the profile write is withheld.
+    const fixture = await submittedSelfie("op135-discard-fields", "op135-discard-fields");
+    await claimSelfie(fixture.selfieId, LEASEHOLDER);
+    await seedSupersededProfile();
+    const sink = installLogSink();
+
+    const response = await workerReportHandler(
+      signedPost(REPORT_PATH, {
+        workerId: LEASEHOLDER,
+        items: [
+          {
+            kind: "selfie",
+            id: fixture.selfieId,
+            outcome: "done",
+            matchesCreated: 0,
+            matchRunStartedAt: SUPERSEDED_NEWER_RUN.toISOString(),
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await bodyOf(response, 200, "POST internal worker/report")).toEqual({
+      applied: 1,
+      leaseLost: 0,
+      rejected: [],
+    });
+
+    const discarded = discardEntries(sink);
+    expect(discarded).toHaveLength(1);
+    const entry = discarded[0];
+    if (entry === undefined) {
+      throw new Error(
+        "the withheld profile write was not announced, so its field set cannot be measured"
+      );
+    }
+
+    // `ts`/`level`/`msg` come from the logger's envelope; the four others are
+    // the call site's. Anything else on this entry is a field the decision did
+    // not sanction, which is what makes this an exact set rather than a subset.
+    expect(Object.keys(entry).sort()).toEqual([
+      "event",
+      "id",
+      "kind",
+      "level",
+      "msg",
+      "reason",
+      "ts",
+      "workerId",
+    ]);
+
+    // Named one by one, so the failure says which field leaked rather than only
+    // that the set grew (ADR-0833 §2's negative list).
+    expect(entry).not.toHaveProperty("profileId");
+    expect(entry).not.toHaveProperty("subject");
+    expect(entry).not.toHaveProperty("embedding");
+    expect(entry).not.toHaveProperty("email");
+    expect(entry).not.toHaveProperty("phone");
+  });
 });
 
 /* ──────────── I3, I7: the thumbnail processor's derivative report ───────── */
