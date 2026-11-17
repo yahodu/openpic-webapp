@@ -1,3 +1,9 @@
+## [1.65.9](https://github.com/yahodu/openpic-webapp/compare/v1.65.8...v1.65.9) (2026-11-17)
+
+### Bug Fixes
+
+- **images:** OP-136 warn when a reprocess enqueue is refused ([#667](https://github.com/yahodu/openpic-webapp/issues/667)) ([268c842](https://github.com/yahodu/openpic-webapp/commit/268c842e1585567a0330557437b10bab002b1cff)), closes [#666](https://github.com/yahodu/openpic-webapp/issues/666)
+
 ## [1.65.8](https://github.com/yahodu/openpic-webapp/compare/v1.65.7...v1.65.8) (2026-11-17)
 
 ### Bug Fixes
