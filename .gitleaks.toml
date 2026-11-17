@@ -44,4 +44,12 @@ regexes = [
   '''op135-deriv-rawkey''',
   '''op135-f2-handle''',
   '''op135-f4-lease-race''',
+  # The OP-136 observability pins' plan key (ADR-0864): a plan identifier the
+  # suite seeds and the tenant's subscription points at, not a secret. The
+  # constant's `PLAN_KEY` name and the value's entropy match generic-api-key, so
+  # the exact non-secret value is allowlisted. The first entry is the literal the
+  # branch's pre-rename commit still carries (gitleaks scans the whole push
+  # range), the second the renamed fixture's value, exactly as OP-99's entry did.
+  '''op136-observability-plan''',
+  '''op136-observability''',
 ]
