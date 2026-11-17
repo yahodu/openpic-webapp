@@ -27,7 +27,10 @@
   on `origin/OP-136-task-usage-elapsed-period-pins`, so neither was free. This
   record takes **`0855`** — the highest record on any surface plus one — and
   advances the lane cell to `0856`; the two pool cells stay `0869`. No number
-  outside `0849`–`0868` is consumed.
+  outside `0849`–`0868` is consumed. `ADR-0854` merged into the trunk as
+  `d5830902` while this branch was in review, moving the trunk's cell to
+  `0855`; the pre-push sweep still found no `ADR-0855*` on any surface, and the
+  merged tree keeps the cell at the higher value (`0856`).
 
 ## Context
 
@@ -90,7 +93,13 @@ apps/web/src/test/integration/job-pipeline-indexed-check.test.ts` → `8 passed
 - `vitest run --project unit` → `184 files / 3077 passed | 3 skipped`, and the
   full `integration` project green.
 - `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` 0 on the touched
-  paths; `prettier --check` clean; the six ADR guards green.
+  paths; `prettier --check` clean; the six ADR guards `236 passed` on the
+  merged tree.
+- The combined run CI performs —
+  `vitest run --project unit --project integration --coverage` — is green at the
+  merged head: `322 files / 4520 passed | 3 skipped`, statements `91.55 %`,
+  branches `80.26 %`, functions `95.95 %`, lines `91.67 %`, so the configured
+  global threshold holds (the trunk's branch figure was `80.09 %`).
 - The behaviour is load-bearing per ADR-0852's own probe table (the trunk's
   collapsed criterion reddens I1–I3, no latch reddens I4, no flag reddens
   I5/I6, an empty batch arm reddens I7/I8), measured against this job.
