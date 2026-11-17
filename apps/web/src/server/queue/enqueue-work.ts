@@ -47,7 +47,8 @@ export interface EnqueueWorkOptions {
   /** The collection holding the work item. */
   readonly collection: CollectionName;
   readonly work: WorkItemPointer;
-  readonly logger?: Logger;
+  /** Optional so a caller that forwards its own optional logger type-checks. */
+  readonly logger?: Logger | undefined;
   readonly clock?: Clock;
 }
 
