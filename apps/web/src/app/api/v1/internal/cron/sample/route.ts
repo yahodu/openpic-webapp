@@ -1,5 +1,4 @@
-import { internalAuthStage } from "@/server/auth/internal-hmac";
-import { getConfig } from "@/server/config/env";
+import { internalRouteAuth } from "@/server/auth/internal-hmac";
 import { defineRoute } from "@/server/http/define-route";
 import { cronResultSchema, defineCronJob } from "@/server/jobs/cron-job";
 import { getLogger } from "@/server/logging";
@@ -43,11 +42,7 @@ function buildSampleRoute(requestedLimit: string | null) {
   return defineRoute({
     route: ROUTE,
     response: cronResultSchema,
-    auth: (ctx, request) =>
-      internalAuthStage({
-        internalApiSecret: getConfig().internal.apiSecret,
-        cronSecret: getConfig().cron.secret,
-      })(ctx, request),
+    auth: internalRouteAuth,
     handler: async () => {
       const result = await sampleJob.run({
         requestedLimit,

@@ -8,8 +8,7 @@
  * `next build`'s page-data collection (which runs without a configured
  * environment) never evaluates `getConfig()` at module scope.
  */
-import { internalAuthStage } from "@/server/auth/internal-hmac";
-import { getConfig } from "@/server/config/env";
+import { internalRouteAuth } from "@/server/auth/internal-hmac";
 import { defineRoute } from "@/server/http/define-route";
 import { cronResultSchema, type CronJob } from "@/server/jobs/cron-job";
 import { getLogger } from "@/server/logging";
@@ -33,11 +32,7 @@ export function runNotificationCronRoute(
   return defineRoute({
     route,
     response: cronResultSchema,
-    auth: (ctx, req) =>
-      internalAuthStage({
-        internalApiSecret: getConfig().internal.apiSecret,
-        cronSecret: getConfig().cron.secret,
-      })(ctx, req),
+    auth: internalRouteAuth,
     handler: async () => {
       const result = await job.run({ requestedLimit, clock: systemClock, logger: getLogger() });
       return { body: result };
