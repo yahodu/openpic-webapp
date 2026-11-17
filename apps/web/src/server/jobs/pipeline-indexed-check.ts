@@ -122,8 +122,38 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
   const now = clock.now();
   const events = platformRepo(db).collection(COLLECTIONS.events);
 
+  // The candidate window is keyed on the pipeline INPUT: a row stays a candidate
+  // only until its counters move (ADR-0861 §1). The latch cannot be the filter —
+  // a `delayed` / `partial_failure` row never latches and would hold its slot for
+  // ever — so every evaluated row leaves the page through the checked triple.
   const raw: unknown = await events
-    .find({ "counters.imageCount": { $gt: 0 } })
+    .find({
+      "counters.imageCount": { $gt: 0 },
+      $expr: {
+        $or: [
+          { $eq: [{ $type: "$pipeline.indexedCheckedCounters" }, "missing"] },
+          {
+            $ne: [
+              { $ifNull: ["$counters.imageCount", 0] },
+              "$pipeline.indexedCheckedCounters.imageCount",
+            ],
+          },
+          {
+            $ne: [
+              { $ifNull: ["$counters.processedImageCount", 0] },
+              "$pipeline.indexedCheckedCounters.processedImageCount",
+            ],
+          },
+          {
+            $ne: [
+              { $ifNull: ["$counters.failedImageCount", 0] },
+              "$pipeline.indexedCheckedCounters.failedImageCount",
+            ],
+          },
+        ],
+      },
+    })
+    .sort({ _id: 1 })
     .limit(limit)
     .toArray();
   const candidates = Array.isArray(raw)
@@ -135,9 +165,18 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
 
   for (const row of candidates) {
     const counts = pipelineCounts(row);
+    const checked = {
+      imageCount: counts.imageCount,
+      processedImageCount: counts.processedImageCount,
+      failedImageCount: counts.failedImageCount,
+    };
     // The shipped §4.1 table is the oracle: only `indexed` is fully searchable,
     // and a latched event was announced already.
     if (derivePipelineStatus(counts) !== "indexed" || row.pipeline?.indexedNotifiedAt != null) {
+      await events.updateOne(
+        { _id: row._id },
+        { $set: { "pipeline.indexedCheckedCounters": checked } }
+      );
       skipped += 1;
       continue;
     }
@@ -155,7 +194,17 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
       },
       { db, clock }
     );
-    await events.updateOne({ _id: row._id }, { $set: { "pipeline.indexedNotifiedAt": now } });
+    // Emit first, marker second (ADR-0861 §2): one update stamps the latch and the
+    // checked triple, so this row leaves the window too.
+    await events.updateOne(
+      { _id: row._id },
+      {
+        $set: {
+          "pipeline.indexedNotifiedAt": now,
+          "pipeline.indexedCheckedCounters": checked,
+        },
+      }
+    );
     if (result.deduped) {
       skipped += 1;
       continue;
