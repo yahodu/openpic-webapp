@@ -1,28 +1,34 @@
 import { z } from "zod";
 
-import { internalAuthStage } from "@/server/auth/internal-hmac";
-import { getConfig } from "@/server/config/env";
+import { internalRouteAuth } from "@/server/auth/internal-hmac";
 import { getDb } from "@/server/db/mongo";
 import { DomainEventError, emitDomainEvent } from "@/server/domain/domain-events";
 import { defineRoute } from "@/server/http/define-route";
+import { systemClock } from "@/server/runtime/clock";
 
 /**
  * `POST /api/v1/internal/domain-events` — the worker's outbox flush (OP-135,
- * contract §10.3.2, §7.6, §7.7; ADR-0029, ADR-0808 §3, ADR-0829 §2).
+ * contract §10.3.2, §7.6, §7.7; ADR-0029, ADR-0808 §3, ADR-0829 §2, ADR-0835 §4).
  *
  * The Python worker must never embed a notification client, so every fact it
  * produces reaches the outbox through here. Each item is gated separately: an
  * unknown `eventKey` is refused **in the answer** and the rest of the batch
- * still commits (§10.3.2's "a bad key never fails the batch"), and `dedupeKey`
- * is honoured through {@link emitDomainEvent} — which is what makes the worker's
- * announcement of an activation result and the confirmation's the same
- * delivery (ADR-0808 §3).
+ * still commits (§10.3.2's "a bad key never fails the batch"), and so is an
+ * `occurredAt` more than 24 h ahead of the platform clock — the one direction in
+ * which the worker's own instant can push the outbox TTL past the retention it
+ * is measured against (ADR-0835 §4; an instant in the past is a legitimate
+ * backlog). `dedupeKey` is honoured through {@link emitDomainEvent} — which is
+ * what makes the worker's announcement of an activation result and the
+ * confirmation's the same delivery (ADR-0808 §3).
  */
 
 const ROUTE = "/api/v1/internal/domain-events";
 
 /** §10.3.2's batch cap. */
 const MAX_BATCH = 100;
+
+/** How far ahead of the platform clock a worker-supplied instant may be. */
+const MAX_EVENT_AHEAD_MS = 24 * 60 * 60 * 1000;
 
 /** One event as the worker sends it. */
 const batchItemSchema = z.object({
@@ -55,20 +61,20 @@ export const POST = defineRoute<{ events: BatchItem[] }, z.infer<typeof batchRes
   route: ROUTE,
   body: z.object({ events: z.array(batchItemSchema).max(MAX_BATCH) }),
   response: batchResponseSchema,
-  // The secrets are read through a thunk: `getConfig()` validates the
-  // environment, which `next build` runs without.
-  auth: (ctx, request) =>
-    internalAuthStage({
-      internalApiSecret: getConfig().internal.apiSecret,
-      cronSecret: getConfig().cron.secret,
-    })(ctx, request),
+  auth: internalRouteAuth,
   handler: async (ctx) => {
     const db = getDb();
+    const now = systemClock.now();
     const rejected: z.infer<typeof rejectedItemSchema>[] = [];
     let accepted = 0;
     let deduped = 0;
 
     for (const [index, item] of ctx.body.events.entries()) {
+      const occurredAt = new Date(item.occurredAt);
+      if (occurredAt.getTime() - now.getTime() > MAX_EVENT_AHEAD_MS) {
+        rejected.push({ index, eventKey: item.eventKey, reason: "occurred_at_out_of_window" });
+        continue;
+      }
       try {
         const result = await emitDomainEvent(
           {
@@ -81,7 +87,7 @@ export const POST = defineRoute<{ events: BatchItem[] }, z.infer<typeof batchRes
           },
           // The worker's own instant is the event's `occurredAt`; the outbox
           // stamps it from this seam rather than from the request clock.
-          { db, clock: { now: () => new Date(item.occurredAt) } }
+          { db, clock: { now: () => occurredAt } }
         );
         if (result.deduped) {
           deduped += 1;
