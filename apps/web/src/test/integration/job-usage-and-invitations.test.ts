@@ -130,10 +130,10 @@ async function setCounterValue(entitlementKey: string, value: number): Promise<v
 }
 
 /** The stored latch of one counter row. */
-async function latch(entitlementKey: string): Promise<unknown> {
+async function latch(entitlementKey: string, period: string): Promise<unknown> {
   const row = await app.db
     .collection(COLLECTIONS.usageCounters)
-    .findOne({ tenantId: TENANT, entitlementKey });
+    .findOne({ tenantId: TENANT, entitlementKey, periodKey: period });
   return row?.thresholdsNotified;
 }
 
@@ -182,7 +182,7 @@ describe("usage-threshold-check: the per-period latch", () => {
     expect(afterFirst).toHaveLength(1);
     expect(afterFirst[0]?.payload).toMatchObject({ threshold: 80, percent: 85 });
     expect(first.details?.notified).toBe(1);
-    expect(await latch("storage.bytes")).toEqual([80]);
+    expect(await latch("storage.bytes", "lifetime")).toEqual([80]);
 
     // ── Act: the same 85 % on the next hourly tick ──
     const again = await usageThresholdCheckJob.run({
@@ -227,7 +227,7 @@ describe("usage-threshold-check: the per-period latch", () => {
     expect(events).toHaveLength(2);
     expect(events[1]?.payload).toMatchObject({ threshold: 95, percent: 96 });
     expect(afterNinetyFive.details?.notified).toBe(1);
-    expect(await latch("storage.bytes")).toEqual([80, 95]);
+    expect(await latch("storage.bytes", "lifetime")).toEqual([80, 95]);
   });
 
   it("notifies the same threshold again in a new period", async () => {
@@ -260,7 +260,7 @@ describe("usage-threshold-check: the per-period latch", () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.payload).toMatchObject({ threshold: 80, percent: 90 });
     expect(result.details?.notified).toBe(1);
-    expect(await latch("events.active")).toEqual([80]);
+    expect(await latch("events.active", periodKey("monthly", NOW))).toEqual([80]);
   });
 
   it("says nothing for an unlimited quota or a counter below the first threshold", async () => {
@@ -280,7 +280,7 @@ describe("usage-threshold-check: the per-period latch", () => {
 
     expect(result.details?.notified).toBe(0);
     expect(await thresholdEvents("usage.storage.threshold")).toHaveLength(0);
-    expect(await latch("storage.bytes")).toBeUndefined();
+    expect(await latch("storage.bytes", "lifetime")).toBeUndefined();
   });
 });
 
