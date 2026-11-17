@@ -76,7 +76,7 @@ const DAY_MS = 86_400_000;
 const TENANT = "t_op136_observability";
 
 /** The plan key the seeded plan and subscription agree on. */
-const PLAN_KEY = "op136-observability-plan";
+const PLAN_SLUG = "op136-observability";
 
 let app: TestApp;
 
@@ -277,7 +277,7 @@ async function countCollectionReads(
 async function seedPlan(): Promise<void> {
   await app.db.collection(COLLECTIONS.plans).insertOne(
     makePlan({
-      key: PLAN_KEY,
+      key: PLAN_SLUG,
       entitlements: {
         "events.active": makeEntitlement({
           limit: 10,
@@ -290,13 +290,13 @@ async function seedPlan(): Promise<void> {
   );
 }
 
-/** Seed the live subscription that makes {@link PLAN_KEY} the active plan. */
+/** Seed the live subscription that makes {@link PLAN_SLUG} the active plan. */
 async function seedActiveSubscription(): Promise<void> {
   await app.db.collection(COLLECTIONS.subscriptions).insertOne(
     makeSubscription({
       tenantId: TENANT,
-      subscribedPlanKey: PLAN_KEY,
-      activePlanKey: PLAN_KEY,
+      subscribedPlanKey: PLAN_SLUG,
+      activePlanKey: PLAN_SLUG,
       status: "active",
     })
   );
