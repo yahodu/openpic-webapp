@@ -10,6 +10,23 @@ import { defineConfig } from "vitest/config";
  */
 const webSrc = fileURLToPath(new URL("./apps/web/src/", import.meta.url));
 
+/**
+ * Per-test budget for the `integration` project, in ms (ADR-0841).
+ *
+ * Vitest's 5 000 ms default sat only 1.26x above the slowest *passing* case of
+ * a full `integration` run, so a worker under Mongo/CPU contention reddened an
+ * unrelated spec with `Test timed out in 5000ms` on a tree that reads green on
+ * the next run. The budget below is sized from a measured full run (2026-11-17,
+ * 1452 cases / 139 files at `cbab1f0f`): p50 166 ms, p99 1 905 ms, slowest
+ * passing case 3 953 ms — 30 000 ms is ~15.7x p99 and ~7.6x that maximum, and
+ * the same ceiling the two specs that already pin their own budget
+ * (`notification-seed`, `identity-hooks`) use.
+ *
+ * This is a ceiling for contention, not a performance gate: no assertion is
+ * relaxed by it, and the `unit` project keeps the 5 000 ms default.
+ */
+const INTEGRATION_TEST_TIMEOUT_MS = 30_000;
+
 export default defineConfig({
   resolve: {
     alias: [{ find: /^@\//, replacement: webSrc }],
@@ -31,6 +48,7 @@ export default defineConfig({
           include: ["apps/web/src/test/integration/**/*.test.ts"],
           setupFiles: ["apps/web/src/test/integration/setup.ts"],
           globalSetup: ["apps/web/src/test/integration/global-setup.ts"],
+          testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
         },
       },
     ],
