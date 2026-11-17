@@ -1,4 +1,4 @@
-import type { Document } from "mongodb";
+import type { Document, ObjectId } from "mongodb";
 import { z } from "zod";
 
 import { internalAuthStage } from "@/server/auth/internal-hmac";
@@ -89,9 +89,10 @@ const reportResponseSchema = z.object({
   rejected: z.array(rejectedItemSchema),
 });
 
-/** A stored attendee profile, as the withdrawn guard reads it (§15.3). */
+/** A stored attendee profile, as the withdrawn and superseded guards read it (§15.3). */
 interface ProfileStatusRow {
   readonly status?: string;
+  readonly activeSelfieId?: ObjectId | null;
 }
 
 export const POST = defineRoute<
@@ -142,12 +143,15 @@ export const POST = defineRoute<
       }
 
       const tenant = tenantRepo(row.tenantId, db);
+      // §6.4: the profile's live count and watermark belong to the selfie it
+      // points at, so a late report for a superseded row must not move them.
+      let supersededSelfie = false;
       if (item.kind === "selfie") {
         const profile = (await tenant
           .collection(COLLECTIONS.attendeeEventProfiles)
           .findOne(
             { _id: row.profileId },
-            { projection: { status: 1 } }
+            { projection: { status: 1, activeSelfieId: 1 } }
           )) as ProfileStatusRow | null;
         if (profile?.status === "withdrawn") {
           rejected.push({ index, id: item.id, reason: "profile_withdrawn" });
@@ -158,6 +162,8 @@ export const POST = defineRoute<
           });
           continue;
         }
+        supersededSelfie =
+          profile?.activeSelfieId != null && !profile.activeSelfieId.equals(row._id);
       }
 
       const faceCount = item.kind === "event_image" ? item.faceCount : item.quality?.faceCount;
@@ -210,7 +216,15 @@ export const POST = defineRoute<
         );
         // The profile projection §6.4 polls: `ready` only on a success, and
         // the watermark is the run's own start instant (§10.3.3).
-        if (decision.status !== "skipped") {
+        if (decision.status !== "skipped" && supersededSelfie) {
+          getLogger().warn("worker.report_discarded", {
+            event: "worker.report_discarded",
+            kind: item.kind,
+            id: item.id,
+            workerId,
+            reason: "superseded_selfie",
+          });
+        } else if (decision.status !== "skipped") {
           await tenant.collection(COLLECTIONS.attendeeEventProfiles).updateOne(
             { _id: row.profileId },
             {

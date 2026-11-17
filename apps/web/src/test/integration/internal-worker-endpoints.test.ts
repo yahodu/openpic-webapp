@@ -1198,6 +1198,85 @@ describe("when the worker reports a selfie outcome", () => {
     expect(participation.status).toBe("withdrawn");
     expect(participation.matchCount).toBe(0);
   });
+
+  it("discards a superseded selfie's result: the active profile keeps its own count and watermark", async () => {
+    const fixture = await submittedSelfie("op135-report-superseded", "op135-report-superseded");
+    // The worker still holds the lease on the row it is finishing, so the lease
+    // check is not what this case is about: the report is *this* worker's.
+    await claimSelfie(fixture.selfieId, LEASEHOLDER);
+
+    // The race ADR-0829 §1 and ADR-0830 §9 name, pinned by ADR-0832: the attendee
+    // has since handed in a **newer** selfie, so the profile's live result belongs
+    // to that row, never to the superseded one the worker is finishing. Seeded
+    // rather than raced — the window is a state (one superseded row plus one
+    // active one), not a timing gap — and `activeSelfieId` names a row the worker
+    // does not report, which is all the discarded arm may be decided on.
+    const newerRunStartedAt = new Date("2026-09-25T12:00:00.000Z");
+    const supersededRunStartedAt = new Date("2026-09-25T09:10:00.000Z");
+    const liveProfile = await profileRow();
+    await app.db.collection(COLLECTIONS.attendeeEventProfiles).updateOne(
+      { _id: liveProfile._id },
+      {
+        $set: {
+          activeSelfieId: new ObjectId(),
+          status: "ready",
+          matchCount: 7,
+          lastMatchRunAt: newerRunStartedAt,
+        },
+      }
+    );
+    const profileBefore = await profileRow();
+
+    const response = await workerReportHandler(
+      signedPost(REPORT_PATH, {
+        workerId: LEASEHOLDER,
+        items: [
+          {
+            kind: "selfie",
+            id: fixture.selfieId,
+            outcome: "done",
+            matchesCreated: 0,
+            matchRunStartedAt: supersededRunStartedAt.toISOString(),
+          },
+        ],
+      })
+    );
+
+    // The item is this worker's, so it is applied: discarding the **profile**
+    // write is neither `leaseLost` (the lease is held) nor `rejected` (the row
+    // exists). Keeping `applied` at 1 is what makes re-delivering the report a
+    // no-op with the same answer.
+    expect(response.status).toBe(200);
+    expect(await bodyOf(response, 200, "POST internal worker/report")).toEqual({
+      applied: 1,
+      leaseLost: 0,
+      rejected: [],
+    });
+
+    // The live result belongs to the newer selfie: nothing about this report may
+    // move it. An unguarded write stores this item's own `matchesCreated` (0) and
+    // rewinds the watermark to the superseded run's start, and §10.3.3's
+    // watermark is the incremental search's lower bound (`createdAt >
+    // lastMatchRunAt`), so a rewind re-scores every already-matched face and the
+    // §6.4 poll shows a count that just fell.
+    const profileAfter = await profileRow();
+    expect({
+      status: profileAfter.status,
+      matchCount: profileAfter.matchCount,
+      lastMatchRunAt: profileAfter.lastMatchRunAt,
+    }).toEqual({
+      status: "ready",
+      matchCount: 7,
+      lastMatchRunAt: newerRunStartedAt,
+    });
+    expect(profileAfter).toEqual(profileBefore);
+
+    // The item's **own** row is not the profile: its verdict is still recorded.
+    expect((await selfieRow(fixture.selfieId))?.processing).toMatchObject({
+      status: "done",
+      lastError: null,
+    });
+  });
 });
 
 /* ──────────── I3, I7: the thumbnail processor's derivative report ───────── */
