@@ -1,3 +1,9 @@
+## [1.65.5](https://github.com/yahodu/openpic-webapp/compare/v1.65.4...v1.65.5) (2026-11-17)
+
+### Bug Fixes
+
+- **internal:** OP-135 recount the event's processing counters from the report ([#658](https://github.com/yahodu/openpic-webapp/issues/658)) ([a099340](https://github.com/yahodu/openpic-webapp/commit/a099340e41286cbbad295256d8316b65fa6b3932))
+
 ## [1.65.4](https://github.com/yahodu/openpic-webapp/compare/v1.65.3...v1.65.4) (2026-11-17)
 
 ### Bug Fixes
