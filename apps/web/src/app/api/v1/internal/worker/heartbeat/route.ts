@@ -1,7 +1,6 @@
 import { z } from "zod";
 
-import { internalAuthStage } from "@/server/auth/internal-hmac";
-import { getConfig } from "@/server/config/env";
+import { internalRouteAuth } from "@/server/auth/internal-hmac";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
@@ -60,13 +59,7 @@ export const POST = defineRoute<HeartbeatBody, z.infer<typeof heartbeatResponseS
   route: ROUTE,
   body: heartbeatBodySchema,
   response: heartbeatResponseSchema,
-  // The secrets are read through a thunk: `getConfig()` validates the
-  // environment, which `next build` runs without.
-  auth: (ctx, request) =>
-    internalAuthStage({
-      internalApiSecret: getConfig().internal.apiSecret,
-      cronSecret: getConfig().cron.secret,
-    })(ctx, request),
+  auth: internalRouteAuth,
   handler: async (ctx) => {
     const db = getDb();
     const now = systemClock.now();

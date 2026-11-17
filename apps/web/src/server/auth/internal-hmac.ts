@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import { getConfig } from "@/server/config/env";
 import { appError } from "@/server/http/errors";
 import type { RouteStage } from "@/server/http/define-route";
 import { requestLogger } from "@/server/logging";
@@ -274,3 +275,19 @@ export function internalAuthStage(options: InternalAuthStageOptions): RouteStage
     return undefined;
   };
 }
+
+/**
+ * The `auth:` stage of the four internal M2M routes (§0.3, §10.3.2).
+ *
+ * One definition for all of them: {@link internalAuthStage} with the deployed
+ * secret pair. The secrets are read **inside** the stage, never at import time,
+ * because `getConfig()` validates the environment and `next build` runs without
+ * it.
+ *
+ * @returns The pipeline stage the route's `auth:` option takes.
+ */
+export const internalRouteAuth: RouteStage = (ctx, request) =>
+  internalAuthStage({
+    internalApiSecret: getConfig().internal.apiSecret,
+    cronSecret: getConfig().cron.secret,
+  })(ctx, request);
