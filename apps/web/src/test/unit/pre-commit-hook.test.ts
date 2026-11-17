@@ -43,12 +43,13 @@
  * on `main` and then fails **every** commit in the repo: git refuses the hook
  * before `set -e` or the identity guard ever run. One `sh -n` case closes that.
  *
- * **Why the executable bit is pinned as well (F3).** Git skips a hook that is not
- * executable — silently, and with every other gate green — so a committed mode flip
- * from `100755` to `100644` turns off both the identity guard and `lint-staged`
- * repo-wide while the line pin and `sh -n` both stay green. The case reads the mode
- * of the **working tree**, not of the index: git executes the mode on disk, and a
- * checkout without `core.filemode` (Windows) can flip it locally.
+ * **Why the executable bit is pinned as well (F3).** Git does not run a hook that is
+ * not executable — the commit still succeeds, so every other gate stays green — and it
+ * prints only an advisory hint (`advice.ignoredHook`, on by default). A committed mode
+ * flip from `100755` to `100644` therefore turns off both the identity guard and
+ * `lint-staged` repo-wide while the line pin and `sh -n` both stay green. The case reads
+ * the mode of the **working tree**, not of the index: git executes the mode on disk, and
+ * a checkout without `core.filemode` (Windows) can flip it locally.
  *
  * **Characterization, not RED.** The hook already has this shape on the trunk, so
  * every case below is green on its first run. The pin stays load-bearing because
@@ -286,15 +287,17 @@ describe(".husky/pre-commit", () => {
     it("is executable, so git actually runs it", () => {
       // Git executes the mode on disk, not the mode recorded in the index, so this reads
       // the working tree: a hook that lost its bit — a committed `chmod 644`, a Windows
-      // checkout without `core.filemode` — is skipped with no warning even though the
-      // index still says `100755`. The path is a literal for the same
+      // checkout without `core.filemode` — is not run by git at all: the commit still
+      // succeeds and git prints only an advisory hint (`advice.ignoredHook`) even though
+      // the index still says `100755`. The path is a literal for the same
       // `security/detect-non-literal-fs-filename` reason as `HOOK_SOURCE`.
       const mode = statSync(".husky/pre-commit").mode;
 
       expect(
         mode & 0o111,
-        "a non-executable hook is skipped by git with no warning: the identity guard and " +
-          "lint-staged stop running and every gate stays green. Restore the bit " +
+        "a non-executable hook is not run by git: the commit still succeeds, so the " +
+          "identity guard and lint-staged stop running and every gate stays green. " +
+          "(Git prints an advisory hint only — `advice.ignoredHook`.) Restore the bit " +
           "(`chmod 755 .husky/pre-commit`) and commit the mode change."
       ).not.toBe(0);
     });

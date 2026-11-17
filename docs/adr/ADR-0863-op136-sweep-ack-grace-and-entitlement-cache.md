@@ -13,10 +13,11 @@
   guard this record leaves untouched).
 - **Consumers:** `apps/web/src/server/jobs/pipeline-sweep.ts`,
   `apps/web/src/server/jobs/usage-threshold-check.ts`.
-- **Number allocation:** the `OP-136 jobs lane` row read `` `0862` `` on this
-  head (`origin/main` `c91e3212`). `ADR-0862*` already exists
-  (`ADR-0862-op136-indexed-check-batch-arm-cost.md`, on an open lane branch) and
-  no `ADR-0863*` exists on the trunk, in any `.worktrees/*/docs/adr` tree or in
+- **Number allocation:** the `OP-136 jobs lane` row read `` `0862` `` when this
+  record was minted (`origin/main` `c91e3212`), and `ADR-0862*`
+  (`ADR-0862-op136-indexed-check-batch-arm-cost.md`) was in flight on the lane
+  branch that has since merged it as `d28cddd1`; no `ADR-0863*` exists on the
+  trunk, in any `.worktrees/*/docs/adr` tree or in
   `git rev-list --objects --all -- docs/adr`, so this record takes `0863` and
   advances only the `OP-136 jobs lane` cell to `` `0864` ``; both
   `unallocated (future lanes)` cells stay `0869`. No frozen record is edited.

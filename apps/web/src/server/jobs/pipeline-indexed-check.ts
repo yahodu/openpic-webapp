@@ -50,6 +50,13 @@ interface EventBatch {
   readonly batchId: string;
 }
 
+/**
+ * How many batch checks one run has in flight (ADR-0862 §3: the arm's
+ * round-trip chains were serialised). Kept small — a chunk is three reads per
+ * batch against one database.
+ */
+const BATCH_CHECK_CONCURRENCY = 8;
+
 /** Narrow a stored event row, or `null`. */
 function asIndexedEventRow(value: unknown): IndexedEventRow | null {
   if (typeof value !== "object" || value === null) {
@@ -79,35 +86,66 @@ function pipelineCounts(row: IndexedEventRow): ProcessingCounts {
 }
 
 /**
- * The batches one event's rows name, at most one run's limit of them.
+ * The batches the candidate page names, at most one run's limit of them.
+ *
+ * One grouped read **per tenant in the page**, not one read per event: the
+ * aggregation returns distinct `(eventId, uploadBatchId)` pairs, so the join
+ * documents never leave the database (ADR-0862 §1: the per-event read moved up
+ * to `limit` documents to learn a handful of ids).
  *
  * The discovery reads `event_images.uploadBatchId`: a batch whose images the
  * worker settled always has those join rows. A batch that was entirely
  * duplicates has only its sessions and settles from the completion route.
  *
- * @param row - The event whose batches to find.
+ * @param candidates - The run's candidate page.
  * @param db - The database handle.
- * @param limit - The run's cap.
- * @returns The distinct batch ids, in stored order.
+ * @param limit - The run's cap; collection stops at it.
+ * @returns The distinct `(event, batch)` pairs, in sorted order.
  */
-async function batchesOfEvent(
-  row: IndexedEventRow,
+async function pendingBatches(
+  candidates: readonly IndexedEventRow[],
   db: Db,
   limit: number
-): Promise<readonly string[]> {
-  const rows = await tenantRepo(row.tenantId, db)
-    .collection(COLLECTIONS.eventImages)
-    .find({ eventId: row._id, uploadBatchId: { $ne: null } })
-    .project({ uploadBatchId: 1 })
-    .limit(limit)
-    .toArray();
-  // §16.3 stores an `ObjectId` for a 24-hex batch id and the raw string
-  // otherwise (`batchIdValue`); `String` is the one form both agree on.
-  const ids = new Set<string>();
-  for (const value of rows as readonly { readonly uploadBatchId?: unknown }[]) {
-    ids.add(String(value.uploadBatchId));
+): Promise<EventBatch[]> {
+  const idsByTenant = new Map<string, ObjectId[]>();
+  for (const row of candidates) {
+    const ids = idsByTenant.get(row.tenantId);
+    if (ids === undefined) {
+      idsByTenant.set(row.tenantId, [row._id]);
+    } else {
+      ids.push(row._id);
+    }
   }
-  return [...ids];
+
+  const pending: EventBatch[] = [];
+  for (const [tenantKey, eventIds] of idsByTenant) {
+    if (pending.length >= limit) {
+      break;
+    }
+    // `$limit` after the `$group` caps the run's work, not its reads: the
+    // distinct pairs are the whole result set.
+    const groups = (await tenantRepo(tenantKey, db)
+      .collection(COLLECTIONS.eventImages)
+      .aggregate([
+        { $match: { eventId: { $in: eventIds }, uploadBatchId: { $ne: null } } },
+        { $group: { _id: { eventId: "$eventId", batchId: "$uploadBatchId" } } },
+        { $sort: { "_id.eventId": 1, "_id.batchId": 1 } },
+        { $limit: limit - pending.length },
+      ])
+      .toArray()) as unknown as readonly {
+      readonly _id: { readonly eventId: ObjectId; readonly batchId: unknown };
+    }[];
+    for (const group of groups) {
+      pending.push({
+        tenantKey,
+        eventId: group._id.eventId,
+        // §16.3 stores an `ObjectId` for a 24-hex batch id and the raw string
+        // otherwise (`batchIdValue`); `String` is the one form both agree on.
+        batchId: String(group._id.batchId),
+      });
+    }
+  }
+  return pending;
 }
 
 /**
@@ -212,18 +250,17 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
     indexed += 1;
   }
 
-  // shortcut: a batch already summarised is re-checked on every run — the
-  // outbox's (batch, uploader) dedupe key makes the repeat a no-op; add a
-  // per-batch marker if the per-run batch count outgrows the limit.
-  const pending: EventBatch[] = [];
-  for (const row of candidates) {
-    for (const batchId of await batchesOfEvent(row, db, limit)) {
-      pending.push({ tenantKey: row.tenantId, eventId: row._id, batchId });
-    }
-  }
-  const batches = pending.slice(0, limit);
-  for (const batch of batches) {
-    await checkUploadBatchTransition({ db, ...batch });
+  // A batch already summarised on an earlier run is re-checked when its event's
+  // counters move again — the outbox's (batch, uploader) dedupe key makes the
+  // repeat a no-op. The checks run a chunk at a time so a full page is one wave
+  // of round trips, not `limit` serialised ones.
+  const batches = await pendingBatches(candidates, db, limit);
+  for (let start = 0; start < batches.length; start += BATCH_CHECK_CONCURRENCY) {
+    await Promise.all(
+      batches
+        .slice(start, start + BATCH_CHECK_CONCURRENCY)
+        .map((batch) => checkUploadBatchTransition({ db, ...batch }))
+    );
   }
 
   const scanned = candidates.length;
