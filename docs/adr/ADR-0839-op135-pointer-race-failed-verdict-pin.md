@@ -169,13 +169,21 @@ which is how the missing record was caught first (invariant (iv) reddens
 `reports the repository's real source tree as reference-clean` the moment the spec cites `ADR-0839`),
 full `unit` `184 files / 3077 passed | 3 skipped (3080)`.
 
-Full `integration` is **`8 failed | 1428 passed (1436)`**, and all eight are the harness's 5 s
-test-timeout class in five specs this change does not touch — `notification-quiet-hours-release`
-(I5 ×2, 5020 ms and 5011 ms), `uploads-single-put` (I9 5159 ms, I5 3712 ms), `auth` I17 5011 ms,
-`event-images-management` R1 5105 ms and `domain-events` I1/I2 5015 ms/5002 ms. Each of the five
-specs is green when run on its own at this head (`58 passed (58)` for `domain-events` + `auth` +
-`event-images-management`, `30 passed (30)` for `notification-quiet-hours-release` +
-`uploads-single-put`), which is the same class the review of ADR-0838 measured at `2 failed |
-1432 passed (1434)`. The total moved from `1434` to `1436` because this case adds one and the
-OP-136 pins PR #632 added another. A test-only append to one spec cannot reach these files; the
-lane spec itself is `49 passed (49)` in the same run.
+Full `integration` at the shipped tree (`6711993e`, re-measured on a clean checkout of that squash) is
+**`139 files passed (139)` / `1448 passed (1448)`**, and CI on `6711993e` is `success`. The total is
+the half that is deterministic, and `1448` is it — not the `1436` an earlier run of this card
+measured, because two trunk PRs landed in the branch after that measurement: `#635`
+(`job-pipeline-indexed-check.test.ts`, 8 cases) and `#636` (`job-sweep-failure-windows.test.ts`,
+4 cases). The control is exact — the pre-append parent `51c439f0` measures `139 files passed (139)` /
+`1447 passed (1447)`, one fewer — so this append still adds exactly one case.
+
+The red count is the half that is **not** deterministic, so no quoted failure set describes a tree.
+Two full runs of `6711993e` read `6 failed | 1442 passed (1448)` and `0 failed | 1448 passed (1448)`;
+two full runs of `51c439f0` read `4 failed | 1443 passed (1447)` and `0 failed | 1447 passed (1447)`.
+Every red is `Error: Test timed out in 5000ms.` in a spec this change does not touch, and the two
+sets are disjoint — `tenant-members` ×2, `event-members` ×2, `attendee-claim-endpoint-arms` ×1 and
+`notification-dispatch-retry` ×1 at `6711993e`, `notification-digest-flush-*` ×3 and
+`selfie-submit-object-transport` ×1 at `51c439f0` — with those four `6711993e` specs green when run
+alone at that tree (`4 files passed (4)`, `37 passed (37)`). That is the harness's 5 s class the
+review of ADR-0838 measured at `2 failed | 1432 passed (1434)`, not this case: a test-only append to
+one spec cannot reach those files, and the lane spec itself is `49 passed (49)` at that tree.
