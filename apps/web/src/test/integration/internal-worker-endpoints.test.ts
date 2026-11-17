@@ -2397,4 +2397,165 @@ describe("when the active selfie moves while a selfie report is being applied", 
       lastError: null,
     });
   });
+
+  /**
+   * The same window with the **other** verdict (ADR-0839).
+   *
+   * The report's profile projection sits behind `decision.status !== "skipped"`,
+   * so the `failed` arm takes the identical write with a different `$set`
+   * (`status: "failed"` plus `updatedAt`). A superseded `failed` report is
+   * therefore the same ADR-0832 §2 / ADR-0833 §2 defect as F-A — raced, not
+   * sequential (ADR-0836's P3 pins only the sequential form) — and it is
+   * measured worse: it does not merely move the count and the watermark, it
+   * tells the newer selfie's profile that its own result failed, which is what
+   * §6.4 renders to the attendee.
+   */
+  it("F-B: a superseded failed verdict leaves the newer selfie's profile ready", async () => {
+    const fixture = await submittedSelfie("op135-pointer-race-failed", "op135-pointer-race-failed");
+    // As in F-A: the confirmation points the profile at the row the worker is
+    // about to report, so the write this case races is one that *would* match on
+    // `_id` alone. Only the pointer separates the two selfies.
+    await bodyOf(
+      await confirmSelfie(fixture.world.event.slug, fixture.selfieId, {
+        cookie: fixture.world.cookie,
+        ip: fixture.world.ip,
+      }),
+      200,
+      `POST confirm on ${fixture.world.event.slug}`
+    );
+    await claimSelfie(fixture.selfieId, LEASEHOLDER);
+
+    const profile = await profileRow();
+    // The newer selfie the confirmation flip below points the profile at — a
+    // real, finished row of this profile's on this event. Nothing in the report
+    // path reads it; the failed verdict never carries matches.
+    const newerSelfieId = new ObjectId();
+    await app.db.collection(COLLECTIONS.selfies).insertOne({
+      _id: newerSelfieId,
+      tenantId: fixture.world.tenantKey,
+      eventId: fixture.world.event.id,
+      profileId: profile._id,
+      subject: profile.subject,
+      contentHash: createHash("sha256").update("op135-pointer-race-failed").digest("hex"),
+      liveness: { required: true, challengeKind: "gesture", passed: true, score: 0.94 },
+      processing: {
+        status: "done",
+        priority: "high",
+        attempts: 1,
+        maxAttempts: 5,
+        leaseExpiresAt: null,
+        workerId: OTHER_WORKER,
+        queuedAt: NEWER_RUN_STARTED_AT,
+        startedAt: NEWER_RUN_STARTED_AT,
+        finishedAt: NEWER_RUN_STARTED_AT,
+        durationMs: 900,
+        lastError: null,
+        queueRef: null,
+      },
+      isActive: true,
+      createdAt: NEWER_RUN_STARTED_AT,
+    });
+
+    /** What the newer confirmation leaves on the profile. */
+    const flip = {
+      activeSelfieId: newerSelfieId,
+      status: "ready",
+      matchCount: NEWER_MATCH_COUNT,
+      lastMatchRunAt: NEWER_RUN_STARTED_AT,
+      updatedAt: NEWER_RUN_STARTED_AT,
+    };
+
+    // The window: this request's own profile read is held open, a confirmation
+    // flips the pointer to the newer selfie in the meantime, and only then does
+    // the held read resolve with the profile as it was **before** that flip.
+    const held: { opened: boolean; flipped: Document | null } = { opened: false, flipped: null };
+    const findOneSpy = vi.spyOn(Collection.prototype, "findOne").mockImplementation(function (
+      this: Collection,
+      ...args: Parameters<typeof driverFindOne>
+    ) {
+      if (held.opened || this.collectionName !== COLLECTIONS.attendeeEventProfiles) {
+        return driverFindOne.call(this, ...args);
+      }
+      if (filterTargetId(args[0]) !== profile._id.toHexString()) {
+        return driverFindOne.call(this, ...args);
+      }
+      held.opened = true;
+      return (async () => {
+        const snapshot = await driverFindOne.call(this, ...args);
+        await app.db
+          .collection(COLLECTIONS.attendeeEventProfiles)
+          .updateOne({ _id: profile._id }, { $set: flip });
+        // The window is open, so this read falls through to the driver.
+        held.flipped = await app.db
+          .collection(COLLECTIONS.attendeeEventProfiles)
+          .findOne({ _id: profile._id });
+        return snapshot;
+      })();
+    } as never);
+
+    let response: Response;
+    try {
+      response = await workerReportHandler(
+        signedPost(REPORT_PATH, {
+          workerId: LEASEHOLDER,
+          items: [
+            {
+              kind: "selfie",
+              id: fixture.selfieId,
+              outcome: "failed",
+              error: { code: "face_detection_failed", message: "no face found", retryable: false },
+            },
+          ],
+        })
+      );
+    } finally {
+      findOneSpy.mockRestore();
+    }
+
+    // Without the held read there is no window, so say that instead of passing:
+    // a green here would mean this case measures nothing.
+    if (!held.opened) {
+      throw new Error("the route never read the profile, so the pinned window never opened");
+    }
+    const beforeFlip = held.flipped;
+    if (beforeFlip === null) {
+      throw new Error("the pointer flip left no profile to compare against");
+    }
+
+    expect(response.status).toBe(200);
+    // ADR-0832 §2: a discarded **profile** write is still an applied item — the
+    // row's own verdict landed and this worker held the lease.
+    expect(
+      await bodyOf(response, 200, "POST internal worker/report after the pointer flip")
+    ).toEqual({ applied: 1, leaseLost: 0, rejected: [] });
+
+    // The live result still belongs to the newer selfie: a superseded failure
+    // may not tell this profile that its own result failed, and may not stamp
+    // this report's instant on it either.
+    const profileAfter = (await app.db
+      .collection(COLLECTIONS.attendeeEventProfiles)
+      .findOne({ _id: profile._id })) as unknown as
+      | (PointerProfile & {
+          readonly status?: string;
+        })
+      | null;
+    expect({
+      activeSelfieId: profileAfter?.activeSelfieId,
+      status: profileAfter?.status,
+      matchCount: profileAfter?.matchCount,
+      lastMatchRunAt: profileAfter?.lastMatchRunAt,
+    }).toEqual({
+      activeSelfieId: newerSelfieId,
+      status: "ready",
+      matchCount: NEWER_MATCH_COUNT,
+      lastMatchRunAt: NEWER_RUN_STARTED_AT,
+    });
+    expect(profileAfter).toEqual(beforeFlip);
+
+    // ...while the item's own row still records the verdict it was given.
+    expect((await selfieRow(fixture.selfieId))?.processing).toMatchObject({
+      status: "failed",
+      lastError: { code: "face_detection_failed" },
+    });
+  });
 });
