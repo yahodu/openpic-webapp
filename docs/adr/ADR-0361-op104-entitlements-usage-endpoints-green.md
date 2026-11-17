@@ -203,3 +203,48 @@ This lane (`OP-104`) drew `0360`–`0379` with `0360` consumed by the RED record
 record takes `0361` — the lane-local cell's value re-read immediately before
 committing — and the cell advances to `0362`. No number outside the block is
 touched.
+
+## Reconciliation (2026-11-17)
+
+The lane branch was reconciled onto the current trunk on 2026-11-17 (card
+`t_b0b12dc9`): `origin/main` `9bda367e` (tree `e77bbe61`) was **merged** into
+the lane head `904b4950` — no rebase, so every reviewed SHA is kept — giving
+merge commit `7d8e6c3f` (tree `3fc89202`). The only conflicted path was the
+shared `docs/adr/README.md` ledger, and it resolved as a **union** with three
+decisions:
+
+- **Range table.** Every `main` row is kept and `main`'s
+  `unallocated (future lanes)` cursor stays `0799`+ / `0869`. The branch's
+  pool-advance hunk was discarded: `0380`–`0399` is OP-105's live range and
+  `0360`–`0379` had already been allocated to this lane, so the pool must not
+  move. The `OP-104 entitlements & usage lane` row is inserted after the
+  `OP-103 entitlements lane` row as `0360`–`0379` / next free `0362`.
+- **Index table.** The `0360` and `0361` rows are inserted in numeric position
+  (after `0348`, before `0380`) with their descriptions and `Accepted`.
+- **Prose.** This lane's three ledger paragraphs (lane allocation, GREEN,
+  re-run) are appended verbatim, followed by one reconciliation paragraph.
+
+No other file conflicted, and nothing outside the OP-104 payload was changed.
+
+Re-verification at the merged head (real values, no estimates):
+
+- `pnpm typecheck` exit 0 on all three projects (`tsconfig.json`,
+  `packages/contracts`, `apps/web`).
+- unit + integration with coverage: **exit 0** — **328 files / 4621 passed
+  (3 skipped)**; global **91.74 % statements / 80.57 % branches / 96 %
+  functions / 91.86 % lines**; `apps/web/src/server/services/**` branches
+  **97.91 % (281/287)** against the 90 % gate (the lane's own
+  `services/entitlements` directory at **99.34 %** branches).
+- `eslint` 0 errors and `prettier --check` clean on every touched file.
+- ADR guards (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`)
+  **3 files / 97 tests** green; `git rev-list --objects --all -- docs/adr`
+  holds only this lane's `ADR-0360`/`ADR-0361` objects.
+- `pnpm --filter @openpic/web build` exit 0, with
+  `/api/v1/tenants/[tenantId]/entitlements` and
+  `/api/v1/tenants/[tenantId]/usage` in the route table.
+
+The §3.5 contract above is unchanged: no production file was touched by this
+reconciliation, so the served projection, the free-tier default, the
+`owner`|`admin` split on `/usage` and the parallel reads are exactly what the
+green run exercises. Numbers `0360` (RED), `0361` (this GREEN record) and the
+lane cell `0362` stand — no renumber, no new number.
