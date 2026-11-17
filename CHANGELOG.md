@@ -1,3 +1,9 @@
+## [1.64.2](https://github.com/yahodu/openpic-webapp/compare/v1.64.1...v1.64.2) (2026-11-17)
+
+### Bug Fixes
+
+- **internal:** OP-135 harden the internal worker boundary and dedupe the auth thunk ([#626](https://github.com/yahodu/openpic-webapp/issues/626)) ([5db2238](https://github.com/yahodu/openpic-webapp/commit/5db2238013e960a5e8e0ec927f092b7824ddc5f1))
+
 ## [1.64.1](https://github.com/yahodu/openpic-webapp/compare/v1.64.0...v1.64.1) (2026-11-17)
 
 ### Bug Fixes
