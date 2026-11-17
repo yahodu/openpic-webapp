@@ -1,7 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 
 import { Collection, ObjectId, type Document } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as domainEventsRouteModule from "@/app/api/v1/internal/domain-events/route";
 import * as derivativeCompleteRouteModule from "@/app/api/v1/internal/media/derivative-complete/route";
@@ -11,6 +11,13 @@ import * as meRouteModule from "@/app/api/v1/p/events/[slug]/me/route";
 import { getConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
+import {
+  createLogger,
+  getLogger,
+  memoryTransport,
+  setLogger,
+  type LogEntry,
+} from "@/server/logging";
 import {
   getPlatformSettings,
   invalidatePlatformSettings,
@@ -1275,6 +1282,296 @@ describe("when the worker reports a selfie outcome", () => {
     // The item's **own** row is not the profile: its verdict is still recorded.
     expect((await selfieRow(fixture.selfieId))?.processing).toMatchObject({
       status: "done",
+      lastError: null,
+    });
+  });
+
+  /*
+   * P1–P4 pin the discard's own line and the arms beside it (ADR-0836): the
+   * null pointer, a `failed` verdict and a `skipped` one.
+   */
+
+  /** The superseded profile's live watermark: the newer selfie's run instant. */
+  const SUPERSEDED_NEWER_RUN = new Date("2026-09-25T12:00:00.000Z");
+
+  /** The process logger a case found installed, put back after every case. */
+  let loggerBeforeCase: ReturnType<typeof getLogger> | undefined;
+
+  /**
+   * Install a memory-backed process logger so a case can read what the route
+   * emitted.
+   *
+   * `@/server/logging` has no `resetLogger`, so a case that left this logger in
+   * place would silence every later case in the file; the `afterEach` below
+   * restores the one the case found.
+   *
+   * @returns The sink the route's entries land in.
+   */
+  function installLogSink(): ReturnType<typeof memoryTransport> {
+    loggerBeforeCase = getLogger();
+    const sink = memoryTransport();
+    setLogger(createLogger({ level: "info", transports: [sink] }));
+    return sink;
+  }
+
+  /**
+   * The discard lines a case's sink captured.
+   *
+   * @param sink - The transport {@link installLogSink} returned.
+   * @returns Every `worker.report_discarded` entry, in emission order.
+   */
+  function discardEntries(sink: ReturnType<typeof memoryTransport>): LogEntry[] {
+    return sink.entries.filter((entry) => entry.event === "worker.report_discarded");
+  }
+
+  afterEach(() => {
+    if (loggerBeforeCase !== undefined) {
+      setLogger(loggerBeforeCase);
+      loggerBeforeCase = undefined;
+    }
+  });
+
+  /**
+   * Seed ADR-0832's superseded state: the item is this worker's, and the
+   * profile's live result belongs to a **different** selfie.
+   *
+   * @returns The profile as it stands before the report.
+   */
+  async function seedSupersededProfile(): Promise<ProfileRow> {
+    const profile = await profileRow();
+    await app.db.collection(COLLECTIONS.attendeeEventProfiles).updateOne(
+      { _id: profile._id },
+      {
+        $set: {
+          activeSelfieId: new ObjectId(),
+          status: "ready",
+          matchCount: 7,
+          lastMatchRunAt: SUPERSEDED_NEWER_RUN,
+        },
+      }
+    );
+    return await profileRow();
+  }
+
+  it("P1: logs one warn when a superseded report withholds the profile write", async () => {
+    const fixture = await submittedSelfie("op135-discard-log", "op135-discard-log");
+    await claimSelfie(fixture.selfieId, LEASEHOLDER);
+    await seedSupersededProfile();
+    // Installed after the seed, so the sink holds this request's lines only.
+    const sink = installLogSink();
+
+    const response = await workerReportHandler(
+      signedPost(REPORT_PATH, {
+        workerId: LEASEHOLDER,
+        items: [
+          {
+            kind: "selfie",
+            id: fixture.selfieId,
+            outcome: "done",
+            matchesCreated: 0,
+            matchRunStartedAt: SUPERSEDED_NEWER_RUN.toISOString(),
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await bodyOf(response, 200, "POST internal worker/report")).toEqual({
+      applied: 1,
+      leaseLost: 0,
+      rejected: [],
+    });
+
+    // A withheld write is not silent (ADR-0833 §2): one warn naming the item
+    // that was discarded, this worker and the stable reason — no profile id and
+    // no biometric field.
+    const discarded = discardEntries(sink);
+    expect(discarded).toHaveLength(1);
+    expect(discarded[0]).toMatchObject({
+      event: "worker.report_discarded",
+      level: "warn",
+      kind: "selfie",
+      id: fixture.selfieId,
+      workerId: LEASEHOLDER,
+      reason: "superseded_selfie",
+    });
+  });
+
+  it("P1: logs nothing when the profile's active selfie is the reported row", async () => {
+    const fixture = await submittedSelfie("op135-discard-allowed", "op135-discard-allowed");
+    // The confirmation points the profile at **this** row, so the report carries
+    // the live result and the guard has nothing to withhold.
+    await bodyOf(
+      await confirmSelfie(fixture.world.event.slug, fixture.selfieId, {
+        cookie: fixture.world.cookie,
+        ip: fixture.world.ip,
+      }),
+      200,
+      `POST confirm on ${fixture.world.event.slug}`
+    );
+    await claimSelfie(fixture.selfieId, LEASEHOLDER);
+    const sink = installLogSink();
+
+    const response = await workerReportHandler(
+      signedPost(REPORT_PATH, {
+        workerId: LEASEHOLDER,
+        items: [
+          {
+            kind: "selfie",
+            id: fixture.selfieId,
+            outcome: "done",
+            quality: { faceCount: 1, accepted: true },
+            matchesCreated: 3,
+            matchRunStartedAt: RUN_STARTED_AT.toISOString(),
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    // No line, because nothing was discarded...
+    expect(discardEntries(sink)).toEqual([]);
+
+    // ...and the write it must not withhold happened, which is the half that
+    // fails if the log fires unconditionally.
+    const profileAfter = await profileRow();
+    expect({
+      status: profileAfter.status,
+      matchCount: profileAfter.matchCount,
+      lastMatchRunAt: profileAfter.lastMatchRunAt,
+    }).toEqual({ status: "ready", matchCount: 3, lastMatchRunAt: RUN_STARTED_AT });
+  });
+
+  it("P2: writes the profile when it has no active selfie pointer", async () => {
+    const fixture = await submittedSelfie("op135-null-pointer", "op135-null-pointer");
+    await claimSelfie(fixture.selfieId, LEASEHOLDER);
+    // A submit leaves the pointer null; it is set here explicitly so a change to
+    // the submit's own default cannot retarget this pin.
+    const profileBefore = await profileRow();
+    await app.db
+      .collection(COLLECTIONS.attendeeEventProfiles)
+      .updateOne({ _id: profileBefore._id }, { $set: { activeSelfieId: null } });
+    const sink = installLogSink();
+
+    const response = await workerReportHandler(
+      signedPost(REPORT_PATH, {
+        workerId: LEASEHOLDER,
+        items: [
+          {
+            kind: "selfie",
+            id: fixture.selfieId,
+            outcome: "done",
+            quality: { faceCount: 1, accepted: true },
+            matchesCreated: 4,
+            matchRunStartedAt: RUN_STARTED_AT.toISOString(),
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await bodyOf(response, 200, "POST internal worker/report")).toEqual({
+      applied: 1,
+      leaseLost: 0,
+      rejected: [],
+    });
+
+    // A null pointer is not superseded: there is no live result to protect, so
+    // the §6.4 projection is written (ADR-0832 §4, ADR-0833 §1). Inverting the
+    // guard's `!= null` reddens exactly this case.
+    const profileAfter = await profileRow();
+    expect({
+      status: profileAfter.status,
+      matchCount: profileAfter.matchCount,
+      lastMatchRunAt: profileAfter.lastMatchRunAt,
+    }).toEqual({ status: "ready", matchCount: 4, lastMatchRunAt: RUN_STARTED_AT });
+    expect(discardEntries(sink)).toEqual([]);
+  });
+
+  it("P3: discards a failed verdict on a superseded row as well", async () => {
+    const fixture = await submittedSelfie("op135-superseded-failed", "op135-superseded-failed");
+    await claimSelfie(fixture.selfieId, LEASEHOLDER);
+    const profileBefore = await seedSupersededProfile();
+    const sink = installLogSink();
+
+    const response = await workerReportHandler(
+      signedPost(REPORT_PATH, {
+        workerId: LEASEHOLDER,
+        items: [
+          {
+            kind: "selfie",
+            id: fixture.selfieId,
+            outcome: "failed",
+            error: { code: "face_detection_failed", message: "no face found", retryable: false },
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await bodyOf(response, 200, "POST internal worker/report")).toEqual({
+      applied: 1,
+      leaseLost: 0,
+      rejected: [],
+    });
+
+    // A failure is discarded as well (`decision.status !== "skipped"`): a
+    // superseded row must not mark the **active** profile `failed`.
+    expect(await profileRow()).toEqual(profileBefore);
+    const profileAfter = await profileRow();
+    expect({
+      status: profileAfter.status,
+      matchCount: profileAfter.matchCount,
+      lastMatchRunAt: profileAfter.lastMatchRunAt,
+    }).toEqual({ status: "ready", matchCount: 7, lastMatchRunAt: SUPERSEDED_NEWER_RUN });
+
+    // The item's **own** row still records the verdict...
+    expect((await selfieRow(fixture.selfieId))?.processing).toMatchObject({
+      status: "failed",
+      lastError: { code: "face_detection_failed" },
+    });
+
+    // ...and the withheld profile write is announced once.
+    const discarded = discardEntries(sink);
+    expect(discarded).toHaveLength(1);
+    expect(discarded[0]).toMatchObject({
+      event: "worker.report_discarded",
+      level: "warn",
+      kind: "selfie",
+      id: fixture.selfieId,
+      workerId: LEASEHOLDER,
+      reason: "superseded_selfie",
+    });
+  });
+
+  it("P4: a skipped verdict on a superseded row writes nothing and logs nothing", async () => {
+    const fixture = await submittedSelfie("op135-superseded-skipped", "op135-superseded-skipped");
+    await claimSelfie(fixture.selfieId, LEASEHOLDER);
+    const profileBefore = await seedSupersededProfile();
+    const sink = installLogSink();
+
+    const response = await workerReportHandler(
+      signedPost(REPORT_PATH, {
+        workerId: LEASEHOLDER,
+        items: [{ kind: "selfie", id: fixture.selfieId, outcome: "skipped" }],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await bodyOf(response, 200, "POST internal worker/report")).toEqual({
+      applied: 1,
+      leaseLost: 0,
+      rejected: [],
+    });
+
+    // `skipped` never wrote the profile in the first place, so the guard has
+    // nothing to withhold and nothing to announce (ADR-0833 §2).
+    expect(await profileRow()).toEqual(profileBefore);
+    expect(discardEntries(sink)).toEqual([]);
+
+    // ...while the item's own row still carries the verdict.
+    expect((await selfieRow(fixture.selfieId))?.processing).toMatchObject({
+      status: "skipped",
       lastError: null,
     });
   });
