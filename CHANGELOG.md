@@ -1,3 +1,9 @@
+## [1.65.8](https://github.com/yahodu/openpic-webapp/compare/v1.65.7...v1.65.8) (2026-11-17)
+
+### Bug Fixes
+
+- **deps:** OP-135 govern the picomatch ReDoS audit advisory ([#669](https://github.com/yahodu/openpic-webapp/issues/669)) ([47d3661](https://github.com/yahodu/openpic-webapp/commit/47d3661715c9613ded6da764e212d9ee7b521d4b))
+
 ## [1.65.7](https://github.com/yahodu/openpic-webapp/compare/v1.65.6...v1.65.7) (2026-11-17)
 
 ### Bug Fixes
