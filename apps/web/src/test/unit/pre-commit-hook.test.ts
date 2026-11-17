@@ -17,27 +17,43 @@
  * commit then dies and every agent has to pass `--no-verify`, which skips
  * `lint-staged` entirely. The hook therefore invokes the local binary directly.
  *
- * **Five invariants**, every one a cheap executable-line assertion (no subprocess):
+ * **Six invariants** — five cheap executable-line assertions (no subprocess), plus
+ * one syntax pass, which is the spec's only subprocess (F1, added after review):
  *   1. no `pnpm` / `npx` / `yarn` / `npm` / `bun` wrapper runs `lint-staged`;
  *   2. the step is exactly `node_modules/.bin/lint-staged`;
- *   3. the step stays behind `if [ -x node_modules/.bin/lint-staged ]; then`, so a
- *      worktree that never installed skips it instead of installing mid-commit;
+ *   3. the step stays behind an executable test of that same path, so a worktree
+ *      that never installed skips it instead of installing mid-commit;
  *   4. the identity guard is **first** — nothing else executes before it — and
  *      **unconditional** — top level, never inside the `if`;
- *   5. errexit is enabled at top level before both commands and never disabled.
+ *   5. errexit is enabled at top level before both commands and never disabled;
+ *   6. the file parses as the shell it declares.
+ *
+ * **The guard is pinned by meaning, not by spelling (F2).** `if [ -x <path> ];
+ * then`, the shellcheck-recommended `if [ -x "<path>" ]; then` and the POSIX
+ * `if test -x <path>; then` run the same test, so the pin normalizes the
+ * condition before comparing it (`normalizeStepCondition`). What stays pinned is
+ * the meaning: the path is exactly `node_modules/.bin/lint-staged`, the test is
+ * `-x`, the block body invokes that same path, and the guard appears once.
+ *
+ * **Why a syntax pass is not optional (F1).** Every invariant above is
+ * line-oriented, so a parse error that leaves the pinned lines intact — an
+ * unclosed `if`, a stray `else` after the final `fi` — reddens nothing. It lands
+ * on `main` and then fails **every** commit in the repo: git refuses the hook
+ * before `set -e` or the identity guard ever run. One `sh -n` case closes that.
  *
  * **Characterization, not RED.** The hook already has this shape on the trunk, so
  * every case below is green on its first run. The pin stays load-bearing because
- * the parsing helpers (`parseHook`, `guardedStep`, `wrapperInvocations`,
- * `isErrexitOn`, `isErrexitOff`) are also exercised against synthetic hook sources
- * in the last `describe` block: a parser that silently loses a line, or a
- * predicate weakened to always say "clean", reddens there too.
+ * the parsing helpers (`parseHook`, `guardedStep`, `normalizeStepCondition`,
+ * `wrapperInvocations`, `isErrexitOn`, `isErrexitOff`) are also exercised against
+ * synthetic hook sources in the last `describe` block: a parser that silently
+ * loses a line, or a predicate weakened to always say "clean", reddens there too.
  *
  * **Only executable lines are pinned.** Comment prose may be rewritten freely
  * (today's hook *quotes* `pnpm lint-staged` while arguing against it), and no line
  * number is ever hard-coded — the assertions compare the content of executable
  * lines and their relative order.
  */
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
@@ -48,11 +64,24 @@ const HOOK_PATH = ".husky/pre-commit";
 /** The identity guard's command, byte-exact (ADR-0309 / ADR-0310). */
 const IDENTITY_GUARD = "node --experimental-strip-types scripts/git/check-identity.ts";
 
-/** The executable-dep guard: a worktree without dependencies skips the step (ADR-0310). */
+/**
+ * The executable-dep guard in the hook's canonical spelling: a worktree without
+ * dependencies skips the step (ADR-0310). Only the synthetic fixtures and the
+ * assertion messages use this literal — every comparison against the real hook
+ * goes through `isStepCondition`, so a behaviour-equivalent spelling is not a
+ * regression.
+ */
 const STEP_CONDITION = "if [ -x node_modules/.bin/lint-staged ]; then";
 
 /** The step itself: the local binary, never a package-manager wrapper. */
 const STEP_INVOCATION = "node_modules/.bin/lint-staged";
+
+/**
+ * What every accepted guard spelling normalizes to: an `-x` test of exactly
+ * `STEP_INVOCATION`. A guard on any other path — `…/prettier`, a wrapper — or
+ * with any other predicate normalizes to a different string and still fails.
+ */
+const STEP_CONDITION_MEANING = `[ -x ${STEP_INVOCATION} ]`;
 
 /**
  * Fail-closed mode, however it is spelled: `set -e`, `set -eu`, `set -euo pipefail`,
@@ -128,6 +157,54 @@ function requireErrexit(lines: readonly HookLine[]): HookLine {
   return found;
 }
 
+/** Drops one matched pair of quotes around a shell word; anything else is unchanged. */
+function unquote(word: string): string {
+  const quoted = /^(["'])(.*)\1$/u.exec(word);
+  return quoted?.[2] ?? word;
+}
+
+/**
+ * The *meaning* of an `if` condition, so the pin is not coupled to one spelling
+ * of it (F2). Three edits are behaviour-preserving and must not redden:
+ *
+ *   - quotes around the path — exactly what a shellcheck pass recommends, and
+ *     without them a path containing a space would word-split;
+ *   - the POSIX `test -x <path>` spelling of `[ -x <path> ]`;
+ *   - any amount of whitespace, including none before `;`.
+ *
+ * Anything else is returned verbatim, so it can only ever match itself: the path,
+ * the `-x` predicate and the `if … ; then` shape stay pinned.
+ */
+function normalizeStepCondition(command: string): string {
+  const subject = /^if\s+(.+?)\s*;\s*then$/u.exec(command)?.[1];
+  if (subject === undefined) {
+    return command;
+  }
+  const testOperand = /^test\s+-x\s+(.+)$/u.exec(subject)?.[1];
+  if (testOperand !== undefined) {
+    return `[ -x ${unquote(testOperand.trim())} ]`;
+  }
+  const bracketOperand = /^\[\s+-x\s+(.+?)\s+\]$/u.exec(subject)?.[1];
+  if (bracketOperand !== undefined) {
+    return `[ -x ${unquote(bracketOperand.trim())} ]`;
+  }
+  return command;
+}
+
+/** True when `command` is the executable-dep guard, in any accepted spelling. */
+function isStepCondition(command: string): boolean {
+  return normalizeStepCondition(command) === STEP_CONDITION_MEANING;
+}
+
+/** The one executable line that guards the step; throws a named error when absent. */
+function requireStepCondition(lines: readonly HookLine[]): HookLine {
+  const found = lines.find((line) => isStepCondition(line.command));
+  if (found === undefined) {
+    throw new Error(`${HOOK_PATH} has no \`if [ -x ${STEP_INVOCATION} ]; then\` guard.`);
+  }
+  return found;
+}
+
 interface GuardedStep {
   readonly condition: HookLine;
   readonly close: HookLine;
@@ -135,13 +212,15 @@ interface GuardedStep {
   readonly body: readonly HookLine[];
 }
 
-/** The `if [ -x node_modules/.bin/lint-staged ]; then … fi` block, as executable lines. */
+/** The `if … -x node_modules/.bin/lint-staged … ; then … fi` block, as executable lines. */
 function guardedStep(lines: readonly HookLine[]): GuardedStep {
-  const condition = requireLine(lines, STEP_CONDITION);
+  const condition = requireStepCondition(lines);
   const after = lines.filter((line) => line.number > condition.number);
   const close = after.find((line) => line.command === "fi");
   if (close === undefined) {
-    throw new Error(`${HOOK_PATH}: the \`${STEP_CONDITION}\` block is never closed with \`fi\`.`);
+    throw new Error(
+      `${HOOK_PATH}: the \`${condition.command}\` block is never closed with \`fi\`.`
+    );
   }
   return { condition, close, body: after.filter((line) => line.number < close.number) };
 }
@@ -166,11 +245,34 @@ function commandsBefore(lines: readonly HookLine[], line: HookLine): HookLine[] 
 /**
  * Read once. The path is a literal (not `HOOK_PATH`) so
  * `security/detect-non-literal-fs-filename` stays quiet; `vitest run` executes from
- * the repo root, so the relative path is the repo's hook.
+ * the repo root, so the relative path is the repo's hook. The raw source is kept
+ * because the syntax case feeds the *same bytes* to `sh -n` on stdin, so the parse
+ * check can never read a different revision of the file than the line pin asserts on.
  */
-const hook = parseHook(readFileSync(".husky/pre-commit", "utf8"));
+const HOOK_SOURCE = readFileSync(".husky/pre-commit", "utf8");
+const hook = parseHook(HOOK_SOURCE);
 
 describe(".husky/pre-commit", () => {
+  describe("its syntax", () => {
+    it("parses as the shell it declares", () => {
+      // `sh -n`, not `bash -n`: the hook's shebang is `#!/usr/bin/env sh`, so `sh` is
+      // the interpreter git actually runs it with. A bashism (`[[ … ]]`, `function`)
+      // passes `bash -n` and still aborts every commit; `sh -n` rejects it. The source
+      // arrives on stdin, so this is the one subprocess in the spec and reads no path.
+      const check = spawnSync("sh", ["-n"], { input: HOOK_SOURCE, encoding: "utf8" });
+      const diagnostic = (check.error?.message ?? check.stderr).trim();
+
+      expect(
+        check.status,
+        `\`sh -n\` rejected ${HOOK_PATH} (exit ${String(check.status)}): ` +
+          `${diagnostic === "" ? "no diagnostic" : diagnostic}. A hook that cannot be ` +
+          "parsed keeps every other case in this spec green, lands on main, and then fails " +
+          "every commit in the repo: git refuses the hook before `set -e` or the identity " +
+          "guard ever run. Fix the syntax; never delete this case."
+      ).toBe(0);
+    });
+  });
+
   describe("the lint-staged step", () => {
     it("does not run lint-staged through a package-manager wrapper", () => {
       expect(
@@ -186,16 +288,17 @@ describe(".husky/pre-commit", () => {
     it("invokes lint-staged only as the local binary", () => {
       expect(
         hook
-          .filter((line) => line.command.includes("lint-staged") && line.command !== STEP_CONDITION)
+          .filter((line) => line.command.includes("lint-staged") && !isStepCondition(line.command))
           .map((line) => line.command)
       ).toEqual([STEP_INVOCATION]);
     });
 
     it("guards the step on the local binary being executable", () => {
       expect(
-        hook.filter((line) => line.command === STEP_CONDITION),
+        hook.filter((line) => isStepCondition(line.command)),
         "ADR-0310: a worktree that has not run `pnpm install` has no dependencies, so the " +
-          "step must be skipped rather than triggering an install mid-commit."
+          "step must be skipped rather than triggering an install mid-commit. The guard must " +
+          "appear exactly once, in any behaviour-equivalent spelling."
       ).toHaveLength(1);
     });
 
@@ -358,5 +461,41 @@ describe("the hook-shape predicates", () => {
     expect(() => guardedStep(parseHook(BASELINE.replace("\nfi", "")))).toThrow(
       /is never closed with `fi`/u
     );
+  });
+
+  it("accepts the shellcheck-recommended quoted guard path", () => {
+    const quoted = parseHook(
+      BASELINE.replace(STEP_CONDITION, `if [ -x "${STEP_INVOCATION}" ]; then`)
+    );
+
+    expect(
+      guardedStep(quoted).body.map((line) => line.command),
+      "quoting the path is exactly what a shellcheck pass recommends and changes nothing at " +
+        "run time, so it must not force a contributor to edit the pin"
+    ).toEqual([STEP_INVOCATION]);
+  });
+
+  it("accepts the `test -x` spelling of the guarded step", () => {
+    const posix = parseHook(
+      BASELINE.replace(STEP_CONDITION, `if test -x ${STEP_INVOCATION}; then`)
+    );
+
+    expect(
+      guardedStep(posix).body.map((line) => line.command),
+      "`test -x PATH` and `[ -x PATH ]` are the same POSIX test, so the pin is on the test " +
+        "and not on its spelling"
+    ).toEqual([STEP_INVOCATION]);
+  });
+
+  it("still rejects a guard on any binary other than the local lint-staged", () => {
+    const otherBinary = parseHook(
+      BASELINE.replace(STEP_CONDITION, "if [ -x node_modules/.bin/prettier ]; then")
+    );
+
+    expect(
+      () => guardedStep(otherBinary),
+      "the tolerance is for spelling only: the guarded path stays exactly " +
+        "`node_modules/.bin/lint-staged`"
+    ).toThrow(/has no `if \[ -x node_modules\/\.bin\/lint-staged \]; then` guard/u);
   });
 });
