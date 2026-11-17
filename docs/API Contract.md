@@ -2357,11 +2357,13 @@ Auth `attendee` · `{ "seenAt": "2026-09-25T09:20:00.000Z" }` (optional; default
 
 Sets `attendeeEventProfiles.lastSeenGalleryAt` and stamps `faceMatches.seenAt` for unseen rows. `204`. This is what dismisses the "New" badge; it must be a separate explicit call, not a side effect of `GET`, so a prefetch never clears the badge.
 
-### `POST /api/v1/p/matches/{matchId}/hide` · `.../unhide`
+### `POST /api/v1/p/matches/{matchId}/hide`
 
 Auth `attendee` + owns the profile
 
-Sets/clears `faceMatches.hiddenAt`. **Never deletes the row** — a false positive is a model-quality signal, and deleting it would make the next incremental match run re-insert it (schema §17.5). `204`.
+Sets `faceMatches.hiddenAt` to now. **Never deletes the row** — a false positive is a model-quality signal, and deleting it would make the next incremental match run re-insert it (schema §17.5). `204`.
+
+No `unhide` counterpart ships in this release: a hidden match stays hidden until the retention purge. The pair was cut deliberately — `hide` carries the ownership case (ADR-0793), and `unhide` is listed "Out of scope, not silently dropped" (ADR-0794).
 
 Optional body `{ "reason": "not_me" | "poor_quality" | "other" }` feeds abuse/quality review.
 

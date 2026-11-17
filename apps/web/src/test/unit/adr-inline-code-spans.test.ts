@@ -94,12 +94,15 @@ import {
  *     inline span, whatever the author meant. Inside a single-backtick span it
  *     is the prettier trap; outside a span it renders a literal backtick, which
  *     is the CommonMark way to write one; inside a double-backtick span it can
- *     be literal shell text (`echo \`id\``). So the two sanctioned alternatives
+ *     be literal shell text (see below). So the two sanctioned alternatives
  *     are a **fenced block**, or **dropping the escape** where the meaning
- *     allows (`` ``…`…`` ``). An earlier revision of this bullet claimed the
- *     pair was "always wrong … nothing legitimate needs it in prose", which was
- *     too strong: the two characterization rows at the end of the rule block pin
- *     the shapes that are reported although prettier leaves them byte-stable.
+ *     allows (a double-backtick span holds a bare backtick, e.g. ``echo `id` ``).
+ *     Widening the delimiters is not an escape on its own: the pair must also
+ *     go, because the guard matches bytes, not spans.
+ *     An earlier revision of this bullet claimed the pair was "always wrong …
+ *     nothing legitimate needs it in prose", which was too strong: the two
+ *     characterization rows at the end of the rule block pin the shapes that
+ *     are reported although prettier leaves them byte-stable.
  *   - `column` is the 1-based character offset of the **backslash** — the first
  *     byte of the pair — so a report can be pasted into an editor's gutter.
  *   - The sweep root is the repository root the spec derives from its own
@@ -115,10 +118,24 @@ import {
  *     citation guards for `ADR-`-prefixed tokens, so a fixture that spelled one
  *     would have to cite a real record. This spec cites no record, by design.
  *
- * **Open design question, not answered here.** Should a double-backtick span's
- * content be exempt from the ban — which needs span parsing — or stay banned, as
- * it is today under a cheap byte scan? This card pins the behaviour that exists,
- * so the answer belongs to an orchestrator decision, not to an edit here.
+ * **Decided — the byte scan stays; a double-backtick span's content is not
+ * exempt.** The pair is reported on every prose line of every `*.md`, exactly as
+ * the two characterization rows at the end of the rule block pin it. A future
+ * record moves the text into a fenced block, or drops the escape. The rule is a
+ * byte scan because a delimiter rule is the defeat vector (see the unmatched
+ * fence case above): masking span content would let one malformed delimiter hide
+ * the only gate that can see the prettier fixpoint trap. Nothing is blocked
+ * today (`3f29ac94` carries the pair in none of its 346 markdown files), so the
+ * strict reading costs nothing. Re-open only on evidence: a record that must
+ * show the pair inline where a fence cannot go (a table cell) and that cannot be
+ * re-worded.
+ *
+ * **Measured hazard — prettier narrows a redundant span.** A double-backtick
+ * span whose content is one backslash is byte-clean as written, yet
+ * `prettier --write` rewrites it as a single-backtick span holding backslash +
+ * backtick, i.e. the banned pair: the formatter can create the defect from a
+ * construct this guard accepts, so an exemption for span content would be
+ * defeated by the very pass it exists to protect.
  */
 
 describe("checkMarkdownInlineCodeDelimiters — the escaped-delimiter rule", () => {
