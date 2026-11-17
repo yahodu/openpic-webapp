@@ -101,15 +101,8 @@ export async function invitationExpiry(options: SweepJobRunOptions): Promise<Cro
 
   for (const row of stale) {
     const invitationHex = row._id.toHexString();
-    // The latch is the conditional write: a retry finds `reminderSentAt` set and
-    // matches nothing, so one invitation is reminded at most once.
-    const claimed = await invitations.findOneAndUpdate(
-      { _id: row._id, status: "pending", reminderSentAt: null },
-      { $set: { reminderSentAt: now, updatedAt: now } }
-    );
-    if (claimed === null) {
-      continue;
-    }
+    // Emit before the latch: a failed insert must leave `reminderSentAt` unset,
+    // or the reminder is lost. The outbox's dedupe key keeps a retry to one row.
     const result = await emitDomainEvent(
       {
         eventKey: "collab.invite.reminder",
@@ -121,6 +114,15 @@ export async function invitationExpiry(options: SweepJobRunOptions): Promise<Cro
       },
       { db, clock }
     );
+    // The latch is the conditional write: a retry finds `reminderSentAt` set and
+    // matches nothing, so one invitation is reminded at most once.
+    const claimed = await invitations.findOneAndUpdate(
+      { _id: row._id, status: "pending", reminderSentAt: null },
+      { $set: { reminderSentAt: now, updatedAt: now } }
+    );
+    if (claimed === null) {
+      continue;
+    }
     reminded += result.deduped ? 0 : 1;
   }
 

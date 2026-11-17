@@ -133,14 +133,13 @@ export async function verificationNudge(options: SweepJobRunOptions): Promise<Cr
       },
       { db, clock }
     );
-    if (result.deduped) {
-      skipped += 1;
-      continue;
-    }
+    // The counter is the ladder's latch: it must advance even when the outbox
+    // already holds this rung, or a failed increment is deduped into silence and
+    // the ladder never reaches its next rung.
     await platform
       .collection(COLLECTIONS.userProfiles)
       .updateOne({ _id: profile._id }, { $inc: { verificationNudges: 1 } });
-    nudged += 1;
+    nudged += result.deduped ? 0 : 1;
   }
 
   const scanned = candidates.length;
