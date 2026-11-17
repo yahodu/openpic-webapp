@@ -1,3 +1,9 @@
+## [1.64.1](https://github.com/yahodu/openpic-webapp/compare/v1.64.0...v1.64.1) (2026-11-17)
+
+### Bug Fixes
+
+- **internal:** OP-135 keep a superseded selfie's report off the active profile ([#623](https://github.com/yahodu/openpic-webapp/issues/623)) ([13d5bb4](https://github.com/yahodu/openpic-webapp/commit/13d5bb4da6fd26e8ad61cc8452822ddebd1911aa))
+
 ## [1.64.0](https://github.com/yahodu/openpic-webapp/compare/v1.63.6...v1.64.0) (2026-11-17)
 
 ### Features
