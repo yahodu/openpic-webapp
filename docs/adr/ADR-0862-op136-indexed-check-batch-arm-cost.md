@@ -174,3 +174,134 @@ absent per-batch marker. `readBatchSnapshot`'s own two reads per batch are untou
 - `readBatchSnapshot`'s own reads per batch (three when a batch has failures) — the arm calls it once
   per pair, and narrowing it is a change to the OP-126 seam, not to this cron.
 - The indexable refinement of the candidate filter (`counters.pipelineRevision`, `t_3072cd38`).
+
+## Review sign-off (round 1, artifact + execution lens) — APPROVED WITH FINDINGS
+
+Reviewed head `59c66cc7` (PR #661), already squash-merged as `d28cddd1` before this section
+was written. The production file's blob is
+`3052eaaf1c3737aaf20c04902a29b6d71edc7595` at the reviewed head **and** at the squash, and
+this record's own blob `df54f870…` is the same object at the head, at the squash and on the
+trunk — so the sections above are the bytes that shipped, not a later rewording.
+
+### Reviewed bytes
+
+- **The one delta inside the branch's own paths.** `git diff --stat 59c66cc7 d28cddd1` over
+  the three paths the delivery touches is `docs/adr/README.md` alone, and it is **main-owned**:
+  the board-wide ADR-0314 row, prose and cell that arrived with `a099340e` during the merge
+  window (the added lines carry `0313`, `0314`, `0315`; the board cell reads `0315`). The
+  branch's own `[0862]` row, lane note and lane cell `0863` are present at the squash; the
+  cell reads `0877` today, advanced by the records that followed.
+- **The production blob.** `git rev-parse 59c66cc7:apps/web/src/server/jobs/pipeline-indexed-check.ts`
+  and the same query at `d28cddd1` both answer `3052eaaf…`. The trunk's blob is `c299d043…`
+  today: ADR-0867 (`t_bf0ae9ae`) reordered the per-row work after this record landed, so
+  `3052eaaf…` is not what `main` carries now.
+- **The pins.** Spec blob `6dce3597…` and `sha256 cd4d8de5…7fffb0` identical at the reviewed
+  head and at the squash, sixteen cases and nothing else.
+
+### Evidence the round-1 review measured at the head
+
+- **The sixteen pins.** `16 passed (16)` on the spec byte-identical to the branch head, with
+  `tsc -p apps/web/tsconfig.json --noEmit` exit `0`, `eslint` 0, `prettier --check` clean on
+  the three touched paths, the six `adr-*` guards `6 files / 236 passed (236)`, and the full
+  `unit` + `integration` `--coverage` run `324/324` files, `4559 passed | 3 skipped`, exit
+  `0`, branches `80.39 %` against the `80` gate.
+- **On the merged trunk** `4a98f013`: the sixteen pins again `16 passed (16)`, and
+  `adr-numbering` `29 passed (29)` with no duplicate `ADR-NNNN` basename over the `364`
+  records then on the trunk.
+
+### Re-measured for this sign-off
+
+- **The sixteen pins at the squash.** `16 passed (16)` at `d28cddd1`, reproduced in a
+  throwaway worktree detached there (with `node_modules`, `apps/web/node_modules` and
+  `packages/contracts/node_modules` symlinked from the lane; the worktree removed afterwards)
+  on the spec byte-identical to the reviewed head.
+- **The six `adr-*` guards at this branch head** (which carries this section): `6 files / 236 passed (236)`.
+- **The full suite on today's trunk** `c63f2e47`: `326` files, `4589 passed | 3 skipped`,
+  exit `0`, branches `80.63 %` (gate `80`). The spec there carries `I1`–`I25` and the
+  production job has been reworked since, so this figure is the current tree's, not the
+  reviewed one's.
+- **The ledger.** `375` ADR records on the trunk today, no duplicate `ADR-NNNN` basename.
+
+### The probes (round 1, at the head)
+
+Measured by the round-1 review at `59c66cc7` in a throwaway worktree (removed afterwards)
+through driver-level spies on `find` and `aggregate`. They were not re-run for this section,
+but `R1` and `R2` are now independently corroborated by the pins `I20` and `I21` (ADR-0869).
+
+- **`R1` — two changed events of one tenant**, one settled batch each → both summaries and
+  `details.batches: 2`: the grouped `$in` path, which no pin of the day exercised.
+- **`R2` — one event, 3 distinct pairs, `requestedLimit: 2`** → `details.batches: 2` and two
+  summaries: the budget bound holds.
+- **`R3` — one batch stored as `ObjectId` in one row and as its 24-hex string in another** →
+  discovery `2` groups against the old `Set`'s `1`, `details.batches: 2`, summaries `1`; the
+  outbox dedupe absorbs the difference, so nothing observable changes.
+- **`R4` — page `E1` (tenant A, 2 pairs), `E2` (tenant B, 2), `E3` (tenant A, 1) at
+  `requestedLimit: 3`** → picks `E1`, `E1`, `E3` where the old slice picked `E1`, `E1`, `E2`.
+
+### Findings
+
+#### F1 — Low, test quality (routed to `t_b730389c`, chained behind `t_bf0ae9ae`)
+
+The grouped discovery's distinguishable paths were unpinned: a revert to per-event reads
+stays green, the one-tenant `$in` page and the `$limit`/`break` budget were never exercised,
+and every fixture gave an event its own tenant. Both halves closed after this review:
+`t_b730389c` landed as `7e3f642d` (ADR-0869, `I20`/`I21`) and `t_4fe23af4` added `I22` for
+the per-tenant early stop (ADR-0876).
+
+#### Info, recorded only
+
+- **F2 — §Assumptions A1's wording.** A1 says the `$group` uses "the same `String(...)`
+  normalisation" as the old `Set`; it normalises _after_ grouping, which is the `R3`
+  measurement. It is unreachable under schema §16.3 (`batchIdValue` is an ObjectId for a
+  24-hex id and a raw string otherwise), so no action follows.
+- **F3 — §Assumptions A2 is the `R4` measurement.** A2 already declares that no pin depends
+  on which pairs win a truncated page; the starvation window is `t_488f057b` → `t_bf0ae9ae`.
+- **F4 — chunking widens the abort window.** Up to seven further checks in a chunk complete
+  before a rejection surfaces, where the serial loop stopped at the first failure; emissions
+  are unchanged because the dedupe keys are unchanged.
+- **F5 — duplicate advisory card.** The implementer's follow-up `t_7b6f83c6` duplicated
+  `t_b0e2c0dd`, already running on the same GHSA. Both are closed today.
+- **F6 — the lane cell collided.** The branch's cell `0863` is also the number the concurrent
+  same-lane sibling `t_bc01c854` minted in its worktree; the end state was consistent (that
+  branch set the cell to `0864`, and the ledger merged as a union keeping the higher cell),
+  and the durable allocation fix is `t_3072cd38`.
+
+### The `audit` red at the head, and where it went
+
+The head carried `14` gates — `15` check-runs including the `notify-discord` side effect — and
+`audit` alone failed, on `GHSA-fc5q-39xc-vjpf` (`picomatch <= 4.0.7`). The branch touches no
+manifest and no lockfile, and the merged PR #660 failed the identical check, so the red was
+repo-wide and time-based, not this delivery's. `audit-dev`, `ci`, `lint`, `unit_test`,
+`test_coverage`, `secret-scan`, `env-changes`, `validate-branch-name`, `validate-pr-title` and
+CodeQL all passed, and the ruleset declares `required_status_checks: []`. The advisory has
+since been cleared: `audit` is `success` on the trunk's `c63f2e47` run, while the squash's own
+`main` run still shows the failure beside a passing `ci`, `audit-dev` and `secret-scan`.
+
+### One flake, cleared
+
+An earlier overlapping run saw `tenant-analytics.test.ts > I1` fail with
+`Hook timed out in 10000ms` in `beforeEach`; alone it is `18 passed (18)` and the final full
+run is clean.
+
+### Post-review status
+
+This section consumes **no** ADR number, adds no index row, and leaves `docs/adr/README.md`
+byte-identical: the ledger numbers move only when a card mints a record, and every card this
+review raised was either docs-only or a pin.
+
+The follow-ups, by card id — not by ADR number, which can renumber while a card is open:
+
+- `t_488f057b` → `t_bf0ae9ae`, the **M2** ordering: the pins `I17`–`I19` landed, and the fix
+  (stamp the checked triple only after the row's batch-arm work) landed as `40b65309`.
+- `t_b730389c`, **F1**: the grouped discovery's one-tenant page and `limit` budget, landed as
+  `7e3f642d` (ADR-0869).
+- `t_3072cd38`, the durable lane-number allocation fix.
+- `t_b0e2c0dd`, the `picomatch` advisory.
+
+**No decision in §1–§3 is retracted.** §1's grouped aggregate and §2's `$limit` budget are
+unchanged on the trunk (`pendingBatches`, `{ $limit: limit - pending.length }`). §3's decision
+— chunk the checks at a fixed width instead of serialising them — also stands, but its _unit_
+moved from batches to rows when ADR-0867 reordered the per-row work (`t_bf0ae9ae`): the
+trunk's constant is `ROW_CHECK_CONCURRENCY = 8`, not the `BATCH_CHECK_CONCURRENCY` named
+above, and a row's own batches now run in turn. §Assumptions A1–A2 and §Out of scope are left
+as they were; the follow-ups' own records document what followed.
