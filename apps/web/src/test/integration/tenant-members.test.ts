@@ -663,9 +663,9 @@ describe("GET /api/v1/tenants/{tenantId}/members — a membership with no usable
 });
 
 /**
- * OP-101 follow-up pins — a membership row whose **numeric** `joinedAt` names an
- * instant outside the RFC 3339 four-digit-year range (contract §2.2, ADR-0282,
- * ADR-0284).
+ * OP-101 follow-up pins — a membership row whose **numeric or string**
+ * `joinedAt` names an instant outside the RFC 3339 four-digit-year range
+ * (contract §2.2, ADR-0282, ADR-0284).
  *
  * The merged defensive restore makes the projection total for every value that
  * cannot name an instant, but a finite number is admitted as an instant and
@@ -702,13 +702,16 @@ describe("GET /api/v1/tenants/{tenantId}/members — a membership with no usable
  * the exact instant inside `-62167219200000 … 253402300799999`, the epoch
  * sentinel otherwise. How the bound is enforced is not pinned here (ADR-0284).
  */
-describe("GET /api/v1/tenants/{tenantId}/members — a numeric `joinedAt` outside the four-digit-year range", () => {
+describe("GET /api/v1/tenants/{tenantId}/members — a `joinedAt` outside the four-digit-year range", () => {
   /** The instant an out-of-range `joinedAt` degrades to (ADR-0282 §D2). */
   const EPOCH_JOINED_AT_ISO = "1970-01-01T00:00:00.000Z";
 
   /** The last instant inside the wire's window, and its ISO form. */
   const LAST_WIRE_INSTANT_MILLIS = 253402300799999;
   const LAST_WIRE_INSTANT_ISO = "9999-12-31T23:59:59.999Z";
+
+  /** The first instant past the ceiling, stored as the string an old write may hold. */
+  const FIRST_EXPANDED_YEAR_ISO = "+010000-01-01T00:00:00.000Z";
 
   /**
    * Insert a raw `tenantMembers` row exactly as supplied, with no defaults.
@@ -774,5 +777,37 @@ describe("GET /api/v1/tenants/{tenantId}/members — a numeric `joinedAt` outsid
     const entries = (await body(response)).data as Record<string, unknown>[];
     const memberEntry = entries.find((entry) => entry.userId === member.userId.toHexString());
     expect(memberEntry?.joinedAt).toBe(LAST_WIRE_INSTANT_ISO);
+  });
+
+  it("still answers 200 for a membership whose `joinedAt` is the string `+010000-01-01T00:00:00.000Z`, degrading it to the epoch", async () => {
+    // The string arm reaches the same `new Date(value).getTime()` the numeric
+    // arm does, so a bound placed on numbers only would let this row deny the
+    // listing with `data.0.joinedAt: Invalid ISO datetime` (ADR-0284 §D1 fixes
+    // the contract for whatever the stored `joinedAt` is).
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await insertRawMembership({
+      tenantId,
+      userId: member.userId,
+      role: "member",
+      status: "active",
+      joinedAt: FIRST_EXPANDED_YEAR_ISO,
+    });
+
+    const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-tenant-id")).toBe(tenantId.toHexString());
+
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    // A corrupt instant may never push a member out of the listing.
+    expect(entries.map((entry) => entry.userId).sort()).toEqual(
+      [member.userId.toHexString(), owner.userId.toHexString()].sort()
+    );
+
+    const memberEntry = entries.find((entry) => entry.userId === member.userId.toHexString());
+    expect(memberEntry).toBeDefined();
+    expect(memberEntry?.joinedAt).toBe(EPOCH_JOINED_AT_ISO);
   });
 });

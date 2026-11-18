@@ -165,7 +165,7 @@ describe("projectMember — an unusable `joinedAt` degrades instead of throwing"
  *     the epoch sentinel `1970-01-01T00:00:00.000Z`;
  *   - **the window's own edges are still served as themselves** — one
  *     millisecond inside either end round-trips to its ISO string, so a clamp
- *     may not be looser than the wire format.
+ *     may not be tighter than the wire format.
  *
  * ## Why the epoch sentinel (ADR-0284, following ADR-0282 §D2)
  *
@@ -230,6 +230,84 @@ describe("projectMember — a `joinedAt` instant outside the four-digit-year ran
     const projected = projectMember(membership({ joinedAt }), undefined, undefined);
 
     expect(projected.joinedAt).toBe(expected);
+    expect(isoDateTimeSchema.safeParse(projected.joinedAt).success).toBe(true);
+  });
+});
+
+/**
+ * Unit / contract — a **string** `joinedAt` that names an instant outside the
+ * RFC 3339 four-digit-year range (OP-101 follow-up on the bounded `joinedAt`
+ * reader, contract §2.2, ADR-0282, ADR-0284 §D1).
+ *
+ * ADR-0284 §D1 fixes the contract for **whatever** the stored `joinedAt` is,
+ * not for the numeric arm alone. A string is parsed through the same
+ * `new Date(value).getTime()` a number is, so a string that names an instant
+ * the wire cannot carry reaches the identical failure class:
+ *
+ * ```
+ * new Date("+010000-01-01T00:00:00.000Z").getTime()  -> 253402300800000
+ * new Date("+275760-09-13T00:00:00.000Z").getTime()  -> 8640000000000000
+ * new Date("-000001-12-31T23:59:59.999Z").getTime()  -> -62167219200001
+ * ```
+ *
+ * `@openpic/contracts` `isoDateTimeSchema` rejects the `toISOString()` shapes
+ * those instants produce (`+010000-…`, `+275760-…`, `-000001-…`), so a member
+ * projected from one is not a §2.2 member: the route's `serializeResponse`
+ * fails the strict parse and the whole listing is a `5xx` for every caller —
+ * ADR-0282's "one corrupt row denies the listing", reached through a corrupt
+ * *string* on a collection that carries no validator. A bound placed on the
+ * numeric arm only leaves this path open, which is why the string arm is
+ * pinned in its own right.
+ *
+ * The pins below fix the contract, not a mechanism:
+ *
+ *   - **a string naming an instant outside the window is undatable for this
+ *     purpose** and degrades exactly like any other undatable value — the row
+ *     stays listed and `joinedAt` carries the epoch sentinel
+ *     `1970-01-01T00:00:00.000Z`;
+ *   - **the window's own edges are still served as themselves** — a string
+ *     naming the last or the first instant the four-digit-year form carries
+ *     round-trips unchanged, so a bound may not be tighter than the wire format.
+ *
+ * ## Contract expected of the implementation
+ *
+ * `@/server/tenancy/members` must keep exporting
+ * `projectMember(membership, user, profile): Member`, and whatever the stored
+ * `joinedAt` — including any string — the call must return a §2.2 member whose
+ * `joinedAt` is an `isoDateTimeSchema`-valid string: the exact instant when the
+ * value names one inside `-62167219200000 … 253402300799999`, the epoch
+ * sentinel otherwise. How the reading is factored (an inline guard, a local
+ * helper, or a shared reader) is not pinned.
+ */
+describe("projectMember — a `joinedAt` string naming an instant outside the four-digit-year range", () => {
+  /** The last instant the four-digit-year form can carry, as a stored string. */
+  const LAST_FOUR_DIGIT_YEAR_ISO = "9999-12-31T23:59:59.999Z";
+
+  /** The first instant of year 0000, the lower edge of the wire's window. */
+  const FIRST_YEAR_ZERO_ISO = "0000-01-01T00:00:00.000Z";
+
+  it.each([
+    ["the first instant past the four-digit-year ceiling", "+010000-01-01T00:00:00.000Z"],
+    ["the Date maximum", "+275760-09-13T00:00:00.000Z"],
+    ["the Date minimum", "-271821-04-20T00:00:00.000Z"],
+    ["one millisecond below the year-0000 floor", "-000001-12-31T23:59:59.999Z"],
+  ])("degrades a string naming %s to the epoch sentinel", (_label, joinedAt) => {
+    // Silent like the numeric arm: a schema-invalid string leaves the
+    // projector, and only the route's strict parse turns it into a 5xx.
+    const projected = projectMember(membership({ joinedAt }), undefined, undefined);
+
+    expect(projected.joinedAt).toBe(EPOCH_ISO);
+    expect(isoDateTimeSchema.safeParse(projected.joinedAt).success).toBe(true);
+  });
+
+  it.each([
+    ["the last instant the four-digit-year form carries", LAST_FOUR_DIGIT_YEAR_ISO],
+    ["the year-0000 floor", FIRST_YEAR_ZERO_ISO],
+  ])("still serves a string naming %s as its own instant", (_label, joinedAt) => {
+    // Controls: a bound tighter than the wire format is a regression, not a fix.
+    const projected = projectMember(membership({ joinedAt }), undefined, undefined);
+
+    expect(projected.joinedAt).toBe(joinedAt);
     expect(isoDateTimeSchema.safeParse(projected.joinedAt).success).toBe(true);
   });
 });
