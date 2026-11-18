@@ -189,3 +189,68 @@ loosened matcher.
   the `unallocated (future lanes)` cursor — both land on `0875` after the allocator's sweep of this
   card (card `t_f21a0110`: `0870` retired unminted, `0871`–`0874` in flight). Merging the ledger
   takes the higher side of a union and never lowers a cell.
+
+## Review sign-off (round 1, artifact lens) — APPROVED
+
+Reviewed head `e178da53` (PR #673), already squash-merged as `7e3f642d` before the review
+ran. The PR's own paths — the spec and this record — are byte-identical between the reviewed
+head and the squash, so the reviewed bytes are the shipped bytes. The only tree delta in that
+window is main's own `ADR-0316` landing (card `t_8f0c9915`): its record file, plus the
+`+7/−3` row it added to `docs/adr/README.md`. No production file, existing case, fixture,
+constant or helper is touched, there is no `.only`, no skip and no loosened matcher.
+
+### Evidence re-measured at the merged trunk
+
+Re-measured by the reviewer at `7e3f642d` in a throwaway worktree, not copied from the
+delivery's handoff. The production job file hashes to `0744e6b5…82112` there and on today's
+trunk, so the pins and the probes below ran against the bytes this record describes.
+
+- **The spec is green as delivered** — the whole file, on unchanged production code:
+  `21 passed (21)`.
+- **M2 — the grouping narrowed.** `$in: eventIds` → `eventIds.slice(0, 1)` reddens `I20`
+  alone with `1 failed | 20 passed (21)`: `AssertionError: expected 1 to be 2` at
+  `details.batches`, because the tenant's second event and its summary are gone.
+- **M3 — the budget dropped.** With the `{ $limit: limit - pending.length }` stage removed,
+  `I21` alone reddens with `1 failed | 20 passed (21)`: `AssertionError: expected 3 to be 2`.
+- **M5 — the counter off by one.** `details.batches` raised by one reddens with
+  `2 failed | 19 passed (21)` — exactly `I20` and `I21`, both `expected 3 to be 2` — so the
+  count assertion carries its own pin and is not merely implied by the two summaries.
+- **Production restored byte-identically.** After each probe the file hashed back to
+  `0744e6b5…82112` and `git status --porcelain` was empty.
+
+### Gates at the merged trunk
+
+- the pin spec → `21 passed (21)`, whole file;
+- the full suite → `326 files / 4585 passed | 3 skipped (4588)`, exit `0`;
+- `tsc -p apps/web/tsconfig.json --noEmit` exit `0`, `eslint` 0 problems on the spec, and
+  `prettier --check` clean on the spec, this record and the ledger;
+- the six `adr-*` guards → `6 files / 236 passed (236)`;
+- the ledger at `7e3f642d`: `373` `ADR-*` records, every number appearing once — no duplicate,
+  and `ADR-0869` present;
+- the delivery's own fourteen checks were green on `e178da53`.
+
+### Findings
+
+#### Low (additive, since closed) — the per-tenant early stop was unpinned
+
+Deleting `if (pending.length >= limit) break;` leaves this record's cases fully green
+(`21 passed (21)`), while a page whose first tenant fills the budget then rejects the tick
+with `MongoServerError: the limit must be positive` (`code 15958`). The gap is additive, so
+it could not change this delivery's verdict: it was routed to the Test Author as
+`t_4fe23af4`, and the case `I22` it produced — beside `I20` and `I21` — is recorded in
+[ADR-0876](ADR-0876-op136-per-tenant-early-stop-pin.md).
+
+#### Info — the lane worktree was reaped mid-review
+
+`/root/openpic/openpic-webapp/.worktrees/t_16239628` was deleted while the review ran
+(dispatcher reap), and it and the gated follow-up's worktree were rebuilt detached at
+`7e3f642d`. No action follows for this record: the reaper is owned by `t_f4a1695b` (OPS,
+done).
+
+### Post-review status
+
+This sign-off consumes **no ADR number**: `0869` is the record it appends to, no row and no
+cell of `docs/adr/README.md` is touched, and the ledger therefore stays byte-identical. No
+decision in §Decision is retracted — §1's two cases and §2's three declared gaps stand — and
+the further arm the review measured is now pinned beside them in ADR-0876 as `I22`. No code
+change was requested and no case was weakened.
