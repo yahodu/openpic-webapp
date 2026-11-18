@@ -1,3 +1,9 @@
+## [1.66.0](https://github.com/yahodu/openpic-webapp/compare/v1.65.10...v1.66.0) (2026-11-18)
+
+### Features
+
+- **entitlements:** OP-104 entitlements and usage endpoints ([#279](https://github.com/yahodu/openpic-webapp/issues/279)) ([8e5b09a](https://github.com/yahodu/openpic-webapp/commit/8e5b09a7dd3d4ca35ecf35a47ae5049eb69cbe27))
+
 ## [1.65.10](https://github.com/yahodu/openpic-webapp/compare/v1.65.9...v1.65.10) (2026-11-17)
 
 ### Bug Fixes

@@ -3,7 +3,9 @@
 - **Status:** Accepted · **Date:** 2026-11-18
 - **Card:** OP-132 follow-up GREEN `t_41f06cb7` (Medium; finding raised by the review of the
   OP-135 test-infra card `t_e9340c72`). Branch `OP-132-bug-confirm-burst-attempt-budget`, worktree
-  `/root/openpic/openpic-webapp/.worktrees/t_e9340c72`, cut from `origin/main` `1167db2d`.
+  `/root/openpic/openpic-webapp/.worktrees/t_e9340c72`, cut from `origin/main` `1167db2d` and merged
+  with `origin/main` `9931d702` (the OP-104 landing) — the ledger is the only conflicted path and
+  resolves as a union.
 - **Implements:** contract §6.3 / §6.4 (the confirm's seven-key envelope and its `status`), schema
   §15.3 (the profile row's `activeSelfieId`), §16.4.
 - **Satisfies:** the pin of [ADR-0821](ADR-0821-op132-confirm-burst-pin.md) — the F3.5 describe in
@@ -92,10 +94,12 @@ startup is machine-dependent and its settled wait is bounded at 1 s. Three fresh
   0 `Test timed out`, 0 confirm `500`s, and the burst's deepest retry line was
   `attempt: 4, maxAttempts: 5` — i.e. a green run still spends four of the five attempts, which is
   why the exhausted arm is load-bearing rather than theoretical.
-- **Whole suite with coverage** (`vitest run --project unit --project integration --coverage`):
-  `326 files passed (326)` / `4589 passed | 3 skipped (4592)`, exit `0`, all four global thresholds
-  green (lines `91.66`, branches `80.33`, functions `95.75`, statements `91.77`). The route file reads
-  `79.48` stmts / `63.63` branch, the exhausted arm itself uncovered — the gap below.
+- **Whole suite with coverage**, on the merged tree (`origin/main` `9931d702` merged in; run with
+  `--project unit --project integration --coverage`): `328 files passed (328)` /
+  `4627 passed | 3 skipped (4630)`, exit `0`, 0 confirm `500`s, 0 timeouts, and all four global
+  thresholds green (lines `91.75`, branches `80.54`, functions `95.85`, statements `91.86`). The
+  route file reads `79.48` stmts / `63.63` branch, the exhausted arm itself uncovered — the gap
+  below.
 
 ## Alternatives
 
