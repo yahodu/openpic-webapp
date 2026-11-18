@@ -41,8 +41,6 @@
  *   the run's own `matchRunStartedAt`, never the report instant (§10.3.3).
  *
  * The four routes are `POST` only: the worker writes, it never reads back.
- 
-
  *
  * ## Where the cases live
  *
