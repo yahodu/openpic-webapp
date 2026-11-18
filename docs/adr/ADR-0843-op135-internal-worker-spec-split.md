@@ -148,8 +148,11 @@ as moves plus generated import blocks plus the appended docblock map.
 ## Consequences
 
 - A future append lands in the file that owns the behaviour, and no file has to hold the whole surface.
-- The four specs run in **9.54 s** (`Duration`, 4 files) against the single file's **13.59 s**: the same
-  work, split across workers.
+- **The split costs runtime; it does not save it.** Four `TestApp` boots and four database prefixes
+  instead of one: **11.84 s** warm against the single file's **9.32 s** at `2f23fa34` (one machine, back
+  to back, `TMPDIR=/root/tmp-mongo`; §Evidence carries the cold runs) — 1.4–2.5 s more, not less. Both
+  trees sit far inside ADR-0841's `INTEGRATION_TEST_TIMEOUT_MS = 30 000`, and that is the point: the
+  split pays seconds it can afford.
 - The one behavioural difference is lifecycle isolation: four `app` instances instead of one.
 - A refactor that reorders or drops a case now reddens one small file, not a 2 700-line one.
 - The legacy path stays as the citation anchor for four records, so a later card that wants to move the
@@ -187,6 +190,13 @@ split  (this tree) Test Files  4 passed (4)   Tests  51 passed (51)    Duration 
 
 Per file, run alone: `internal-worker-endpoints` 32, `internal-worker-batch-heartbeat` 6,
 `internal-worker-derivative` 8, `internal-worker-report-limits` 5.
+
+The `Duration`s in that log did not reproduce on review. Re-measured at the merged head `f9257747`, on
+one machine, back to back, with `TMPDIR=/root/tmp-mongo`: the four files take **11.84 s** warm
+(**10.33 s** cold) against the single file's **9.32 s** warm (**8.94 s** cold) at `2f23fa34`. The split
+therefore costs 1.4–2.5 s warm — four `TestApp` boots and four database prefixes instead of one — so it
+does not save time. Both trees are far inside ADR-0841's 30 000 ms budget (§Consequences), which is the
+point.
 
 **2. Citation invariant.** `grep -rln "ADR-0792\|ADR-0798\|ADR-0840" apps/web/src/test` returns **two**
 paths: the legacy spec, and the pre-existing `integration/liveness-selfie-submit.test.ts`, which cites
