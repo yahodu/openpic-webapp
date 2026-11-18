@@ -185,8 +185,9 @@ use only existing exports, so the red is assertion-level, not a missing module),
 - **No route, schema or storage change is implied.** The GREEN successor's surface
   is `apps/web/src/server/tenancy/members.ts` only; `tenantMembers` still carries
   no validator (ADR-0282 §D4).
-- **Cost.** One file-level constant pair and six unit cases plus four route cases;
-  no measurable suite-time change (integration file `6.5s` at this head).
+- **Cost.** Six unit cases and four route cases, each block carrying its own
+  boundary constants; no measurable suite-time change (integration file `6.5s` at
+  this head).
 
 ## Alternatives considered
 
