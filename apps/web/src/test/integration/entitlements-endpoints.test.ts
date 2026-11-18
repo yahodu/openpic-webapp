@@ -1,6 +1,6 @@
 import type { Document, WithId } from "mongodb";
 import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { GET as getEntitlements } from "@/app/api/v1/tenants/[tenantId]/entitlements/route";
@@ -140,11 +140,31 @@ const usageBodySchema = z.object({ data: z.array(usageRowSchema) });
 
 let app: TestApp;
 
+/**
+ * The instant every spec in this file reasons about.
+ *
+ * The view derives `periodKey` and `resetsAt` from the route's injected
+ * `systemClock.now()`, and the counters are seeded with the *same* derivation.
+ * Freezing the clock keeps the seed and the read on one instant, so a run that
+ * would straddle a UTC month boundary (seed at `T-1ms`, read at `T+1ms`) cannot
+ * look up the next period key and find no counter. A mid-month instant keeps
+ * `nextMonthStartIso()` unambiguous.
+ */
+const FROZEN_NOW = new Date("2026-09-15T12:00:00.000Z");
+
 beforeAll(async () => {
   // Boots a private database, the real auth surface and the readiness probe;
   // the cold connect belongs in this hook, never inside a timed spec.
   app = await startTestApp({ prefix: "op104-endpoints" });
 }, MONGO_READY_HOOK_TIMEOUT_MS);
+
+beforeEach(() => {
+  // Fake `Date` only: `setTimeout`/`setInterval` stay real for the driver's
+  // sockets and heartbeats, while `new Date()` (and so `systemClock.now()`)
+  // returns {@link FROZEN_NOW} for every case.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FROZEN_NOW);
+});
 
 beforeEach(async () => {
   // One database is booted for the whole file (`beforeAll`), so a reused plan
@@ -162,6 +182,10 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await app.cleanup();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /** Merge fields into a caller's auto-provisioned `userProfiles` row. */
@@ -333,12 +357,17 @@ async function seedCounter(fields: {
   });
 }
 
-/** The current UTC period key for a monthly cadence. */
+/**
+ * The current UTC period key for a monthly cadence.
+ *
+ * Reads the frozen clock of the running spec (see {@link FROZEN_NOW}), i.e. the
+ * same instant the route's `systemClock.now()` sees.
+ */
 function currentMonthKey(now = new Date()): string {
   return `${String(now.getUTCFullYear())}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-/** The start of the next UTC month. */
+/** The start of the next UTC month, from the frozen clock of the running spec. */
 function nextMonthStartIso(now = new Date()): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
 }
@@ -583,7 +612,7 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     expect(row.effectiveLimit).toBe(100);
   });
 
-  it("serves an active grant's non-null `validUntil` window beside its delta (view.ts:166)", async () => {
+  it("serves an active grant's non-null `validUntil` window beside its delta (contract §3.5 grants[])", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -630,7 +659,7 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     });
   });
 
-  it("serves `used` and a null `remaining` for a tenant-scoped unlimited quota (view.ts:188)", async () => {
+  it("serves `used` and a null `remaining` for a tenant-scoped unlimited quota (contract §3.5)", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -679,7 +708,7 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     });
   });
 
-  it("serves an empty `entitlements` array (still 200) when the resolved plan has no document (view.ts:224)", async () => {
+  it("serves an empty `entitlements` array (still 200) when the resolved plan has no document (contract §3.5)", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -903,7 +932,7 @@ describe("GET /api/v1/tenants/{tenantId}/usage", () => {
     expect(rows.map((row) => row.periodKey)).toEqual(["2026-10"]);
   });
 
-  it("serves every period when no `?periodKey=` filter is supplied (view.ts:264)", async () => {
+  it("serves every period when no `?periodKey=` filter is supplied (contract §3.5, §0.5 envelope)", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -935,7 +964,7 @@ describe("GET /api/v1/tenants/{tenantId}/usage", () => {
     expect(rows.map((row) => row.periodKey).sort()).toEqual(["2026-09", "2026-10"]);
   });
 
-  it("omits `updatedAt` from a served row whose counter row has none (view.ts:277)", async () => {
+  it("omits `updatedAt` from a served row whose counter row has none (schema §14.2)", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
