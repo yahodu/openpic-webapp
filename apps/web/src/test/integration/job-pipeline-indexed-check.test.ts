@@ -1043,17 +1043,21 @@ function failFindWhen(
  * The case names no marker, no ordering and no query. It seeds one event the
  * status table derives as `indexed` with one worker-settled batch, arms a
  * **one-shot** failure on the arm's own read, and asserts only what the API
- * consumer observes: the first run rejects, and the run after it leaves exactly
- * one `upload.batch.completed` row for that batch, naming its batch, event and
- * file count. Any implementation that keeps the row a candidate until its arm
- * work completes satisfies it — retrying the arm, stamping after the arm, or
- * anything else that stops the row leaving the page early.
+ * consumer observes: the first run resolves with `errors: 1` and no summary,
+ * and the run after it leaves exactly one `upload.batch.completed` row for that
+ * batch, naming its batch, event and file count. Any implementation that keeps
+ * the row a candidate until its arm work completes satisfies it — retrying the
+ * arm, stamping after the arm, or anything else that stops the row leaving the
+ * page early.
  *
- * ## Why it is RED at the RED head
+ * ## Why it was RED at its own RED head
  *
- * The mark lands in the announcement loop, before the arm. Run 1 stamps the
- * row and then aborts, so run 2 reports `scanned: 0, details.batches: 0` and the
- * outbox holds no `upload.batch.completed` row for the batch at all.
+ * At the ADR-0866 RED head the mark landed in the announcement loop, before the
+ * arm: run 1 stamped the row and then aborted, so run 2 reported `scanned: 0,
+ * details.batches: 0` and the outbox held no `upload.batch.completed` row for
+ * the batch at all. Under ADR-0871 §1 the same run now contains the row failure
+ * (`errors: 1`) instead of rejecting, and the retry property below is
+ * unchanged.
  */
 describe("pipeline-indexed-check: the batch arm's work survives an aborted run", () => {
   /**
@@ -1112,11 +1116,14 @@ describe("pipeline-indexed-check: the batch arm's work survives an aborted run",
     const { batchId, uploader } = await seedSettledBatchOf(event);
     const injection = failNextFind(COLLECTIONS.eventImages);
     try {
-      // Act — the first tick aborts inside the arm.
+      // Act — the first tick fails inside the arm, and the run contains it: the
+      // failure is counted in the envelope, not thrown out of the run
+      // (ADR-0871 §1). Asserting the resolved envelope, not a bare `catch`, is
+      // what a containment that still rejects a one-row chunk cannot pass.
       await expect(
         runJobWithLimit(NOW, 50),
-        "the seeded read failure must abort the run, or the case proves nothing"
-      ).rejects.toThrow("injected failure: find on event_images");
+        "a row whose own arm work throws must be counted, not thrown out of the run"
+      ).resolves.toMatchObject({ errors: 1 });
     } finally {
       injection.restore();
     }
@@ -1167,13 +1174,13 @@ describe("pipeline-indexed-check: the batch arm's work survives an aborted run",
     expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
     const { batchId, uploader } = await seedSettledBatchOf(event);
 
-    // Act — the first tick aborts inside the arm…
+    // Act — the first tick fails inside the arm, and the run contains it…
     const firstAbort = failNextFind(COLLECTIONS.eventImages);
     try {
       await expect(
         runJobWithLimit(NOW, 50),
-        "the seeded read failure must abort the run, or the case proves nothing"
-      ).rejects.toThrow("injected failure: find on event_images");
+        "the first tick's row failure must be counted, not thrown out of the run"
+      ).resolves.toMatchObject({ errors: 1 });
     } finally {
       firstAbort.restore();
     }
@@ -1185,14 +1192,15 @@ describe("pipeline-indexed-check: the batch arm's work survives an aborted run",
       "an aborted run cannot have summarised the batch it never read"
     ).toHaveLength(0);
 
-    // Act — …and so does the tick after it over the same rows: the row has to
-    // still be a candidate, or the repeat abort is never even measured.
+    // Act — …and the tick after it fails inside the arm again over the same
+    // rows, and is contained too: the row has to still be a candidate, or the
+    // repeat failure is never even measured.
     const secondAbort = failNextFind(COLLECTIONS.eventImages);
     try {
       await expect(
         runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 50),
-        "the second tick must reach the arm again rather than pass the row over"
-      ).rejects.toThrow("injected failure: find on event_images");
+        "the second tick's row failure must be counted too, not thrown out of the run"
+      ).resolves.toMatchObject({ errors: 1 });
     } finally {
       secondAbort.restore();
     }
