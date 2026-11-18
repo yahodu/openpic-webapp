@@ -248,3 +248,36 @@ reconciliation, so the served projection, the free-tier default, the
 `owner`|`admin` split on `/usage` and the parallel reads are exactly what the
 green run exercises. Numbers `0360` (RED), `0361` (this GREEN record) and the
 lane cell `0362` stand — no renumber, no new number.
+
+### Second merge onto `origin/main` `88d65749`
+
+The trunk moved eleven more commits while this card ran (the OP-136
+indexed-check pins and
+[ADR-0317](ADR-0317-lane-workspace-durability-and-recovery.md)), so the lane
+merged `origin/main` `88d65749` a second time — again a **merge**, never a
+rebase — giving merge commit `62f9ce17`. The only conflicted path was
+`docs/adr/README.md` again, resolved with the same three decisions: every
+`main` row and paragraph is kept (including `0317`, `0869` and `0876`),
+`main`'s `unallocated (future lanes)` cursor stays `0799`+ / `0869`, and this
+lane's ledger paragraphs stay after `main`'s. No test file's assertions were
+touched.
+
+Re-verified at `62f9ce17` (real values, no estimates):
+
+- `pnpm typecheck` exit 0 on all three projects.
+- unit + integration with coverage: **exit 0** — **328 files / 4627 passed
+  (3 skipped)**; global **91.81 % statements / 80.70 % branches / 96.05 %
+  functions / 91.92 % lines**; `apps/web/src/server/services/**` branches
+  **97.91 % (281/287)** against the 90 % gate, with
+  `services/entitlements/view.ts` at **32/32**.
+- `eslint` 0 issues and `prettier --check` clean on the eleven touched `.ts`
+  files and this ledger.
+- ADR guards (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`)
+  **3 files / 97 tests** green; `git rev-list --objects --all -- docs/adr`
+  still holds only this lane's `ADR-0360`/`ADR-0361` objects.
+- `pnpm --filter @openpic/web build` exit 0, with both new routes in the route
+  table.
+
+The §3.5 contract is unchanged again — the second merge added no production
+file to this lane's diff. Numbers `0360`, `0361` and the lane cell `0362`
+stand.
