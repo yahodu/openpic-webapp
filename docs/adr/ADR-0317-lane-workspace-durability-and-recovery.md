@@ -28,9 +28,15 @@ worktree prune`) run outside any card. No board-side hook can prevent that
 surface, because the surface is a human shell.
 
 The observed damage is not only lost files. A `dir`-only lane whose path has no
-checkout at all starts in an **empty tree**: `pnpm vitest run` finds no project,
-prints no `Tests` line, exits `0`, and the run looks green. That is the failure
-class this record closes — silently quiet success on a tree that does not exist.
+checkout starts from nothing, and the failure is **ambiguous rather than loud** —
+in an empty directory this repository's own commands answer about something else.
+Measured in an empty scratch directory with this tree's binaries: `vitest run
+--project unit` prints a startup error, `No projects matched the filter "unit".`,
+and exits `1`; `pnpm install --frozen-lockfile` prints `ERR_PNPM_NO_LOCKFILE`
+with `pnpm-lock.yaml is absent`. Neither line says "the lane's checkout is gone",
+so a worker that reads only a later step, or retries with looser flags, ends up
+measuring a tree that is not the lane. Empty-tree execution is the failure class
+this rule closes: rule 1 makes the cause explicit before any command runs.
 
 ## Decision
 
@@ -104,8 +110,9 @@ cheapest place to notice, and dispatch is the last place that may notice.
 kanban gc` and the worktree pruner already behave correctly; this record does
   not add a hook, a cron job or a timer, because none of them was the cause.
 - A `dir`-only lane is the most exposed shape: it has no branch to recover from,
-  so it is also the one that fails quietest. Rule 1's third step (detached at
-  `origin/main`) is what turns that into an explicit, commented rebuild.
+  so it is also the one whose failure is hardest to attribute. Rule 1's third
+  step (detached at `origin/main`) is what turns that into an explicit,
+  commented rebuild.
 - Nothing about application code, specs, CI workflows or the lockfile changes
   here. This record is a dispatch-time precondition plus an operator rule.
 
@@ -123,9 +130,10 @@ kanban gc` and the worktree pruner already behave correctly; this record does
   the path, and the pruner already answers `skip-kanban`. There is no defect to
   fix in them.
 - **Let the worker proceed and create the directory inline.** Rejected: an empty
-  tree runs a suite that finds nothing and exits `0` (see §Context). The failure
-  is silence, so the remedy must be loud — a rebuild plus a comment, never an
-  implicit `mkdir`.
+  tree answers with errors that name neither the cause nor the lane — a startup
+  error about the project filter, a missing `pnpm-lock.yaml` (§Context) — so the
+  remedy must be loud and specific: a rebuild plus a comment, never an implicit
+  `mkdir`.
 - **Make `workspace_path` durable by copying each lane into a board-owned
   directory.** Rejected as out of scope and untested: it changes the workspace
   contract every profile and every card body already speaks, to defend against a
@@ -187,3 +195,10 @@ Verification after the repair: the board query reports `misses: 0` for every
 non-terminal `dir`/`worktree` row; `.worktrees/t_16239628` exists and all 8
 non-terminal cards that name it resolve; 20 `git worktree list` entries for 18
 directories (two cards share a path).
+
+Empty-tree probe (this tree's binaries, an empty scratch directory, run with the
+rest of this record's gates): `vitest run --project unit` → `Startup Error`,
+`No projects matched the filter "unit".`, exit `1`; `pnpm install
+--frozen-lockfile --prefer-offline` → `ERR_PNPM_NO_LOCKFILE`, `pnpm-lock.yaml is
+absent`. Neither message names the missing checkout, which is why rule 1 checks
+the tree before it runs anything.
