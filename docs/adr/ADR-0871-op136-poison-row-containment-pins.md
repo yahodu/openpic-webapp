@@ -85,7 +85,7 @@ A row whose own OP-126 batch-arm work throws must not abort the run:
 5. `scanned`, `hasMore`, `skipped` and `details` keep their present meaning — the contained run is a
    normal §10.2 run with a non-zero `errors`.
 
-### 2. The pins (`I26`–`I29`, appended; the shipped cases untouched)
+### 2. The pins (`I26`–`I29` appended, and `I17`/`I23`'s vacuity arm retired)
 
 The block is one `describe` at the end of
 `apps/web/src/test/integration/job-pipeline-indexed-check.test.ts`, plus one module-level helper
@@ -117,39 +117,54 @@ Every assertion is an observable: the run envelope, the outbox rows (`pipeline.e
 the chunking, the catch, the query or the sort, so any containment that keeps the four properties
 above satisfies the block.
 
+The same diff also retires the three `rejects.toThrow` arms of the shipped `I17`/`I23` (§4): those
+arms assert the premise this decision retires, so the pin set cannot be green with them in place. No
+other line of those two cases changes.
+
 ### 3. Case numbering: `I26`–`I29`, not `I20`–`I23`
 
 The card said the file holds `I1`–`I19` and that these cases are `I20`–`I23`. That is stale by six
 landings: at this base the file already carries `I1`–`I25`, and `I20`/`I21` (the grouped discovery
 and its limit budget), `I22` (the per-tenant early stop) and `I23` (the two-abort retry) are taken.
 Four cases appended as `I20`–`I23` would duplicate four live ids, so the block continues at `I26`.
-No shipped case, helper, fixture or assertion is edited: the diff is the block, the one helper, and
-one extended import line.
+Apart from the §4 retirement, no shipped case, helper, fixture or assertion is edited: the block's own
+diff is the block, the one helper, and one extended import line.
 
-### 4. The ripple the GREEN must carry: `I17` and `I23`'s vacuity arm
+### 4. `I17` and `I23`'s vacuity arm is retired here, not by the GREEN
 
-`I17` and `I23` guard their own seeds with
+`I17` and `I23` guarded their own seeds with
 `await expect(runJobWithLimit(...)).rejects.toThrow("injected failure: find on event_images")` —
 "the seeded read failure must abort the run, or the case proves nothing". That premise is exactly
 what this decision retires: once a row failure is contained, the run **resolves** with `errors: 1`.
-The three assertions are therefore false under the new contract, and no containment can satisfy
-both them and `I26`.
+The three assertions are false under the new contract, and no containment can satisfy both them and
+`I26` — measured in a throwaway probe worktree by applying only the near-fix (settle, count, warn
+naming the event) to the production file: `2 failed | 27 passed (29)`, `I17` and `I23`, both
+"promise resolved … instead of rejecting".
 
-Measured, in a throwaway probe worktree at the pin commit (`10b89325`), by applying only the near-fix
-(settle, count, warn naming the event) to the production file:
+The retirement is a **test** change, so this card makes it: `docs/CONVENTIONS.md:22` — "Tests are
+owned by the Test Author. Implementers and agents never edit, skip, weaken or delete a test to make
+the suite pass" — and the GREEN card's own body forbids editing or renumbering a pin. The round-1
+review of PR #690 rejected the earlier plan to route the retirement to the GREEN `t_6275f30a`, and
+this record states the delivery as it is.
 
+The retired arm asserts the **resolved envelope**, never a swallow:
+
+```ts
+await expect(
+  runJobWithLimit(NOW, 50),
+  "a row whose own arm work throws must be counted, not thrown out of the run"
+).resolves.toMatchObject({ errors: 1 });
 ```
-2 failed | 27 passed (29)   I17 and I23, both "promise resolved
-                            "{ job: 'pipeline-indexed-check', …(9) }" instead of rejecting"
-```
 
-and with those three arms retired as well, the same tree answers `29 passed (29)`. This card may not
-edit shipped pins, so the edit is **routed to the GREEN `t_6275f30a`**, which owns the behaviour
-change: the three `expect(...).rejects.toThrow(...)` wrappers become a plain
-`await runJobWithLimit(...).catch(() => undefined)`, and every other line of `I17`/`I23` — the
-`fired() === 1` anchor that proves the arm was reached, and the "one summary for the batch" subject —
-stays byte-identical. Nothing about what those cases pin is weakened; only the arm that asserts the
-run's envelope, which is now `I26`'s subject.
+A bare `.catch(() => undefined)` was rejected because the reviewer measured that a degenerate
+containment which still rethrows when the failing row is alone in its chunk — `if (chunk.length === 1)
+{ throw outcome.reason; }`, otherwise count and warn — passes all 29 cases under that shape. The
+resolved-envelope form kills it: `I17`'s page holds exactly one candidate, so its chunk has length
+one. Every other line of `I17`/`I23` — the `fired() === 1` anchor that proves the arm was reached, the
+empty-outbox assertion of the failed tick, and the "one summary for the batch" subject with its five
+assertions — is unchanged, and both case titles plus the two "aborted run" assertion messages keep
+the shipped word "abort" for the arm failure (the row's arm still fails; only the run now contains
+it).
 
 ## Consequences
 
@@ -164,19 +179,34 @@ run's envelope, which is now `I26`'s subject.
   needs a new pin.
 - A contained run's `scanned` counts the failing row like any other, so `hasMore` is unaffected by
   containment.
-- The pins are RED at this head by design (`I26` on the rejection, `I27` on the missing warn), so
-  the PR is a **draft** and is not merged: the GREEN closes it, as ADR-0864 / ADR-0866 did.
+- The pins are RED at this head by design (`I17`/`I23` on the resolved envelope containment does not
+  yet give, `I26` on the run's rejection, `I27` on the missing warn), so the PR is a **draft** and is
+  not merged: the GREEN closes it, as ADR-0864 / ADR-0866 did. The GREEN needs **no** test edit — the
+  near-fix alone answers `29 passed (29)` (§Evidence).
 
-### Evidence at the pin head (`10b89325`, base `cd89b275`)
+### Evidence at the pin head (`17e8eff8`, base `cd89b275`)
 
-- The pin file: `2 failed | 27 passed (29)` — `I26` fails with "a row whose own arm work throws must
-  not abort the run; it rejected with: Error: injected failure: find on event_images", `I27` with
-  "a row whose own arm work throws must be named exactly once: expected [] to have a length of 1 but
-  got +0". `I1`–`I25` stay `25 passed`, `I28`/`I29` green on arrival.
-- Satisfiability, in a probe worktree removed afterwards: the near-fix alone `2 failed | 27 passed
-(29)` (`I17`, `I23` — §4 above), and the near-fix plus the three retired arms `29 passed (29)`.
-  The probe tree was restored byte-identically (`git status --short` empty, production file
-  `sha256 0744e6b5…82112`) and removed.
+- The pin file: `4 failed | 25 passed (29)`. `I17` and `I23` fail with
+  "promise rejected \"Error: injected failure: find on event_images\" instead of resolving" — the
+  replacement arm of §4, red because the head still rethrows; `I26` with "a row whose own arm work
+  throws must not abort the run; it rejected with: Error: injected failure: find on event_images";
+  `I27` with "a row whose own arm work throws must be named exactly once: expected [] to have a
+  length of 1 but got +0". `I1`–`I16`, `I18`–`I25` and `I28`/`I29` pass.
+- Satisfiability, in a throwaway probe worktree at this head with the near-fix applied to the
+  production file alone (settle the chunk, count each rejection, warn with
+  `event: "pipeline.indexed_check.row_failed"` and `fields.eventId`): **`29 passed (29)`**, so the
+  GREEN `t_6275f30a` needs no test edit. The probe tree was restored byte-identically
+  (`git status --short` empty, production file `sha256 0744e6b5…82112`) and removed.
+- Gates at this head: `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` on the changed file
+  `0` issues; `prettier --check` clean on the three changed paths; the six `adr-*` guards
+  `236 passed (236)`; the full `integration` project `1 failed | 141 passed (142)` files and
+  `4 failed | 1500 passed (1504)` tests — the four are `I17`/`I23`/`I26`/`I27` by design.
+- The round-1 review of PR #690 (head `437947d2`) measured the pre-retirement numbers this record
+  used to carry: pin file `2 failed | 27 passed (29)`; near-fix alone `2 failed | 27 passed (29)`
+  (`I17`/`I23` on the vacuity arm now retired in §4); near-fix plus the retired arms
+  `29 passed (29)`. That review also measured a degenerate containment that still rejects a
+  singleton chunk passing all 29 cases under a bare `.catch`, which is why §4 asserts the resolved
+  envelope.
 
 ## Alternatives
 
@@ -188,6 +218,10 @@ run's envelope, which is now `I26`'s subject.
   either, since no option emits it until the row is fixed.
 - **Number the cases `I20`–`I23` as the card said.** Would duplicate four live ids and make the file
   ambiguous to both the reader and the next card.
-- **Retire `I17`/`I23`'s vacuity arm in this card.** Rejected: the RED card may not edit shipped
-  pins, and doing it here would have hidden the ripple from the reviewer. It is measured in §4 and
-  routed to the GREEN instead.
+- **Keep `I17`/`I23`'s vacuity arm and route its retirement to the GREEN.** Rejected in the round-1
+  review of PR #690: the retirement is a test change, `docs/CONVENTIONS.md:22` forbids an implementer
+  editing a pin, and the GREEN's own card says "Do not edit or renumber a pin". A pin set that cannot
+  all be green is not a satisfiable handoff.
+- **Retire the arm as a bare `.catch(() => undefined)`.** Rejected: the reviewer measured a
+  containment that still rejects a singleton chunk passing all 29 cases under that shape. The
+  resolved-envelope form in §4 is what bites.
