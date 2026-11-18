@@ -1,7 +1,7 @@
 # ADR-0287 — OP-101 TEST: a **`Date`** `joinedAt` outside the four-digit-year window must not deny the members listing either
 
 - **Status:** Accepted · **Date:** 2026-11-18
-- **Card:** OP-101 TEST (Low, `t_07bc5990`) · **Origin:** review finding F1 on the string-arm pin card `t_e9bf64f1` (PR [#699](https://github.com/yahodu/openpic-webapp/pull/699), squash `0441efde`) · **Docs sign-off:** pending
+- **Card:** OP-101 TEST (Low, `t_07bc5990`) · **Origin:** review finding F1 on the string-arm pin card `t_e9bf64f1` (PR [#699](https://github.com/yahodu/openpic-webapp/pull/699), squash `0441efde`) · **Docs sign-off:** `t_e1699624`
 - **Branch:** `OP-101-task-tenant-members-date-arm-pins` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_1d41c1e4`
 - **Base:** `origin/main` `bde5e469` (PR [#700](https://github.com/yahodu/openpic-webapp/pull/700), the PR #694/#698/#699 review sign-offs).
 - **Spec sources:** API contract §2.2 (tenant members — the `Member` DTO and its `joinedAt`); schema §13.4 (`tenantMembers`, no validator on the collection); the executable wire shape in `@/server/tenancy/member-schema` (`joinedAt: isoDateTimeSchema`, i.e. `offset: false`, `precision: 3`, **non-nullable**).
@@ -176,3 +176,80 @@ is `0280`–`0299` ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md));
 pins, `0283` its GREEN, `0284` the numeric instant-range pins, `0285` their
 GREEN and `0286` the string instant-range pins. This record advances the cell to
 `0288`. No number outside the lane range is touched.
+
+## Review and landing — PR [#701](https://github.com/yahodu/openpic-webapp/pull/701)
+
+Reviewed head `bb328af4`; docs sign-off `t_e1699624`. **Verdict: APPROVED WITH
+FINDINGS (Low only)** — no blocking finding. Merged as squash `a36c4dfd` into
+`origin/main` `bde5e469`; PR `#701` is `MERGED` at `2026-11-18T19:52:57Z`.
+
+- **Tree identity.** `git diff --stat bb328af4 a36c4dfd` is empty, so the
+  reviewed bytes are the trunk bytes, and `a36c4dfd` is an ancestor of
+  `origin/main`. The lane worktree was clean and detached at `a36c4dfd` with
+  `main` == `origin/main`.
+  `apps/web/src/server/tenancy/members.ts` is the same content on the trunk as at
+  the base `bde5e469` — git blob `6b80e50f…`, `sha256sum` `07debc66…` — so the
+  delivery changed no production byte.
+- **Scope confirmed.** Four files, **zero production files**: the unit spec, the
+  integration spec, this record and its one index row. The numeric block, the
+  string block and the five carried route cases are byte-untouched and green.
+- **Checks re-run on the trunk.** Unit file `30 passed (30)`, integration file
+  `30 passed (30)` (`TMPDIR=/root/tmp-mongo`), full unit project
+  `187 files / 3157 passed | 3 skipped` (the base's `3151` plus exactly the six
+  new cases), six ADR guards `236 passed (236)`,
+  `tsc -p apps/web/tsconfig.json --noEmit` exit `0`, `prettier --check` clean on
+  all four touched files, and the CI rollup `15/15` on the head `bb328af4`.
+
+### Discrimination, re-measured by review
+
+Three mutations of the reader in a throwaway probe worktree at `a36c4dfd`, each
+reverted before the next one; `sha256sum` was `07debc66…` before and after every
+mutation.
+
+| Reader shape                               | Unit file                    | Route case                   |
+| ------------------------------------------ | ---------------------------- | ---------------------------- |
+| numbers and strings bounded, `Date` exempt | `4 failed \| 26 passed (30)` | `1 failed \| 29 passed (30)` |
+| tighter bound `0 … 4102444800000`          | `6 failed \| 24 passed (30)` | not run                      |
+| `Date` bounded, numbers and strings open   | `8 failed \| 22 passed (30)` | not run                      |
+
+The first two rows agree with §D3's own measurement of the same shapes. The four
+reds of the first row print `+010000-01-01T00:00:00.000Z`,
+`+275760-09-13T00:00:00.000Z`, `-271821-04-20T00:00:00.000Z` and
+`-000001-12-31T23:59:59.999Z` against the expected epoch, and the route case reds
+with `expected 500 to be 200` behind the logged
+`Response for /api/v1/tenants/:tenantId/members did not match its schema` and its
+cause `data.0.joinedAt: Invalid ISO datetime`, thrown at `serialize-response.ts:58`. The
+six reds of the second row are the window-edge controls of all three arms — both
+numeric, both string, both `Date` — each printing the epoch where its own edge
+instant is expected.
+
+The third row is evidence §D3 did not have. With the bound left on the `Date` arm
+alone, every red falls in the numeric and string blocks and all six `Date` pins
+stay green, so the three arms are independent of each other and this record's
+block is not a restatement of the two blocks beside it.
+
+- **The route case is not vacuous.** It reads the seeded row back from `app.db`
+  and asserts `stored.joinedAt` equals `new Date(8.64e15)`, so the driver
+  provably stored a `Date` and the case exercises the `Date` arm rather than a
+  coerced string (§D4 confirmed).
+- **No number consumed.** `docs/adr/README.md` stays byte-identical
+  (`git diff origin/main...HEAD -- docs/adr/README.md` is empty): the lane cell
+  remains `0288` and no index row is added.
+
+### Findings
+
+- **F1 — closed by this card.** The header of this record carried its
+  `Docs sign-off` marker as `pending`; it now names `t_e1699624`. It was the only
+  such marker under `docs/adr/`.
+- **I1 — no action.** §Consequences quotes the two specs at `1.31s` / `7.50s`
+  against review's `0.97s` / `6.59s` on the trunk. That is runtime noise between
+  reads, not a claim about the change.
+- **I2 — no action.** The §Evidence collision sweep is a point-in-time statement
+  over the open PRs of the day (`#272`, `#685`, `#688`, `#690`, `#693`).
+  Re-verified on the merged trunk: one `ADR-0287` path, `uniq -d` over the ADR
+  numbers empty across `384` records, and the lane cell at `0288`.
+
+**Nothing here retracts §D1–§D5, §Context, §Evidence or §Alternatives
+considered.** Those sections record what the delivery decided and measured before
+it landed. This section only adds what review measured afterwards; no part of the
+decision, the scope or the number allocation changes.
