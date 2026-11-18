@@ -1583,3 +1583,118 @@ describe("pipeline-indexed-check: the per-tenant early stop of the batch discove
     ]);
   });
 });
+
+/**
+ * Characterization / contract — an event's own batches are **all** driven, not
+ * just the last pair the discovery returns for it (ADR-0867 §1.2; finding
+ * **F1** of the review of the OP-136 GREEN `t_bf0ae9ae`, PR #670 / head
+ * `1b38307d`).
+ *
+ * ## Why this block exists
+ *
+ * The run groups the discovery's `(event, batch)` pairs by the event that owns
+ * them, and each candidate row then drives the pairs of **its own** event id.
+ * Every case above gives an event at most one settled batch (`I7`, `I8`, `I17`,
+ * `I23`), or gives it three behind a `limit` of two (`I21`), so no fixture ever
+ * made one event own **two** batches. That is the arm of the grouping that
+ * appends to an event's list (`owned.push(batch)`), and a grouping that keeps
+ * only the last pair per event passed every pin above while the earlier
+ * batch's §4.7 summary was silently never emitted.
+ *
+ * ## How to read it
+ *
+ * The case seeds one event the status table derives as `indexed` and gives it
+ * two worker-settled batches of two files each, both uploaded by the same user.
+ * It asserts only what the outbox shows: exactly two `upload.batch.completed`
+ * rows, whose payload `batchId`s are the two seeded ids. Which of the two is
+ * written first is **not** pinned — the discovery's sort order is ADR-0862
+ * §1's business, not this contract's — so the ids are compared as a sorted
+ * array. Any grouping that keeps every pair of the event satisfies it.
+ */
+describe("pipeline-indexed-check: an event with two settled batches is summarised twice", () => {
+  /**
+   * Run the job once at one instant, over a caller-chosen page size.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @param limit - The per-run cap the run is asked for.
+   * @returns The §10.2 run envelope.
+   */
+  async function runJobWithLimit(
+    at: Date,
+    limit: number
+  ): Promise<Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>> {
+    return pipelineIndexedCheckJob.run({
+      requestedLimit: limit,
+      clock: fixedClock(at),
+      logger: recordingLogger(),
+    });
+  }
+
+  /**
+   * Give one event one worker-settled batch of two files (§16.2, §16.3), the
+   * shape `I17`'s `seedSettledBatchOf` uses.
+   *
+   * The completion route is never called: the sessions are already `completed`
+   * and the images already `done`, which is the "the worker finished it" state
+   * the OP-126 arm reads.
+   *
+   * @param event - The event that owns the batch.
+   * @param input - The batch's uploader and a slug unique to the batch, which
+   *   seeds its `contentHash` and `fileName`.
+   * @returns The batch id.
+   */
+  async function seedTwoFileBatchOf(
+    event: SeededEvent,
+    input: { readonly uploader: ObjectId; readonly slug: string }
+  ): Promise<string> {
+    const batchId = new ObjectId().toHexString();
+    for (const sequence of [1, 2]) {
+      await seedCompletedSession(event, {
+        batchId,
+        createdByUserId: input.uploader,
+        contentHash: hashFor(`${input.slug}-${String(sequence)}`),
+        fileName: `DSC-${input.slug}-${String(sequence)}.JPG`,
+      });
+      await seedBatchImage(event, { batchId, status: "done", sequence });
+    }
+    return batchId;
+  }
+
+  it("I24: an event with two settled batches gets both summaries", async () => {
+    // Arrange — one event the status table derives as indexed, two distinct
+    // worker-settled batches of two files each, both uploaded by the same user.
+    const event = await seedEvent(ALL_PROCESSED);
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const uploader = new ObjectId();
+    const firstBatchId = await seedTwoFileBatchOf(event, {
+      uploader,
+      slug: "op136-grouped-batch-one",
+    });
+    const secondBatchId = await seedTwoFileBatchOf(event, {
+      uploader,
+      slug: "op136-grouped-batch-two",
+    });
+
+    // Act — one run with room for both of the event's batches.
+    const run = await runJobWithLimit(NOW, 50);
+
+    // Sanity — the discovery found both pairs, so a missing summary below is the
+    // grouping dropping one, not a discovery that never saw it.
+    expect(
+      run.details?.batches,
+      "both of the event's settled batches must be on the run's page"
+    ).toBe(2);
+
+    // Assert — each of the event's batches is summarised on its own: a grouping
+    // that keeps only the last pair of an event leaves the first one missing.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(
+      summaries,
+      "an event that owns two settled batches must be summarised for both"
+    ).toHaveLength(2);
+    expect(
+      summaries.map((row) => String(row.payload.batchId)).sort(),
+      "the two summaries name the two batches the event owns"
+    ).toEqual([firstBatchId, secondBatchId].sort());
+  });
+});
