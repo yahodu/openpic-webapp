@@ -51,11 +51,40 @@ interface UserProfileDocument {
 }
 
 /**
+ * Read a stored `joinedAt` as epoch milliseconds (ADR-0283 §D1).
+ *
+ * Only a `Date` with a finite `getTime()`, or a string or number that parses to
+ * one, names an instant. Everything else — absent, `null`, `NaN`, an invalid
+ * `Date`, an unparseable or empty string, a boolean, an object — cannot name one
+ * and yields `null`, which the projection degrades to the epoch sentinel
+ * (ADR-0283 §D2). This duplicates the shape of the events read's `instantMillis`
+ * rather than importing it: that helper is module-private in another bounded
+ * context and its skip-the-row policy is the opposite of the listing's (§D2).
+ *
+ * @param value - The stored `joinedAt`, typed `unknown` because the row may hold
+ *   a value the write path never produced.
+ * @returns The instant in epoch milliseconds, or `null` when the value names none.
+ */
+function joinedAtMillis(value: unknown): number | null {
+  const millis =
+    value instanceof Date
+      ? value.getTime()
+      : typeof value === "string" || typeof value === "number"
+        ? new Date(value).getTime()
+        : Number.NaN;
+  return Number.isFinite(millis) ? millis : null;
+}
+
+/**
  * Project one membership row onto the §2.2 DTO.
  *
  * Stored values are read straight from the schema §13.4 document shapes, so the
  * only normalisation needed is the two §2.2 conventions the wire fixes: the
  * contact is masked, and a missing invited-by becomes `null`.
+ *
+ * A `joinedAt` that cannot name an instant degrades to the epoch sentinel
+ * instead of throwing: one corrupt row must never deny the whole listing to
+ * every caller (ADR-0283 §D2).
  *
  * @param membership - The stored `tenantMembers` row.
  * @param user - The member's Better Auth user document, when it exists.
@@ -73,7 +102,7 @@ export function projectMember(
     emailMasked: maskEmail(user?.email ?? ""),
     role: asTenantRole(membership.role),
     status: membership.status === "removed" ? "removed" : "active",
-    joinedAt: new Date(membership.joinedAt as string | number | Date).toISOString(),
+    joinedAt: new Date(joinedAtMillis(membership.joinedAt) ?? 0).toISOString(),
     invitedByUserId:
       membership.invitedByUserId === undefined ? null : membership.invitedByUserId.toHexString(),
     avatarUrl: null,
