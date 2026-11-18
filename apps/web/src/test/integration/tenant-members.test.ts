@@ -663,7 +663,7 @@ describe("GET /api/v1/tenants/{tenantId}/members — a membership with no usable
 });
 
 /**
- * OP-101 follow-up pins — a membership row whose **numeric or string**
+ * OP-101 follow-up pins — a membership row whose **numeric, string or `Date`**
  * `joinedAt` names an instant outside the RFC 3339 four-digit-year range
  * (contract §2.2, ADR-0282, ADR-0284).
  *
@@ -697,7 +697,7 @@ describe("GET /api/v1/tenants/{tenantId}/members — a membership with no usable
  * ## Contract expected of the implementation
  *
  * `GET /api/v1/tenants/{tenantId}/members` must answer `200` for a workspace
- * whose `tenantMembers` rows carry any finite numeric `joinedAt`, listing every
+ * whose `tenantMembers` rows carry any `joinedAt`, listing every
  * member, and must serve each `joinedAt` as an `isoDateTimeSchema`-valid string:
  * the exact instant inside `-62167219200000 … 253402300799999`, the epoch
  * sentinel otherwise. How the bound is enforced is not pinned here (ADR-0284).
@@ -794,6 +794,47 @@ describe("GET /api/v1/tenants/{tenantId}/members — a `joinedAt` outside the fo
       status: "active",
       joinedAt: FIRST_EXPANDED_YEAR_ISO,
     });
+
+    const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-tenant-id")).toBe(tenantId.toHexString());
+
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    // A corrupt instant may never push a member out of the listing.
+    expect(entries.map((entry) => entry.userId).sort()).toEqual(
+      [member.userId.toHexString(), owner.userId.toHexString()].sort()
+    );
+
+    const memberEntry = entries.find((entry) => entry.userId === member.userId.toHexString());
+    expect(memberEntry).toBeDefined();
+    expect(memberEntry?.joinedAt).toBe(EPOCH_JOINED_AT_ISO);
+  });
+
+  it("still answers 200 for a membership whose `joinedAt` is a stored `Date` past the four-digit-year ceiling, degrading it to the epoch", async () => {
+    // The third arm. `joinedAtMillis` reads `value.getTime()` for a `Date`
+    // before any parse, so a bound placed on the parsed millis covers it, while
+    // a bound placed on the numeric and string branches alone does not — and the
+    // projected `+275760-09-13T00:00:00.000Z` then denies the whole listing with
+    // `data.0.joinedAt: Invalid ISO datetime` (ADR-0284 §D1, ADR-0285).
+    const DATE_MAXIMUM_MILLIS = 8.64e15;
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await insertRawMembership({
+      tenantId,
+      userId: member.userId,
+      role: "member",
+      status: "active",
+      joinedAt: new Date(DATE_MAXIMUM_MILLIS),
+    });
+
+    // Confirmed rather than assumed: the driver stores the `Date` itself, so this
+    // case exercises the `Date` arm and not a coerced string.
+    const stored = await app.db
+      .collection(COLLECTIONS.tenantMembers)
+      .findOne({ tenantId, userId: member.userId });
+    expect(stored?.joinedAt).toEqual(new Date(DATE_MAXIMUM_MILLIS));
 
     const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
 
