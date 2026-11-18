@@ -87,9 +87,14 @@ mutation was reverted before the commit; `sha256sum` of
 | ------------------------------------------------------------- | ---------------------------- | ---------------------------- |
 | merged bound on the shared `millis` (on `main`)               | `30 passed (30)`             | `30 passed (30)`             |
 | numbers and strings bounded, `Date` on `Number.isFinite` only | `4 failed \| 26 passed (30)` | `1 failed \| 29 passed (30)` |
-| tighter "sanity bound" (`0 … 4102444800000`)                  | the two controls red         | n/a                          |
+| tighter "sanity bound" (`0 … 4102444800000`)                  | `6 failed \| 24 passed (30)` | not measured                 |
 
-The four reds print `+010000-01-01T00:00:00.000Z`, `+275760-09-13T00:00:00.000Z`,
+Under the tight bound the six reds are the window-edge controls of **all three**
+arms — both numeric, both string and both `Date` — each printing the epoch where
+its own edge instant is expected, which is how the two `Date` controls catch a
+clamp tighter than the wire format.
+
+The four reds of the numbers-and-strings mutation print `+010000-01-01T00:00:00.000Z`, `+275760-09-13T00:00:00.000Z`,
 `-271821-04-20T00:00:00.000Z` and `-000001-12-31T23:59:59.999Z` against the
 expected epoch, and the route case reds with `expected 500 to be 200` behind the
 logged `Response for /api/v1/tenants/:tenantId/members did not match its schema:
