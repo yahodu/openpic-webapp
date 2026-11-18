@@ -28,8 +28,8 @@
   exhausted — so [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §11 item 18 makes it
   advance **both** the lane cell and the cursor; both move to `0877`, one above this record, so the
   next draw of either cell cannot re-mint `0876`. Per §11 items 18–21 the exhausted block **keeps**
-  its range `0849`–`0868`, no range is re-cut, and no foreign lane cell is touched (the `OP-129
-attendee identity lane` cell `0869` stays as found: its range is `0780`–`0798`, so a cell past the
+  its range `0849`–`0868`, no range is re-cut, and no foreign lane cell is touched (the
+  `OP-129 attendee identity lane` cell `0869` stays as found: its range is `0780`–`0798`, so a cell past the
   end is item 19's encoding of "this block is exhausted", and item 20 forbids repairing it).
 
 ## Context
@@ -198,3 +198,72 @@ loosened matcher.
 - `0876` is a **pool draw**; the lane block keeps its range and draws from the pool on every further
   record (ADR-0300 §11 items 18–21). Merging the ledger takes the higher side of a union and never
   lowers a cell.
+
+## Review sign-off (round 1, artifact lens) — APPROVED
+
+Reviewed head `8d1dbb9d` (PR #676), already squash-merged as `53051b91` before the
+review ran. `git diff --stat 8d1dbb9d 53051b91` is **empty**, so the reviewed bytes
+are the shipped bytes and this section is appended to the record that landed. The
+delivery is the one spec, append only, plus this record and the shared ledger: no
+existing case, fixture, constant or helper is edited, there is no `.only` and no
+skip, and no production file is touched.
+
+### Evidence the reviewer reproduced
+
+Every figure below was re-measured at the trunk `53051b91` in the lane worktree
+`/root/openpic/openpic-webapp/.worktrees/t_4fe23af4`, not copied from the delivery's
+handoff. Each probe mutated
+`apps/web/src/server/jobs/pipeline-indexed-check.ts` (committed
+`sha256 0744e6b5…82112`), ran the case filter on `I22` alone, and was reverted with
+`git checkout --`; after every pass the file hashed back to `0744e6b5…82112` and
+`git status --porcelain` was empty.
+
+- **The spec is green as delivered** — `22 passed (22)` on the unchanged production
+  file. The new case alone is `1 passed | 21 skipped (22)`, so the 22nd case is not
+  a silently skipped sibling.
+- **M1 — the early stop deleted.** Only the three lines
+  `if (pending.length >= limit) { break; }` removed → `1 failed | 21 skipped (22)`,
+  `I22` alone: `MongoServerError: the limit must be positive`.
+- **M2 — the comparison moved from `>=` to `>`.** → the same
+  `1 failed | 21 skipped (22)` and the same driver error, so the case pins the
+  boundary and not only the guard's total removal.
+- **M3 — the early stop deleted and `$limit` clamped.** With
+  `{ $limit: Math.max(1, limit - pending.length) }` the driver no longer rejects and
+  the run settles, yet the case still reddens, `1 failed | 21 skipped (22)`:
+  `AssertionError: the page's work stays inside the run's limit: expected 3 to be 2`
+  at `run.details?.batches`. The count assertion carries the pin on its own.
+- **The gates, at `53051b91`** — the six `adr-*` guards `6 files / 236 passed (236)`;
+  `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` exit `0` on the job and
+  the spec; `prettier --check` clean on this record; all `14` gates on `8d1dbb9d`
+  pass; and the trunk's `CI`, `CodeQL` and `Version Bump` runs are `success` at
+  `53051b91`.
+
+### Findings
+
+#### Info — `I22` alone cannot separate "the early stop fired" from "the second tenant was never read"
+
+A tenant-loop truncation probe (`[...idsByTenant].slice(0, 1)`, so the loop reads
+only the page's first tenant) leaves `I22` **green**: A's own read returns the two
+pairs the budget allows, and all three of the case's assertions hold. The suite still
+discriminates, because the frozen `I11` reddens on the same mutation
+(`1 failed | 21 passed (22)`, `expected [ { …(10) } ] to have a length of 2 but got 1`).
+No action follows: `I22` is one characterization case on one behaviour, and
+§Out of scope already declines the read-count pin that would separate the two arms.
+
+#### Info — the new `describe` re-declares its own `runJobWithLimit`
+
+The appended block carries a block-scoped `runJobWithLimit`, byte-identical to the
+earlier blocks' declarations (`10` lines), instead of reaching for the file's first
+one. The card asked for block-scoped helpers, so this follows the contract, and the
+same duplication is already the file's pattern at three earlier blocks.
+
+### Post-review status
+
+This sign-off consumes **no ADR number**: `0876` is the record it appends to, no row
+and no cell of `docs/adr/README.md` is touched (the ledger stays byte-identical), and
+the two follow-ups the review raised are docs-only — this section, and the missing
+sign-off on `ADR-0869` (card `t_a224dd6f`). No code change was requested and no
+decision in §1–§2 is retracted. The only other change to this record is in the
+**Number allocation** bullet, where one continuation line was moved into the list
+indent and its inline code span joined onto that line; the wording is unchanged and
+`prettier --check` is clean.
