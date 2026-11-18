@@ -1114,7 +1114,7 @@ describe("pipeline-indexed-check: the batch arm's work survives an aborted run",
    * implementation that keeps the row a candidate until its arm completes
    * satisfies it however many runs abort in a row.
    */
-  it("I22: two aborts in a row still leave the batch summarised once", async () => {
+  it("I23: two aborts in a row still leave the batch summarised once", async () => {
     // Arrange — one event the status table derives as indexed, one worker-settled
     // batch, and the same transient read failure available to two ticks running.
     const event = await seedEvent(ALL_PROCESSED);
