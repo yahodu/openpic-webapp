@@ -1103,6 +1103,85 @@ describe("pipeline-indexed-check: the batch arm's work survives an aborted run",
       "a batch with no failure is not an errors summary"
     ).toHaveLength(0);
   });
+
+  /**
+   * ADR-0866 §1 — a row does not leave the page until its arm work completes.
+   *
+   * `I17` pins **one** abort. An implementation that re-stamps a latched row
+   * before its arm still passes `I17`, and loses the summary if the next run
+   * aborts as well; this is the repeat-abort shape of the same requirement. It
+   * names no marker, no ordering and no query (ADR-0866 §3), so any
+   * implementation that keeps the row a candidate until its arm completes
+   * satisfies it however many runs abort in a row.
+   */
+  it("I22: two aborts in a row still leave the batch summarised once", async () => {
+    // Arrange — one event the status table derives as indexed, one worker-settled
+    // batch, and the same transient read failure available to two ticks running.
+    const event = await seedEvent(ALL_PROCESSED);
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const { batchId, uploader } = await seedSettledBatchOf(event);
+
+    // Act — the first tick aborts inside the arm…
+    const firstAbort = failNextFind(COLLECTIONS.eventImages);
+    try {
+      await expect(
+        runJobWithLimit(NOW, 50),
+        "the seeded read failure must abort the run, or the case proves nothing"
+      ).rejects.toThrow("injected failure: find on event_images");
+    } finally {
+      firstAbort.restore();
+    }
+    expect(firstAbort.fired(), "the first injected read failure must have fired exactly once").toBe(
+      1
+    );
+    expect(
+      await outboxFor(BATCH_COMPLETED_EVENT),
+      "an aborted run cannot have summarised the batch it never read"
+    ).toHaveLength(0);
+
+    // Act — …and so does the tick after it over the same rows: the row has to
+    // still be a candidate, or the repeat abort is never even measured.
+    const secondAbort = failNextFind(COLLECTIONS.eventImages);
+    try {
+      await expect(
+        runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 50),
+        "the second tick must reach the arm again rather than pass the row over"
+      ).rejects.toThrow("injected failure: find on event_images");
+    } finally {
+      secondAbort.restore();
+    }
+    expect(
+      secondAbort.fired(),
+      "the second injected read failure must have fired exactly once"
+    ).toBe(1);
+    expect(
+      await outboxFor(BATCH_COMPLETED_EVENT),
+      "two aborted runs cannot have summarised the batch either"
+    ).toHaveLength(0);
+
+    // Act — the third tick, over the same rows and unchanged counters.
+    await runJobWithLimit(new Date(NOW.getTime() + 2 * NEXT_BUCKET_MS), 50);
+
+    // Assert — two aborts in a row lose nothing: one §4.7 summary for the batch,
+    // exactly once, naming what the summary's email rule reads.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(
+      summaries,
+      "a batch whose arm work was cut off twice must still be summarised by a later run"
+    ).toHaveLength(1);
+    const summary = summaries[0];
+    expect(summary?.tenantId).toBe(event.tenantKey);
+    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.payload.batchId).toBe(batchId);
+    expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
+    expect(summary?.payload.fileCount).toBe(2);
+
+    // …and a batch with no failure is never an errors summary.
+    expect(
+      await outboxFor(BATCH_COMPLETED_WITH_ERRORS_EVENT),
+      "a batch with no failure is not an errors summary"
+    ).toHaveLength(0);
+  });
 });
 
 /**
