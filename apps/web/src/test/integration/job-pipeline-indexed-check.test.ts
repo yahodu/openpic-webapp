@@ -1594,12 +1594,21 @@ describe("pipeline-indexed-check: the per-tenant early stop of the batch discove
  *
  * The run groups the discovery's `(event, batch)` pairs by the event that owns
  * them, and each candidate row then drives the pairs of **its own** event id.
- * Every case above gives an event at most one settled batch (`I7`, `I8`, `I17`,
- * `I23`), or gives it three behind a `limit` of two (`I21`), so no fixture ever
- * made one event own **two** batches. That is the arm of the grouping that
- * appends to an event's list (`owned.push(batch)`), and a grouping that keeps
- * only the last pair per event passed every pin above while the earlier
- * batch's §4.7 summary was silently never emitted.
+ *
+ * The arm that appends to an event's list (`owned.push(batch)`) is already
+ * reached by `I21` and by `I22`: both seed one event with three settled batches
+ * and run with a `limit` of two, so the page carries **two** of that event's
+ * pairs. Neither of them pins the grouping, though — they pin the budget and
+ * the per-tenant early stop, and `I21`'s third batch is deliberately never
+ * discovered, so a grouping that keeps one pair per event is caught there only
+ * as a side effect of a page that a budget truncated.
+ *
+ * `I24` is the case that pins the grouping itself: one event, two of its
+ * batches, `requestedLimit: 50` so no budget cuts the page, and both ids named
+ * in the outbox. `I25` closes the last window a page size can hide: it puts
+ * **three** of one event's batches on the page with the same room to spare and
+ * names all three, so a grouping bounded to the last two pairs of an event —
+ * which every other case of this file still passes — is red there.
  *
  * ## How to read it
  *
@@ -1696,5 +1705,40 @@ describe("pipeline-indexed-check: an event with two settled batches is summarise
       summaries.map((row) => String(row.payload.batchId)).sort(),
       "the two summaries name the two batches the event owns"
     ).toEqual([firstBatchId, secondBatchId].sort());
+  });
+
+  it("I25: an event with three settled batches gets three summaries", async () => {
+    // Arrange — one event the status table derives as indexed, three distinct
+    // worker-settled batches of two files each, all uploaded by the same user.
+    const event = await seedEvent(ALL_PROCESSED);
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const uploader = new ObjectId();
+    const batchIds = [
+      await seedTwoFileBatchOf(event, { uploader, slug: "op136-triple-batch-one" }),
+      await seedTwoFileBatchOf(event, { uploader, slug: "op136-triple-batch-two" }),
+      await seedTwoFileBatchOf(event, { uploader, slug: "op136-triple-batch-three" }),
+    ];
+
+    // Act — one run with room to spare, so no budget can truncate the event's
+    // own pairs: a missing summary below is the grouping dropping it.
+    const run = await runJobWithLimit(NOW, 50);
+
+    // Sanity — the discovery found all three pairs, so the grouping saw them.
+    expect(
+      run.details?.batches,
+      "all three of the event's settled batches must be on the run's page"
+    ).toBe(3);
+
+    // Assert — each batch of the event is summarised on its own: a grouping
+    // bounded to the last two pairs of an event leaves the first one missing.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(
+      summaries,
+      "an event that owns three settled batches must be summarised for all three"
+    ).toHaveLength(3);
+    expect(
+      summaries.map((row) => String(row.payload.batchId)).sort(),
+      "the three summaries name the three batches the event owns"
+    ).toEqual([...batchIds].sort());
   });
 });
