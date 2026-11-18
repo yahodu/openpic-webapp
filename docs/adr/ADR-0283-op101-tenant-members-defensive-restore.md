@@ -43,6 +43,14 @@ The reader is total: it has no throw path, so no row can deny the listing. The
 `as string | number | Date` cast is gone; the stored value is read as `unknown`,
 which is what the row actually holds.
 
+> **Amended 2026-11-18 by [ADR-0285](ADR-0285-op101-tenant-members-instant-range-green.md)
+> (OP-101 GREEN `t_79838160`).** The reader was total; the _wire_ was not. A
+> finite number still named an instant, and `toISOString()` leaves the four-digit
+> year form outside `-62167219200000 … 253402300799999`, which
+> `isoDateTimeSchema` rejects — so a row could deny the listing after all.
+> ADR-0285 bounds the accept-set to that window, and "no row can deny the
+> listing" holds only for instants inside it.
+
 ### D2 — the events-module precedent is duplicated in shape, not imported
 
 ADR-0282 §D4 left the helper choice to this card and its own preference was
@@ -110,9 +118,11 @@ $ pnpm vitest run --project integration apps/web/src/test/integration/tenant-mem
 - **The listing can no longer be denied by one row.** The failure mode moves from
   "every caller of the workspace gets a `5xx`" to "one member renders as joined
   1970", which is visibly wrong and therefore actionable.
-- **The sentinel is load-bearing.** `now Date(joinedAtMillis(...) ?? 0)` is the
+- **The sentinel is load-bearing.** `new Date(joinedAtMillis(...) ?? 0)` is the
   only degradation path; a later decision to serve `null`, skip the row or infer
-  the instant from `_id` must break the ADR-0282 pins first.
+  the instant from `_id` must break the ADR-0282 pins first. The same expression
+  is now the outlet for the out-of-window instants [ADR-0285](ADR-0285-op101-tenant-members-instant-range-green.md)
+  keeps out of the accept-set.
 - **Coverage.** Every arm of the new reader is exercised by the pinned inputs
   (four valid forms, four undatable kinds plus the object/boolean rejections), so
   the branch gate does not drop for it.
