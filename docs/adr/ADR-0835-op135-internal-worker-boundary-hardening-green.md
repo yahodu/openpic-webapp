@@ -196,8 +196,8 @@ leaseMinutes,maxAttempts,pauseRequested}`, `{applied,leaseLost,rejected}`, `{sta
 ## Evidence
 
 Base `origin/OP-135-task-worker-boundary-pins` `2e395e88` (draft PR #624, unmerged), merged into
-`origin/main` `a53623e5` (already an ancestor). Lane spec: **42 passed (42)** — the 31 frozen cases,
-the superseded-selfie case, and ADR-0834's 11 pins.
+`origin/main` `a53623e5` (already an ancestor). Lane spec: **42 passed (42)** — the frozen 30,
+ADR-0832's superseded-selfie case, and ADR-0834's 11 pins.
 
 Revert probes, each applied alone to the delivered tree, run against the same spec, then restored:
 
