@@ -1619,8 +1619,9 @@ describe("pipeline-indexed-check: the per-tenant early stop of the batch discove
  * written first is **not** pinned — the discovery's sort order is ADR-0862
  * §1's business, not this contract's — so the ids are compared as a sorted
  * array. Any grouping that keeps every pair of the event satisfies it.
+ * `I25` repeats the shape with three settled batches, where a last-two grouping reds.
  */
-describe("pipeline-indexed-check: an event with two settled batches is summarised twice", () => {
+describe("pipeline-indexed-check: an event's settled batches are each summarised, not just its last two", () => {
   /**
    * Run the job once at one instant, over a caller-chosen page size.
    *
