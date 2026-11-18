@@ -51,15 +51,29 @@ interface UserProfileDocument {
 }
 
 /**
- * Read a stored `joinedAt` as epoch milliseconds (ADR-0283 §D1).
+ * The closed window of instants the wire can carry (ADR-0285 §D1).
+ *
+ * `isoDateTimeSchema` keeps four year digits, and `toISOString()` leaves that
+ * form outside these bounds: `0000-01-01T00:00:00.000Z` is the first accepted
+ * instant and `9999-12-31T23:59:59.999Z` the last, one millisecond before
+ * `+010000-01-01T00:00:00.000Z`.
+ */
+const WIRE_MIN_MILLIS = -62167219200000;
+const WIRE_MAX_MILLIS = 253402300799999;
+
+/**
+ * Read a stored `joinedAt` as epoch milliseconds (ADR-0283 §D1, ADR-0285 §D1).
  *
  * Only a `Date` with a finite `getTime()`, or a string or number that parses to
- * one, names an instant. Everything else — absent, `null`, `NaN`, an invalid
- * `Date`, an unparseable or empty string, a boolean, an object — cannot name one
- * and yields `null`, which the projection degrades to the epoch sentinel
- * (ADR-0283 §D2). This duplicates the shape of the events read's `instantMillis`
- * rather than importing it: that helper is module-private in another bounded
- * context and its skip-the-row policy is the opposite of the listing's (§D2).
+ * one, names an instant, and only inside the wire's four-digit-year window: an
+ * instant outside it cannot be serialized as an `isoDateTimeSchema` string, so
+ * it is undatable for this purpose (ADR-0285 §D1). Everything else — absent,
+ * `null`, `NaN`, an invalid `Date`, an unparseable or empty string, a boolean,
+ * an object, an out-of-window instant — cannot name one and yields `null`,
+ * which the projection degrades to the epoch sentinel (ADR-0283 §D2). This
+ * duplicates the shape of the events read's `instantMillis` rather than
+ * importing it: that helper is module-private in another bounded context and
+ * its skip-the-row policy is the opposite of the listing's (§D2).
  *
  * @param value - The stored `joinedAt`, typed `unknown` because the row may hold
  *   a value the write path never produced.
@@ -72,7 +86,9 @@ function joinedAtMillis(value: unknown): number | null {
       : typeof value === "string" || typeof value === "number"
         ? new Date(value).getTime()
         : Number.NaN;
-  return Number.isFinite(millis) ? millis : null;
+  return Number.isFinite(millis) && millis >= WIRE_MIN_MILLIS && millis <= WIRE_MAX_MILLIS
+    ? millis
+    : null;
 }
 
 /**
