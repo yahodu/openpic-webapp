@@ -181,3 +181,120 @@ the spec, and the six ADR guards green. No production file is in the diff; the P
   `I19`.
 - `docs/adr/README.md` is the lane's hotspot: this index row, this lane cell and this note merge as
   a union keeping the higher cell (`0867` lane, `0869` pool).
+
+## Review sign-off (round 1, artifact + execution lens) — APPROVED WITH FINDINGS
+
+This section reviews PR #668 at head `01497219`, the delivery recorded above. The PR was
+**closed unmerged**: it is a RED-by-design pin PR (OP-93 / ADR-0306), and its GREEN sibling
+`t_bf0ae9ae` is what carried `I17`–`I19` onto the trunk. This record's own blob is `2730db48…`
+at the reviewed head, at the GREEN's squash `40b65309` and on today's `origin/main`, so every
+section above is the bytes that shipped.
+
+**No decision in §1–§3 is retracted.** F1 is a routed test-quality gap, F2 a corrected figure in
+the README, and F3–F5 observations; none of them withdraws a decision, changes an assumption or
+narrows §Out of scope.
+
+### The head, re-measured for this section
+
+Measured at `01497219` in a throwaway worktree detached there, with `node_modules`,
+`apps/web/node_modules` and `packages/contracts/node_modules` symlinked from the lane (the
+contracts tree is byte-identical on both sides, so the links resolve to the same sources), and
+removed afterwards. The job's sha256 at that head is `f0abfe0a…8dfe5e6`, restored
+byte-identically after every probe below.
+
+- **The focused file is RED on `I17` alone** (`19 tests | 1 failed`), the failure being:
+
+  ```
+  a batch whose arm work was cut off must be summarised by a later run:
+    expected [] to have a length of 1 but got +0
+  ```
+
+  The case reaches that assertion only after its own checks pass — run 1 rejects with
+  `injected failure: find on event_images`, `fired() === 1`, and the aborted run's outbox is
+  empty — so the RED is the lost work, not the harness. `I18` and `I19` are green on arrival.
+
+- **`I18` and `I19` discriminate.** Hardcoding the production line `hasMore: scanned >= limit`
+  to `true` reds `I19` with `expected true to be false`; hardcoding it to `false` reds `I18`
+  with `expected false to be true`. Each run is `2 failed | 17 passed (19)`, the second failure
+  being the standing `I17` RED, so neither extreme of the field survives the file.
+- **§1 is satisfiable.** Replaying the intended fix — every checked-triple stamp moved after the
+  arm loop, the latch left where it is — answers `19 passed (19)`, so the decision of record
+  asks for no shape the frozen cases refuse and no pin contradicts a sibling.
+- **The gates.** `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` exit `0` on the
+  spec; `prettier --check` clean on the spec, on this record and on `docs/adr/README.md`; the
+  six `adr-*` guards `6 files / 236 passed (236)`; the full `integration` project
+  `140 files / 1 failed | 1469 passed (1470)`, `I17` the only failure.
+
+### F1 — Low, test quality: §1's property was half-pinned (routed to `t_a31e0548`)
+
+`I17` arms one abort. Measured in a throwaway probe worktree at `01497219`, a
+weaker-but-plausible fix — the page rows the announcement loop does not announce keep the
+shipped inline stamp, and only the announced rows are deferred — keeps `I17` green
+(`summaries: 1`), while a two-abort probe is RED (`ticks: both rejected, fired 1 each;
+summaries: 0`). An implementation can consequently re-stamp a latched row before the arm, pass
+every case in the file, and still lose the batch summary when the next run also aborts.
+
+Routed by card id, because a PR or ADR number can renumber while a card is open: `t_a31e0548`,
+a TEST card that adds a two-abort arm, gated on the GREEN and on the lane's existing test
+chain. It has since landed as PR #675 (squash `e311b4e6`), adding `I23` ("two aborts in a row
+still leave the batch summarised once") inside the same `describe` block and re-measuring the
+weak shape as `I17` green and `I23` red. It minted no ADR number, so §1 now holds with two pins
+and no second record.
+
+### F2 — Low, docs accuracy: the `+254/−0` figure is superseded
+
+The `0866` index row and the lane note in `docs/adr/README.md` record the appended spec blocks
+as `+254/−0`. Measured, `git diff --numstat 01497219^ 01497219` over the spec answers
+**`258 2`**, in two hunks: `@@ -1,5 +1,5 @@` rewrites the two import lines (`Collection` joins
+the `mongodb` import, `vi` the `vitest` one), and `@@ -923,3 +923,259 @@` appends **256** lines
+— the two `describe` blocks, the `failNextFind` helper and its interface. The file is therefore
+`+258/−2` and the appended hunk alone is 256. §Evidence's prose above ("additive: two
+`describe` blocks appended after `I16`, the helper and the two import specifiers") holds; only
+the README's arithmetic is wrong.
+
+This card leaves `docs/adr/README.md` byte-identical (sha256 `d4da9878…f95a99d` before and
+after), so the figure cannot be repaired at its source in this change. This paragraph is the
+correction of record, and the index row keeps the number it shipped with.
+
+### F3 — Info: the merge is index-only, and the union rule
+
+PR #668 read `CONFLICTING` / `DIRTY` on `docs/adr/README.md` alone. At the review-time trunk
+`268c842e` — and at `f3bb846a` and `47d36617` before it — `git merge-tree --write-tree <trunk>
+01497219` names exactly that path, because the trunk landed ADR-0864's row via #666 after this
+base; the two sides add different rows and rewrite different cells, so no number is duplicated.
+The union rule that keeps the ledger consistent is the lane's: keep main's `0864` row, keep
+every row ascending, take the higher cell for the lane (`0867` over main's `0865`), and leave
+the pool cells at `0869`.
+
+On today's trunk `bbfa0f9a` the same command also names the spec, because `e311b4e6` and the
+later pin cards extended it. That is the closed branch being superseded and not a second
+number, and nothing in this card merges it.
+
+### F4 — Info: where the injection sits
+
+`I17`'s failure is injected at `Collection.prototype.find`, gated on
+`this.collectionName === COLLECTIONS.eventImages`. That is the arm's read today
+(`readBatchSnapshot`), and it stays right only while that read is a `find`: a refactor of it to
+an aggregation would leave the injection unfired, and the case would red at `rejects.toThrow`
+and at `fired() === 1` instead of passing silently — a loud failure, which is the acceptable
+direction. §A1 already documents the seam; no card.
+
+### F5 — Info: hygiene
+
+The PR's three paths are the spec, this record and `docs/adr/README.md`: no production file, no
+fixture-specific branch, no test-environment conditional, no lint suppression and no new
+dependency. The head carried four check-runs — CodeQL, two `Analyze` jobs and the repo's
+"Assert CI evidence" job — and no `CI` or `PR Checks` run, which is what a draft gets in this
+repo, so the gates above were run locally. The GREEN's PR #670 then ran the repo's gate set in
+CI on the spec's identical bytes (`5de03872…` at both heads, all fifteen checks green).
+
+### Posture
+
+This was a **RED-by-design pin PR and it stays a draft** (OP-93 / ADR-0306): the RED branch is
+unmergeable by construction, and `t_bf0ae9ae` (squash `40b65309`, ADR-0867) is what carried
+`I17`–`I19` to the trunk. The PR was closed unmerged on 2026-11-17, and nothing from this card
+merges anything.
+
+This section consumes **no** ADR number, adds no index row and leaves `docs/adr/README.md`
+byte-identical. The ledger moves only when a card mints a record, and every card this review
+raised is a pin (`t_a31e0548`) or the correction carried here.
