@@ -1350,3 +1350,157 @@ describe("pipeline-indexed-check: the grouped batch discovery and its limit budg
     ]);
   });
 });
+
+/**
+ * Characterization — the **per-tenant** early stop of the grouped batch
+ * discovery (ADR-0876 §1–§2; finding **F2** of the review of the OP-136 pin
+ * card `t_b730389c`, PR #673 / squash `7e3f642d`).
+ *
+ * ## Why this block exists
+ *
+ * `pendingBatches` reads one aggregate **per tenant in the candidate page**, and
+ * each tenant's read is capped at `limit - pending.length`. The block above pins
+ * the grouping (`I20`) and that budget (`I21`), but both of their fixtures put a
+ * single tenant on the page: `I20`'s two events share one workspace and `I21`'s
+ * three batches share one event. So the loop never reached a **second** tenant
+ * with the budget already spent, and the guard that keeps the next read legal —
+ * the early stop before each tenant's aggregate — was unpinned.
+ *
+ * The failure that guard prevents is not "one extra batch": without it the
+ * second tenant's aggregate is sent with `$limit: 0`, which MongoDB rejects
+ * (`the limit must be positive`, code 15958), so the **whole run** rejects and
+ * every candidate of the page loses its arm work.
+ *
+ * ## How to read it
+ *
+ * The case asserts only what the run envelope and the outbox show: the run
+ * settles, `details.batches` is the budget, and the summaries that landed are the
+ * first tenant's. Which of that tenant's three batches win is deliberately
+ * **not** pinned (ADR-0862 §A2), and neither is the mixed `ObjectId`/24-hex
+ * batch-id form (§16.3).
+ */
+describe("pipeline-indexed-check: the per-tenant early stop of the batch discovery", () => {
+  /**
+   * Run the job once at one instant, over a caller-chosen page size.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @param limit - The per-run cap the run is asked for.
+   * @returns The §10.2 run envelope.
+   */
+  async function runJobWithLimit(
+    at: Date,
+    limit: number
+  ): Promise<Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>> {
+    return pipelineIndexedCheckJob.run({
+      requestedLimit: limit,
+      clock: fixedClock(at),
+      logger: recordingLogger(),
+    });
+  }
+
+  /**
+   * Seed one event into a tenant the caller chooses.
+   *
+   * `seedEvent` mints a fresh tenant per call, so the row is written by the
+   * fixture and then re-homed with the raw driver — the shape `I20` uses to put
+   * two events of one workspace on a page.
+   *
+   * @param tenantKey - The tenant the event belongs to.
+   * @param counters - The three §4.1 counters, which is the whole input of the
+   *   status table.
+   * @returns The tenant key and the event id, addressed to the shared tenant.
+   */
+  async function seedEventForTenant(
+    tenantKey: string,
+    counters: ProcessingCounts
+  ): Promise<SeededEvent> {
+    const seeded = await seedEvent(counters);
+    await app.db
+      .collection(COLLECTIONS.events)
+      .updateOne({ _id: seeded.eventId }, { $set: { tenantId: tenantKey } });
+    return { tenantKey, eventId: seeded.eventId };
+  }
+
+  /**
+   * Give one event one worker-settled batch of a single file (§16.2, §16.3).
+   *
+   * The completion route is never called: the session is already `completed`
+   * and the image already `done`, which is the "the worker finished it" state
+   * the OP-126 arm reads — case `I7`'s shape, one file instead of two.
+   *
+   * @param event - The event that owns the batch.
+   * @param name - A name unique to the batch, which seeds its `contentHash`.
+   * @returns The batch id and the batch's uploader.
+   */
+  async function seedSettledOneFileBatch(
+    event: SeededEvent,
+    name: string
+  ): Promise<{ readonly batchId: string; readonly uploader: ObjectId }> {
+    const batchId = new ObjectId().toHexString();
+    const uploader = new ObjectId();
+    await seedCompletedSession(event, {
+      batchId,
+      createdByUserId: uploader,
+      contentHash: hashFor(name),
+      fileName: "DSC_5101.JPG",
+    });
+    await seedBatchImage(event, { batchId, status: "done", sequence: 1 });
+    return { batchId, uploader };
+  }
+
+  it("I22: a tenant whose read spends the run's budget leaves the next tenant's read unrun", async () => {
+    // Arrange — tenant A: one changed event with three worker-settled batches;
+    // tenant B: one changed event with one. A's event is seeded first, so it is
+    // the page's first candidate (`_id: 1`) and its tenant's read comes first.
+    const tenantA = new ObjectId().toHexString();
+    const tenantB = new ObjectId().toHexString();
+    const eventA = await seedEventForTenant(tenantA, ALL_PROCESSED);
+    const eventB = await seedEventForTenant(tenantB, ALL_PROCESSED);
+    const batchesA = [
+      await seedSettledOneFileBatch(eventA, "op136-early-stop-a1"),
+      await seedSettledOneFileBatch(eventA, "op136-early-stop-a2"),
+      await seedSettledOneFileBatch(eventA, "op136-early-stop-a3"),
+    ];
+    const batchB = await seedSettledOneFileBatch(eventB, "op136-early-stop-b1");
+
+    // Sanity — the page is the two events in `_id` order, so tenant A's read is
+    // the one that spends the budget. Without this the case would measure the
+    // other tenant and pass for the wrong reason.
+    expect(
+      eventA.eventId.toHexString() < eventB.eventId.toHexString(),
+      "tenant A's event must be the page's first candidate"
+    ).toBe(true);
+
+    // Act — a run allowed the work of two batches: tenant A alone asks for
+    // three, so its read consumes the budget before tenant B is reached. A
+    // rejected run here (a zero `$limit` on B's read) is the pinned failure.
+    const run = await runJobWithLimit(NOW, 2);
+
+    // Assert — the run settled, and its counter is the budget…
+    expect(run.details?.batches, "the page's work stays inside the run's limit").toBe(2);
+
+    // …and the work is tenant A's: two summaries for two of its three batches,
+    // none for tenant B's single batch.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(
+      summaries,
+      "the arm must stop at the budget instead of reading the second tenant"
+    ).toHaveLength(2);
+    const aBatchIds = batchesA.map((batch) => batch.batchId);
+    const summarised = summaries.map((row) => String(row.payload.batchId));
+    expect(new Set(summarised).size, "one summary per batch").toBe(2);
+    expect(
+      summarised.filter((batchId) => aBatchIds.includes(batchId)),
+      "both summaries name a batch of the tenant whose read spent the budget"
+    ).toHaveLength(2);
+    expect(summarised, "tenant B's batch is behind the spent budget").not.toContain(batchB.batchId);
+    expect(
+      summaries.map((row) => row.tenantId),
+      "both rows belong to tenant A"
+    ).toEqual([tenantA, tenantA]);
+    expect(summaries.map((row) => String(row.payload.eventId))).toEqual([
+      eventA.eventId.toHexString(),
+      eventA.eventId.toHexString(),
+    ]);
+  });
+});
