@@ -132,3 +132,104 @@ describe("projectMember — an unusable `joinedAt` degrades instead of throwing"
     });
   });
 });
+
+/**
+ * Unit / contract — a numeric `joinedAt` whose instant lies outside the RFC 3339
+ * four-digit-year range (OP-101 follow-up on the merged defensive restore,
+ * contract §2.2, ADR-0282, ADR-0284).
+ *
+ * `projectMember()` reads the stored `joinedAt` as `unknown` and degrades every
+ * value that cannot name an instant to the epoch sentinel. A **finite number**
+ * is accepted as an instant, but `Date.prototype.toISOString()` leaves the
+ * four-digit-year form once `|millis|` reaches the boundary:
+ *
+ * ```
+ * new Date(253402300800000).toISOString()  -> "+010000-01-01T00:00:00.000Z"
+ * new Date(8.64e15).toISOString()          -> "+275760-09-13T00:00:00.000Z"
+ * new Date(-8.64e15).toISOString()         -> "-271821-04-20T00:00:00.000Z"
+ * new Date(-62167219200001).toISOString()  -> "-000001-12-31T23:59:59.999Z"
+ * ```
+ *
+ * `@openpic/contracts` `isoDateTimeSchema` rejects all four, so the projected
+ * member is not a §2.2 member: the route's `serializeResponse` fails the strict
+ * parse (it throws outside production) and the whole listing is a `5xx` for
+ * every caller — the same "one corrupt row denies the listing" defect ADR-0282
+ * removes, reached through the numeric branch it left open (`tenantMembers`
+ * carries no MongoDB validator, so an older write, a migration or a manual
+ * repair can store such a number; the write path cannot).
+ *
+ * The pins below fix the contract, not a mechanism:
+ *
+ *   - **an instant outside the four-digit-year window degrades** exactly like
+ *     any other undatable value — the row stays listed and `joinedAt` carries
+ *     the epoch sentinel `1970-01-01T00:00:00.000Z`;
+ *   - **the window's own edges are still served as themselves** — one
+ *     millisecond inside either end round-trips to its ISO string, so a clamp
+ *     may not be looser than the wire format.
+ *
+ * ## Why the epoch sentinel (ADR-0284, following ADR-0282 §D2)
+ *
+ * The sentinel decision is ADR-0282 §D2's and does not change here: contract
+ * §2.2 and `member-schema` require a non-nullable `isoDateTimeSchema` string, a
+ * `null` would fail `serializeResponse` (still a `5xx`) and break the listing's
+ * `localeCompare` sort, and the epoch is a real, totally ordered instant that
+ * cannot be mistaken for a join time. What ADR-0284 adds is the *bound*: "names
+ * an instant" means "names an instant the wire can carry", so the projection's
+ * accept-set is the closed interval `-62167219200000 … 253402300799999` and
+ * everything outside it is undatable for this purpose.
+ *
+ * ## Contract expected of the implementation
+ *
+ * `@/server/tenancy/members` must keep exporting
+ * `projectMember(membership, user, profile): Member`, and whatever the stored
+ * `joinedAt` — including any finite number — the call must return a §2.2 member
+ * whose `joinedAt` is an `isoDateTimeSchema`-valid string: the exact instant
+ * when the value names one inside `-62167219200000 … 253402300799999`, the
+ * epoch sentinel otherwise. How the bound is enforced (a range check in the
+ * reader, a clamp on the millis, a guard around `toISOString()`) is not pinned.
+ */
+describe("projectMember — a `joinedAt` instant outside the four-digit-year range", () => {
+  /** One millisecond past `9999-12-31T23:59:59.999Z` — the first expanded year. */
+  const FIRST_EXPANDED_YEAR_MILLIS = 253402300800000;
+
+  /** The last instant the four-digit-year form can carry. */
+  const LAST_FOUR_DIGIT_YEAR_MILLIS = 253402300799999;
+  const LAST_FOUR_DIGIT_YEAR_ISO = "9999-12-31T23:59:59.999Z";
+
+  /** The first instant of year 0000, the lower edge of the wire's window. */
+  const FIRST_YEAR_ZERO_MILLIS = -62167219200000;
+  const FIRST_YEAR_ZERO_ISO = "0000-01-01T00:00:00.000Z";
+
+  /** One millisecond below that edge — the first expanded year on the low side. */
+  const LAST_EXPANDED_YEAR_MINUS_ONE_MILLIS = -62167219200001;
+
+  it.each([
+    ["the first instant past the four-digit-year ceiling", FIRST_EXPANDED_YEAR_MILLIS],
+    ["the Date maximum", 8.64e15],
+    ["the Date minimum", -8.64e15],
+    ["one millisecond below the year-0000 floor", LAST_EXPANDED_YEAR_MINUS_ONE_MILLIS],
+  ])("degrades %s to the epoch sentinel", (_label, joinedAt) => {
+    // The defect is silent: no throw, an expanded-year string that the §2.2
+    // schema rejects, and only then a 5xx at the route.
+    const projected = projectMember(membership({ joinedAt }), undefined, undefined);
+
+    expect(projected.joinedAt).toBe(EPOCH_ISO);
+    expect(isoDateTimeSchema.safeParse(projected.joinedAt).success).toBe(true);
+  });
+
+  it.each([
+    [
+      "the last instant the four-digit-year form carries",
+      LAST_FOUR_DIGIT_YEAR_MILLIS,
+      LAST_FOUR_DIGIT_YEAR_ISO,
+    ],
+    ["the year-0000 floor", FIRST_YEAR_ZERO_MILLIS, FIRST_YEAR_ZERO_ISO],
+  ])("still serves %s as its own instant", (_label, joinedAt, expected) => {
+    // Controls: these are green before the fix and must stay green, so a clamp
+    // tighter than the wire format is a regression, not a fix.
+    const projected = projectMember(membership({ joinedAt }), undefined, undefined);
+
+    expect(projected.joinedAt).toBe(expected);
+    expect(isoDateTimeSchema.safeParse(projected.joinedAt).success).toBe(true);
+  });
+});
