@@ -1103,6 +1103,85 @@ describe("pipeline-indexed-check: the batch arm's work survives an aborted run",
       "a batch with no failure is not an errors summary"
     ).toHaveLength(0);
   });
+
+  /**
+   * ADR-0866 §1 — a row does not leave the page until its arm work completes.
+   *
+   * `I17` pins **one** abort. An implementation that re-stamps a latched row
+   * before its arm still passes `I17`, and loses the summary if the next run
+   * aborts as well; this is the repeat-abort shape of the same requirement. It
+   * names no marker, no ordering and no query (ADR-0866 §3), so any
+   * implementation that keeps the row a candidate until its arm completes
+   * satisfies it however many runs abort in a row.
+   */
+  it("I23: two aborts in a row still leave the batch summarised once", async () => {
+    // Arrange — one event the status table derives as indexed, one worker-settled
+    // batch, and the same transient read failure available to two ticks running.
+    const event = await seedEvent(ALL_PROCESSED);
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const { batchId, uploader } = await seedSettledBatchOf(event);
+
+    // Act — the first tick aborts inside the arm…
+    const firstAbort = failNextFind(COLLECTIONS.eventImages);
+    try {
+      await expect(
+        runJobWithLimit(NOW, 50),
+        "the seeded read failure must abort the run, or the case proves nothing"
+      ).rejects.toThrow("injected failure: find on event_images");
+    } finally {
+      firstAbort.restore();
+    }
+    expect(firstAbort.fired(), "the first injected read failure must have fired exactly once").toBe(
+      1
+    );
+    expect(
+      await outboxFor(BATCH_COMPLETED_EVENT),
+      "an aborted run cannot have summarised the batch it never read"
+    ).toHaveLength(0);
+
+    // Act — …and so does the tick after it over the same rows: the row has to
+    // still be a candidate, or the repeat abort is never even measured.
+    const secondAbort = failNextFind(COLLECTIONS.eventImages);
+    try {
+      await expect(
+        runJobWithLimit(new Date(NOW.getTime() + NEXT_BUCKET_MS), 50),
+        "the second tick must reach the arm again rather than pass the row over"
+      ).rejects.toThrow("injected failure: find on event_images");
+    } finally {
+      secondAbort.restore();
+    }
+    expect(
+      secondAbort.fired(),
+      "the second injected read failure must have fired exactly once"
+    ).toBe(1);
+    expect(
+      await outboxFor(BATCH_COMPLETED_EVENT),
+      "two aborted runs cannot have summarised the batch either"
+    ).toHaveLength(0);
+
+    // Act — the third tick, over the same rows and unchanged counters.
+    await runJobWithLimit(new Date(NOW.getTime() + 2 * NEXT_BUCKET_MS), 50);
+
+    // Assert — two aborts in a row lose nothing: one §4.7 summary for the batch,
+    // exactly once, naming what the summary's email rule reads.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(
+      summaries,
+      "a batch whose arm work was cut off twice must still be summarised by a later run"
+    ).toHaveLength(1);
+    const summary = summaries[0];
+    expect(summary?.tenantId).toBe(event.tenantKey);
+    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.payload.batchId).toBe(batchId);
+    expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
+    expect(summary?.payload.fileCount).toBe(2);
+
+    // …and a batch with no failure is never an errors summary.
+    expect(
+      await outboxFor(BATCH_COMPLETED_WITH_ERRORS_EVENT),
+      "a batch with no failure is not an errors summary"
+    ).toHaveLength(0);
+  });
 });
 
 /**
@@ -1177,5 +1256,490 @@ describe("pipeline-indexed-check: the §10.2 backpressure field", () => {
     // …and it did not re-announce what it had already drained.
     expect(await indexedRowsFor(one.eventId)).toHaveLength(1);
     expect(await indexedRowsFor(two.eventId)).toHaveLength(1);
+  });
+});
+
+/**
+ * Characterization / contract — the indexed check's **grouped** batch discovery
+ * and its `limit` budget (ADR-0869 §1–§2; finding **F1** of the review of the
+ * OP-136 GREEN `t_eeb212c2`, PR #661 / squash `d28cddd1`, which shipped
+ * ADR-0862's grouped read).
+ *
+ * ## Why this block exists
+ *
+ * ADR-0862 replaced the per-event `event_images` read with **one grouped
+ * aggregation per tenant in the candidate page** (`$match` on the page's event
+ * ids, `$group` on `(eventId, uploadBatchId)`, then `$sort` and a `$limit` of
+ * the run's remaining budget), and the arm stops collecting at `limit`. The
+ * cases above assert emitted summaries, and every one of their fixtures gives
+ * each event its own tenant (`seedEvent` mints a fresh tenant per call), so the
+ * two paths that distinguish the grouped read were unpinned: the grouping only
+ * ever saw a one-event `$in`, and no case asked the run's `details.batches` to
+ * stay inside `limit`.
+ *
+ * ## How to read them
+ *
+ * Both cases assert only what the outbox and the run envelope show. Neither
+ * names the aggregation, its sort key or a query, so any discovery that finds
+ * every candidate event's batches whatever tenant they share, and keeps the
+ * page's work inside `limit`, satisfies them.
+ *
+ * Which *pairs* win a truncated page is deliberately **not** pinned (ADR-0862
+ * §Assumptions **A2**): the bounded case asserts the count and that every
+ * emitted summary names a seeded batch, never which batch a later page carries.
+ */
+describe("pipeline-indexed-check: the grouped batch discovery and its limit budget", () => {
+  /**
+   * Run the job once at one instant, over a caller-chosen page size.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @param limit - The per-run cap the run is asked for.
+   * @returns The §10.2 run envelope.
+   */
+  async function runJobWithLimit(
+    at: Date,
+    limit: number
+  ): Promise<Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>> {
+    return pipelineIndexedCheckJob.run({
+      requestedLimit: limit,
+      clock: fixedClock(at),
+      logger: recordingLogger(),
+    });
+  }
+
+  /**
+   * Seed one event into a tenant the caller chooses.
+   *
+   * `seedEvent` mints a fresh tenant per call, which is why no case above can
+   * put two events of one workspace on a page. The row is written by `seedEvent`
+   * and then re-homed with the raw driver, so the document keeps the one shape
+   * the fixture already owns.
+   *
+   * @param tenantKey - The tenant both events of a case belong to.
+   * @param counters - The three §4.1 counters, which is the whole input of the
+   *   status table.
+   * @returns The tenant key and the event id, addressed to the shared tenant.
+   */
+  async function seedEventForTenant(
+    tenantKey: string,
+    counters: ProcessingCounts
+  ): Promise<SeededEvent> {
+    const seeded = await seedEvent(counters);
+    await app.db
+      .collection(COLLECTIONS.events)
+      .updateOne({ _id: seeded.eventId }, { $set: { tenantId: tenantKey } });
+    return { tenantKey, eventId: seeded.eventId };
+  }
+
+  /**
+   * Give one event one worker-settled batch of a single file (§16.2, §16.3).
+   *
+   * The completion route is never called: the session is already `completed`
+   * and the image already `done`, which is the "the worker finished it" state
+   * the OP-126 arm reads — case `I7`'s shape, one file instead of two.
+   *
+   * @param event - The event that owns the batch.
+   * @param name - A name unique to the batch, which seeds its `contentHash`.
+   * @returns The batch id and the batch's uploader.
+   */
+  async function seedSettledOneFileBatch(
+    event: SeededEvent,
+    name: string
+  ): Promise<{ readonly batchId: string; readonly uploader: ObjectId }> {
+    const batchId = new ObjectId().toHexString();
+    const uploader = new ObjectId();
+    await seedCompletedSession(event, {
+      batchId,
+      createdByUserId: uploader,
+      contentHash: hashFor(name),
+      fileName: "DSC_5001.JPG",
+    });
+    await seedBatchImage(event, { batchId, status: "done", sequence: 1 });
+    return { batchId, uploader };
+  }
+
+  it("I20: two changed events of one tenant are both discovered on one page", async () => {
+    // Arrange — one workspace, two events, one worker-settled batch each.
+    const tenantKey = new ObjectId().toHexString();
+    const first = await seedEventForTenant(tenantKey, ALL_PROCESSED);
+    const second = await seedEventForTenant(tenantKey, ALL_PROCESSED);
+    const firstBatch = await seedSettledOneFileBatch(first, "op136-grouped-first");
+    const secondBatch = await seedSettledOneFileBatch(second, "op136-grouped-second");
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+
+    // Act — one run, room for both events and both batches.
+    const run = await runJobWithLimit(NOW, 50);
+
+    // Assert — the discovery counted both of the tenant's pairs…
+    expect(run.details?.batches).toBe(2);
+
+    // …and each batch is summarised on its own, naming its own event, uploader
+    // and file count: a discovery whose `$in` narrows to one event id, or that
+    // drops a tenant's later event, leaves one of these two missing.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(summaries).toHaveLength(2);
+    const byBatch = new Map(summaries.map((row) => [String(row.payload.batchId), row]));
+    expect([...byBatch.keys()].sort()).toEqual([firstBatch.batchId, secondBatch.batchId].sort());
+
+    const firstSummary = byBatch.get(firstBatch.batchId);
+    expect(firstSummary?.tenantId).toBe(tenantKey);
+    expect(firstSummary?.subjectRef).toEqual({
+      kind: "user",
+      id: firstBatch.uploader.toHexString(),
+    });
+    expect(firstSummary?.payload.eventId).toBe(first.eventId.toHexString());
+    expect(firstSummary?.payload.fileCount).toBe(1);
+
+    const secondSummary = byBatch.get(secondBatch.batchId);
+    expect(secondSummary?.tenantId).toBe(tenantKey);
+    expect(secondSummary?.subjectRef).toEqual({
+      kind: "user",
+      id: secondBatch.uploader.toHexString(),
+    });
+    expect(secondSummary?.payload.eventId).toBe(second.eventId.toHexString());
+    expect(secondSummary?.payload.fileCount).toBe(1);
+  });
+
+  it("I21: the discovery is bounded at the run's limit", async () => {
+    // Arrange — one event with three distinct worker-settled batches.
+    const event = await seedEvent(ALL_PROCESSED);
+    const batches = [
+      await seedSettledOneFileBatch(event, "op136-budgeted-one"),
+      await seedSettledOneFileBatch(event, "op136-budgeted-two"),
+      await seedSettledOneFileBatch(event, "op136-budgeted-three"),
+    ];
+
+    // Act — a run allowed the work of two batches.
+    const run = await runJobWithLimit(NOW, 2);
+
+    // Assert — the run's own counter is the bounded one, not all three pairs…
+    expect(run.details?.batches).toBe(2);
+
+    // …and the arm did only that much work: two summaries, no repeat, each one
+    // naming one of the seeded batches of the event.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(summaries).toHaveLength(2);
+    const summarised = summaries.map((row) => String(row.payload.batchId));
+    expect(new Set(summarised).size).toBe(2);
+    const seeded = batches.map((batch) => batch.batchId);
+    expect(seeded.filter((batchId) => summarised.includes(batchId))).toHaveLength(2);
+    expect(summaries.map((row) => row.payload.eventId)).toEqual([
+      event.eventId.toHexString(),
+      event.eventId.toHexString(),
+    ]);
+  });
+});
+
+/**
+ * Characterization — the **per-tenant** early stop of the grouped batch
+ * discovery (ADR-0876 §1–§2; finding **F2** of the review of the OP-136 pin
+ * card `t_b730389c`, PR #673 / squash `7e3f642d`).
+ *
+ * ## Why this block exists
+ *
+ * `pendingBatches` reads one aggregate **per tenant in the candidate page**, and
+ * each tenant's read is capped at `limit - pending.length`. The block above pins
+ * the grouping (`I20`) and that budget (`I21`), but both of their fixtures put a
+ * single tenant on the page: `I20`'s two events share one workspace and `I21`'s
+ * three batches share one event. So the loop never reached a **second** tenant
+ * with the budget already spent, and the guard that keeps the next read legal —
+ * the early stop before each tenant's aggregate — was unpinned.
+ *
+ * The failure that guard prevents is not "one extra batch": without it the
+ * second tenant's aggregate is sent with `$limit: 0`, which MongoDB rejects
+ * (`the limit must be positive`, code 15958), so the **whole run** rejects and
+ * every candidate of the page loses its arm work.
+ *
+ * ## How to read it
+ *
+ * The case asserts only what the run envelope and the outbox show: the run
+ * settles, `details.batches` is the budget, and the summaries that landed are the
+ * first tenant's. Which of that tenant's three batches win is deliberately
+ * **not** pinned (ADR-0862 §A2), and neither is the mixed `ObjectId`/24-hex
+ * batch-id form (§16.3).
+ */
+describe("pipeline-indexed-check: the per-tenant early stop of the batch discovery", () => {
+  /**
+   * Run the job once at one instant, over a caller-chosen page size.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @param limit - The per-run cap the run is asked for.
+   * @returns The §10.2 run envelope.
+   */
+  async function runJobWithLimit(
+    at: Date,
+    limit: number
+  ): Promise<Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>> {
+    return pipelineIndexedCheckJob.run({
+      requestedLimit: limit,
+      clock: fixedClock(at),
+      logger: recordingLogger(),
+    });
+  }
+
+  /**
+   * Seed one event into a tenant the caller chooses.
+   *
+   * `seedEvent` mints a fresh tenant per call, so the row is written by the
+   * fixture and then re-homed with the raw driver — the shape `I20` uses to put
+   * two events of one workspace on a page.
+   *
+   * @param tenantKey - The tenant the event belongs to.
+   * @param counters - The three §4.1 counters, which is the whole input of the
+   *   status table.
+   * @returns The tenant key and the event id, addressed to the shared tenant.
+   */
+  async function seedEventForTenant(
+    tenantKey: string,
+    counters: ProcessingCounts
+  ): Promise<SeededEvent> {
+    const seeded = await seedEvent(counters);
+    await app.db
+      .collection(COLLECTIONS.events)
+      .updateOne({ _id: seeded.eventId }, { $set: { tenantId: tenantKey } });
+    return { tenantKey, eventId: seeded.eventId };
+  }
+
+  /**
+   * Give one event one worker-settled batch of a single file (§16.2, §16.3).
+   *
+   * The completion route is never called: the session is already `completed`
+   * and the image already `done`, which is the "the worker finished it" state
+   * the OP-126 arm reads — case `I7`'s shape, one file instead of two.
+   *
+   * @param event - The event that owns the batch.
+   * @param name - A name unique to the batch, which seeds its `contentHash`.
+   * @returns The batch id and the batch's uploader.
+   */
+  async function seedSettledOneFileBatch(
+    event: SeededEvent,
+    name: string
+  ): Promise<{ readonly batchId: string; readonly uploader: ObjectId }> {
+    const batchId = new ObjectId().toHexString();
+    const uploader = new ObjectId();
+    await seedCompletedSession(event, {
+      batchId,
+      createdByUserId: uploader,
+      contentHash: hashFor(name),
+      fileName: "DSC_5101.JPG",
+    });
+    await seedBatchImage(event, { batchId, status: "done", sequence: 1 });
+    return { batchId, uploader };
+  }
+
+  it("I22: a tenant whose read spends the run's budget leaves the next tenant's read unrun", async () => {
+    // Arrange — tenant A: one changed event with three worker-settled batches;
+    // tenant B: one changed event with one. A's event is seeded first, so it is
+    // the page's first candidate (`_id: 1`) and its tenant's read comes first.
+    const tenantA = new ObjectId().toHexString();
+    const tenantB = new ObjectId().toHexString();
+    const eventA = await seedEventForTenant(tenantA, ALL_PROCESSED);
+    const eventB = await seedEventForTenant(tenantB, ALL_PROCESSED);
+    const batchesA = [
+      await seedSettledOneFileBatch(eventA, "op136-early-stop-a1"),
+      await seedSettledOneFileBatch(eventA, "op136-early-stop-a2"),
+      await seedSettledOneFileBatch(eventA, "op136-early-stop-a3"),
+    ];
+    const batchB = await seedSettledOneFileBatch(eventB, "op136-early-stop-b1");
+
+    // Sanity — the page is the two events in `_id` order, so tenant A's read is
+    // the one that spends the budget. Without this the case would measure the
+    // other tenant and pass for the wrong reason.
+    expect(
+      eventA.eventId.toHexString() < eventB.eventId.toHexString(),
+      "tenant A's event must be the page's first candidate"
+    ).toBe(true);
+
+    // Act — a run allowed the work of two batches: tenant A alone asks for
+    // three, so its read consumes the budget before tenant B is reached. A
+    // rejected run here (a zero `$limit` on B's read) is the pinned failure.
+    const run = await runJobWithLimit(NOW, 2);
+
+    // Assert — the run settled, and its counter is the budget…
+    expect(run.details?.batches, "the page's work stays inside the run's limit").toBe(2);
+
+    // …and the work is tenant A's: two summaries for two of its three batches,
+    // none for tenant B's single batch.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(
+      summaries,
+      "the arm must stop at the budget instead of reading the second tenant"
+    ).toHaveLength(2);
+    const aBatchIds = batchesA.map((batch) => batch.batchId);
+    const summarised = summaries.map((row) => String(row.payload.batchId));
+    expect(new Set(summarised).size, "one summary per batch").toBe(2);
+    expect(
+      summarised.filter((batchId) => aBatchIds.includes(batchId)),
+      "both summaries name a batch of the tenant whose read spent the budget"
+    ).toHaveLength(2);
+    expect(summarised, "tenant B's batch is behind the spent budget").not.toContain(batchB.batchId);
+    expect(
+      summaries.map((row) => row.tenantId),
+      "both rows belong to tenant A"
+    ).toEqual([tenantA, tenantA]);
+    expect(summaries.map((row) => String(row.payload.eventId))).toEqual([
+      eventA.eventId.toHexString(),
+      eventA.eventId.toHexString(),
+    ]);
+  });
+});
+
+/**
+ * Characterization / contract — an event's own batches are **all** driven, not
+ * just the last pair the discovery returns for it (ADR-0867 §1.2; finding
+ * **F1** of the review of the OP-136 GREEN `t_bf0ae9ae`, PR #670 / head
+ * `1b38307d`).
+ *
+ * ## Why this block exists
+ *
+ * The run groups the discovery's `(event, batch)` pairs by the event that owns
+ * them, and each candidate row then drives the pairs of **its own** event id.
+ *
+ * The arm that appends to an event's list (`owned.push(batch)`) is already
+ * reached by `I21` and by `I22`: both seed one event with three settled batches
+ * and run with a `limit` of two, so the page carries **two** of that event's
+ * pairs. Neither of them pins the grouping, though — they pin the budget and
+ * the per-tenant early stop, and `I21`'s third batch is deliberately never
+ * discovered, so a grouping that keeps one pair per event is caught there only
+ * as a side effect of a page that a budget truncated.
+ *
+ * `I24` is the case that pins the grouping itself: one event, two of its
+ * batches, `requestedLimit: 50` so no budget cuts the page, and both ids named
+ * in the outbox. `I25` closes the last window a page size can hide: it puts
+ * **three** of one event's batches on the page with the same room to spare and
+ * names all three, so a grouping bounded to the last two pairs of an event —
+ * which every other case of this file still passes — is red there.
+ *
+ * ## How to read it
+ *
+ * The case seeds one event the status table derives as `indexed` and gives it
+ * two worker-settled batches of two files each, both uploaded by the same user.
+ * It asserts only what the outbox shows: exactly two `upload.batch.completed`
+ * rows, whose payload `batchId`s are the two seeded ids. Which of the two is
+ * written first is **not** pinned — the discovery's sort order is ADR-0862
+ * §1's business, not this contract's — so the ids are compared as a sorted
+ * array. Any grouping that keeps every pair of the event satisfies it.
+ * `I25` repeats the shape with three settled batches, where a last-two grouping reds.
+ */
+describe("pipeline-indexed-check: an event's settled batches are each summarised, not just its last two", () => {
+  /**
+   * Run the job once at one instant, over a caller-chosen page size.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @param limit - The per-run cap the run is asked for.
+   * @returns The §10.2 run envelope.
+   */
+  async function runJobWithLimit(
+    at: Date,
+    limit: number
+  ): Promise<Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>> {
+    return pipelineIndexedCheckJob.run({
+      requestedLimit: limit,
+      clock: fixedClock(at),
+      logger: recordingLogger(),
+    });
+  }
+
+  /**
+   * Give one event one worker-settled batch of two files (§16.2, §16.3), the
+   * shape `I17`'s `seedSettledBatchOf` uses.
+   *
+   * The completion route is never called: the sessions are already `completed`
+   * and the images already `done`, which is the "the worker finished it" state
+   * the OP-126 arm reads.
+   *
+   * @param event - The event that owns the batch.
+   * @param input - The batch's uploader and a slug unique to the batch, which
+   *   seeds its `contentHash` and `fileName`.
+   * @returns The batch id.
+   */
+  async function seedTwoFileBatchOf(
+    event: SeededEvent,
+    input: { readonly uploader: ObjectId; readonly slug: string }
+  ): Promise<string> {
+    const batchId = new ObjectId().toHexString();
+    for (const sequence of [1, 2]) {
+      await seedCompletedSession(event, {
+        batchId,
+        createdByUserId: input.uploader,
+        contentHash: hashFor(`${input.slug}-${String(sequence)}`),
+        fileName: `DSC-${input.slug}-${String(sequence)}.JPG`,
+      });
+      await seedBatchImage(event, { batchId, status: "done", sequence });
+    }
+    return batchId;
+  }
+
+  it("I24: an event with two settled batches gets both summaries", async () => {
+    // Arrange — one event the status table derives as indexed, two distinct
+    // worker-settled batches of two files each, both uploaded by the same user.
+    const event = await seedEvent(ALL_PROCESSED);
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const uploader = new ObjectId();
+    const firstBatchId = await seedTwoFileBatchOf(event, {
+      uploader,
+      slug: "op136-grouped-batch-one",
+    });
+    const secondBatchId = await seedTwoFileBatchOf(event, {
+      uploader,
+      slug: "op136-grouped-batch-two",
+    });
+
+    // Act — one run with room for both of the event's batches.
+    const run = await runJobWithLimit(NOW, 50);
+
+    // Sanity — the discovery found both pairs, so a missing summary below is the
+    // grouping dropping one, not a discovery that never saw it.
+    expect(
+      run.details?.batches,
+      "both of the event's settled batches must be on the run's page"
+    ).toBe(2);
+
+    // Assert — each of the event's batches is summarised on its own: a grouping
+    // that keeps only the last pair of an event leaves the first one missing.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(
+      summaries,
+      "an event that owns two settled batches must be summarised for both"
+    ).toHaveLength(2);
+    expect(
+      summaries.map((row) => String(row.payload.batchId)).sort(),
+      "the two summaries name the two batches the event owns"
+    ).toEqual([firstBatchId, secondBatchId].sort());
+  });
+
+  it("I25: an event with three settled batches gets three summaries", async () => {
+    // Arrange — one event the status table derives as indexed, three distinct
+    // worker-settled batches of two files each, all uploaded by the same user.
+    const event = await seedEvent(ALL_PROCESSED);
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const uploader = new ObjectId();
+    const batchIds = [
+      await seedTwoFileBatchOf(event, { uploader, slug: "op136-triple-batch-one" }),
+      await seedTwoFileBatchOf(event, { uploader, slug: "op136-triple-batch-two" }),
+      await seedTwoFileBatchOf(event, { uploader, slug: "op136-triple-batch-three" }),
+    ];
+
+    // Act — one run with room to spare, so no budget can truncate the event's
+    // own pairs: a missing summary below is the grouping dropping it.
+    const run = await runJobWithLimit(NOW, 50);
+
+    // Sanity — the discovery found all three pairs, so the grouping saw them.
+    expect(
+      run.details?.batches,
+      "all three of the event's settled batches must be on the run's page"
+    ).toBe(3);
+
+    // Assert — each batch of the event is summarised on its own: a grouping
+    // bounded to the last two pairs of an event leaves the first one missing.
+    const summaries = await outboxFor(BATCH_COMPLETED_EVENT);
+    expect(
+      summaries,
+      "an event that owns three settled batches must be summarised for all three"
+    ).toHaveLength(3);
+    expect(
+      summaries.map((row) => String(row.payload.batchId)).sort(),
+      "the three summaries name the three batches the event owns"
+    ).toEqual([...batchIds].sort());
   });
 });
