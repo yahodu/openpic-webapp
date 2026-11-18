@@ -147,3 +147,100 @@ directs (the lane range is `0280`–`0299`, [ADR-0300](ADR-0300-adr-number-range
 `0280` and `0281` are consumed by the tenant-members RED/GREEN pair and `0282` by
 the RED pins this card turns green. This record advances the cell to `0284`. No
 number outside the lane range is touched.
+
+## Review and landing — PR [#694](https://github.com/yahodu/openpic-webapp/pull/694)
+
+Reviewed head `6b009e92`; land card `t_1d41c1e4`; docs sign-off `t_bfae10cd`.
+**Verdict: APPROVED WITH FINDINGS** — ship it, and the findings feed the next
+cycle. Nothing is blocking: the diff carries no fixture-specific hardcoding, no
+test-environment conditional, no `ts-ignore`/`eslint-disable` and no console
+noise, and the RED → GREEN delta is one production file.
+
+### Merge gate, on the exact head `6b009e92`
+
+- **G1** `mergeable=MERGEABLE`, `mergeStateStatus=BLOCKED` — the ruleset needs a
+  non-author approval and the only `gh` identity is the PR author; not `DIRTY` and
+  not `UNKNOWN`.
+- **G2** 20 rollup entries, every one `COMPLETED` / `SUCCESS`.
+- **G3** all eleven gating names present:
+  `ci`, `audit`, `audit-dev`, `secret-scan`, `lint`, `unit_test`,
+  `test_coverage`, `env-changes`, `validate-branch-name`, `validate-pr-title`,
+  `Assert CI evidence for the pushed head`.
+- **G4** `audit.completedAt` = `2026-11-18T17:22:44Z`, and at the merge no commit
+  in `f9257747..origin/main` touched the four gate paths — the only intervening
+  trunk commit, `8c88ee4d` (OP-135), touches `ADR-0843` and
+  `internal-worker-endpoints.test.ts`. (That range has since grown; see
+  §Post-merge proof.)
+- **G5** `git diff --quiet` on the four gate paths is empty.
+- **G6** no failure — no `gh run rerun`, no rebase, no force-push.
+
+The rollup reads 21 entries today, not 20: `notify-discord` is a post-merge
+notification job that completed at `17:41:24Z`, eleven seconds after the merge.
+The gate was evaluated on the 20 that existed at the head.
+
+**Landing mechanism.** `gh pr merge 694 --squash --delete-branch --admin`.
+`--admin` bypassed the author-approval ruleset only; every gate above had already
+passed on the pushed head, and the squash that resulted is the one recorded
+below.
+
+### Independent verification
+
+- unit `12 passed (12)` and integration `24 passed (24)`, re-run by the reviewer
+  in a private probe worktree at `6b009e92` **and** again on the merged tree
+  `d42032b4`.
+- The RED → GREEN spec delta is empty: `git diff 64090ee8 6b009e92` with the
+  pathspecs `*.test.ts` and `*/test/*` prints nothing, so no assertion, fixture,
+  helper or mock moved under the production change.
+- Against `main` the two spec files are pure additions — 127 and 134 lines, 0
+  deletions.
+- ADR guards: 6 files / 236 tests green.
+- `prettier --check` clean on all six changed files.
+- ADR-0282 §Base reproduced: `88d65749..f9257747` is empty on the tenancy
+  directory and the integration spec.
+
+### ADR numbers
+
+This PR consumed exactly `0282` and `0283`, both inside the OP-101 lane
+`0280`–`0299` ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md));
+neither file existed on `origin/main` before the merge. The lane cell advanced
+`0282` → `0284` and no other lane row moved.
+
+That is the state at this merge. The cell has moved since — `0284` and `0285`
+went to the pin record and its GREEN
+([ADR-0284](ADR-0284-op101-tenant-members-instant-range-pins.md),
+[ADR-0285](ADR-0285-op101-tenant-members-instant-range-green.md)), `0286` to the
+string-arm pins
+([ADR-0286](ADR-0286-op101-tenant-members-string-instant-pins.md)) — and reads
+`0287`. This sign-off consumed no number and left `docs/adr/README.md`
+byte-identical: `git diff --stat origin/main -- docs/adr/README.md` is empty.
+
+### Post-merge proof
+
+`d42032b4` was the tip of `origin/main` when the squash landed. Its tree
+(`d202bf5e`) differs from the reviewed head's tree (`96fb21bc`) only because the
+squash re-parents the payload onto a trunk that already carried `8c88ee4d`;
+`git diff --name-only 6b009e92 d42032b4` lists exactly that commit's two files
+and no lane file. The trunk has since moved five commits (`33b02d8a`,
+`6adfbc3f`, `f4558e3e`, `18df24b4`, `0441efde`), and `git merge-base
+--is-ancestor d42032b4 origin/main` holds. The remote branch
+`OP-101-task-tenant-members-defensive-restore` was deleted — `git ls-remote
+--heads` no longer lists it.
+
+### Findings routing
+
+- **F1 (Low) — closed.** A numeric `joinedAt` outside
+  `-62167219200000 … 253402300799999` — an expanded-year instant that
+  `isoDateTimeSchema` rejects — still denied the listing through the numeric
+  branch. Routed to the pin card `t_20a04cdb`
+  ([ADR-0284](ADR-0284-op101-tenant-members-instant-range-pins.md)) and closed by
+  its GREEN `t_79838160`
+  ([ADR-0285](ADR-0285-op101-tenant-members-instant-range-green.md)), which is
+  the amendment in §D1 above.
+- **F3 (Info) — no action.** Two module-private instant readers sit in the tree
+  with opposite row policies: `tenancy` degrades the row, `events` skips it. That
+  is decision §D2 by design, and a third same-policy consumer is the trigger to
+  factor a shared reader.
+- **F4 (Info) — no action.** A numeric **string** `joinedAt` degrades to 1970
+  rather than serving its instant. The behaviour is defensible and measured; the
+  string arm was later pinned as characterization by
+  [ADR-0286](ADR-0286-op101-tenant-members-string-instant-pins.md).

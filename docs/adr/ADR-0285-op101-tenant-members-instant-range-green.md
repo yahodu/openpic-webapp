@@ -158,3 +158,34 @@ two records landing in this PR the cell advances from `0284` to `0286`, matching
 the PR #694 precedent (`0282` → `0284`). The lane range is `0280`–`0299`
 ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md)); no number outside
 it is touched.
+
+## Review and landing — PR [#698](https://github.com/yahodu/openpic-webapp/pull/698)
+
+Reviewed head `b29c742b`; docs sign-off `t_bfae10cd`. **Verdict: APPROVED WITH
+FINDINGS** — no blocking finding. Merged as squash `f4558e3e`, whose tree
+`0b6449b7` is the push head's tree and the tree of `origin/main` at the merge, so
+the reviewed bytes are the trunk bytes; CI was `15/15 success` on that tree.
+
+- Re-run by the reviewer in a private probe worktree at the head and again on the
+  merged tree: unit `18 passed (18)`, integration `28 passed (28)`, six ADR
+  guards `236 passed (236)`, `prettier --check` clean on all seven changed files,
+  `tsc -p apps/web/tsconfig.json --noEmit` exit `0`.
+- The three pinned paths are byte-identical to the pin head `07dd4aca`:
+  `git diff 07dd4aca f4558e3e --` the two specs and
+  [ADR-0284](ADR-0284-op101-tenant-members-instant-range-pins.md) is empty. That
+  identity holds at the reviewed head; on today's trunk the two specs carry
+  [ADR-0286](ADR-0286-op101-tenant-members-string-instant-pins.md)'s string-arm
+  cases on top.
+- An 11-input window probe, in a throwaway worktree that imported no repository
+  file and was removed afterwards: both edges serve themselves
+  (`253402300799999` → `9999-12-31T23:59:59.999Z`, `-62167219200000` →
+  `0000-01-01T00:00:00.000Z`), and every out-of-window numeric, string and
+  `Date` value degrades to `1970-01-01T00:00:00.000Z`, every one of them
+  `isoDateTimeSchema`-valid.
+- Numbers `0284`/`0285` are unique across every worktree ADR directory and every
+  open PR head; the cell read `0286`, inside `0280`–`0299`.
+- Findings, both Low and neither blocking: the string arm was unpinned and the
+  unit docblock word was inverted — routed to card `t_e9bf64f1`, which landed as
+  [ADR-0286](ADR-0286-op101-tenant-members-string-instant-pins.md). The
+  superseded draft PR [#697](https://github.com/yahodu/openpic-webapp/pull/697)
+  was closed and its branch deleted.

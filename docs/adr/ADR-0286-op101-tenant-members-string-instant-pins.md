@@ -170,3 +170,30 @@ is `0280`–`0299` ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md));
 pins, `0283` its GREEN, `0284` the numeric instant-range pins and `0285` their
 GREEN. This record advances the cell to `0287`. No number outside the lane range
 is touched.
+
+## Review and landing — PR [#699](https://github.com/yahodu/openpic-webapp/pull/699)
+
+Reviewed head `1156a8ab`; docs sign-off `t_bfae10cd`. **Verdict: APPROVED** — no
+blocking finding. Merged as squash `0441efde`, whose tree `5eb96c7f` is the push
+head's tree, so the reviewed bytes are the trunk bytes; all `15` check-runs on
+the head were `SUCCESS`.
+
+- Checks at the head: unit `24 passed (24)`, integration `29 passed (29)`, six
+  ADR guards `236 passed (236)`, `tsc` exit `0`, `eslint` exit `0`, `prettier
+--check` clean on the four touched files.
+- Discrimination, measured by three mutations in a throwaway probe worktree: a
+  numbers-only bound → unit `4 failed | 20 passed (24)` and the route case
+  `expected 500 to be 200` with `data.0.joinedAt: Invalid ISO datetime`; a
+  year-2100 tighter bound → the two string controls and the two numeric controls
+  red; numbers-and-strings bounded with `Date` left on `Number.isFinite` → this
+  file stays `24 passed (24)`.
+- **Landed rather than left in draft — the card's one deviation.** These are
+  characterization pins that pass on arrival (§D3), so there was no GREEN to
+  supersede them and no RED to keep off the trunk; an unmerged pin set would
+  guard nothing.
+- Routed finding (Low, and not a defect of this delivery): the **`Date` instance**
+  arm is still unpinned — the "Date maximum" rows are the number `8.64e15`, never
+  a `Date`. Routed to card `t_07bc5990`. The merged bound on the shared `millis`
+  already closes that arm, so the gap is in the pin set, not in the behaviour.
+- This sign-off consumed no number: `docs/adr/README.md` stays byte-identical and
+  the lane cell remains `0287`.
