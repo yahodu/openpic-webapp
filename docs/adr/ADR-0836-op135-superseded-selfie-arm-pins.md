@@ -42,7 +42,7 @@ silently:
 ## Decision
 
 Five cases are appended to `apps/web/src/test/integration/internal-worker-endpoints.test.ts`, inside
-the existing `describe("when the worker reports a selfie outcome")`: the 31 frozen cases, the
+the existing `describe("when the worker reports a selfie outcome")`: the frozen 30, ADR-0832's
 superseded-selfie case and ADR-0834's 11 pins are untouched, as are every helper, fixture, mock and
 spec literal (the two import lines gain `afterEach` and the logging port).
 
