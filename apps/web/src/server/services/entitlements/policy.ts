@@ -12,11 +12,14 @@ import type { EntitlementGrant, EntitlementSpec, ResetPeriod } from "./types";
 /**
  * Whether a grant's window covers `now` (`validFrom <= now < validUntil`).
  *
+ * Exposed so the entitlements read view can serve exactly the grants it counted
+ * into `effectiveLimit` (OP-104, contract §3.5).
+ *
  * @param grant - The grant under test.
  * @param now - The instant the check reasons about.
  * @returns `true` while the grant is active.
  */
-function isGrantActive(grant: EntitlementGrant, now: Date): boolean {
+export function isGrantActive(grant: EntitlementGrant, now: Date): boolean {
   const at = now.getTime();
   if (grant.validFrom.getTime() > at) {
     return false;
