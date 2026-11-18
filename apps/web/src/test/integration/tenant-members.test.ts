@@ -661,3 +661,118 @@ describe("GET /api/v1/tenants/{tenantId}/members — a membership with no usable
     }
   );
 });
+
+/**
+ * OP-101 follow-up pins — a membership row whose **numeric** `joinedAt` names an
+ * instant outside the RFC 3339 four-digit-year range (contract §2.2, ADR-0282,
+ * ADR-0284).
+ *
+ * The merged defensive restore makes the projection total for every value that
+ * cannot name an instant, but a finite number is admitted as an instant and
+ * `Date.prototype.toISOString()` leaves the four-digit-year form at
+ * `|millis| >= 253402300800000` (and below `-62167219200000`), returning
+ * `+010000-…`, `+275760-…`, `-271821-…` or `-000001-…`. `isoDateTimeSchema`
+ * rejects those shapes, so `serializeResponse` fails and the whole listing is a
+ * `5xx` for every caller of the workspace — one corrupt row denying the listing,
+ * exactly what ADR-0282 exists to remove. `tenantMembers` carries no MongoDB
+ * validator, so an older write, a migration or a manual repair can store such a
+ * number; the write path cannot.
+ *
+ * The route is where the defect is observable, so these pins assert the wire
+ * behaviour: `200`, the §2.2 `{ data: […] }` envelope, the member still listed,
+ * and its `joinedAt` degraded to the epoch sentinel `1970-01-01T00:00:00.000Z`.
+ * The final case is the control at the wire's own ceiling: one millisecond
+ * inside the four-digit-year range (`9999-12-31T23:59:59.999Z`) must still be
+ * served as itself, so the bound may not be tighter than the wire format.
+ *
+ * ## Why the epoch sentinel (ADR-0284, following ADR-0282 §D2)
+ *
+ * `memberSchema` requires a non-nullable `isoDateTimeSchema`, so `null` is not
+ * on the wire (it would still fail `serializeResponse`) and the listing's
+ * `joinedAt` sort would break on it. The epoch is a schema-valid, totally
+ * ordered instant that cannot be mistaken for a real join time. ADR-0284 adds
+ * the window itself — "names an instant" means an instant the wire can carry,
+ * i.e. `-62167219200000 … 253402300799999`.
+ *
+ * ## Contract expected of the implementation
+ *
+ * `GET /api/v1/tenants/{tenantId}/members` must answer `200` for a workspace
+ * whose `tenantMembers` rows carry any finite numeric `joinedAt`, listing every
+ * member, and must serve each `joinedAt` as an `isoDateTimeSchema`-valid string:
+ * the exact instant inside `-62167219200000 … 253402300799999`, the epoch
+ * sentinel otherwise. How the bound is enforced is not pinned here (ADR-0284).
+ */
+describe("GET /api/v1/tenants/{tenantId}/members — a numeric `joinedAt` outside the four-digit-year range", () => {
+  /** The instant an out-of-range `joinedAt` degrades to (ADR-0282 §D2). */
+  const EPOCH_JOINED_AT_ISO = "1970-01-01T00:00:00.000Z";
+
+  /** The last instant inside the wire's window, and its ISO form. */
+  const LAST_WIRE_INSTANT_MILLIS = 253402300799999;
+  const LAST_WIRE_INSTANT_ISO = "9999-12-31T23:59:59.999Z";
+
+  /**
+   * Insert a raw `tenantMembers` row exactly as supplied, with no defaults.
+   *
+   * Unlike {@link insertTenantMember} this never stamps `joinedAt`, so a spec
+   * can seed the numeric rows the collection's write path would never produce.
+   */
+  async function insertRawMembership(row: Record<string, unknown>): Promise<void> {
+    await app.db.collection(COLLECTIONS.tenantMembers).insertOne({ ...row });
+  }
+
+  it.each([
+    ["the first instant past the four-digit-year ceiling", 253402300800000],
+    ["the Date maximum", 8.64e15],
+    ["the Date minimum", -8.64e15],
+  ])(
+    "still answers 200 for a membership whose `joinedAt` is %s, degrading it to the epoch",
+    async (_label, joinedAt) => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      const member = await app.signIn(makeIdentity("maya-member"));
+      const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+      await insertRawMembership({
+        tenantId,
+        userId: member.userId,
+        role: "member",
+        status: "active",
+        joinedAt,
+      });
+
+      const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-tenant-id")).toBe(tenantId.toHexString());
+
+      const entries = (await body(response)).data as Record<string, unknown>[];
+      // One corrupt instant may never push a member out of the listing.
+      expect(entries.map((entry) => entry.userId).sort()).toEqual(
+        [member.userId.toHexString(), owner.userId.toHexString()].sort()
+      );
+
+      const memberEntry = entries.find((entry) => entry.userId === member.userId.toHexString());
+      expect(memberEntry).toBeDefined();
+      expect(memberEntry?.joinedAt).toBe(EPOCH_JOINED_AT_ISO);
+      expect(Object.keys(memberEntry ?? {}).sort()).toEqual(MEMBER_DTO_KEYS);
+    }
+  );
+
+  it("still serves a numeric `joinedAt` at the wire's own ceiling as its exact instant", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await insertRawMembership({
+      tenantId,
+      userId: member.userId,
+      role: "member",
+      status: "active",
+      joinedAt: LAST_WIRE_INSTANT_MILLIS,
+    });
+
+    const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+    expect(response.status).toBe(200);
+    const entries = (await body(response)).data as Record<string, unknown>[];
+    const memberEntry = entries.find((entry) => entry.userId === member.userId.toHexString());
+    expect(memberEntry?.joinedAt).toBe(LAST_WIRE_INSTANT_ISO);
+  });
+});
