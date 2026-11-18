@@ -9,7 +9,7 @@ import { fixedClock } from "@/server/runtime/clock";
 
 import { startTestApp, type TestApp } from "../helpers/authed-app";
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
-import { recordingLogger } from "../helpers/recording-logger";
+import { recordingLogger, type RecordingLogger } from "../helpers/recording-logger";
 
 /**
  * Integration / contract — `pipeline-indexed-check`, the every-5-minutes
@@ -978,6 +978,52 @@ function failNextFind(collectionName: string): InjectedReadFailure {
 }
 
 /**
+ * Arm a driver failure on **every** `find` of `collectionName` whose filter the
+ * predicate accepts.
+ *
+ * `failNextFind` loses its aim after one call, which is the transient read
+ * `I17`/`I23` pin. A row that is retried tick after tick needs a failure that is
+ * still armed on the next run, and one scoped to the row's own batch: the
+ * predicate reads the driver filter, so every other row's arm reads normally and
+ * the failure is deterministic for the whole case. The error carries `code: 91`
+ * (a replica-set election) like its one-shot sibling, and the counter proves the
+ * injection was reached rather than assumed.
+ *
+ * @param collectionName - The collection whose read fails, matched on `this`.
+ * @param accepts - Whether a given driver filter is the read to fail.
+ * @returns The injection, whose `fired` count proves every call reached it.
+ */
+function failFindWhen(
+  collectionName: string,
+  accepts: (filter: Record<string, unknown>) => boolean
+): InjectedReadFailure {
+  let fired = 0;
+  const spy = vi.spyOn(Collection.prototype, "find").mockImplementation(function (
+    this: Collection,
+    ...args: DriverFindArgs
+  ) {
+    const filter: unknown = args[0];
+    if (
+      this.collectionName === collectionName &&
+      typeof filter === "object" &&
+      filter !== null &&
+      accepts(filter as Record<string, unknown>)
+    ) {
+      fired += 1;
+      throw Object.assign(new Error(`injected failure: find on ${collectionName}`), { code: 91 });
+    }
+    return driverFind.call(this, ...args);
+  } as never);
+
+  return {
+    fired: () => fired,
+    restore: () => {
+      spy.mockRestore();
+    },
+  };
+}
+
+/**
  * Integration / contract — the batch arm's work survives a run that aborts
  * inside it (ADR-0866 §1; finding **M2** of the review of the OP-136 GREEN
  * `t_6a0e3e55`).
@@ -1741,5 +1787,406 @@ describe("pipeline-indexed-check: an event's settled batches are each summarised
       summaries.map((row) => String(row.payload.batchId)).sort(),
       "the three summaries name the three batches the event owns"
     ).toEqual([...batchIds].sort());
+  });
+});
+
+/** The §10.2 key a contained per-row failure must be named under (ADR-0871 §1). */
+const ROW_FAILED_EVENT = "pipeline.indexed_check.row_failed";
+
+/**
+ * Integration / contract — a persistently failing row is contained, counted and
+ * named (ADR-0871; decision of record: card `t_39d7b19f`, option 1, taken on
+ * finding **F2** of the round-1 review of the OP-136 GREEN `t_bf0ae9ae`,
+ * PR #670 / head `1b38307d` / squash `40b65309`).
+ *
+ * ## Why this block exists
+ *
+ * The shipped run drives its candidate page in chunks of `ROW_CHECK_CONCURRENCY`
+ * = 8 and rethrows the first rejection after the chunk settles, and every job
+ * hardcodes `errors: 0`. A row whose own OP-126 batch-arm work throws
+ * **persistently** — not the transient read `I17`/`I23` pin — therefore rejects
+ * every tick for as long as it exists: the cron 500s on each tick, `errors`
+ * cannot tell that run from a clean one, the poison row itself is never named,
+ * and only the rows of its own chunk that started before it make progress. The
+ * reviewer measured that shape at `1b38307d` (one poison row as the lowest
+ * `_id`, ten healthy `indexed` events, `requestedLimit: 12`, three ticks):
+ * `{"tick":0,"rejected":true,"announcedAfterTick":8}`,
+ * `{"tick":1,…11}`, `{"tick":2,…11}`, so the defect is a **permanent run
+ * failure plus a throughput cap of `ROW_CHECK_CONCURRENCY - 1` = 7 rows per
+ * tick**, not permanent head-of-line blocking.
+ *
+ * ## The contract these cases pin
+ *
+ * 1. the failing row cannot abort the run: the run resolves, `scanned` is the
+ *    page it read, and `errors` counts the failure;
+ * 2. the remaining rows **and later chunks** keep running in the same run, so a
+ *    healthy row of the **second** chunk is announced by the run the poison row
+ *    failed in;
+ * 3. each failing row is named once, at `warn`, under
+ *    `pipeline.indexed_check.row_failed`, with its event id and the thrown error
+ *    carried alongside;
+ * 4. the failing row keeps its `pipeline.indexedCheckedCounters` triple
+ *    unstamped, so it stays a candidate and a later tick retries the arm's work
+ *    (ADR-0866 §1 / ADR-0867 §1 unchanged: nothing is lost, only deferred).
+ *
+ * ## How to read them
+ *
+ * The poison row is the **lowest** `_id` of an `_id`-ascending page and its
+ * `event_images` read throws on **every** call — scoped to that event, so no
+ * other row's arm sees the failure and the case is deterministic. Every
+ * assertion is what an API consumer observes: the run envelope (`scanned`,
+ * `errors`), the `pipeline.event.indexed` and `upload.batch.completed` rows the
+ * outbox holds, the row's own stored triple, and the run's own log lines. No
+ * case names the chunking, the catch, the query or the sort.
+ *
+ * ## Which cases are RED at this head
+ *
+ * - `I26` — the run rejects today, so a page of nine candidates with one poison
+ *   row never reaches its second chunk.
+ * - `I27` — no `pipeline.indexed_check.row_failed` line exists at this head at
+ *   all, so it reddens on its own arm even once `I26` is satisfied.
+ * - `I28` is a **characterization** pin (green on arrival): it asserts the half
+ *   the shipped ordering already gives — the row keeps its triple and stays a
+ *   candidate — so a reviewer does not read it as new coverage.
+ * - `I29` is the negative control: a clean page of the same size reports no
+ *   failure and names no row, so neither `errors` nor the warn can become a
+ *   constant in either direction.
+ */
+describe("pipeline-indexed-check: a persistently failing row is contained, counted and named", () => {
+  /**
+   * The page every case reads: one candidate more than `ROW_CHECK_CONCURRENCY`
+   * (8), so the last candidate is alone in the run's **second** chunk.
+   */
+  const PAGE_SIZE = 9;
+
+  /** The per-run cap every case asks for — room for the whole page. */
+  const PAGE_LIMIT = 12;
+
+  /** One seeded candidate of the page: the event, its settled batch, its uploader. */
+  interface PageRow {
+    readonly event: SeededEvent;
+    readonly batchId: string;
+    readonly uploader: ObjectId;
+  }
+
+  /** The run envelope plus the logger that recorded the run. */
+  interface RecordedRun {
+    readonly result: Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>;
+    readonly log: RecordingLogger;
+  }
+
+  /**
+   * Run the job once over the block's page, keeping its log.
+   *
+   * The contract is that a failing row cannot abort the run, so a rejection is
+   * reported as this block's own assertion failure: the message names the shape
+   * that was expected instead of leaving a raw driver error behind.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @returns The envelope and the lines the run wrote.
+   */
+  async function runPage(at: Date): Promise<RecordedRun> {
+    const log = recordingLogger();
+    try {
+      const result = await pipelineIndexedCheckJob.run({
+        requestedLimit: PAGE_LIMIT,
+        clock: fixedClock(at),
+        logger: log,
+      });
+      return { result, log };
+    } catch (error) {
+      throw new Error(
+        `a row whose own arm work throws must not abort the run; it rejected with: ${String(error)}`
+      );
+    }
+  }
+
+  /**
+   * Run one tick whose envelope is **not** the case's subject.
+   *
+   * `I28` reads the row state two ticks leave behind, and that state is the same
+   * whether the tick resolved (containment) or rejected (the shipped head), so
+   * the outcome is deliberately not inspected here.
+   *
+   * @param at - The instant the tick's windows are evaluated at.
+   */
+  async function tickWithoutReadingTheEnvelope(at: Date): Promise<void> {
+    try {
+      await pipelineIndexedCheckJob.run({
+        requestedLimit: PAGE_LIMIT,
+        clock: fixedClock(at),
+        logger: recordingLogger(),
+      });
+    } catch {
+      // The row state is the observable; `I26` owns the envelope's shape.
+    }
+  }
+
+  /**
+   * Run one tick and keep its log, whatever the envelope did.
+   *
+   * `I27` reads the lines the run wrote, and the run that must write them is the
+   * one the poison row fails in — so a rejection here is not the case's subject
+   * either.
+   *
+   * @param at - The instant the tick's windows are evaluated at.
+   * @returns The logger the run wrote into.
+   */
+  async function tickKeepingTheLog(at: Date): Promise<RecordingLogger> {
+    const log = recordingLogger();
+    try {
+      await pipelineIndexedCheckJob.run({
+        requestedLimit: PAGE_LIMIT,
+        clock: fixedClock(at),
+        logger: log,
+      });
+    } catch {
+      // As above: the lines, not the envelope, are this tick's output.
+    }
+    return log;
+  }
+
+  /**
+   * Seed one `indexed` candidate (contract §4.1) whose two-file batch the worker
+   * already settled (§16.2, §16.3) — `I7`'s shape, which the OP-126 arm
+   * summarises as a clean `upload.batch.completed`.
+   *
+   * @param slug - A name unique to the candidate, which seeds its content hashes.
+   * @returns The event, its batch id and the batch's uploader.
+   */
+  async function seedCandidate(slug: string): Promise<PageRow> {
+    const event = await seedEvent(ALL_PROCESSED);
+    const batchId = new ObjectId().toHexString();
+    const uploader = new ObjectId();
+    for (const sequence of [1, 2]) {
+      await seedCompletedSession(event, {
+        batchId,
+        createdByUserId: uploader,
+        contentHash: hashFor(`${slug}-${String(sequence)}`),
+        fileName: `DSC_9${String(sequence).padStart(3, "0")}.JPG`,
+      });
+      await seedBatchImage(event, { batchId, status: "done", sequence });
+    }
+    return { event, batchId, uploader };
+  }
+
+  /**
+   * Seed the block's page: the poison row **first** — so it is the lowest `_id`
+   * of the `_id`-ascending page — then the healthy candidates.
+   *
+   * @returns The poison row, the healthy rows (in page order) and the one that
+   *   lands in the run's second chunk.
+   */
+  async function seedPage(): Promise<{
+    readonly poison: PageRow;
+    readonly healthy: readonly PageRow[];
+    readonly secondChunk: PageRow;
+  }> {
+    const poison = await seedCandidate("op136-poison-row-poison");
+    const healthy: PageRow[] = [];
+    for (let index = 1; index < PAGE_SIZE; index += 1) {
+      healthy.push(await seedCandidate(`op136-poison-row-healthy-${String(index)}`));
+    }
+    const secondChunk = healthy[healthy.length - 1];
+    if (secondChunk === undefined) {
+      throw new Error("the page must hold a candidate in the run's second chunk");
+    }
+    return { poison, healthy, secondChunk };
+  }
+
+  /**
+   * Seed a page of the same size with no row failing.
+   *
+   * @returns The page's candidates, in `_id` order.
+   */
+  async function seedCleanPage(): Promise<readonly PageRow[]> {
+    const page: PageRow[] = [];
+    for (let index = 0; index < PAGE_SIZE; index += 1) {
+      page.push(await seedCandidate(`op136-poison-row-clean-${String(index)}`));
+    }
+    return page;
+  }
+
+  /**
+   * Arm the poison shape on one event's batch: every `event_images` read of that
+   * event throws, for the whole case.
+   *
+   * @param eventId - The event whose batch reads fail.
+   * @returns The injection, whose `fired` count proves every call reached it.
+   */
+  function poisonBatchReads(eventId: ObjectId): InjectedReadFailure {
+    return failFindWhen(
+      COLLECTIONS.eventImages,
+      (filter) => filter.eventId instanceof ObjectId && filter.eventId.equals(eventId)
+    );
+  }
+
+  /**
+   * The `upload.batch.completed` rows that name one batch.
+   *
+   * @param batchId - The batch id the summary's payload carries.
+   * @returns The matching outbox rows.
+   */
+  async function completedSummariesFor(batchId: string): Promise<readonly OutboxRow[]> {
+    return (await outboxFor(BATCH_COMPLETED_EVENT)).filter(
+      (row) => String(row.payload.batchId) === batchId
+    );
+  }
+
+  it("I26: the run a poison row fails in still reaches its second chunk", async () => {
+    // Arrange — nine `_id`-ascending candidates: the first is the poison row, and
+    // the ninth is alone in the run's second chunk.
+    const { poison, healthy, secondChunk } = await seedPage();
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const pageOrder = [poison, ...healthy].map((row) => row.event.eventId.toHexString());
+    expect(
+      pageOrder,
+      "the page must be `_id`-ascending, or the poison row is not the one the run reaches first"
+    ).toEqual([...pageOrder].sort());
+
+    // Act — one run, with the poison row's own batch read failing on every call.
+    const injection = poisonBatchReads(poison.event.eventId);
+    try {
+      const run = await runPage(NOW);
+
+      // Sanity — the armed read was reached, or the case proves nothing.
+      expect(
+        injection.fired(),
+        "the poison row's arm read must have failed, or the seed is not poison"
+      ).toBeGreaterThanOrEqual(1);
+
+      // Assert — the failure was contained: the whole page was read and counted.
+      expect(run.result.scanned, "a contained failure does not shorten the page").toBe(PAGE_SIZE);
+      expect(run.result.errors, "one failing row is one counted error").toBe(1);
+
+      // …the healthy rows of both chunks were announced by this same run…
+      const announced = await Promise.all(healthy.map((row) => indexedRowsFor(row.event.eventId)));
+      expect(
+        announced.map((rows) => rows.length),
+        "every healthy row of the page is announced once, in the run the poison row failed in"
+      ).toEqual(healthy.map(() => 1));
+
+      // …the second chunk's row included: a run that stops at the failing chunk
+      // leaves exactly this one missing.
+      expect(
+        await indexedRowsFor(secondChunk.event.eventId),
+        "the second chunk of the page must run in the same run the poison row failed in"
+      ).toHaveLength(1);
+    } finally {
+      injection.restore();
+    }
+  });
+
+  it("I27: the failing row is named once, at warn, under its own event id", async () => {
+    // Arrange — the same page, the same poison row.
+    const { poison } = await seedPage();
+    const injection = poisonBatchReads(poison.event.eventId);
+    try {
+      // Act — one run, keeping the lines it writes.
+      const log = await tickKeepingTheLog(NOW);
+
+      // Sanity — the armed read was reached, so a missing line is the missing warn.
+      expect(
+        injection.fired(),
+        "the poison row's arm read must have failed, or the seed is not poison"
+      ).toBeGreaterThanOrEqual(1);
+
+      // Assert — one line, at warn, naming the row by its event id.
+      const named = log.entriesForEvent(ROW_FAILED_EVENT);
+      expect(named, "a row whose own arm work throws must be named exactly once").toHaveLength(1);
+      expect(named[0]?.level, "a contained row failure is a warning, not a run failure").toBe(
+        "warn"
+      );
+      expect(named[0]?.fields.eventId, "the line must name the failing event").toBe(
+        poison.event.eventId.toHexString()
+      );
+
+      // …and the thrown error travels with the line, whichever field carries it.
+      const carried = JSON.stringify(named[0]?.fields ?? {}, (_key, value: unknown) =>
+        value instanceof Error ? value.message : value
+      );
+      expect(carried, "the warn must carry the thrown error").toContain(
+        `injected failure: find on ${COLLECTIONS.eventImages}`
+      );
+    } finally {
+      injection.restore();
+    }
+  });
+
+  it("I28 (characterization): a contained row keeps its triple and is retried until its arm reads", async () => {
+    // Arrange — the same page, the same poison row.
+    const { poison } = await seedPage();
+    const injection = poisonBatchReads(poison.event.eventId);
+    try {
+      // Act — two ticks whose envelopes are not this case's subject.
+      await tickWithoutReadingTheEnvelope(NOW);
+      await tickWithoutReadingTheEnvelope(new Date(NOW.getTime() + NEXT_BUCKET_MS));
+
+      // Assert — both ticks reached the poison row's arm again: the row stayed a
+      // candidate instead of leaving the page with its work undone.
+      expect(
+        injection.fired(),
+        "each tick must reach the poison row's read again, or the retry was never measured"
+      ).toBeGreaterThanOrEqual(2);
+
+      const stored = (await app.db
+        .collection(COLLECTIONS.events)
+        .findOne({ _id: poison.event.eventId })) as unknown as {
+        readonly pipeline?: { readonly indexedCheckedCounters?: unknown };
+      } | null;
+      expect(
+        stored?.pipeline?.indexedCheckedCounters,
+        "a row whose arm work failed must keep its checked triple unstamped"
+      ).toBeUndefined();
+      expect(
+        await completedSummariesFor(poison.batchId),
+        "no summary exists while the row's arm cannot read its batch"
+      ).toHaveLength(0);
+    } finally {
+      injection.restore();
+    }
+
+    // Act — the read is cleared: the next tick over the same rows.
+    await runPage(new Date(NOW.getTime() + 2 * NEXT_BUCKET_MS));
+
+    // Assert — the deferred work is done once, naming what the summary's email
+    // rule reads. Nothing was lost while the row was poisoned.
+    const summaries = await completedSummariesFor(poison.batchId);
+    expect(
+      summaries,
+      "the retried row's own batch must be summarised exactly once, by the tick that can read it"
+    ).toHaveLength(1);
+    expect(summaries[0]?.payload.eventId).toBe(poison.event.eventId.toHexString());
+    expect(summaries[0]?.subjectRef).toEqual({ kind: "user", id: poison.uploader.toHexString() });
+    expect(summaries[0]?.payload.fileCount).toBe(2);
+  });
+
+  it("I29: a clean page of the same size reports no failure and announces every row once", async () => {
+    // Arrange — the same page shape, with no row's batch read failing.
+    const page = await seedCleanPage();
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+
+    // Act
+    const run = await runPage(NOW);
+
+    // Assert — nothing failed, so the envelope and the log say so…
+    expect(run.result.scanned, "a clean page is read whole").toBe(PAGE_SIZE);
+    expect(run.result.errors, "a clean page must not report an error").toBe(0);
+    expect(
+      run.log.entriesForEvent(ROW_FAILED_EVENT),
+      "a clean page has no failing row to name"
+    ).toHaveLength(0);
+
+    // …and every row of the page is announced, and its settled batch summarised,
+    // exactly once.
+    const announced = await Promise.all(page.map((row) => indexedRowsFor(row.event.eventId)));
+    expect(
+      announced.map((rows) => rows.length),
+      "every row of a clean page is announced once"
+    ).toEqual(page.map(() => 1));
+    expect(
+      (await outboxFor(BATCH_COMPLETED_EVENT)).map((row) => String(row.payload.batchId)).sort(),
+      "every row's settled batch is summarised once"
+    ).toEqual(page.map((row) => row.batchId).sort());
   });
 });
