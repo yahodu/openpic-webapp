@@ -1,3 +1,9 @@
+## [1.66.2](https://github.com/yahodu/openpic-webapp/compare/v1.66.1...v1.66.2) (2026-11-18)
+
+### Bug Fixes
+
+- **tenancy:** OP-101 bound the joinedAt reader to the wire instant window ([#698](https://github.com/yahodu/openpic-webapp/issues/698)) ([f4558e3](https://github.com/yahodu/openpic-webapp/commit/f4558e3e314e8b9c55d07bc31270a25b46645bb4))
+
 ## [1.66.1](https://github.com/yahodu/openpic-webapp/compare/v1.66.0...v1.66.1) (2026-11-18)
 
 ### Bug Fixes
