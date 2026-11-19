@@ -1,3 +1,9 @@
+## [1.66.8](https://github.com/yahodu/openpic-webapp/compare/v1.66.7...v1.66.8) (2026-11-19)
+
+### Bug Fixes
+
+- **jobs:** OP-136 drain the three emit-only sweeps ([#732](https://github.com/yahodu/openpic-webapp/issues/732)) ([b3b1e68](https://github.com/yahodu/openpic-webapp/commit/b3b1e68d005bd8ccaf0da88d84476d957c04a95c)), closes [#653](https://github.com/yahodu/openpic-webapp/issues/653)
+
 ## [1.66.7](https://github.com/yahodu/openpic-webapp/compare/v1.66.6...v1.66.7) (2026-11-19)
 
 ### Bug Fixes
