@@ -206,3 +206,106 @@ green; `eslint` 0 errors on the spec (one pre-existing
 `git diff --numstat` is `71 21 apps/web/src/test/integration/job-sweep-drain.test.ts`
 plus this record and the ledger row, cell and note. No number outside `0881` is
 consumed.
+
+## Review — round 1 (post-merge verification at `94db9d6a`)
+
+**Verdict: APPROVED WITH FINDINGS — no Critical, High, Medium or Low finding;
+three Info notes.** The delivery is PR #738, reviewed at head `9a355179` and
+squash-merged as `94db9d6a` before this verification ran, so this is a check of
+the landed bytes and not a merge request. The reviewer made **zero edits** to the
+deliverable — no test, fixture, helper, production line or ADR body — and this
+append mints no number, renames no file and retracts nothing: **nothing in
+§Decision is retracted**, and §Context, §Consequences, §Alternatives and
+§Evidence stand exactly as written.
+
+### The reviewed bytes are the shipped bytes
+
+`git rev-parse 9a355179^{tree}` and `git rev-parse 94db9d6a^{tree}` both return
+`20f29a989e152b7e839e5a20526c3a0042bee36e`. `git diff --name-status 9a355179 94db9d6a`
+is empty and `git merge-base --is-ancestor 94db9d6a origin/main` succeeds, so the
+squash carries the reviewed tree verbatim and sits on the trunk.
+
+### Measured by this review, not carried over from the handoff
+
+`git diff --numstat 94db9d6a^ 94db9d6a` names **three paths and no production
+file**:
+
+- `71 21 apps/web/src/test/integration/job-sweep-drain.test.ts`
+- `208 0 docs/adr/ADR-0881-op136-nudge-slot-residual-pins.md`
+- `33 2 docs/adr/README.md`
+
+The spec's blob is one object at all three commits that matter, so the pin that
+ran is the pin that landed: on `9a355179`, `94db9d6a` and `origin/main`,
+`git rev-parse <sha>:<spec>` prints `b4d115bc8564ad24b7fe9fc382d2a0bc792e203c`
+every time.
+
+- **Spec:** `1 file / 6 passed (6)` (`job-sweep-drain.test.ts`, integration
+  project, at `94db9d6a`).
+- **Neighbours plus the spec:** `3 files / 17 passed (17)` — 6 + 7 + 4, from
+  `job-sweep-failure-windows.test.ts` and the trunk's
+  `apps/web/src/test/integration/job-account-lifecycle.test.ts`. The second
+  basename is the one on disk; §Decision 3 and §Evidence above shorten it to
+  `job-sweep-account-lifecycle.test.ts`, a naming slip that moves no file, no
+  case and no count (ADR-0849, ADR-0853, ADR-0856 and ADR-0880 all name it
+  correctly). It is recorded here rather than edited, because this section is
+  additive.
+- **ADR guards:** `6 files / 236 passed (236)` — `adr-numbering`,
+  `adr-consumers`, `adr-inline-code-spans`, `adr-lane-ranges`,
+  `adr-record-links` and `adr-source-references`.
+- **Types and format:** `tsc -p apps/web/tsconfig.json --noEmit` exit `0`;
+  `prettier --check` clean on the touched paths.
+- **Full `unit` project on the merged tree:** `188 files / 3162 passed | 3 skipped (3165)`, exit `0`.
+- **Number:** `ADR-0881` occurs exactly once among the trunk's `docs/adr`
+  basenames and `uniq -d` over that list is empty. `git rev-list --objects --all`
+  over `docs/adr` resolves the record only as itself, and the open PR heads top
+  out at `0876` and `0306`. At review time no `.worktrees/*/docs/adr` tree
+  carried it; the one that holds it today is this lane's own, cut from the trunk
+  that now carries it.
+- **ADR-0879:** absent from the diff; the correction is stated by reference, as
+  §3 promises.
+
+### The pin is load-bearing — both mutations re-run here
+
+In a throwaway `--detach` worktree at `9a355179`, with the per-package
+`node_modules` symlinked (the reviewed head and this lane do not differ under
+`apps/web/src/server` or `packages/contracts`), against `verification-nudge.ts`
+sha256 `38064a396f525ab9e05888d20c7055b9f9612069ad50a27f613dae0aeba1bb17` before
+and after each probe:
+
+- **M1** — the page's sort flipped to `.sort({ createdAt: -1 })` gives
+  `1 failed | 5 passed (6)` with **S6 alone**, and the failure message
+  `the page carries the exhausted row and one eligible account, so exactly one nudge is due: expected 2 to be 1`.
+- **M2** — `MAX_CANDIDATE_AGE_MS = 6 × MS_PER_DAY` (the window widened) gives
+  `2 failed | 4 passed (6)`, **S4 and S5** red and **S6 green**.
+
+Both mutations were reverted with `git checkout --`, the file came back at the
+same sha256, and `git status --short` was clean afterwards. The red sets are
+disjoint, so the appended case adds a guarantee rather than restating S4: the
+§Evidence table reproduces exactly.
+
+### Findings and routing, all Info
+
+- **A1 — resolved, accepted.** The card asked for "every assertion
+  byte-identical"; the implementer restated two `expect(…, "<message>")` message
+  strings in S4 while keeping every matcher and expected value byte-identical
+  (`toBe(2)` and `toEqual({ exhausted: 0, thirty: 1, forty: 1, fifty: 0 })`),
+  and the fixture, the seeds and the seed order did not move. One restated
+  message was itself the overstatement this record corrects, so leaving it would
+  have shipped a corrected title beside an uncorrected claim; the restatement is
+  the correct reading of the card. No card was needed.
+- **S6 shape.** The case asserts only `detail(run, "nudged")` and
+  `outboxCounts(...)`; it names no marker field, no constant, no sort key and no
+  `scanned` or `hasMore` value, so a correct implementation with a different
+  field name, a different bound inside the stated margins or an ordered cursor
+  satisfies it. It is deterministic — the fixture's insertion order fixes the
+  page prefix — and it discriminates both "the exhausted row is skipped for
+  free" (which gives `nudged: 2` and `forty: 1`) and "the page ignores its
+  limit" (which gives `forty: 1`).
+- **Production doc-comment.** The comment at
+  `apps/web/src/server/jobs/verification-nudge.ts:23–25` says that an account
+  _older than_ `MAX_CANDIDATE_AGE_MS` stops spending a page slot. That is
+  accurate — age is why the query spares the row — and it does not repeat the
+  corrected overstatement, so no change is due.
+- **Follow-up routing.** `t_47f104cb` (round-1 docs, ADR-0880's stale
+  `createdAt` citation) was already open and is this card's parent, so it was
+  not re-routed; nothing else was left unrouted.
