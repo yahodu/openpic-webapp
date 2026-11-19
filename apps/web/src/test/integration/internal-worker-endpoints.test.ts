@@ -1352,3 +1352,85 @@ describe("when one event item is both ahead of the outbox window and out of the 
     expect(stored.map((row) => row.eventKey)).toEqual([PIPELINE_INDEXED_EVENT]);
   });
 });
+
+/* ── F-B, one rung lower: the instant gate before the payload gate (ADR-0844) ─ */
+
+/**
+ * The rung **below** F-B, which ADR-0842 §3 named "deliberately not pinned", pinned
+ * by ADR-0844. The same question one gate further down: an item whose `occurredAt`
+ * is more than 24 h ahead **and** whose payload nests a key on
+ * `FORBIDDEN_PAYLOAD_KEYS` (ADR-0029 §3) is refused for two independent reasons at
+ * once, and the caller sees `occurred_at_out_of_window` — because the route asks
+ * its envelope question before `emitDomainEvent` reaches *any* of its semantic
+ * gates, the catalogue gate (`isRegisteredEventKey`) and the payload gate
+ * (`findForbiddenPayloadKey`) included. So `forbidden_payload_field` is never the
+ * reason a caller sees when the instant is also out of window.
+ *
+ * **Pinned as shipped** on ADR-0842 §1's first ground, unchanged one rung down: the
+ * window guard can only live in the route (ADR-0835 §4 — `emitDomainEvent`'s clock
+ * seam *is* the worker's instant and its own specs drive fixed clocks), while the
+ * payload gate must stay inside `emitDomainEvent`, which every in-process publisher
+ * of a domain event calls. The route can answer the instant question on its own; it
+ * would need a second copy of the forbidden-key list to answer this one first.
+ *
+ * Both rungs refuse the item and neither writes a row, so the data outcome is
+ * identical whatever the order — what is pinned is the one string a worker's retry
+ * logic branches on. **Characterization, green on arrival** (the ladder ships);
+ * it is not a RED pin and needs no GREEN sibling.
+ */
+describe("when one event item is both ahead of the outbox window and carries a forbidden payload key", () => {
+  it("F-B2: applies the sibling and answers occurred_at_out_of_window for a future-dated item with a forbidden payload key", async () => {
+    const seeded = await world("op135-fb2-forbidden-payload");
+    // The sibling is a valid item: a registered key, an instant inside the window
+    // (an hour in the past — the window is one-sided forward).
+    const insideAt = new Date(Date.now() - 60 * 60 * 1000);
+    // The doubly-invalid item: the SAME registered key (so nothing it carries can
+    // answer `unknown_event_key`), 25 h ahead, and a payload that nests a key the
+    // outbox refuses at any depth (ADR-0029 §3).
+    const aheadAt = new Date(Date.now() + EVENT_INSTANT_WINDOW_MS + 60 * 60 * 1000);
+    const forbiddenPayload = { email: "probe@example.test" };
+
+    const response = await domainEventsHandler(
+      signedPost(DOMAIN_EVENTS_PATH, {
+        events: [
+          {
+            ...domainEvent(PIPELINE_INDEXED_EVENT, seeded.tenantKey, seeded.event),
+            occurredAt: insideAt.toISOString(),
+          },
+          {
+            ...domainEvent(PIPELINE_INDEXED_EVENT, seeded.tenantKey, seeded.event, {
+              payload: forbiddenPayload,
+            }),
+            occurredAt: aheadAt.toISOString(),
+          },
+        ],
+      })
+    );
+
+    // The doubly-invalid item is refused in its own `rejected[]` slot — index 1,
+    // the position it holds in the batch — and the batch still answers 202.
+    expect(response.status).toBe(202);
+    const body = await bodyOf(
+      response,
+      202,
+      "POST internal domain-events (future-dated item with a forbidden payload key)"
+    );
+    expect(keysOf(body)).toEqual(BATCH_KEYS);
+    expect(body.accepted).toBe(1);
+    expect(body.deduped).toBe(0);
+    expect(body.rejected).toEqual([
+      { index: 1, eventKey: PIPELINE_INDEXED_EVENT, reason: OUT_OF_WINDOW_REASON },
+    ]);
+
+    // Exactly the accepted item's row is stored: the refused item wrote none, so
+    // the only row under this tenant carries the sibling's key, and the refused
+    // payload's forbidden value never reached the outbox.
+    const stored = (await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: seeded.tenantKey })
+      .sort({ _id: 1 })
+      .toArray()) as unknown as DomainEventRow[];
+    expect(stored.map((row) => row.eventKey)).toEqual([PIPELINE_INDEXED_EVENT]);
+    expect(JSON.stringify(stored)).not.toContain(forbiddenPayload.email);
+  });
+});
