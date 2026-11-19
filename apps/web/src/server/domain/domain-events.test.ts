@@ -513,3 +513,24 @@ describe("emitDomainEvent — gate precedence when both gates refuse", () => {
     expect(fake.calls.some((call) => call.method === "insertOne")).toBe(false);
   });
 });
+
+describe("emitDomainEvent — the structural schema gate precedes the semantic gates", () => {
+  it("answers invalid_domain_event when a structurally invalid input also carries a forbidden payload key", async () => {
+    const fake = makeFakeMongo();
+
+    // Characterization pin (ADR-0846): `emitDomainEvent` runs `domainEventInputSchema`
+    // before either semantic gate, so an input that fails the schema AND nests a
+    // forbidden payload key answers the structural fault. The payload gate never
+    // gets to speak, and no row is written. The `code` assertion carries the
+    // ordering verdict; the write assertion guards a refuse-then-write regression
+    // (both refusals precede the insert, so it is inert for the order itself).
+    await expect(
+      emitDomainEvent(makeDomainEventInput({ tenantId: "", payload: { email: "leak" } }), {
+        db: fake.db,
+        clock: fixedClock(T0),
+      })
+    ).rejects.toMatchObject({ code: "invalid_domain_event" });
+
+    expect(fake.calls.some((call) => call.method === "insertOne")).toBe(false);
+  });
+});
