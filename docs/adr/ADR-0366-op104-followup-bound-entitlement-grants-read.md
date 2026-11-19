@@ -122,3 +122,153 @@ cell was re-read from this checkout's ledger immediately before committing, and
 worktree at the cut, so this record consumes `0366` and the cell advances to
 `0367`. `0364` and `0365` are consumed and are not renumbered. No number
 outside the lane range `0360`–`0379` is touched.
+
+## Review and landing (PR #708)
+
+Reviewed head `5b46aa31`; docs sign-off `t_75d558ef`, which consumes no ADR
+number. **Verdict: APPROVED WITH FINDINGS (Low only)** — no Critical, High or
+Medium finding; three Low findings and one Info note, each routed to a card.
+PR [#708](https://github.com/yahodu/openpic-webapp/pull/708) squash-merged as
+`200eaf97` (`mergedAt 2026-11-19T06:29:25Z`) onto `origin/main` `e6b081a7`; the
+PR is `MERGED` and the repository deleted the lane branch.
+
+This section records what the review measured after the record above was
+written. It mints no number, retracts nothing and changes no cell.
+
+### Landing proof
+
+- **Tree identity.** `git rev-parse 9e1b822e^{tree} 200eaf97^{tree}` prints
+  `0d5036f10cf4eae46e1a186e7ddce3a4b8fd6ef6` twice: the bytes reviewed at the
+  PR head are the bytes on the trunk.
+- **The landing merge.** `9e1b822e` carries exactly two parents — `5b46aa31`
+  (the reviewed head) and `e6b081a7` (`origin/main`, the PR #710 sign-off) — so
+  it folds the trunk in rather than changing the delivery.
+- **Scoped diff.** `git diff --stat 5b46aa31 9e1b822e` over
+  `apps/web/src/server/services/entitlements/view.ts` and this record is empty.
+- **Production identity.** The `view.ts` blob is `6b2e8f9d…` at `5b46aa31`, at
+  `9e1b822e`, at `200eaf97` and on `origin/main`, so the gates below still
+  describe the code the trunk carries.
+- **This record's own blob** is `8ede3f5c…` at all four of those revisions; this
+  section is the only delta the sign-off adds.
+
+### Equivalence proof — probe worktrees at `84378fa0` and `5b46aa31`
+
+The review built two probe worktrees, one at the branch's base `84378fa0` (the
+unbounded read) and one at the reviewed head `5b46aa31`, seeded both through the
+same script, and called `readEntitlementsView(db, tenantId, now)` directly. The
+two served bodies are **byte-identical** — 591 bytes each, `diff` empty — on a
+seed that exercises every arm of the window predicate:
+
+| Grant window                 | Served into `grants[]` and `effectiveLimit` |
+| ---------------------------- | ------------------------------------------- |
+| `validFrom == now`           | yes                                         |
+| `validFrom == now + 1 ms`    | no                                          |
+| `validUntil == now`          | no (exclusive bound, in both layers)        |
+| `validUntil == now + 1 ms`   | yes                                         |
+| `effectiveLimit` of the plan | **160** = `100` plan + `50` + `7` + `3`     |
+
+A live grant belonging to a **second tenant** (`delta 424242`) is never served
+by either head. That is the load-bearing half of §Decision's tenant-scope claim:
+`tenantRepo`'s `scopeFilter` merges `tenantId` beside the window filter, so the
+`$or` reaches the driver intact and the tenant boundary does not depend on the
+`$or`'s branch shape.
+
+### The disclosed fail-open delta, measured in both directions
+
+§Decision's fail-open delta is real and was reproduced, not assumed. With a grant
+row whose `delta` is not a number in a **closed** window (`validFrom` in the
+past, `validUntil` before `now`), the base `84378fa0` threw a `ZodError` out of
+`storedGrantSchema.parse` and its route answered `500 internal_error`, while the
+head `5b46aa31` answers `200` and serves the healthy numbers, because the
+narrowed read never fetched the corrupt row. The same corruption in an **open**
+window throws a `ZodError` on both heads: the bounded read still parses every row
+it serves. The delta is therefore confined to rows the predicate excludes,
+exactly as §Decision states it, and it is **not pinned** by this record — the
+pins are card `t_8f1dac13`.
+
+### F1 measured — the storage scan still grows with expired grants
+
+One probe seeded **60 expired grants and 3 live ones** and ran the delivered
+filter under the production index set `INDEX_SPECS` ships, then repeated it with
+a window-bearing index added:
+
+| Filter plan                              | keysExamined | docsExamined | nReturned |
+| ---------------------------------------- | ------------ | ------------ | --------- |
+| delivered, production indexes            | 63           | 63           | 3         |
+| with `(tenantId, validUntil)`            | 4            | 6            | 3         |
+| with `(tenantId, validFrom, validUntil)` | 6            | 6            | 3         |
+
+`nReturned` is `3` in every row: that is the filter's answer, not the index's.
+The delivered plan examines `63` documents for a three-document answer because
+the shipped family (`entitlement_grants_tenant_key_valid_from`, leading
+`tenantId` and `entitlementKey`) can order the tenant's grants but cannot bound
+the window, so the driver walks every expired row and filters it out.
+
+Two forward-looking sentences of this record are therefore **superseded**:
+
+- §Consequences' "its latency no longer grows with the number of expired or
+  future purchase grants" holds for the **returned and parsed** set — the view
+  no longer parses expired grants, and `effectiveLimit` pays only for the active
+  ones — but not for the storage scan, which still walks them.
+- §Out of scope's "no finding or measurement asks for a `validFrom`-leading
+  index today" is superseded: the measurement above asks for a window-bearing
+  index, and that index is card `t_a3fcf2e2`.
+
+**Nothing historical is retracted.** This record's §Context and §Decision stand
+as written — the read is still bounded by the same window, with no projection
+and no `limit`, and the served bodies are still identical — and no `D1`/`D2`
+dispute entry of the earlier OP-104 records is reopened. Only the two
+latency-and-index sentences quoted above are corrected, and they are corrected
+here, in the follow-up's own record, which is where what followed belongs.
+
+### Ledger integration
+
+This record's §ADR number allocation sentence read `0366 → 0367`, while the
+trunk carried `0368`: the sibling card `t_d614b82a` reserved `0367` while this
+branch was open, so `origin/main` had moved during the review. `docs/adr/README.md`
+was the only conflicted path on the landing merge, and it resolved as a union —
+the `Next free` cell takes `main`'s `0368` (a higher cell is never rewound), both
+index rows are kept in ascending order (`0366` from this branch, `0367` from the
+trunk), both prose blocks are kept, and the branch's cell sentence is corrected
+to `0368`. At this sign-off the cell reads `0369`, because PR [#711](https://github.com/yahodu/openpic-webapp/pull/711)
+consumed `0368` for [ADR-0368](ADR-0368-op104-followup-counter-parse-pin.md) and
+advanced it; this section touches neither the cell nor any row, so
+`git diff --name-only origin/main...HEAD` lists exactly this file.
+
+The recurrence — a lane card writing a cell lower than the trunk's because it
+read the cell at its cut and the trunk moved under it — is routed to card
+`t_b3edd8a0`.
+
+### Checks at this sign-off
+
+- **`prettier --check`** clean on this record; the six ADR guards
+  (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`, `adr-consumers`,
+  `adr-source-references`, `adr-inline-code-spans`) **236 passed (236)**.
+- **Scope proof.** `git diff --name-only origin/main...HEAD` lists exactly
+  `docs/adr/ADR-0366-op104-followup-bound-entitlement-grants-read.md`, so the
+  ledger is byte-identical and no number is minted.
+- **Remote checks on PR #708** — 15 `statusCheckRollup` rows, all `SUCCESS`; 14
+  are gates (`ci`, `unit_test`, `test_coverage`, `lint`, `audit`, `audit-dev`,
+  `secret-scan`, `env-changes`, `validate-branch-name`, `validate-pr-title`,
+  `CodeQL`, two `Analyze` jobs and `Assert CI evidence for the pushed head`) and
+  the fifteenth, `notify-discord`, is the close side-effect.
+- **Measured by the review on the merged tree `9e1b822e`**: `tsc` exit `0` on
+  all three projects; `eslint` 0 problems on the one touched production file;
+  focused integration `entitlements-endpoints` + `entitlements` **42 passed
+  (42)**; the six ADR guards **236 passed (236)**. And at the reviewed head,
+  full `unit` **187 files / 3157 passed (3 skipped)** and full `integration`
+  **145 files / 1526 passed**.
+
+### Findings routing
+
+| Finding | Severity | Subject                                                   | Routed to     |
+| ------- | -------- | --------------------------------------------------------- | ------------- |
+| F1      | Low      | the storage scan still grows with expired grants          | `t_a3fcf2e2`  |
+| F2      | Low      | the two latency-and-index sentences corrected above       | this sign-off |
+| F3      | Low      | a lane card can write a cell lower than the trunk's       | `t_b3edd8a0`  |
+| —       | —        | the fail-open delta's two arms, left unpinned by design   | `t_8f1dac13`  |
+| Info    | Info     | `grants[]` order is plan-dependent, unpinned, outside the | no action     |
+|         |          | contract                                                  |               |
+
+No finding was Critical, High or Medium, so the delivery ships; the four
+follow-ups above carry the rest.
