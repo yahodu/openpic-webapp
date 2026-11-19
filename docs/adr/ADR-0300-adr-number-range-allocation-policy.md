@@ -382,20 +382,21 @@ ad hoc (ADR-0799, ADR-0800, ADR-0811, ADR-0818); items 18–21 give it a clause.
 B) were already in force. What still propagated the defect was the **card-body
 template**: lane cards were still written as "take the lane `Next free` cell
 immediately before committing", so every worker obeyed the template literally and
-derived its number from the same shared snapshot. Rules A and B stand unchanged;
-this section records the template half that let workers bypass them, plus the two
+derived its number from the same shared snapshot. Rule A stands unchanged; rule B's
+enumeration **gains a fourth source** — every open PR head (item 23 below). This
+section records the template half that let workers bypass them, plus the two
 monotonicity clauses the cell itself needed. It is an in-place amendment: no
 number is consumed, `docs/adr/README.md` stays byte-identical, and the board-wide
 cell stays at `0318`.
 
-| measured (2026-11-19, `origin/main` `b120866c`) | value                                                                                                                                                                                                                                                        |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| OP-104 lane cell / highest landed record        | `0369` / `0368`                                                                                                                                                                                                                                              |
-| in-flight `OP-104` reservations                 | `0369` on PR [#714](https://github.com/yahodu/openpic-webapp/pull/714) (card `t_a3fcf2e2`), `0370` on PR [#712](https://github.com/yahodu/openpic-webapp/pull/712) (card `t_8f1dac13`) — neither on the trunk; each visible only in a worktree and a PR head |
-| the double read                                 | cards `t_d614b82a` and `t_6fdc277b`, both cut off `origin/main` `84378fa0`, both read the OP-104 cell `0366`                                                                                                                                                 |
-| what each wrote                                 | `t_6fdc277b` holds `0366` and wrote the cell `0367` on its branch; `t_d614b82a` swept the worktrees, found `0366` held by a worktree with no PR, took `0367` and wrote the cell `0368`                                                                       |
-| the landing                                     | the trunk cell had already advanced to `0368`, so the branch's `0367` was a **rewind**; the README-only conflict resolved as a union that kept `0368` and renumbered nothing                                                                                 |
-| the cell-versus-PR case                         | PR [#711](https://github.com/yahodu/openpic-webapp/pull/711) held `0368` while the trunk cell also read `0368`, so a card cut from that trunk and obeying "take the cell" would have minted a number a live PR already held                                  |
+| measured (2026-11-19, `origin/main` `b120866c`)             | value                                                                                                                                                                                                                                                        |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| OP-104 lane cell / highest landed record                    | `0369` / `0368`                                                                                                                                                                                                                                              |
+| in-flight `OP-104` reservations                             | `0369` on PR [#714](https://github.com/yahodu/openpic-webapp/pull/714) (card `t_a3fcf2e2`), `0370` on PR [#712](https://github.com/yahodu/openpic-webapp/pull/712) (card `t_8f1dac13`) — neither on the trunk; each visible only in a worktree and a PR head |
+| the double read                                             | cards `t_d614b82a` and `t_6fdc277b`, both cut off `origin/main` `84378fa0`, both read the OP-104 cell `0366`                                                                                                                                                 |
+| what each wrote                                             | `t_6fdc277b` holds `0366` and wrote the cell `0367` on its branch; `t_d614b82a` swept the worktrees, found `0366` held by a worktree with no PR, took `0367` and wrote the cell `0368`                                                                       |
+| the landing                                                 | the trunk cell had already advanced to `0368`, so the branch's `0367` was a **rewind**; the README-only conflict resolved as a union that kept `0368` and renumbered nothing                                                                                 |
+| the cell-versus-PR case (state at `0659da33` = `9b604e44^`) | PR [#711](https://github.com/yahodu/openpic-webapp/pull/711) held `0368` while the trunk cell also read `0368`, so a card cut from that trunk and obeying "take the cell" would have minted a number a live PR already held                                  |
 
 The card that raised this section also listed a `0362`/`0363` collision between
 sibling cards. That instance is **not** cited as evidence: trunk history cannot
@@ -443,7 +444,7 @@ number,headRefName,headRefOid`, then `git fetch origin <headRefName>` (or
     value is higher, the branch's value is dropped without touching a record. A
     rewind is not a lost number, it is a lost **reservation**: the next card
     reads the rewound value and mints a number a live card already holds. Only a
-    duplicate _number_ justifies a renumber (§9 item 9), and renumbering to make
+    duplicate _number_ justifies a renumber (§8 item 9), and renumbering to make
     the ledger look tidy is what this policy exists to end.
 26. **A card that mints no number writes `none` and leaves the ledger
     byte-identical.** A sign-off, a review appendix, an in-place amendment such
@@ -479,7 +480,7 @@ write per reservation re-creates the shared-file serialization point that
 per-lane ranges were introduced to remove.
 
 **Rejected alternative — have the worker renumber when it sees a lower cell.**
-Renumbering hides the collision (§9 item 9) and rewrites every citation of the
+Renumbering hides the collision (§8 item 9) and rewrites every citation of the
 number; the cell is the cheap place to lose nothing, and the reservation is the
 allocator's to re-issue.
 
