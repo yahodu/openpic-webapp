@@ -183,3 +183,164 @@ PR `#714` carries no record for it yet. This record therefore takes **`0371`**,
 the number the card reserved, and the lane cell advances from `0371` to
 **`0372`**. No number outside the lane range `0360`–`0379` is touched, and no
 higher cell is lowered.
+
+## Review and landing — PR #716 (squash 461d83d4)
+
+Reviewed head `bbbcc4905acc9cf87845a17a40d02cce0d6e0691` on card `t_6d79f7d6`;
+this sign-off is card `t_34ffc481`, which consumes **no ADR number**, changes no
+cell, and leaves `docs/adr/README.md` byte-identical. **Verdict: APPROVED WITH
+FINDINGS (three Info; no re-review)** — both pins are load-bearing exactly as
+§Decision claims, and one figure pair in §Evidence does not reproduce; it is
+re-measured below.
+
+Nothing above is retracted. §Context, §Decision (L11, L12 and the
+"one clause per case" ruling), §Evidence's two mutation logs, §Out of scope and
+§Consequences stand as written. The Status line already read `Accepted` at
+delivery, and the reviewed head's tree **is** the squash's tree (§Landing proof),
+so every measurement in §Evidence describes the bytes now on the trunk.
+
+### Shape of the reviewed diff
+
+The review base was `origin/main` `8d8f2c13`, and the trunk did not move while
+the review ran. `git diff --stat 8d8f2c13...bbbcc49`:
+
+| Path                                                           | Lines     |
+| -------------------------------------------------------------- | --------- |
+| `apps/web/src/test/integration/entitlements-endpoints.test.ts` | `+191 −0` |
+| `docs/adr/ADR-0371-op104-followup-grant-read-clause-pins.md`   | `+185 −0` |
+| `docs/adr/README.md`                                           | `+4 −1`   |
+
+**Three paths, `+380 −1`.** The spec holds **37** `it(` blocks at the head, and
+its hunk carries **no deletion at all**, so the 35 carried cases — L9 and L10
+included — are byte-identical. No production file appears. The same diff holds no
+new import, no test-environment conditional, no `.only`/`.skip`, no
+`@ts-ignore`/`eslint-disable`, no `console.*` and no fixture-specific hardcoding:
+the honesty audit is clean, and the delivery is tests plus this record plus the
+ledger exactly as the card ordered.
+
+### Landing proof
+
+- **Squash.** `461d83d4365dd4f06e7a13bd4e1a27528046e71f`; PR
+  [#716](https://github.com/yahodu/openpic-webapp/pull/716) is `MERGED` with
+  `mergedAt 2026-11-19T08:11:56Z`, `headRefOid bbbcc49` and
+  `mergeCommit 461d83d4`. The branch was deleted by the repository on merge.
+- **Tree identity.** `git rev-parse bbbcc49^{tree}` and
+  `git rev-parse 461d83d4^{tree}` both print
+  `64528c03457eef4c02c2513400d0bc01e5bf7afa`, and `git diff --stat bbbcc49
+461d83d4` prints nothing over the **whole** tree — the review ran on the
+  shipped bytes, not on a near-copy.
+- **Trunk at merge.** Local `main` == `origin/main` == `461d83d4` immediately
+  after the merge, so the reviewed tree was also the trunk tree. The trunk has
+  since advanced through `4cb72527` (PR #714,
+  [ADR-0369](ADR-0369-op104-followup-grant-window-index.md), the `validUntil`
+  index) and `62b855f5` (the `1.66.6` release chore);
+  `git diff --name-only 461d83d4 origin/main` lists neither this record nor the
+  spec, and `apps/web/src/server/services/entitlements/view.ts` still hashes
+  `92e83ccd…867cb`. That is why the counts below were re-measured on today's
+  trunk `62b855f5` and answer unchanged.
+
+### Reviewer-run evidence
+
+Measured by the review of `t_6d79f7d6`, independent of the delivery's own runs:
+
+- **Focused integration**
+  (`CI=true TMPDIR=/root/tmp-mongo … --project integration
+apps/web/src/test/integration/entitlements-endpoints.test.ts`): **37 passed
+  (37)** at the reviewed head, and **37 passed (37)** again on the trunk
+  `62b855f5` at this sign-off.
+- **Standalone selection.** `-t "L11"` and `-t "L12"` each answer **1 passed |
+  36 skipped (37)**, so neither pin is carried by its neighbour's seed.
+- **Case count.** `grep -c '^\s*it('` on the spec reads **37** at the head and
+  **35** at `8d8f2c13`; the hunk is `+191 −0`.
+- **Static gates.** `prettier --check` clean on the spec, this record and the
+  ledger; `eslint` exit **0** on the spec; `tsc -p` exit **0** on all three
+  projects; the six ADR guard files **236 passed (236)**.
+- **Full suite with coverage.** `vitest run --project unit --project integration
+--coverage`: exit **0** — **333 files / 4690 passed (3 skipped)**, global
+  **91.8 % statements / 80.69 % branches / 96.01 % functions / 91.91 % lines**,
+  against the 80 % per-dimension thresholds in `vitest.config.ts`.
+- **Remote checks.** `gh pr checks 716` — **14/14 pass** at `bbbcc49`.
+
+### Load-bearing, re-measured
+
+Two mutations in a throwaway **detached** probe worktree at `bbbcc49` — never the
+lane tree — with `node_modules`, `apps/web/node_modules` and
+`packages/contracts/node_modules` symlinked in. `view.ts` there hashed
+`92e83ccd585f6aae0c2096fd2e2ce618f46b7b90ab998965e64eff580ea867cb`, the value
+§Evidence and ADR-0370's probe record; baseline `Test Files 1 passed (1)` /
+`Tests 37 passed (37)`.
+
+| Mutation                                           | Full-file result             | Red case |
+| -------------------------------------------------- | ---------------------------- | -------- |
+| drop `validFrom: { $lte: now },`                   | `1 failed \| 36 passed (37)` | **L11**  |
+| `{ validUntil: { $gt: now } }` → `{ … $gte: now }` | `1 failed \| 36 passed (37)` | **L12**  |
+
+Both reds are `AssertionError: expected 500 to be 200 // Object.is equality` on
+the case's `expect(response.status).toBe(200)` line. Under mutation 1 the other
+three arrangement cases — L9, L10 and L12 — are among the 36 passed; under
+mutation 2 it is L9, L10 and L11. Each clause therefore has exactly one case that
+reddens when it alone moves, which is the claim §Decision makes and the reason
+the card allowed two cases rather than one.
+
+**Restore.** `git checkout -- apps/web/src/server/services/entitlements/view.ts`
+returned the file to the same sha256 `92e83ccd…867cb`, `git status --short` was
+empty, and the pre-mutation count was reproduced. The probe worktree was removed.
+
+### Correction to §Evidence's coverage figures (finding I1)
+
+§Evidence states the global figures as **`91.82 / 80.76 / 96.06 / 91.94`** and
+concludes "the same global figures as the parent head, so the two new cases add
+coverage without moving any gate". The reviewer ran the identical command at the
+reviewed head and read **`91.8 / 80.69 / 96.01 / 91.91`** — same `333 files /
+4690 passed (3 skipped)`, same exit `0`.
+
+Both pairs are recorded here; the original is **not** rewritten. The quoted
+quadruple is [ADR-0366](ADR-0366-op104-followup-bound-entitlement-grants-read.md)'s
+own head figures, not this delivery's, so the "same as the parent head" clause
+rests on a stale pair: the parent head `8d8f2c13` measures
+`91.8 / 80.69 / 96.01 / 91.91` — the pair
+[ADR-0365](ADR-0365-op104-followup-bounded-counters-and-usage-sort-index.md)
+records, which is the expected shape for a test-only delivery. No gate moves
+either way: the command exits `0` with global branches at **80.69** against the
+80 % threshold, so §Evidence's _conclusion_ holds — the two cases add pins
+without moving a gate — while its _figure pair_ does not reproduce. The
+re-measured pair stands beside it.
+
+### Findings recorded, no code change routed
+
+Both are Info, and both leave the delivery as specified:
+
+| Finding | Location         | Subject                                                                                                                                                                                                                                                 | Routed to                  |
+| ------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| **I2**  | spec L11 and L12 | Neither case asserts that the corrupt row was written, so the "ignored" half is vacuous on its own — on an empty collection the same assertions pass. L9 has the same shape. The mutation probe is what proves the row is present and would be fetched. | no action; legibility note |
+| **I3**  | spec L9/L11/L12  | The three seed blocks are near-identical (~65 lines each). The commissioning card prescribed "same seed shape as L9", so this is a deliberate delivery choice in a test file, not an accident.                                                          | no action; card-prescribed |
+
+I2 is a **coverage** gap rather than a defect: a case that also asserted the raw
+insert would make the pair self-evident, but the pins are load-bearing as
+measured above, so no card is opened against a green, merged, behaviour-preserving
+delivery.
+
+### ADR-number ruling
+
+**`0371` stands and no re-cut is needed.** The mandated sweep at the cut —
+`.worktrees/*/docs/adr/`, `git rev-list --objects --all -- docs/adr`, and every
+open PR head (`#690`, `#688`, `#685`, `#272`) — found the number held by exactly
+one record file name, `ADR-0371-op104-followup-grant-read-clause-pins.md`, and by
+no open PR head; worktrees that carry it carry it from the trunk. The trunk held
+`0360`–`0368` plus `0370`, and `0369` was in flight on the sibling index card
+`t_a3fcf2e2` / PR #714. That PR landed as `4cb72527` with
+[ADR-0369](ADR-0369-op104-followup-grant-window-index.md) while this sign-off was
+being cut — the lane's intended order, with no number reused. The lane cell reads
+**`0372`** on `origin/main` `62b855f5` and is untouched here: this card appends one
+section and changes no row and no cell.
+
+### Checks at this sign-off
+
+- **`prettier --check`** clean on this record.
+- The six ADR guards — `adr-numbering`, `adr-lane-ranges`, `adr-record-links`,
+  `adr-consumers`, `adr-source-references`, `adr-inline-code-spans` —
+  **236 passed (236)**.
+- **Scope proof.** `git diff --stat origin/main...HEAD` lists exactly this file
+  and reads **`+161 −0`**; `git diff --stat origin/main...HEAD -- docs/adr/README.md`
+  prints nothing, so the ledger is byte-identical, no number is minted and no
+  existing sentence is deleted.
