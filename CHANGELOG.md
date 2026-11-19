@@ -1,3 +1,9 @@
+## [1.66.3](https://github.com/yahodu/openpic-webapp/compare/v1.66.2...v1.66.3) (2026-11-19)
+
+### Bug Fixes
+
+- **entitlements:** OP-104 bound the usage read and require the subscription plan keys ([#703](https://github.com/yahodu/openpic-webapp/issues/703)) ([8c539a3](https://github.com/yahodu/openpic-webapp/commit/8c539a3be4571fbee2d7c31936329654c62ffe6f)), closes [#279](https://github.com/yahodu/openpic-webapp/issues/279)
+
 ## [1.66.2](https://github.com/yahodu/openpic-webapp/compare/v1.66.1...v1.66.2) (2026-11-18)
 
 ### Bug Fixes
