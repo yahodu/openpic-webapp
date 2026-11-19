@@ -119,7 +119,7 @@ than deriving a delta, and the delivered change leaves that number identical —
    when this record first landed, on the ground that every measured red was inside a timed case
    rather than a hook, and every DB-backed `beforeAll` already passes an explicit
    `MONGO_READY_HOOK_TIMEOUT_MS` (35 000 ms) budget (ADR-0037 §Amendment), with the reservation that
-   *"if a hook red is ever observed, it gets its own measurement."* A hook red has since been
+   _"if a hook red is ever observed, it gets its own measurement."_ A hook red has since been
    observed, so §Amendment — the hook clock records the measurement and raises the hook timer to the
    case timer. Hooks that pass an explicit budget keep their own value; the `unit` project keeps the
    10 000 ms default.
