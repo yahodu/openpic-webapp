@@ -1,4 +1,4 @@
-import { ObjectId } from "mongodb";
+import { ObjectId, type Db } from "mongodb";
 
 import { subjectFilter } from "@/server/attendee/consent-guard";
 import { pathSegmentFromRequest, requireAttendeeScope } from "@/server/attendee/request-event";
@@ -12,11 +12,12 @@ import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
-import { withTransaction } from "@/server/db/transaction";
+import { waitForCommitted } from "@/server/db/retry-wait";
+import { isTransactionRetryLimitError, withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent, matchesNewDedupeKey } from "@/server/domain/domain-events";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
-import { tenantRepo, platformRepo } from "@/server/repos";
+import { tenantRepo, platformRepo, type RepositoryCollection } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 
 /**
@@ -56,9 +57,10 @@ const confirmResponseSchema = SELFIE_ENVELOPE_SCHEMA;
  * that loses the contending write is retried whole: a burst of `N` confirms for
  * one selfie costs the unluckiest racer one attempt per rival commit (`N - 1`),
  * and one spare absorbs an abort that produces no commit at all (two rivals
- * aborting each other, which makes no progress). Five therefore covers the
- * pinned burst of four; a wider storm still exhausts the budget and answers
- * `500`, which is this budget's bound and not the endpoint's.
+ * aborting each other, which makes no progress). Five covers the pinned burst of
+ * four; a racer that still spends all five answers only once the row shows the
+ * outcome it owed ({@link confirmOutcomeCommitted}), and otherwise keeps its
+ * `500` (ADR-0877).
  */
 const CONFIRM_MAX_ATTEMPTS = 5;
 
@@ -67,6 +69,66 @@ interface ProfileRow {
   readonly _id: ObjectId;
   /** The §15.3 "fires exactly once" watermark; `null` until the first delivery. */
   readonly firstMatchNotifiedAt?: Date | null;
+}
+
+/** The `attendeeEventProfiles` fields a settled confirm must show (§15.3/§6.4). */
+interface SettledProfileRow {
+  readonly activeSelfieId?: ObjectId | null;
+  readonly status?: string;
+  readonly matchCount?: number;
+}
+
+/** What this confirm owed the profile and the outbox (§6.3/§6.4, §10.3.2). */
+interface ConfirmedOutcome {
+  readonly db: Db;
+  readonly profiles: RepositoryCollection;
+  readonly profileId: ObjectId;
+  readonly selfieId: ObjectId;
+  readonly status: "processing" | "ready";
+  readonly matchCount: number;
+  readonly dedupeKey: string;
+  readonly announceDue: boolean;
+}
+
+/**
+ * Wait, bounded, for the winner of a confirm burst to commit this request's
+ * outcome.
+ *
+ * A burst of `N` confirms writes the same profile document, so the unluckiest
+ * racer can spend its whole attempt budget on rivals' commits and still lose the
+ * last attempt to a rival that has not committed yet. Nothing of the loser's
+ * attempt was written, so it answers only once the row carries **everything this
+ * request owed** — the activation pointer, the §6.4 cached total, the status,
+ * and, when it had something to announce, the §10.3.2 outbox row. A repeat
+ * confirm whose selfie is already active must therefore still see its own
+ * `matchCount`/status/announcement land, or it keeps its `500`; the pointer
+ * alone would answer a success for a write that never happened.
+ *
+ * The wait is the shared settled re-read ADR-0877 records, the shape the
+ * invitation accept uses.
+ *
+ * @param outcome - The request's facts and what its commit must leave behind.
+ * @returns `true` once the row shows all of it, `false` when the wait ran out (a
+ *   race nobody settled stays the original `500`).
+ */
+async function confirmOutcomeCommitted(outcome: ConfirmedOutcome): Promise<boolean> {
+  const events = platformRepo(outcome.db).collection(COLLECTIONS.domainEvents);
+  return waitForCommitted(
+    async () => ({
+      activation: (await outcome.profiles.findOne(
+        { _id: outcome.profileId },
+        { projection: { activeSelfieId: 1, status: 1, matchCount: 1 } }
+      )) as SettledProfileRow | null,
+      announced:
+        !outcome.announceDue ||
+        (await events.countDocuments({ dedupeKey: outcome.dedupeKey }, { limit: 1 })) > 0,
+    }),
+    ({ activation, announced }) =>
+      announced &&
+      activation?.activeSelfieId?.equals(outcome.selfieId) === true &&
+      activation.status === outcome.status &&
+      activation.matchCount === outcome.matchCount
+  );
 }
 
 /** The `selfies` fields the confirm reads (§16.4). */
@@ -181,7 +243,28 @@ export const POST = defineRoute({
         }
       },
       { maxAttempts: CONFIRM_MAX_ATTEMPTS }
-    );
+    ).catch(async (error: unknown) => {
+      // Losing the burst can spend the whole budget while a rival's commit is
+      // still in flight. Nothing of the loser's attempt was written, so answer
+      // only when the row shows this request's outcome — the activation, the
+      // cached total, the status and its announcement (§6.3/§6.4); a race
+      // nobody settled stays the original `500` (ADR-0877).
+      if (
+        !isTransactionRetryLimitError(error) ||
+        !(await confirmOutcomeCommitted({
+          db,
+          profiles,
+          profileId: profile._id,
+          selfieId,
+          status: published ? "ready" : "processing",
+          matchCount: matched,
+          dedupeKey,
+          announceDue: newMatches > 0,
+        }))
+      ) {
+        throw error;
+      }
+    });
 
     const attempts = await selfieAttemptNumbers({
       db,
