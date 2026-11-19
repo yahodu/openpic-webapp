@@ -16,11 +16,18 @@ ADR-0366 bounded the `entitlementGrants` read to the active window:
 ```
 
 That change bounded the **returned** set (`nReturned = 3` over a 60-expired-grant
-seed) but not the **storage scan**: `validUntil` was in no index, and
-`entitlementKey` is unconstrained by this filter, so the only production index
-(`entitlement_grants_tenant_key_valid_from`) could not range-bound `validFrom`
-either. The planner therefore fetched the tenant's whole grant history —
-exactly the expired-grant mass the bound was meant to stop paying for — and
+seed) but not the **storage scan**: `validUntil` — the only key that separates the
+live rows from the expired mass — is in no index. The only production index
+(`entitlement_grants_tenant_key_valid_from`) can apply its `validFrom` bound only
+within one `entitlementKey` range, and even there the bound excludes nothing:
+every **expired** row also satisfies `validFrom <= now`. Measured on a 123-row
+seed (60 expired, 60 future-dated `validFrom 2027-01-01`, 3 live), old index
+only: `nReturned 3 / keysExamined 123 / docsExamined 63` when the future-dated
+rows carry distinct `entitlementKey`s — `validFrom` bounds nothing at all — and
+`nReturned 3 / keysExamined 64 / docsExamined 63` when they share the expired
+rows' key, where the bound skips only that key's future tail. Either way the
+planner fetched the tenant's whole expired-grant history — exactly the
+expired-grant mass the bound was meant to stop paying for — and
 ADR-0366 §Consequences' "its latency no longer grows with the number of expired
 or future purchase grants" and §Out of scope's "no finding or measurement asks
 for a `validFrom`-leading index today" were both overstated by that measurement.
@@ -59,16 +66,19 @@ not a hand-assembled filter, and explained with
 
 ### Chosen key order, and the rejected alternative
 
-**A — `(tenantId, validUntil)`** is chosen. It ties B on `docsExamined` (6) and
-wins on `keysExamined` (4 vs 6): `validFrom` is only ever bounded from **above**
-by this read, and an equality-prefixed range on the trailing key cannot use the
-leading `validFrom` to shorten the scan, so B pays index entries it cannot
-spend. B also duplicates the `validFrom` key the existing
-`(tenantId, entitlementKey, validFrom)` index already carries.
+**A — `(tenantId, validUntil)`** is chosen. On the card seed above it ties B on
+`docsExamined` (6) and wins on `keysExamined` (4 vs 6), and one `tenantId`-leading
+key pair bounds the expired mass. B is not useless: on a future-dated mass its
+leading `validFrom` bound does shorten the scan — 60 future-dated rows + 3 live,
+B alone `3 keys / 3 docs` against `63 / 63` for A alone — but that is not the
+shape this finding measured, and on the expired-grant seed B pays 6 keys for the
+same 6 documents A fetches with 4. B also duplicates the `validFrom` key the
+existing `(tenantId, entitlementKey, validFrom)` index already carries.
 
-**B — `(tenantId, validFrom, validUntil)`** is rejected on that measurement. It
-is not wrong, only strictly larger for no gain; the same 6 documents are fetched
-and two more keys are walked.
+**B — `(tenantId, validFrom, validUntil)`** is rejected on that measurement. On
+the expired-grant shape it is strictly larger for no gain; its advantage is
+confined to future-dated grants, which is why it is the recorded fallback if
+those become the dominant mass (see Consequences).
 
 ## Evidence
 
@@ -89,8 +99,17 @@ and two more keys are walked.
 
 - The `/entitlements` grant read now walks **4 keys and fetches 6 documents**
   over the measured seed instead of 63 and 63, so its storage scan no longer
-  grows with the tenant's expired or not-yet-valid grant mass. ADR-0366
-  §Consequences' latency claim now holds for the reason it gave.
+  grows with the tenant's **expired** grant mass, and ADR-0366 §Consequences'
+  latency claim now holds for expired grants.
+- **Future-dated grants are the regression to watch.** On the same 123-row seed
+  the delivered index can fetch more than the old one did: `3 / 64 / 126` with
+  the future-dated rows under distinct keys, against `3 / 123 / 63` for the old
+  index alone, because the `validUntil: null` arm matches every future-dated row
+  and `FETCH` then drops it on `validFrom`. The answer is unchanged
+  (`nReturned 3`) and it is still the right plan for the measured expired mass,
+  but `(tenantId, validFrom, validUntil)` serves that shape at `3 / 8 / 6`; if
+  scheduled grants ever become the dominant mass, that is the key order to
+  adopt.
 - One more index to maintain on each `entitlementGrants` insert. With no
   `validUntil` bound in the query the planner has no reason to pick it over the
   existing key-leading index.

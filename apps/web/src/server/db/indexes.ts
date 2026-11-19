@@ -805,8 +805,9 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
   // history that the index below otherwise serves. `(tenantId, validUntil)`
   // measured 4 keys / 6 docs over a 63-row seed against 63/63 for the
   // `(tenantId, entitlementKey, validFrom)` index, with a lower key count than
-  // the `(tenantId, validFrom, validUntil)` alternative (6/6) because
-  // `validFrom` is only ever bounded from above (ADR-0369).
+  // the `(tenantId, validFrom, validUntil)` alternative (6/6) on that seed,
+  // whose trailing `validFrom` bound only shortens a future-dated mass
+  // (ADR-0369).
   {
     collection: COLLECTIONS.entitlementGrants,
     name: "entitlement_grants_tenant_valid_until",
