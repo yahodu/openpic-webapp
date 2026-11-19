@@ -144,3 +144,103 @@ this worktree and on every remote ref at the cut, so this record consumes `0364`
 and the cell advances to `0365`. No number outside the lane range `0360`–`0379`
 is touched, and the still-in-flight sibling card `t_8ac61afe` is told to take
 `0365`.
+
+## Review and landing — PR [#704](https://github.com/yahodu/openpic-webapp/pull/704)
+
+Reviewed head `56cfe2e1`; docs sign-off `t_7b3d9947`. **Verdict: APPROVED** —
+round 1, artifact lens, no finding that required a card. Squash-merged as
+`5e1a05de` onto `origin/main` `6c4fb8b3`; PR `#704` is `MERGED` at
+`2026-11-19T04:37:21Z`.
+
+### Landing proof
+
+- **Tree identity.** `git rev-parse 56cfe2e1^{tree} 5e1a05de^{tree}` prints
+  `7e20ead9…` twice and `git diff --stat 56cfe2e1 5e1a05de` is empty, so the
+  reviewed bytes are the trunk bytes; the squash is an ancestor of `origin/main`
+  (`git merge-base --is-ancestor 5e1a05de origin/main` exits `0`).
+- **Scope, measured.** `git show --stat 5e1a05de` is **3 files, +228 / −1**: the
+  spec (+78), this record (`A`, 146 lines) and the ledger (5 lines — the `0364`
+  index row, the cell `0364` → `0365` and the lane note). No production file is
+  touched, which is what a characterization-pin delivery must show.
+- **The head branch was auto-deleted.** `git ls-remote --heads origin` lists no
+  `OP-104-task-usage-cursor-edge-pins`, and local `main` matched `origin/main` at
+  `513284e5`, the commit this note was written on top of: the squash plus the
+  three trunk commits after it — `c2f079da`
+  ([ADR-0365](ADR-0365-op104-followup-bounded-counters-and-usage-sort-index.md)),
+  the `1.66.4` release chore `84378fa0` and `513284e5` (the ADR-0363 sign-off).
+  The trunk advanced once more while this sign-off PR was open (`dbf93bf3`, PR
+  `#707`); this section is docs-only and depends on neither head.
+
+### Checks run by the review at `56cfe2e1`
+
+- **Focused integration** (`entitlements-endpoints.test.ts`): **31 passed (31)**,
+  was 29 — the two new pins green on arrival, as §Decision declares.
+- **Both pins are load-bearing.** A throwaway probe worktree at `56cfe2e1`, one
+  `view.ts` mutation at a time, each run filtered to the single pin under test,
+  every mutation reverted and the worktree removed afterwards. **Guard
+  disabled** → L5 red, `AssertionError: expected 500 to be 400`; **keyset `$lt`
+  → `$gte`** → L6 red, `expected [ { …(4) }, { …(4) } ] to deeply equal []`. Both
+  filtered runs read `1 failed | 30 skipped`; that is the probe's shape, and
+  §Evidence records the same two mutations over a wider selection, so the two
+  readings do not conflict.
+- **The formerly-uncovered line left the uncovered set.** Focused coverage scoped
+  to `view.ts`: **100 % statements 54/54, branches 36/36, functions 14/14, lines
+  49/49** ("1 file fully covered"). The line §Context named as the last `view.ts`
+  line outside coverage is the line L5 now executes.
+- **Static gates.** `pnpm typecheck` exit `0` on all three projects; `eslint`
+  exit `0`; `prettier --check` clean on the three touched files.
+- **The six ADR guards** (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`,
+  `adr-consumers`, `adr-source-references`, `adr-inline-code-spans`): **236
+  passed (236)**.
+- **Remote checks 14/14** at `56cfe2e1`, none of them a rerun. On the merged PR
+  the rollup has 15 rows, all `SUCCESS`; the fifteenth is the `notify-discord`
+  close side-effect run, not a gate.
+
+### Checks re-run on this sign-off's base
+
+The numbers above are the review's; these were measured again at `513284e5`
+before this section was appended, so the trunk is known to still carry them:
+
+- focused integration `entitlements-endpoints.test.ts`: **31 passed (31)**;
+- the six ADR guards with this section in place: **236 passed (236)** —
+  `adr-numbering` alone **29 passed (29)**.
+
+### Two Info notes, neither routed to a card
+
+1. **`L6`'s full-envelope `toEqual` on `page` is deliberate.** It couples the pin
+   to the §0.8 three-key page envelope on purpose: a case that asserted only
+   `data: []` would stay green while `nextCursor`, `hasMore` or `limit` drifted,
+   and those three keys are exactly the contract this edge exists to pin. That
+   is a change detector, not brittleness to repair — the same posture as the
+   carried L2 pagination case.
+2. **`L5` asserts `status` and `error.code` only** — not `message`, `requestId`
+   or `retryable`. The error envelope's wording and its correlation fields are
+   owned and pinned elsewhere; asserting them here would couple a cursor pin to
+   text it does not own. §L5 already states this choice.
+
+### Number, ledger and routing
+
+- **This section consumes no ADR number and no index row.** `docs/adr/README.md`
+  is byte-identical to `origin/main` in the sign-off PR (blob `abfeae0c…` before
+  and after; `git diff --name-only origin/main...HEAD` does not list it).
+- The record itself consumed `0364` as §ADR number allocation states, and the
+  lane cell read `0365` on the trunk it was cut from. Measured at this sign-off's
+  base `513284e5`: the cell reads **`0366`**, and exactly one `ADR-0364` path
+  exists across all refs (`git rev-list --objects --all -- docs/adr` counts one),
+  so the number stayed unique.
+- **Routing, as it resolved.** The card that commissioned this note told the open
+  follow-up `t_8ac61afe` (P1/P2 performance, backend-coder) to take `0365` and
+  advance the cell to `0366`, with the ADR-0363 sign-off `t_621fba28` gated
+  behind it. Both have since landed — `t_8ac61afe` as PR `#705` (squash
+  `c2f079da`, [ADR-0365](ADR-0365-op104-followup-bounded-counters-and-usage-sort-index.md))
+  and `t_621fba28` as PR `#706` (squash `513284e5`) — so nothing remains gated on
+  this record's card. The card predicted the cell would read `0365` when this
+  note ran; it read `0366` because those two landed first. That is a stale
+  prediction in the card, not a second consumption of a number.
+
+**No decision in §L5, §L6 or §What is deliberately unchanged is retracted.**
+§Consequences predicted that a regression would fail as `expected 500 to be 400`
+on L5 and as a non-empty page on L6; the review reproduced exactly those two
+reds by mutation, so the consequences are measured, not assumed. Nothing else in
+this record needed amending, and this section only adds what review and landing
+measured afterwards.
