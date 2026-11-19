@@ -344,3 +344,68 @@ section and changes no row and no cell.
   and reads **`+161 −0`**; `git diff --stat origin/main...HEAD -- docs/adr/README.md`
   prints nothing, so the ledger is byte-identical, no number is minted and no
   existing sentence is deleted.
+
+### Correction to the correction (I1 withdrawn — the coverage decimals are run-sensitive)
+
+**I1 is withdrawn.** The preceding subsection is a false positive, and each of its
+three claims is unsupported: the delivery's quoted pair does **not** fail to
+reproduce, it is **not** a "stale pair", and it is **not**
+[ADR-0366](ADR-0366-op104-followup-bound-entitlement-grants-read.md)'s figures.
+All three rest on exact two-decimal equality of a coverage summary that is
+**run-sensitive in the third decimal**, so no measurement can carry them. Nothing
+in the preceding subsection is deleted — it stands as the record of a finding that
+did not survive re-measurement.
+
+**Measured, not reasoned.** Reviewed tree
+`64528c03457eef4c02c2513400d0bc01e5bf7afa`, the identical command
+`CI=true TMPDIR=/root/tmp-mongo ./node_modules/.bin/vitest run --project unit
+--project integration --coverage`, three consecutive runs:
+
+| Run | Files / Tests                 | Statements           | Branches            | Functions           | Lines               |
+| --- | ----------------------------- | -------------------- | ------------------- | ------------------- | ------------------- |
+| 1   | 333 / 4690 passed (3 skipped) | `91.79` (9392/10232) | `80.67` (5516/6837) | `96.01` (1830/1906) | `91.90` (9162/9969) |
+| 2   | 333 / 4690 passed (3 skipped) | `91.81` (9395/10232) | `80.75` (5521/6837) | `96.06` (1831/1906) | `91.93` (9165/9969) |
+| 3   | 333 / 4690 passed (3 skipped) | `91.81` (9395/10232) | `80.75` (5521/6837) | `96.06` (1831/1906) | `91.93` (9165/9969) |
+
+Same tree, same command, same counts — **+3 statements and +5 branches** between
+run 1 and run 2 (+1 function, +3 lines). The denominators are stable
+(`10232 / 6837 / 1906 / 9969`), so a fixed set of lines is sometimes executed and
+sometimes not: integration paths whose hit count depends on timing. The sign-off's
+own trunk sample sits at the top of the same band —
+`91.82 / 80.76 / 96.06 / 91.94` (`9396 / 5522 / 1831 / 9166`) — and the trees
+carrying it and the reviewed head differ only in records, with the same
+denominators, so that one-statement gap is noise rather than coverage. A
+re-measurement at this correction's cut, on trunk `07c24f96` with the identical
+command, read `91.79 / 80.67 / 96.01 / 91.90`
+(`9392 / 5516 / 1830 / 9162`) in **both** of two consecutive runs — the band's
+bottom edge, from a separate session and checkout, and consistent with the
+summary depending on the session and not only on the tree.
+
+**Consequence.** Every figure in the band `91.79`–`91.82 / 80.67`–`80.76 /
+96.01`–`96.06 / 91.90`–`91.94` is a **correct observation** of that command at
+that tree. The delivery's pair and the reviewer's `91.8 / 80.69 / 96.01 / 91.91`
+both sit inside it, and so does the 0366 pair the preceding subsection pointed
+at — a coincidence of the band, not provenance.
+
+**The rule this lane carries: a 2-dp coverage comparison is not evidence.** A
+coverage change may be claimed only from a **count change at a stable
+denominator**, or from a **delta wider than the observed band** — `0.03` pp on
+statements, `0.04` on lines, `0.05` on functions, `0.09` on branches. By that
+rule, §Evidence's conclusion ("the same global figures as the parent head, so the
+two new cases add coverage without moving any gate") rests on a comparison the
+tool cannot support. The conclusion still holds, on a structural ground instead:
+the two new cases are additive and touch no production file, so they neither add
+nor remove an executed line of production code, and the command exits `0` either
+way.
+
+**The margin is thin.** Global branches sits `80.67`–`80.76` against the `80`
+threshold set in `vitest.config.ts`, so a bottom-of-band run leaves about `0.7` pp
+of headroom rather than the `0.76` a top-of-band run suggests. That is an Info
+observation for the lane, not a defect of this delivery — and worth knowing before
+anyone quotes a coverage figure as proof of safety.
+
+**Nothing else moves.** Findings **I2** and **I3** stand unchanged, as does the
+landing proof and every section-level statement above. The verdict for PR #716
+remains **APPROVED WITH FINDINGS**, now with I1 withdrawn. This subsection claims
+no re-review, mints no pin and routes no code change: the delivery is green and
+shipped.
