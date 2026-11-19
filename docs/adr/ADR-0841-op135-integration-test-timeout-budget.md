@@ -350,7 +350,10 @@ Gates at the same tree: `prettier --check .` clean, `tsc -p tsconfig.json --noEm
 Reviewed head `f98e83db` (PR #654, already squash-merged as `78b70894` when this section was
 written). This section consumes **no** ADR number, adds no index row, and leaves
 `docs/adr/README.md` byte-identical — `sha256 1473e9b1245791fb55ef145473366b34f5b15924c37f8303daf7091af879f717`
-at the base of this append and after it. It appends; nothing above is retracted.
+at the base of this append (`7cc764c3`) and at the commit that carries it. The trunk moved the file
+afterwards with other cards' ledger rows (the branch was merged onto `228845cf` before its pull
+request, where the blob is `1158c409…` on both sides of the merge). It appends; nothing above is
+retracted.
 
 ### Delivery state
 
@@ -403,6 +406,10 @@ the trunk `7cc764c3`:
 - the six `adr-*` guards at `7cc764c3` — `6 passed (6)` / `236 passed (236)`;
   `prettier --check "docs/adr/**/*.md"` clean; `0841` unique among `400` records in `docs/adr/`, no
   duplicate `ADR-NNNN` basename, and the `OP-135 worker interface lane` `Next free` cell reads `0847`.
+- `docs/adr/` holds `400` records at `7cc764c3` and `402` at `228845cf`, the trunk this branch was
+  merged onto before its pull request; the two new ones are other cards' (`ADR-0879`, `ADR-0880`), not
+  this append's, and the guards re-read on the merged branch head answer `6 passed (6)` /
+  `236 passed (236)` again.
 
 ### Findings
 
