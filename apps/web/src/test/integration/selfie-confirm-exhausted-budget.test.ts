@@ -55,7 +55,8 @@ import {
  * The cases that read the settled-outcome predicate take that signal. The case
  * that reads the catch's **class** test cannot: a signal the predicate recognizes
  * never exercises the term that refuses every other failure, so that one is
- * handed a driver-shaped error of its own (ADR-0877 decision item 1).
+ * handed a driver-shaped error of its own (the narrow class test ADR-0878
+ * §Decision 1 rests on).
  * The seam is armed per case and one-shot, and every case asserts it fired on the
  * request under test, so a case can never pass by racing its way past the arm.
  *
@@ -75,8 +76,8 @@ import {
  * - **The class term.** A transaction that fails for a reason the wrapper does
  *   not report as a spent budget keeps its `500 internal_error` even when the row
  *   already shows this request's outcome: a settled row is not permission to
- *   answer `200`, so the catch stays the narrow one ADR-0877 decision item 1
- *   chose and never becomes a broad `catch`.
+ *   answer `200`, so the catch keeps the narrow class test ADR-0878 §Decision 1
+ *   rests on and never becomes a broad `catch`.
  *
  * ## Assumptions
  *
@@ -849,7 +850,7 @@ describe("when a confirm's transaction fails for a reason that is not the spent 
     );
     expectTheArmFired("non-retry failure on a settled row");
     // The catch answers only the wrapper's own exhausted-budget signal
-    // (ADR-0877 decision item 1), so this failure is rethrown. A broad `catch`
+    // (ADR-0878 §Consequences), so this failure is rethrown. A broad `catch`
     // would read the settled row as permission and hide the failed write.
     expect(
       response.status,
