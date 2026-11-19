@@ -144,10 +144,12 @@ head and the squash: `d8a10754^{tree}` == `f7246b9d^{tree}` ==
 `98e31ed8b559c67888fbacbf2224b3690f45862c`, which was `origin/main^{tree}` at merge time (the trunk
 then stood at `f7246b9d`). The blind spot the lane's merges of `origin/main` create is closed with
 blob identity instead: the reviewed head `a0668d4e`, the final head `d8a10754`, the squash `f7246b9d`
-and today's trunk `14186080` all carry `6f48ab5f` for the confirm route, `340ba06e` for
-`selfie-confirm-publication.test.ts` and `c5ce4fc1` for this record. So every number below was
-measured on the bytes `main` carries, and the trunk has since advanced only by the sibling DOCS
-landing `14186080` (PR #726) and release `1.66.7` (`750c0398`).
+and the trunks that followed (`14186080`, then `187eafb8`) all carry `6f48ab5f` for the confirm route,
+`340ba06e` for `selfie-confirm-publication.test.ts` and `c5ce4fc1` for this record. So every number
+below was measured on the bytes `main` carries. The trunk advanced twice after the merge
+(`14186080`, this record's sibling DOCS landing #726 with release `1.66.7` at `750c0398`, then
+`187eafb8`, #728 and the F1 pin #727), and none of those landings edits a line of the three blobs
+above.
 
 **Scope measured, not transcribed.** `git diff --stat f7246b9d^ f7246b9d` is exactly three paths —
 `3 files changed, 226 insertions(+), 9 deletions(-)`: the confirm route `+97/−9`, this record `+131`
@@ -190,20 +192,25 @@ merged tree carries both sides: the trunk's own newer material (`0319` board-wid
 `0372` OP-104, the `0282`–`0287` and `0318` rows, `0843`, `0844`, and the OP-135 lane cell at `0845`)
 **and** this lane's `0877` row, its prose note, and the `OP-136` lane cell and pool cursor at `0878`.
 No number is re-minted: the sweep over every `ADR-NNNN` path on the merged tree returns no name twice,
-and the tree holds the same 397 records at `d8a10754`, at `f7246b9d` and at today's trunk.
+and the tree holds 397 records at `d8a10754` and at `f7246b9d`. The one record added after the merge is
+`ADR-0878`, the F1 pin's own (below); this append adds none and touches no ledger cell. A third merge
+of `origin/main` (`187eafb8`) carries that pin and #728 onto this sign-off's branch, conflicts with
+nothing, and continues the same union.
 
 **Findings and their post-review routing.** **F1 (Low)** — no shipped case forces the exhausted arm:
 the confirm route reads `79.48 %` statements and `63.63 %` branches, and the uncovered lines are this
 arm, so its settled `200`, its three outcome conditions and its wait-expired `500` rest on the probe
-above alone. Routed to the test card `t_693d16f7`, which is **not** landed as at this sign-off (its
-PR #727 is open); closing the finding is that card's work, not this record's. **F2 (Info, accepted)**
-— the wait ceiling is the shared fixed `RIVAL_COMMIT_TIMEOUT_MS = 1_000`, so a winner still
-uncommitted at the ceiling keeps its `500`. §Consequences already states that limit and its upgrade
-path (the per-resource lock ADR-0667 and ADR-0669 would need), no measured run's wait expired, and the
-green runs' deepest burst attempt is `attempt: 4, maxAttempts: 5`. **F3 (Info)** — the branch is a
-**pool draw** above the exhausted `0849`–`0868` block, which follows the ADR-0300 §11 item 18
-precedent ADR-0869 and ADR-0876 set (both cells advance, one above the record); `0877` was unique in
-flight, so nothing outside it is consumed.
+above alone. Routed to the test card `t_693d16f7`, and that pin landed after the merge as PR #727
+(squash `187eafb8`, recorded by `ADR-0878`): `selfie-confirm-exhausted-budget.test.ts` covers the
+settled `200`, the outcome conditions and the wait-expired `500`, reading **7 passed (7)** when this
+sign-off re-ran it at the merged trunk, so the gap measured here is now covered on `main`. **F2
+(Info, accepted)** — the wait ceiling is the shared fixed `RIVAL_COMMIT_TIMEOUT_MS = 1_000`, so a
+winner still uncommitted at the ceiling keeps its `500`. §Consequences already states that limit and
+its upgrade path (the per-resource lock ADR-0667 and ADR-0669 would need), no measured run's wait
+expired, and the green runs' deepest burst attempt is `attempt: 4, maxAttempts: 5`. **F3 (Info)** —
+the branch is a **pool draw** above the exhausted `0849`–`0868` block, which follows the ADR-0300 §11
+item 18 precedent ADR-0869 and ADR-0876 set (both cells advance, one above the record); `0877` was
+unique in flight, so nothing outside it is consumed.
 
 **Nothing above is retracted.** §Context, §Decision, §Alternatives, §Evidence and §Consequences stand
 as written: this sign-off changed no decision, consumed no number and touched no other file. F1's
