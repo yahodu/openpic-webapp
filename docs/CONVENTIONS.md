@@ -206,8 +206,9 @@ allocated before the policy (`≤ 0145`) are frozen history and are never moved.
   (b) `git rev-list --objects --all -- docs/adr` — a number committed in any
   reachable tree, pushed or not; (c) the lane's non-`done` cards' `Consumes`
   values; and (d) **every open PR head** — list the open PRs with
-  `gh pr list --state open --json number,headRefName,headRefOid`, then run
-  `git ls-tree <headOid> docs/adr/` at each head. A branch named outside the
+  `gh pr list --state open --json number,headRefName,headRefOid`, then
+  `git fetch origin <headRefName>` before `git ls-tree <headOid> docs/adr/` at
+  each head — `ls-tree` needs the object locally. A branch named outside the
   ticket prefix (`wt/<task-id>`, a lane worktree branch) is invisible to
   `git ls-remote --heads origin "OP-<n>*"`, and an unpushed commit is invisible to
   any remote listing, so the open-PR-head sweep is not optional. The rule binds
@@ -233,9 +234,10 @@ allocated before the policy (`≤ 0145`) are frozen history and are never moved.
   and the merged-tree duplicate check above is unchanged.
 - **The ledger.** The live range table is `docs/adr/README.md` § "ADR number
   allocation" (ADR-0300) — the single source of truth. Do not copy or re-derive
-  the ranges anywhere else, including here. **The `Next free` column is a
-  monotonic high-water mark — not a reservation counter, not a computed count and
-  not a landed-file count — and it is never written lower.** A number is _taken_
+  the ranges anywhere else, including here. **The `Next free` column is the lane's
+  reservation counter (ADR-0300 §7) — a monotonic high-water mark, not a computed
+  count and not a landed-file count — and it is never written lower or moved
+  down.** A number is _taken_
   once it is landed on `main` **or** allocated to any in-flight card/ref of that
   lane (an open PR/branch, or a live card assigned the number). Lanes reserve at
   allocation time: a card that lands a ledger row writes the cell as the **higher**
