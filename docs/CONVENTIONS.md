@@ -166,8 +166,52 @@ A story is complete only when **all** of the following hold:
 - [ ] No hard-coded tunables — runtime knobs are read from `platformSettings`.
 - [ ] An ADR was added in `docs/adr/` for any new decision.
 - [ ] The ADR number is the `Consumes` value reserved in the card body — never derived from `docs/adr/README.md` — and no same-lane ADR-minting sibling card is in flight.
+- [ ] The merge gate printed PASS on the exact head SHA and its output is in the PR (§9.1).
 
 This list is mirrored, copy-pasteably, in `.github/pull_request_template.md`.
+
+### 9.1 The merge gate (ADR-0318)
+
+The ruleset requires no status check, and the identity that merges is an `always`
+bypass actor on it, so the merge is decided by the agent that runs it. Before
+`gh pr merge`, evaluate these six conditions against the PR's **current head SHA**
+and paste the output into the PR:
+
+- **G1** `mergeable == "MERGEABLE"` and `mergeStateStatus` ∉ {`DIRTY`, `UNKNOWN`};
+  re-poll up to 5 × 3 s when `UNKNOWN`.
+- **G2** every entry in `statusCheckRollup` for the head is `status: COMPLETED`
+  with `conclusion: SUCCESS` — no `FAILURE`, no `PENDING`, no `CANCELLED`, no
+  `SKIPPED` on a gating name.
+- **G3** the gating name set is present on the head: `ci`, `audit`, `audit-dev`,
+  `secret-scan`, `lint`, `unit_test`, `test_coverage`, `env-changes`,
+  `validate-branch-name`, `validate-pr-title`,
+  `Assert CI evidence for the pushed head`.
+- **G4 (audit freshness)** No commit on `origin/main` in
+  `<merge-base>..origin/main` may touch the audit input surface —
+  `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `package.json`,
+  `.github/workflows/ci.yml` — with a commit date later than the head's `audit`
+  check `completedAt`. If one did, the green predates a change in what `audit`
+  means: **STALE**.
+- **G5** `git diff --quiet <merge-base> origin/main -- pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/ci.yml` — if false, the merge would change the audited tree, so the head's evidence cannot cover the merge result.
+- **G6** on any failure: **do not merge**, do not rebase, do not `gh run rerun`,
+  do not `--admin`. Comment the failing condition on the PR and route —
+  reconcile through the lane owner (merge `origin/main` in, push to re-trigger
+  CI and get a fresh merge ref) or close as superseded.
+
+```
+N=<pr>; SHA=$(gh pr view "$N" --json headRefOid -q .headRefOid)
+gh pr view "$N" --json mergeable,mergeStateStatus
+gh pr view "$N" --json statusCheckRollup \
+  -q '.statusCheckRollup[] | "\(.name)\t\(.status)\t\(.conclusion)\t\(.completedAt)"'
+BASE=$(git merge-base "$SHA" origin/main)
+git log --format='%cI %h %s' "$BASE"..origin/main -- \
+  pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/ci.yml
+git diff --quiet "$BASE" origin/main -- \
+  pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/ci.yml && echo G5-pass
+```
+
+The decision, its measured context and the rejected alternatives are recorded in
+`docs/adr/ADR-0318-agent-enforced-merge-gate.md`.
 
 ## 10. Authority order when documents conflict
 
