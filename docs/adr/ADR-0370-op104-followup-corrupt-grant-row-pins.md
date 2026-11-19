@@ -216,3 +216,123 @@ This record therefore takes **`0370`**, the number the card reserved, and the
 lane cell advances from `0368` to **`0371`** so the `0369` reservation stays
 claimable and the `0368` claim is never lowered. `0360`–`0367` are consumed and
 are never renumbered. No number outside the lane range `0360`–`0379` is touched.
+
+## Review and landing — PR #712 (squash 432366b0)
+
+Reviewed head `0ad66564` on card `t_8f1dac13`; this sign-off is card
+`t_760c4100`, which consumes **no ADR number**, adds no index row and changes no
+cell. **Verdict: APPROVED WITH FINDINGS (one Low, one Info)** — no Critical, High
+or Medium finding. PR [#712](https://github.com/yahodu/openpic-webapp/pull/712)
+squash-merged as `432366b0` (`mergedAt 2026-11-19T07:16:02Z`) onto `origin/main`
+`b120866c`, with `headRefOid 0ad66564`; the PR is `MERGED` and the repository
+deleted the lane branch.
+
+Nothing above is retracted. §Context, §Decision, §Evidence, §Out of scope and
+§Consequences stand as written; the sign-off only adds what was measured after
+the record landed. One figure in §Evidence was taken on an older tree and is
+corrected below — it changes no decision and no L9/L10 claim.
+
+### Landing proof
+
+- **Squash.** `git log -1 --format='%H %P' 432366b0` prints exactly one parent,
+  `b120866c` (the trunk at merge time), and `git rev-parse 432366b0^{tree}`
+  answers `483a791f…`, equal to `git rev-parse b120866c^{tree}`: the squash
+  produces the bytes the trunk then carried.
+- **Whole-tree identity against the reviewed head does not hold, and the delta
+  is the trunk's own.** `git diff --name-status 0ad66564 432366b0` lists one
+  path, `docs/adr/ADR-0366-op104-followup-bound-entitlement-grants-read.md`
+  (`+150 −0`) — the PR #713 sign-off commit `b120866c` that `main` landed before
+  the merge and that the reviewed branch never carried.
+- **Per-file identity holds for every reviewed path.** One blob per path at both
+  revisions from `git rev-parse <rev>:<path>`: the spec `5a078e31…`, this record
+  `cfe662da…`, `docs/adr/README.md` `4ae8a839…`. The runs below therefore
+  describe the shipped bytes verbatim.
+- **`origin/main` today** carries `432366b0` as an ancestor; it has advanced
+  through `8d8f2c13` (PR #715), `461d83d4` (PR #716), `4cb72527` (PR #714) and
+  the `1.66.6` release chore `62b855f5` since.
+
+### Reviewer-run evidence
+
+Measured for this sign-off on a probe worktree at `432366b0` (never the lane
+tree), real command output:
+
+- **Focused integration**
+  (`CI=true TMPDIR=/root/tmp-mongo … --project integration
+apps/web/src/test/integration/entitlements-endpoints.test.ts`): **35 passed
+  (35)**, and the spec holds **35** `it(` blocks there.
+- **Load-bearing, `.find()` mutation.** Replacing the view's bounded predicate
+  with `.find()` in the probe answers `Test Files 1 failed (1)` /
+  `Tests 1 failed | 34 passed (35)`, the failing case being L9 with
+  `AssertionError: expected 500 to be 200`; L10 is among the 34 passed, and
+  `-t "L10"` on the same mutated tree answers `1 passed | 34 skipped (35)`. No
+  served-window mutation was made, as the card requires. The restore returns
+  `view.ts` to sha256 `92e83ccd…867cb` and leaves `git status --short` empty.
+- **ADR guards** (the six `apps/web/src/test/unit/adr-*.test.ts` files):
+  **236 passed (236)**.
+- **`eslint`** exit 0 on the touched spec and **`prettier --check`** clean on the
+  spec, this record and the ledger, as the review reported at the head.
+- **Full unit + integration with coverage** (`pnpm test:coverage`): **exit 0 at
+  333 files / 4688 passed (3 skipped)**, this sign-off's own run.
+
+### Correction — §Evidence's full-suite count was taken on the pre-#711 tree
+
+§Evidence quotes **332 files / 4685 passed (3 skipped)** with global
+**91.82 % / 80.76 % / 96.06 % / 91.94 %**. That run is truthful, but it measured
+the tree **before** PR #711 (`9b604e44`) reached the branch mid-run.
+
+The same command at the merged tree `432366b0` answers **333 files / 4688 passed
+(3 skipped)** — the count this record should carry — with the coverage summary
+this sign-off measured as **91.86 % statements / 80.83 % branches / 96.06 %
+functions / 91.98 % lines**. The two runs' decimals are close but not
+bit-identical, and the PR #716 review measured a third set
+(`91.8 / 80.69 / 96.01 / 91.91`) on the same command, so this section records its
+own run rather than restating any as current; every one of them clears the
+configured gates by a wide margin.
+
+The count delta is exactly PR #711's
+`apps/web/src/test/unit/entitlements-counter-parse.test.ts` — one file holding
+three `it(` cases, added by squash `9b604e44`, which is an ancestor of the
+reviewed head `0ad66564` and **not** an ancestor of `200eaf97`, the base
+§Evidence names.
+
+Nothing in §Decision, §Consequences or the L9/L10 claims changes: only the
+full-suite count was taken on an older tree.
+
+### The two arms of the bound that L9 does not pin (F1, Low)
+
+§Context and §Decision describe the bound as a whole. The review measured that
+L9 pins only **one** of its two clauses, so this record must not be read as
+covering both. The read is
+
+```ts
+.find({ validFrom: { $lte: now }, $or: [{ validUntil: null }, { validUntil: { $gt: now } }] })
+```
+
+L9's corrupt row (`validFrom 2025-01-01` → `validUntil 2025-02-01`) is excluded by
+the `$or` clause alone. Mutating one clause at a time in a probe worktree at
+`0ad66564` and running the delivered spec file:
+
+| mutation                                    | delivered 35 cases | corrupt-row arm it would have caught    |
+| ------------------------------------------- | ------------------ | --------------------------------------- |
+| drop the validFrom conjunct, keep the `$or` | all 35 green       | future validFrom, validUntil null → 500 |
+| relax the strict validUntil bound to `$gte` | all 35 green       | validUntil equal to now → 500           |
+
+Both candidate arms are green on the trunk, so this is a characterization gap,
+not a behaviour request. It is routed to TEST card `t_6d79f7d6` ("OP-104 TEST
+(Low) — pin the bounded grant read's two unpinned clauses"), PR #716 — cited here
+by card id and PR number, as the commissioning card requires, and deliberately
+not by an ADR number.
+
+### Post-review status
+
+The routed TEST card has **landed**: PR #716 squash-merged as `461d83d4`
+(`mergedAt 2026-11-19T08:11:56Z`). The spec at that trunk holds **37** `it(`
+blocks — L9, L10 and the two new arms, **L11** (a corrupt row whose window has
+not started is ignored; `limit 100`, `effectiveLimit 104`, `used 7`,
+`remaining 97`) and **L12** (a corrupt row whose `validUntil` equals
+`FROZEN_NOW` is ignored) — and the file answers **37 passed (37)** on today's
+trunk. Each new arm was proved separately load-bearing on that card: dropping
+the `validFrom` conjunct reddens L11 only, and relaxing `$gt` to `$gte` reddens
+L12 only, each as `expected 500 to be 200`. The two arms this section reports as
+unpinned are therefore pinned on `main` as of `461d83d4`; nothing in this record
+needed to change for that.
