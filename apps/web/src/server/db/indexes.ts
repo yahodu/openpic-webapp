@@ -798,6 +798,24 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["_id", -1],
     ],
   },
+  // entitlement_grants — the entitlements view reads one tenant's grants whose
+  // window covers `now`
+  // (`validFrom <= now && (validUntil == null || now < validUntil)`), and
+  // without a `validUntil` key the planner can only walk the whole tenant
+  // history that the index below otherwise serves. `(tenantId, validUntil)`
+  // measured 4 keys / 6 docs over a 63-row seed against 63/63 for the
+  // `(tenantId, entitlementKey, validFrom)` index, with a lower key count than
+  // the `(tenantId, validFrom, validUntil)` alternative (6/6) on that seed,
+  // whose trailing `validFrom` bound only shortens a future-dated mass
+  // (ADR-0369).
+  {
+    collection: COLLECTIONS.entitlementGrants,
+    name: "entitlement_grants_tenant_valid_until",
+    keys: [
+      ["tenantId", 1],
+      ["validUntil", 1],
+    ],
+  },
   // entitlement_grants — the entitlement service reads every active grant for a
   // key by (tenant, key) window, so the compound index leads with `tenantId`
   // (schema §14.2; ADR-0341).
