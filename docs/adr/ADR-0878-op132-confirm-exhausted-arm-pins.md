@@ -158,3 +158,93 @@ guards green for this record and its ledger row.
   mock and gate, which the card forbids, for no assertion the new file cannot make); a `unit`-project
   arm over a fake DB (it would duplicate the HTTP surface and the §6.3 envelope the integration harness
   already drives, and would assert the handler's return value instead of the response body).
+
+## Review sign-off — OP-132 TEST (round 1, reviewer `openpic-webapp-reviewer`)
+
+This is the append-only record of the round-1 review of PR
+[#727](https://github.com/yahodu/openpic-webapp/pull/727), posted on the PR as comment
+`#issuecomment-7009718606` and written up here by card `t_12d4675d`. It consumes **no** ADR number,
+appends no index row, moves no ledger cell and leaves `docs/adr/README.md` byte-identical.
+**Verdict: APPROVED** — artifact lens, then an independent execution and mutation pass; one review
+round, no `changes_requested`. The delivery had already merged when the review finished
+(`2026-11-19T12:55:22Z`, squash `187eafb8`), so what was reviewed is the merged bytes. Every figure
+below was re-measured by the reviewer, none is quoted from the handoff.
+
+**Tree identity.** `187eafb8^{tree}` reads `a4e2c4c0…`, which is exactly what
+`git merge-tree --write-tree 187eafb8^ bd212bc4` writes from the reviewed head `bd212bc4` onto the
+trunk `da6ed432`, so the squash carries the reviewed tree and nothing else. This record's own blob and
+its ledger row are byte-identical on the trunk this sign-off is cut from (`228845cf`), whose later
+ledger edits add only other cards' rows (`0845`, `0846`, `0879`, `0880`); the spec has since gained
+the F1 pin's two cases (below), the only change to a path this record names.
+
+**Scope, measured rather than transcribed.** `git diff --numstat 187eafb8^ 187eafb8` is exactly three
+paths, `906 insertions(+), 2 deletions(-)`: the spec `+743/−0`, this record `+160/−0`, and
+`docs/adr/README.md` `+3/−2` (one row and both `Next free` cells `0878` → `0879`). No production
+file, no `vitest.config.ts`, no fixture, helper or mock. The sibling
+`selfie-confirm-publication.test.ts` hashes `be912e85…` (`sha256`) and blob `340ba06e…` — identical
+to `origin/main`, so its `confirmRaceGate` and burst assertion are carried byte-for-byte.
+
+**Execution.** At the reviewed head `bd212bc4`: the focused spec `7 passed (7)`, run twice; with the
+sibling `2 files / 26 passed (26)`, and the same `2 files / 26 passed (26)` at the squash
+`187eafb8`. Six `adr-*` guards (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`,
+`adr-consumers`, `adr-source-references`, `adr-inline-code-spans`) `236 passed (236)`.
+`tsc -p apps/web/tsconfig.json --noEmit` exit `0`, `eslint` exit `0` on the new spec,
+`prettier --check` clean on all three paths. PR #727 carried fourteen pre-merge check runs, every one
+`SUCCESS` including `ci` (concluded `12:37:38Z`); the fifteenth row, `notify-discord` at
+`12:55:31Z`, is the merge's own side effect.
+
+**The mutation table, re-measured.** In a throwaway probe worktree at `bd212bc4`, each of the nine
+mutations of `confirm/route.ts` was applied alone, run, and restored byte-identically —
+`sha256 c37b7233…` before and after every run, `git status --porcelain` clean between them:
+
+- baseline, unmutated: `7 passed (7)`.
+- **M1** the `.catch` always rethrows: `1 failed | 6 passed (7)`, **F1.1** alone.
+- **M2** `activation.matchCount === outcome.matchCount + 1`: `1 failed | 6 passed (7)`, **F1.1** alone.
+- **M3** the predicate made pointer-only: `4 failed | 3 passed (7)` — **F1.3, F1.4, F1.6, F1.7**.
+- **M4** the announcement term dropped: `1 failed | 6 passed (7)`, **F1.6** alone.
+- **M5** the status term dropped: `1 failed | 6 passed (7)`, **F1.7** alone.
+- **M6** the cached-total term dropped: `1 failed | 6 passed (7)`, **F1.4** alone.
+- **M7** the activation-pointer term dropped: `1 failed | 6 passed (7)`, **F1.5** alone.
+- **M8** the whole `.catch` removed: `1 failed | 6 passed (7)`, **F1.1** alone.
+- **M9** the catch answering without the wait: `6 failed | 1 passed (7)`, **F1.1** the only pass.
+
+Every count and every failing case set matches §Evidence, so the table reproduces under the
+reviewer's own anchors rather than being taken on trust.
+
+**Ledger.** `0878` was unique when it was drawn: the trunk it was cut from (`da6ed432`) stops at
+`0877` among its `docs/adr/ADR-*.md` paths, and the delivery's number-allocation note records the
+sweep over every worktree tree, `git rev-list --objects --all -- docs/adr` and both open PR heads
+finding nothing at `0878` or `0879`. The ledger half of the diff is one row plus **both** `Next free`
+cells `0878` → `0879`, per ADR-0300 §11 item 18 — re-read from the squash's own README diff. No
+number collides downstream: `ADR-0879` and `ADR-0880` (the OP-136 lane) were minted on the trunk
+after this record, above it.
+
+**F1 (Low), measured then closed.** The catch's _recognition_ term is unpinned at `bd212bc4`:
+replacing `!isTransactionRetryLimitError(error) ||` with `false ||` leaves `7 passed (7)`, and
+replacing it with `!(error instanceof Error) ||` leaves the same (both re-run by the reviewer, route
+restored byte-identically); round 1 also ran the **full** `integration` project under `false ||` →
+`146 files / 1539 passed (1539)`, so a catch widened out of its narrowness passed the whole suite.
+That qualifies §Consequences' claim that "a future edit that widens the `catch` into a blanket
+success … reds a case": true for the predicate half, false for the class half. The finding was
+routed to card `t_c7528e37`, which pinned the class term in the same spec (PR
+[#731](https://github.com/yahodu/openpic-webapp/pull/731), squash `e0032a61`). Re-measured by the
+reviewer at the merged trunk `228845cf`: the spec plus the sibling reads `2 files / 28 passed (28)`,
+and each of the two mutations above now reds **one** case alone — `1 failed | 8 passed (9)`,
+`keeps its 500 even though a rival already committed the outcome` — with the route restored
+byte-identically after each run. The claim therefore holds for **both** halves of the `catch`, and
+nothing in this review is left open.
+
+**Two Info corrections, recorded and not applied to the frozen text.** (1) The `docs/adr/README.md`
+row for this record prints the spec as `+741/−0`; the measured numstat for that path is `743 0`. The
+row merged with that figure and stays as it is — the correction lives here, not in the ledger.
+(2) §Decision's sentence "No case reads a private function, a call count of an internal collaborator,
+or a class name" is inaccurate as written: `expectTheArmFired` asserts `{ calls: 1 }` on the
+`withTransaction` stub, which **is** a call count on an internal collaborator (the seam's own). The
+private-function and class-name halves hold, the seam is still the wrapper and the assertion surface
+is still the response and the stored rows — so **nothing in §Decision is retracted**; the sentence
+overstates the absence of one guard.
+
+**Post-review status.** `t_c7528e37` closed F1 (PR #731, squash `e0032a61`) with no production
+change, no `docs/adr` change and no ledger cell of its own. Nothing else is routed from this review.
+§Context, §Decision, §Evidence and §Consequences stand as written; this append adds one section and
+touches no other file.
