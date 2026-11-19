@@ -107,6 +107,26 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   The `$or` keyset excludes every seeded row, so the answer is `200` with
  *   `data: []` and `page: { nextCursor: null, hasMore: false, limit: 40 }` —
  *   never a `500`, a silently repeated page, or an unfollowable cursor.
+ *
+ * ## Characterization pins — OP-104 L7/L8 (green on arrival, ADR-0367)
+ *
+ * The counter read ADR-0365 bounded to each `tenant`-scoped key's **current**
+ * period narrows corruption detection in exactly one arm. Both cases below are
+ * **characterization** too: they pass against the shipped trunk and exist only
+ * to make a change visible (ADR-0367), so a red means the shipped behaviour
+ * moved — never that the spec is ahead of the code.
+ *
+ * - **L7 — a malformed counter row in a *closed* period is ignored.** The row
+ *   is outside the fetched `(entitlementKey, periodKey)` pair set, so it is
+ *   never parsed by `storedCounterSchema` and the view still answers `200` from
+ *   the current-period row. Under the pre-ADR-0365 `find().toArray()` read the
+ *   same seed threw (`500 internal_error`). This pin documents that narrowing:
+ *   **a red L7 means the fetch set widened again.**
+ * - **L8 — a malformed counter row in the *served* period is still refused.**
+ *   The row is inside the pair set, so the parse still throws and the route
+ *   answers `500 internal_error`. Green on both heads by design (the unbounded
+ *   read fetched it too); the narrowing is only ever *outside* the served
+ *   period.
  */
 
 const TENANTS_PATH = "/api/v1/tenants";
@@ -1174,6 +1194,119 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     expect([...livePlanStatus.keys()]).toContain(servedPlan);
     expect(livePlanStatus.get(servedPlan)).toBe(servedStatus);
     expect(servedPlan).not.toBe("pro");
+  });
+
+  /**
+   * **Characterization** pin of ADR-0365's bounded counter read (ADR-0367).
+   *
+   * The view fetches only each `tenant`-scoped key's *current* period (the `$or`
+   * over `counterPairs` in `view.ts`), so a counter row for the same key in a
+   * **closed** period is never parsed. A row whose stored `value` is not a
+   * number therefore no longer trips `storedCounterSchema.parse`: the response
+   * stays `200` and `used` comes from the current-period row.
+   *
+   * This records a deliberate narrowing of corruption detection — it does *not*
+   * promise the old row is harmless. **A red here means the fetch set widened
+   * again** (e.g. back to `find().toArray()`), which would restore the `500
+   * internal_error` that the pre-ADR-0365 head answered for this exact seed.
+   */
+  it("L7 characterization: a malformed counter row in a closed period is ignored, and the view still answers 200", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-closed-period",
+    });
+    await seedPlan({
+      key: "free",
+      entitlements: {
+        "events.active": {
+          limit: 5,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: currentMonthKey(),
+      value: 4,
+    });
+    // `seedCounter` types `value` as `number`, so the corruption goes in raw.
+    // A *different* period for the *same* key keeps the row off the
+    // `(tenantId, entitlementKey, periodKey)` unique index (schema §14.2)
+    // while still exercising "a corrupt row this tenant owns".
+    await app.db.collection(COLLECTIONS.usageCounters).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2019-01",
+      value: "corrupt",
+      updatedAt: new Date("2019-01-15T10:00:00.000Z"),
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const row = await entitlementRow(response, "events.active");
+    // `used` is the current-period row's value, never the corrupt row's.
+    expect(row).toMatchObject({
+      key: "events.active",
+      periodKey: currentMonthKey(),
+      used: 4,
+      remaining: 1,
+    });
+  });
+
+  /**
+   * **Characterization** pin: the narrowing is only ever *outside* the served
+   * period (ADR-0367).
+   *
+   * This corrupt row *is* inside the fetched pair set (same key, the current
+   * period), so `storedCounterSchema.parse` still throws and the route answers
+   * `500 internal_error`. Green on both heads by design — the pre-ADR-0365
+   * `find()` read fetched it as well — so this pin is a contract, not a delta:
+   * a red means a malformed *served-period* counter row can now reach a served
+   * `used` value.
+   */
+  it("L8 characterization: a malformed counter row in the served period is still refused with 500 `internal_error`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-served-period",
+    });
+    await seedPlan({
+      key: "free",
+      entitlements: {
+        "events.active": {
+          limit: 5,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    // The one row for this `(entitlementKey, periodKey)` pair is the corrupt
+    // one: a valid row may not sit beside it (schema §14.2 uniqueness), and
+    // the arm under pin is "the served period is still parsed".
+    await app.db.collection(COLLECTIONS.usageCounters).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: currentMonthKey(),
+      value: "corrupt",
+      updatedAt: new Date("2026-09-15T10:00:00.000Z"),
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(500);
+    expect((await errorEnvelope(response)).code).toBe("internal_error");
   });
 });
 
