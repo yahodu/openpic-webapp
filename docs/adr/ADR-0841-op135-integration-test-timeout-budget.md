@@ -344,3 +344,116 @@ Gates at the same tree: `prettier --check .` clean, `tsc -p tsconfig.json --noEm
 4. **Raising the hook timer only on the specs that reddened.** Rejected: the reddened spec is not
    special — its sweep is the same shape as the other 37, and it was green in isolation and on the
    next full run of the same tree.
+
+## Review sign-off (round 1, artifact + execution lens) — APPROVED WITH FINDINGS
+
+Reviewed head `f98e83db` (PR #654, already squash-merged as `78b70894` when this section was
+written). This section consumes **no** ADR number, adds no index row, and leaves
+`docs/adr/README.md` byte-identical — `sha256 1473e9b1245791fb55ef145473366b34f5b15924c37f8303daf7091af879f717`
+at the base of this append (`7cc764c3`) and at the commit that carries it. The trunk moved the file
+afterwards with other cards' ledger rows (the branch was merged onto `228845cf` before its pull
+request, where the blob is `1158c409…` on both sides of the merge). It appends; nothing above is
+retracted.
+
+### Delivery state
+
+- PR #654 is `MERGED` (2026-11-17T15:41:57Z), squash `78b70894`, and `git merge-base --is-ancestor 78b70894 origin/main` → true.
+- `git diff f98e83db 78b70894 -- vitest.config.ts docs/adr/ADR-0841-…md docs/adr/README.md` →
+  **empty**: the reviewed bytes are the shipped bytes. Blob identity says the same — `vitest.config.ts`
+  is `487f95a6…` at `f98e83db`, at `78b70894` **and** at `88d65749`, and this record is `3e2a75ee…`
+  at all three. Squash numstat: `vitest.config.ts` +18/−0, this record +222/−0,
+  `docs/adr/README.md` +41/−1. **No test file in the diff.**
+- Three files differ between those two commits, and all three are trunk-owned commits that landed
+  **before** the merge: `.husky/pre-commit` (`b71e942c`, #652) and two OP-136 sign-off records,
+  `ADR-0850` (`34183b90`, #649) and `ADR-0852` (`20fcf119`, #651). The card said "an OP-136 ADR";
+  the measured count is two.
+- `main` CI on the squash is `success` — run `44117313347`, `push` event, head `78b70894`.
+- At the trunk this append lands on (`7cc764c3`) the two blobs read `3065b890…`
+  (`vitest.config.ts`) and `8688e74b…` (this record): §Decision 4's amendment landed after the
+  merge, as card `t_c053a028` did. The reviewed bytes are unchanged by that; the file simply grew.
+
+### Refactor log
+
+**None.** The deliverable was already merged, so the reviewed SHA is frozen and no implementation
+file may change. The round-1 review edited nothing in it; its writes were to a throwaway worktree
+(removed afterwards) and to the reviewer's own scratch directory.
+
+### Acceptance evidence, re-measured
+
+Runs in a detached worktree at `88d65749` (the merged trunk of that window), `TMPDIR=/root/tmp-mongo`,
+`vitest run --project integration`:
+
+| Check                                  | Result                                                                                                                                                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| full run 1                             | `1 failed \| 1479 passed (1480)` in 141 files, 365.20 s — **zero** `Test timed out`, one `Error: Hook timed out in 10000ms.`                                                                           |
+| full run 2                             | `141 files passed (141)` / `1480 passed (1480)`, 262.57 s, zero timeout lines of either kind                                                                                                           |
+| the run-1 red, alone                   | `uploads-batch-status.test.ts` — `10 passed (10)`, 7.56 s                                                                                                                                              |
+| the five delivered green logs, re-read | five × `139 files passed (139)` / `1455 passed (1455)`, zero `Test timed out`                                                                                                                          |
+| gates at the merged tree               | `prettier --check` clean on the three changed files, `eslint vitest.config.ts` exit `0`, six `adr-*` guards `6 passed (6)` / `236 passed (236)`, `main` CI on the squash `success` (run `44117313347`) |
+
+The hook red sits at `uploads-batch-status.test.ts:279` — that file's `beforeEach`, a `deleteMany({})`
+sweep over **21** collections run one after another. §Amendment carries the block verbatim, and the
+file's `beforeAll` is not the hook that reddened.
+
+**Measured again for this section**, at `88d65749` in a throwaway worktree (removed afterwards) and at
+the trunk `7cc764c3`:
+
+- the reddening spec alone — `10 passed (10)` in 7.19 s, a third observation of that tree, green;
+- one further full `integration` run at `88d65749` — `141 files passed (141)` / `1480 passed (1480)`,
+  229.82 s, **zero** `Test timed out` and **zero** `Hook timed out` lines. That makes three full runs
+  of this tree: two timeout-free, one carrying the single hook red above — the rate this record
+  states, neither better nor worse;
+- the six `adr-*` guards at `7cc764c3` — `6 passed (6)` / `236 passed (236)`;
+  `prettier --check "docs/adr/**/*.md"` clean; `0841` unique among `400` records in `docs/adr/`, no
+  duplicate `ADR-NNNN` basename, and the `OP-135 worker interface lane` `Next free` cell reads `0847`.
+- `docs/adr/` holds `400` records at `7cc764c3` and `402` at `228845cf`, the trunk this branch was
+  merged onto before its pull request; the two new ones are other cards' (`ADR-0879`, `ADR-0880`), not
+  this append's, and the guards re-read on the merged branch head answer `6 passed (6)` /
+  `236 passed (236)` again.
+
+### Findings
+
+**F1 — Medium (test reliability), routed to `t_c053a028`.** The case timer is bounded; the hook timer
+was not. Run 1 above red on `Error: Hook timed out in 10000ms.` while the same tree was green on run 2
+and green in isolation, which is this record's own §Context signature on the other timer. It is the
+**same class** as the case timeout this record addresses, and §Decision 4 had already promised that a
+hook red would "get its own measurement" — so the class was **partially** open when this record
+merged: cases covered, hooks not. Routed to `t_c053a028` (test author) with the measurement obligation
+§Decision 4 names; this sign-off was chained behind that card.
+
+**F2 — Info, recorded only.** The two runs are cited with different SHAs — `cbab1f0f` in §Context,
+`be3a6905` in the ledger row. `git diff --name-only cbab1f0f be3a6905 -- apps packages vitest.config.ts`
+is **empty**, and the only path that differs between them at all is `docs/adr/README.md`, so both
+citations describe the identical test tree. No accuracy defect; recorded so a later reader does not
+read the pair as a contradiction.
+
+**F3 — Info, recorded only.** The card pinned `1448` cases as "the current trunk". The delivered base
+read `1455` and the review's trunk revision `1480`. The delivered diff contains no test file, so
+"unchanged before and after at the same tree" holds at every base it was measured on, and the
+delivery counted the tree it actually measured — correct; the card's figure is a snapshot of an older
+trunk.
+
+**F4 — Low (delivery hygiene).** PR #654 had been merged **without** the mandatory review comment: the
+earlier review run crashed before posting it. The round-1 comment was posted on the merged PR by this
+review — `issuecomment-6980967612` (2026-11-18T14:08:19Z), read back after posting. No file change
+follows from it.
+
+The implementation itself is honest: no fixture-specific hardcoding, no test-environment conditional,
+no `@ts-ignore` or lint suppression, no new dependency, no test file and no skipped or `.only`-ed case
+in the diff.
+
+### Post-review status
+
+Written after the fact, so the list above is a record and not a set of live defects.
+
+- **F1 is closed on the trunk.** `t_c053a028` landed as PR #728, squash `da6ed432`: `vitest.config.ts`
+  gains `INTEGRATION_HOOK_TIMEOUT_MS = 30_000` on the `integration` project only, and §Decision 4 was
+  extended in place by that card's §Amendment, which carries the measurement (five consecutive full
+  runs at `145` files / `1532` cases, zero hook and zero case timeouts) and its own 4 000 ms probe. This
+  section therefore points at that amendment instead of restating it, and **no decision in §Decision is
+  retracted**: §Decision 4's reservation is the clause that was honoured, not withdrawn.
+- **F2 and F3 need no action** and stay as written; they are readings of the record, not defects.
+- **F4 closed when the comment landed** on the merged PR; nothing outside this file changed for it.
+
+No assertion was loosened, no case skipped or retried, and the change stayed project-scoped.
+**APPROVED WITH FINDINGS.**
