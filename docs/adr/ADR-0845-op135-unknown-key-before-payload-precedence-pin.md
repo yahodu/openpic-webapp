@@ -166,3 +166,74 @@ edited, and no production file in the delivered diff.
 Gates on the delivered commit: `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` 0 errors;
 `prettier --check` clean on the spec, this record and `docs/adr/README.md`; the `adr-*` guard family
 green (6 files, 236 tests); the host spec `28 passed (28)` with all 27 pre-existing cases green.
+
+## Review sign-off (round 1, artifact lens)
+
+The round-1 review of this pin was posted on PR
+[#730](https://github.com/yahodu/openpic-webapp/pull/730) as comment `#issuecomment-7010436226`;
+this sign-off is card `t_ce0662bb`, which consumes **no** ADR number, changes no ledger cell and
+leaves `docs/adr/README.md` byte-identical. **Verdict: APPROVED.** The deliverable had already merged
+when the review ran (`gh pr merge 730 --squash --admin`, `2026-11-19T13:17:13Z`, squash `61d7e947`),
+so the review is a verification of **the merged bytes**, not of a proposed head, and no merge action
+was taken.
+
+**Tree identity — the review measures what shipped.** `7b95f970^{tree}` == `61d7e947^{tree}` ==
+`2ebdf49a35908a5302eb48649e77a786227c45e3`, which was `origin/main^{tree}` at review time (`origin/main`
+then stood at `61d7e947`), and `git diff --stat 7b95f970 61d7e947` is empty over the whole tree, so no
+path differs between the reviewed head and the squash. PR #730 reads **15/15 checks pass**, and local
+`main` == `origin/main` == `61d7e947`. The trunk has since advanced to `ef44796d` (PR #733, ADR-0846);
+this record is byte-identical at both trees — `git rev-parse` prints blob
+`e9428fbccb0ee016d51fb431f6272daccb755df8` for `7b95f970`, for `61d7e947` and for `origin/main` — so
+the sign-off still describes the bytes on `main`.
+
+**Scope measured, not transcribed.** `git diff --name-status 61d7e947^ 61d7e947` lists exactly three
+paths, `+190/−1`: the spec `apps/web/src/server/domain/domain-events.test.ts` at `+18/−0` (one
+`describe`/`it` pair appended at the end, with no existing case, helper, fixture, mock or spec literal
+edited), this record at `+168/−0`, and `docs/adr/README.md` at `+4/−1` — its lane cell `0845` → `0846`,
+one index row and one note, with main's `0878` row and the `0879` OP-136/pool cells preserved by the
+union resolution, so nothing of main's was reverted. No production file is in the diff, which is the
+shape a characterization pin must have.
+
+**Counts re-measured, independently of the handoff.** The host spec reads `27 passed (27)` with the
+pre-change spec restored from `187eafb8`, and `28 passed (28)` at `61d7e947`; `tsc -p
+apps/web/tsconfig.json --noEmit` exits `0`; `eslint` exits `0`; `prettier --check` is clean on all
+three paths; the `adr-*` guard family reads **6 files / 236 passed (236)**; and `gh pr checks 730` is
+15/15 pass. The ledger holds 399 records at `61d7e947` with an empty duplicate-number sweep, `0845`
+sits inside the lane block `0829`–`0848`, and the only cell that moved is the OP-135 lane's `0845` →
+`0846` (that cell reads `0847` at `ef44796d`, advanced by ADR-0846's own record). At the trunk
+`ef44796d` the host spec reads `29 passed (29)`, ADR-0846's case being the 29th (see F1), and the same
+six guards read 236 passed over 400 records.
+
+**Probe P1 reproduced independently.** In a throwaway detached worktree at `61d7e947`, with the spec
+copied in, `node_modules` symlinked and **never** the lane tree touched, swapping the two semantic
+gates — the payload scan ahead of the catalogue gate — gave `1 failed | 27 passed (28)`: this case
+**alone**, printing the pair `- "code": "unknown_event_key"` and
+`+ "code": "forbidden_payload_field"` in the assertion diff, with U1, the seven U2 rows and every
+other case green. `git checkout --` returned `domain-events.ts` to
+`sha256 741e9a7ac6e6e512dc15aa2d3e6b9e2507fb7994735c582f79df78b50c272bad`, the hash measured before
+the mutation, `git status --short` showed only the spec, and the re-run answered `28 passed (28)`. The
+same mutation was repeated at the trunk `ef44796d`, whose spec carries 29 cases: the run answered
+`1 failed | 28 passed (29)`, again **this case alone**, with ADR-0846's structural case still green
+because the schema gate runs ahead of both; the file restored to the same `741e9a7a…` hash and the
+re-run answered 29 passed.
+The pin is discriminating, not decorative, and it still discriminates at the trunk.
+
+**Findings and their post-review status.** **F1 (Low)** — the schema-versus-catalogue pair was not
+pinned, so §3's claim that the existing `input validation` block already pins it held for the lone
+fault only: that block sends `makeDomainEventInput({ tenantId: "" })`, a **valid** payload, so it
+cannot see the order. Measured with a probe spec at `61d7e947`:
+`makeDomainEventInput({ tenantId: "", payload: { email: "leak" } })` →
+`{"outcome":"invalid_domain_event","inserts":0}`. Routed to a TEST card created by this review,
+**`t_2428b2b5`**, gated behind this sign-off; that card has since landed as PR #733 (squash
+`ef44796d`), whose one appended case (spec lines 517–518, `28 passed (28)` → `29 passed (29)`) pins the
+pair, and whose ADR-0846 §1 corrects §3 of this record without editing it. **Info, no card** —
+§Context cites the catalogue gate at "line 316" while `isRegisteredEventKey` is line 317 at both
+`da6ed432` and `61d7e947` (schema 308, payload 324); the record is frozen, so no action follows. The
+appended case's `insertOne` assertion is also inert for the ordering question — the refusal precedes db
+resolution, so both orders write nothing — which makes it a guard against a write-then-refuse
+regression rather than against a reorder; the `code` assertion is the one carrying the verdict.
+
+**Nothing above is retracted.** §Context, §Decision, §Consequences, §Alternatives and §Evidence stand
+as written: the review changed no decision, added no number and touched no other file. F1 is not
+decided here — the TEST card `t_2428b2b5` carries it, and that card's own record (ADR-0846, PR #733)
+documents what follows.
