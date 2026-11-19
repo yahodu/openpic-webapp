@@ -113,10 +113,13 @@ and two more keys are walked.
 
 ## ADR number allocation
 
-The OP-104 lane holds `0360`–`0379`. `origin/main` `0659da33` carries
-`0360`–`0367` with the lane cell at `0368` (held by open PR #711) and `0369`
-free on the trunk, in this worktree and on every remote ref at the cut, so this
-record consumes `0369` and the cell advances to `0370`. The in-flight sibling
+The OP-104 lane holds `0360`–`0379`. The cell was read on `origin/main`
+`0659da33` immediately before committing: it carried `0360`–`0367` with the cell
+at `0368` (then held by PR #711) and `0369` free on the trunk, in this worktree
+and on every remote ref, so this record consumes `0369`. PR #711 landed as
+`9b604e44` while this branch was open, so the merge of `origin/main` resolved
+this ledger as a union — its `0368` row and paragraph kept, both rows ascending,
+the higher cell — and the cell now reads `0370`. The in-flight sibling
 `t_8f1dac13` already carries `ADR-0370` on its branch and its own ledger update
-sets the cell to `0371`; whichever lands second wins the union resolution (the
-higher cell), so the two updates converge and no number is reused.
+sets the cell to `0371`; whichever lands second wins the union so the two
+converge and no number is reused.
