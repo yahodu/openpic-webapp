@@ -619,3 +619,64 @@ touched.
 cut on `origin/main` `43c76a0f`. Every figure above was measured in that worktree
 by the command quoted at the top of this section, with `coverage/lcov.info` kept
 per run.
+
+## Review and landing — PR #723 (squash a124df47)
+
+Reviewed head `38a729b2` on card `t_e29bcc7c`, base `origin/main` `43c76a0f`;
+this sign-off is card `t_8d563a6c`, which consumes **no ADR number**, changes no
+cell, and leaves `docs/adr/README.md` byte-identical. **Verdict: APPROVED — two
+Info findings, no changes requested.** Landed with
+`gh pr merge 723 --squash --admin` at `2026-11-19T10:51:08Z`; squash
+`a124df470a6f4d0e5c4af018fab56779bf5d48e0`
+([#723](https://github.com/yahodu/openpic-webapp/pull/723)).
+
+Nothing above is retracted. §Context, §Decision, §Evidence, §Out of scope,
+§Consequences, §"Correction to the correction" and §"Separating the executed
+set" stand as written.
+
+**The claimed pin reproduces.** Three consecutive full runs of
+`CI=true TMPDIR=/root/tmp-mongo ./node_modules/.bin/vitest run --project unit
+--project integration --coverage` at the reviewed head each read
+`333 passed (333)` and `4691 passed | 3 skipped`, with the identical summary
+`91.85 / 80.82 / 96.06 / 91.97` (`9399/10232`, `5526/6837`, `1831/1906`,
+`9169/9969`); diffing the three `lcov.info` files gave **18712 instrumented
+points, 0 zero-crossing flips**; and both arms are hit in all three runs —
+`invitations/route.ts` `DA:108` / `307` / `308` with `isDuplicateKeyError`,
+`complete-upload.ts` `DA:282` / `283` / `286`, `batch-notifications.ts`
+`DA:328`.
+
+**Load-bearing, probed not assumed.** A throwaway worktree at base `43c76a0f`
+carrying the spec without the latch split **3 index-arm / 1 read-arm** across
+four focused runs (`DA:108` = `1,1,1,0`), all `35 passed (35)`; at the reviewed
+head the same four runs gave `1` in **4/4**.
+
+**Mechanism confirmed in the code.** The pre-check `findOne` precedes
+`withTransaction`, and `maxAttempts: 0` makes the wrapper throw
+`TransactionRetryLimitError` **before** `fn(session)` runs, so the added `I4`
+case drives the route's own `isTransactionRetryLimitError` branch — no
+fabricated error, no production change.
+
+**Findings, both Info, no card.** (i) A serialised pair fails `F5` as a 30 s
+timeout rather than as the `arrivalsSeen` assertion (probe worktree:
+`1 failed | 34 passed`, `Test timed out in 30000ms`); no later case is dragged
+down, because the parked request resumes when a later transaction reaches the
+latch. (ii) The `I4:` label now fronts three cases in
+`uploads-single-put.test.ts`, a duplication the file already carried on
+`origin/main`, and each case is cited here by its full title. No threshold was
+moved; `vitest.config.ts` is untouched.
+
+**Landing proof.** The trunk moved by two docs-only commits during the review
+(`bfd3357c` #722, `4d13bebb` #685). `git diff --stat 38a729b2 a124df47` over the
+four PR paths — `event-invitations.test.ts`, `uploads-single-put.test.ts`, this
+record and [ADR-0666](ADR-0666-op121-invitation-accept-race-pin.md) — is empty;
+the five differing paths are that commit's own files
+(`.github/pull_request_template.md`, `AGENTS.md`, `docs/CONVENTIONS.md`,
+`docs/adr/ADR-0318-agent-enforced-merge-gate.md`, `docs/adr/README.md`); and
+`git rev-parse a124df47^{tree} origin/main^{tree}` both print
+`800e0a46d6d32dde3c55cda11abb7b28dbea67ea`. Re-verified on the merged trunk in
+a probe worktree at `a124df47`: focused specs `61 passed (61)`, six ADR guards
+`236 passed (236)`.
+
+**Checks at this sign-off.** `prettier --check` clean on this record; the six ADR
+guards **`236 passed (236)`**; `git diff --stat origin/main...HEAD` lists exactly
+this file, additions only.
