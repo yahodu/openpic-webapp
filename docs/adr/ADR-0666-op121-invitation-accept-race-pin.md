@@ -7,6 +7,10 @@
   `@/server/db/transaction`, the `CONCURRENT_ACCEPTS` /
   `INVITATION_RACE_GRACE_MS` / `INVITATION_RIVAL_HOLD_MS` constants and the
   assumption **I-A6** that names this record.
+  `apps/web/src/test/integration/event-invitations.test.ts` — the `F5`
+  `invitationCreateGate` latch in the duplicate-create case: the same latch and
+  pass-through `vi.mock` shape, applied one stage earlier so a loser's refusal
+  always comes from the partial unique index rather than from the pre-write read.
 - **Lane:** the **OP-120 invitations lane** block `0660`–`0679`, which is the
   block the two OP-121 records already draw from
   ([ADR-0664](ADR-0664-op121-invitation-decisions-green.md),

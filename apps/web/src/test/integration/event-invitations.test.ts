@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { ObjectId } from "mongodb";
+import { ObjectId, type ClientSession } from "mongodb";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { findForbiddenFields, maskEmail, maskPhone } from "@openpic/contracts";
@@ -1527,6 +1527,112 @@ describe("F4 — GET …/invitations is scoped to the event in the path", () => 
 /* F5 — the concurrent duplicate create                                      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * A latch on the create's transaction boundary, so the pair's refusal arm is a
+ * property of the case rather than of the clock.
+ *
+ * `POST …/invitations` can refuse a duplicate through **two** arms, and both are
+ * correct: the pre-write check reads `{ eventId, status: "pending", …invitee }`
+ * and answers `409` from the read, and the §13.6 partial unique index refuses
+ * the losing `insertOne` with `E11000`, which the catch maps to the same
+ * `409 invitation_already_pending`. Which arm answers depends on whether the
+ * loser's read lands before or after the winner's commit — measured on one tree,
+ * four focused runs of this file split 2/2 and the summary gained `+3`
+ * statements, `+5` branches and `+1` function when the index arm ran
+ * (`isDuplicateKeyError` and its `catch` call sites; ADR-0371 §"Separating the
+ * executed set"). `Promise.all` alone leaves that interleaving to the event
+ * loop, so it is not a pin (ADR-0666).
+ *
+ * The latch forces the index arm. The first racer to arrive parks until its
+ * rival also arrives — and the rival can only reach this line **after** its own
+ * pre-check returned `null`, so both reads miss the (still uncommitted) winner —
+ * and then the second racer waits for the first racer's commit before it opens
+ * its transaction. The loser's insert therefore meets a committed duplicate
+ * every run: `E11000`, not a pre-check hit.
+ *
+ * Armed only by F5; every other transaction in this file passes through
+ * untouched, and an unarmed latch returns without counting.
+ */
+const invitationCreateGate = vi.hoisted(() => {
+  let armed = false;
+  let arrivals = 0;
+  let expected = 0;
+  let bothArrived: Promise<void> = Promise.resolve();
+  let signalBothArrived: () => void = () => undefined;
+  let firstCommitted: Promise<void> = Promise.resolve();
+  let signalFirstCommitted: () => void = () => undefined;
+
+  return {
+    /**
+     * Arm the latch for `count` racers.
+     *
+     * @param count - How many racers must reach the boundary before either
+     *   proceeds.
+     */
+    close(count: number): void {
+      armed = true;
+      arrivals = 0;
+      expected = count;
+      bothArrived = new Promise<void>((resolve) => {
+        signalBothArrived = resolve;
+      });
+      firstCommitted = new Promise<void>((resolve) => {
+        signalFirstCommitted = resolve;
+      });
+    },
+    /**
+     * Park at the boundary until the rival arrives, then order the commits.
+     *
+     * @returns `true` for the racer that must commit first, so its wrapper can
+     *   report the commit and release the second racer.
+     */
+    async arrive(): Promise<boolean> {
+      if (!armed) {
+        return false;
+      }
+      arrivals += 1;
+      if (arrivals === 1) {
+        await bothArrived;
+        return true;
+      }
+      if (arrivals === expected) {
+        armed = false;
+        signalBothArrived();
+        await firstCommitted;
+      }
+      return false;
+    },
+    /** Report that the first racer's transaction has committed. */
+    committed(): void {
+      signalFirstCommitted();
+    },
+    /** How many racers reached the boundary while the latch was armed. */
+    get arrivalsSeen(): number {
+      return arrivals;
+    },
+  };
+});
+
+vi.mock("@/server/db/transaction", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/db/transaction")>();
+  return {
+    ...actual,
+    withTransaction: async <T>(
+      fn: (session: ClientSession) => Promise<T>,
+      options?: Parameters<typeof actual.withTransaction>[1]
+    ): Promise<T> => {
+      const commitsFirst = await invitationCreateGate.arrive();
+      try {
+        return await actual.withTransaction(fn, options);
+      } finally {
+        if (commitsFirst) {
+          invitationCreateGate.committed();
+        }
+      }
+    },
+  };
+});
+
 describe("F5 — two simultaneous creates for one invitee", () => {
   it("F5: answers exactly one 201 and one 409 invitation_already_pending, and stores one row", async () => {
     // Arrange — two independent attempts (distinct `Idempotency-Key`s, so the
@@ -1536,6 +1642,7 @@ describe("F5 — two simultaneous creates for one invitee", () => {
     const eventId = await seedEvent(workspace);
     await addEventMember(workspace, eventId, workspace.organizer, "organizer");
     const payload = emailInvite("buck@example.com");
+    invitationCreateGate.close(2);
 
     // Act — both requests are in flight together.
     const responses = await Promise.all([
@@ -1549,6 +1656,18 @@ describe("F5 — two simultaneous creates for one invitee", () => {
 
     // Assert — one winner, one refusal, whichever order they settle in.
     expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+
+    // The latch proves the arm, and that is what makes the coverage summary a
+    // constant: both creates passed their pre-check before either wrote, so the
+    // loser was refused by the partial unique index rather than by the read. A
+    // change that serialises the pair, or answers the loser from the pre-check,
+    // fails here instead of silently dropping three statements and five branches
+    // from the executed set on an arbitrary run (ADR-0371 §"Separating the
+    // executed set").
+    expect(
+      invitationCreateGate.arrivalsSeen,
+      "both creates must reach the transaction boundary, so the loser is refused by the unique index and not by the pre-check"
+    ).toBe(2);
     const winner = responses.find((response) => response.status === 201);
     const loser = responses.find((response) => response.status === 409);
     if (winner === undefined || loser === undefined) {
