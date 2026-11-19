@@ -66,6 +66,30 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   `used`/`remaining` (contract §3.5).
  * - `/usage` answers `{ data: […] }` (§0.5 collection envelope) and never leaks
  *   the driver's `_id` (§0.5: "never expose `_id`").
+ *
+ * ## Follow-up pins — OP-104 L2/L3/L4 (RED at ADR-0362)
+ *
+ * - **L2 — `/usage` is bounded by the platform cursor contract (§0.8),
+ *   additively.** `?cursor=&limit=` go through the existing `parsePageQuery`
+ *   (`@/server/http/cursor`): limit default `40`, clamped to `100`, and an
+ *   unparseable or foreign cursor is `400 invalid_cursor`. The body stays
+ *   `{ data }` and **gains** `page: { nextCursor, hasMore, limit }` (§0.5's
+ *   collection example); `nextCursor` is `null` when `hasMore` is `false`. The
+ *   sort is fixed: **`periodKey` descending, then `_id` descending**, so a tie
+ *   inside one period never skips or duplicates a row. `usageBodySchema` stays
+ *   `{ data }` on purpose — it is the "existing clients still work" control —
+ *   so the envelope assertions read `payload.page` explicitly instead.
+ * - **L3 — both plan keys are required on a present row (§14.3).**
+ *   `activePlanKey`/`subscribedPlanKey` lose their silent `"free"` default: a
+ *   live `subscriptions` row missing either field is server-side corruption and
+ *   answers `500 internal_error` (§0.7 "unhandled — never leak internals"),
+ *   never a laundered free tier. No row at all still reads as `free`/`none`
+ *   (I1, unchanged).
+ * - **L4 — the `$ne: "cancelled"` selection is pinned, not changed.** An
+ *   `expired` row is live and resolves its paid plan; with several live rows the
+ *   read picks an arbitrary one, so the pin asserts only what holds for any
+ *   pick: the served plan is one of the live rows' plans, `subscriptionStatus`
+ *   belongs to that same row, and the cancelled row's plan is never served.
  */
 
 const TENANTS_PATH = "/api/v1/tenants";
@@ -137,6 +161,22 @@ const usageRowSchema = z.object({
 
 /** The `/usage` collection envelope (§0.5). */
 const usageBodySchema = z.object({ data: z.array(usageRowSchema) });
+
+/**
+ * The `page` object `/usage` gains (§0.5 collection example, §0.8).
+ *
+ * Deliberately **not** merged into {@link usageBodySchema}: that schema is the
+ * "an existing client still parses the body" control, so the bound is asserted
+ * against the raw payload here.
+ */
+const usagePageSchema = z.object({
+  nextCursor: z.string().nullable(),
+  hasMore: z.boolean(),
+  limit: z.number().int(),
+});
+
+/** One served `/usage` row, as {@link usageRowSchema} types it. */
+type UsageRow = z.infer<typeof usageRowSchema>;
 
 let app: TestApp;
 
@@ -284,8 +324,10 @@ async function seedPlan(fields: {
 async function seedSubscription(fields: {
   tenantId: string;
   activePlanKey: string;
-  status: "active" | "downgraded" | "past_due";
+  status: "active" | "downgraded" | "past_due" | "cancelled" | "expired";
   subscribedPlanKey?: string;
+  /** Set to timestamp a `cancelled` row; omitted leaves `cancelledAt: null`. */
+  cancelledAt?: Date;
 }): Promise<void> {
   await app.db.collection(COLLECTIONS.subscriptions).insertOne({
     tenantId: fields.tenantId,
@@ -305,7 +347,7 @@ async function seedSubscription(fields: {
     currency: "INR",
     dunning: { attemptCount: 0, lastAttemptAt: null, remindersSent: [], nextReminderAt: null },
     cancelAt: null,
-    cancelledAt: null,
+    cancelledAt: fields.cancelledAt ?? null,
     cancelReason: null,
     scheduledChange: null,
     previousSubscriptionId: null,
@@ -314,6 +356,52 @@ async function seedSubscription(fields: {
     createdAt: new Date("2026-09-01T00:00:00.000Z"),
     updatedAt: new Date("2026-09-01T00:00:00.000Z"),
   });
+}
+
+/**
+ * Insert a **live** `subscriptions` row (schema §14.3) that is missing one of
+ * the two required plan keys.
+ *
+ * A state {@link seedSubscription} cannot build (it always writes both keys):
+ * §14.3 marks `activePlanKey` and `subscribedPlanKey` required, so a document
+ * without one is server-side corruption, not a free tier.
+ */
+async function seedSubscriptionMissingPlanKey(fields: {
+  tenantId: string;
+  missing: "activePlanKey" | "subscribedPlanKey";
+}): Promise<void> {
+  const shared = {
+    tenantId: fields.tenantId,
+    subscribedPlanVersion: 1,
+    status: "active" as const,
+    priceKey: "starter-monthly-inr",
+    paymentMethodKind: "mandate_upi",
+    mandateStatus: "active",
+    billingCycle: "monthly",
+    currentPeriodStart: new Date("2026-09-01T00:00:00.000Z"),
+    currentPeriodEnd: new Date("2026-10-01T00:00:00.000Z"),
+    nextChargeAt: new Date("2026-10-01T00:00:00.000Z"),
+    gracePeriodEndsAt: null,
+    pendingDueMinor: 0,
+    currency: "INR",
+    dunning: { attemptCount: 0, lastAttemptAt: null, remindersSent: [], nextReminderAt: null },
+    cancelAt: null,
+    cancelledAt: null,
+    cancelReason: null,
+    scheduledChange: null,
+    previousSubscriptionId: null,
+    statusHistory: [],
+    externalRefs: [],
+    createdAt: new Date("2026-09-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+  };
+  await app.db
+    .collection(COLLECTIONS.subscriptions)
+    .insertOne(
+      fields.missing === "activePlanKey"
+        ? { ...shared, subscribedPlanKey: "starter" }
+        : { ...shared, activePlanKey: "starter" }
+    );
 }
 
 /** Seed an additive top-up (schema §14.2) for a tenant (string id). */
@@ -358,6 +446,30 @@ async function seedCounter(fields: {
 }
 
 /**
+ * Seed `count` counter rows for one tenant in one period, one per distinct
+ * `entitlementKey`.
+ *
+ * `usageCounters` holds one row per `(entitlementKey, periodKey)` (schema
+ * §14.2), so a page bound needs more rows than the limit *within a single
+ * period* — that is also what makes the `_id` tiebreak load-bearing.
+ *
+ * @returns The seeded entitlement keys, in seed order.
+ */
+async function seedCounterPage(
+  tenantId: string,
+  options: { periodKey: string; count: number; prefix: string }
+): Promise<string[]> {
+  const keys = Array.from(
+    { length: options.count },
+    (_, index) => `${options.prefix}.metric-${String(index + 1).padStart(2, "0")}`
+  );
+  for (const entitlementKey of keys) {
+    await seedCounter({ tenantId, entitlementKey, periodKey: options.periodKey, value: 0 });
+  }
+  return keys;
+}
+
+/**
  * The current UTC period key for a monthly cadence.
  *
  * Reads the frozen clock of the running spec (see {@link FROZEN_NOW}), i.e. the
@@ -385,6 +497,22 @@ function usageRequest(cookie: string, tenantId: string, periodKey?: string): Req
   const url = new URL(`${TENANTS_PATH}/${tenantId}/usage`, APP_ORIGIN);
   if (periodKey !== undefined) {
     url.searchParams.set("periodKey", periodKey);
+  }
+  return new Request(url, { method: "GET", headers: { cookie } });
+}
+
+/**
+ * A `GET /tenants/{t}/usage` request carrying explicit query parameters
+ * (`?cursor=`, `?limit=` — contract §0.8).
+ */
+function usageQueryRequest(
+  cookie: string,
+  tenantId: string,
+  query: Readonly<Record<string, string>>
+): Request {
+  const url = new URL(`${TENANTS_PATH}/${tenantId}/usage`, APP_ORIGIN);
+  for (const [name, value] of Object.entries(query)) {
+    url.searchParams.set(name, value);
   }
   return new Request(url, { method: "GET", headers: { cookie } });
 }
@@ -425,6 +553,16 @@ async function countersFor(tenantId: ObjectId): Promise<WithId<Document>[]> {
     .collection(COLLECTIONS.usageCounters)
     .find({ tenantId: tenantId.toHexString() })
     .toArray();
+}
+
+/**
+ * The wire identities of served `/usage` rows.
+ *
+ * A counter is unique per `(entitlementKey, periodKey)` (schema §14.2), so that
+ * pair is what "the same row" means when two pages are compared.
+ */
+function usageRowIdentities(rows: readonly UsageRow[]): string[] {
+  return rows.map((row) => `${row.entitlementKey}|${row.periodKey}`);
 }
 
 describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
@@ -848,6 +986,178 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     expect(response.status).toBe(401);
     expect((await errorEnvelope(response)).code).toBe("authentication_required");
   });
+
+  it("L3 (RED): a live subscription row missing `activePlanKey` answers 500 `internal_error`, never the free tier", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-partial-active-key",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "events.active": {
+          limit: 3,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    // §14.3 marks both plan keys required, so this row is server-side
+    // corruption — not client input and not a free tier.
+    await seedSubscriptionMissingPlanKey({
+      tenantId: tenantId.toHexString(),
+      missing: "activePlanKey",
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(500);
+    const payload = await body(response);
+    expect((payload.error as { code: string }).code).toBe("internal_error");
+    // §0.7: an unhandled failure never leaks internals — and never launders the
+    // corrupt row into a genuine-looking `free` tier body.
+    expect(payload).not.toHaveProperty("activePlanKey");
+    expect(payload).not.toHaveProperty("entitlements");
+    expect(JSON.stringify(payload)).not.toMatch(/"free"/);
+  });
+
+  it("L3 (RED): a live subscription row missing `subscribedPlanKey` answers 500 `internal_error`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-partial-subscribed-key",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "events.active": {
+          limit: 3,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscriptionMissingPlanKey({
+      tenantId: tenantId.toHexString(),
+      missing: "subscribedPlanKey",
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(500);
+    const payload = await body(response);
+    expect((payload.error as { code: string }).code).toBe("internal_error");
+    expect(payload).not.toHaveProperty("subscribedPlanKey");
+  });
+
+  it("L4 characterisation (green today and after the GREEN): an `expired` subscription is a live row and resolves its paid plan", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-expired-live",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "events.active": {
+          limit: 3,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      subscribedPlanKey: "starter",
+      status: "expired",
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
+    // `expired` is not `cancelled`: the `$ne: "cancelled"` read still selects it,
+    // so the tenant keeps its paid entitlements (ADR-0400 consistency).
+    expect(payload).toMatchObject({
+      activePlanKey: "starter",
+      subscribedPlanKey: "starter",
+      subscriptionStatus: "expired",
+    });
+    const keys = (payload.entitlements as { key: string }[]).map((row) => row.key).sort();
+    expect(keys).toEqual(["events.active", "storage.bytes"]);
+  });
+
+  it('L4 characterisation (green today and after the GREEN): the `$ne: "cancelled"` read never serves the cancelled row\'s plan', async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-multi-live",
+    });
+    await seedPlan({ key: "starter", entitlements: {} });
+    await seedPlan({ key: "plus", entitlements: {} });
+    await seedPlan({ key: "pro", entitlements: {} });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "pro",
+      subscribedPlanKey: "pro",
+      status: "cancelled",
+      cancelledAt: new Date("2026-09-02T00:00:00.000Z"),
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      subscribedPlanKey: "starter",
+      status: "active",
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "plus",
+      subscribedPlanKey: "plus",
+      status: "expired",
+    });
+    // The read has no sort, so which live row wins is arbitrary. Pin only what
+    // holds for any pick: the served plan is a LIVE row's plan and the served
+    // status belongs to that same row — the cancelled `pro` row never wins.
+    const livePlanStatus = new Map<string, string>([
+      ["starter", "active"],
+      ["plus", "expired"],
+    ]);
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    const servedPlan = String(payload.activePlanKey);
+    const servedStatus = String(payload.subscriptionStatus);
+
+    expect([...livePlanStatus.keys()]).toContain(servedPlan);
+    expect(livePlanStatus.get(servedPlan)).toBe(servedStatus);
+    expect(servedPlan).not.toBe("pro");
+  });
 });
 
 describe("GET /api/v1/tenants/{tenantId}/usage", () => {
@@ -1038,5 +1348,161 @@ describe("GET /api/v1/tenants/{tenantId}/usage", () => {
 
     expect(response.status).toBe(401);
     expect((await errorEnvelope(response)).code).toBe("authentication_required");
+  });
+
+  it("L2 (RED): `/usage` serves 40 rows plus a `page` envelope when 41 counters share one period", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-bound",
+    });
+    const seeded = await seedCounterPage(tenantId.toHexString(), {
+      periodKey: "2026-09",
+      count: 41,
+      prefix: "bound",
+    });
+    const seededIds = seeded.map((key) => `${key}|2026-09`);
+
+    const response = await getUsage(usageRequest(owner.cookie, tenantId.toHexString()));
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    // The change is additive: an existing client's `{ data }` parse still holds.
+    const rows = usageBodySchema.parse(payload).data;
+    expect(rows).toHaveLength(40);
+    // The bound is a page of the same rows, never a different query.
+    expect(usageRowIdentities(rows).filter((id) => !seededIds.includes(id))).toEqual([]);
+
+    const page = usagePageSchema.parse(payload.page);
+    expect(page.limit).toBe(40);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextCursor).toEqual(expect.stringMatching(/\S/));
+  });
+
+  it("L2 (RED): following `nextCursor` returns the one remaining row, and the pages neither skip nor duplicate", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-cursor",
+    });
+    const seeded = await seedCounterPage(tenantId.toHexString(), {
+      periodKey: "2026-09",
+      count: 41,
+      prefix: "cursor",
+    });
+    const seededIds = seeded.map((key) => `${key}|2026-09`);
+
+    const first = await body(await getUsage(usageRequest(owner.cookie, tenantId.toHexString())));
+    const firstRows = usageBodySchema.parse(first).data;
+    expect(firstRows).toHaveLength(40);
+    const firstPage = usagePageSchema.parse(first.page);
+    const cursor = firstPage.nextCursor ?? "";
+    expect(cursor).not.toBe("");
+
+    const second = await body(
+      await getUsage(usageQueryRequest(owner.cookie, tenantId.toHexString(), { cursor }))
+    );
+    const secondRows = usageBodySchema.parse(second).data;
+    expect(secondRows).toHaveLength(1);
+    const secondPage = usagePageSchema.parse(second.page);
+    expect(secondPage.hasMore).toBe(false);
+    expect(secondPage.nextCursor).toBeNull();
+    expect(secondPage.limit).toBe(40);
+
+    // One period, 41 rows: the `_id` tiebreak inside the period is what keeps
+    // the two pages disjoint and their union exactly the seeded set.
+    const firstIds = usageRowIdentities(firstRows);
+    const secondIds = usageRowIdentities(secondRows);
+    expect(firstIds.filter((id) => secondIds.includes(id))).toEqual([]);
+    expect([...firstIds, ...secondIds].sort()).toEqual([...seededIds].sort());
+  });
+
+  it("L2 (RED): rows come back `periodKey` descending, with no client-side sort", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-sort",
+    });
+    // Seeded oldest period first: insertion order is NOT the served order.
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-10",
+      value: 1,
+    });
+
+    const response = await getUsage(usageRequest(owner.cookie, tenantId.toHexString()));
+
+    expect(response.status).toBe(200);
+    const rows = usageBodySchema.parse(await body(response)).data;
+    expect(rows.map((row) => row.periodKey)).toEqual(["2026-10", "2026-09"]);
+  });
+
+  it("L2 (RED): `?limit=` is honoured (`1`) and echoed clamped (`100`) in `page.limit`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-limit",
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      periodKey: "2026-09",
+      value: 100,
+    });
+
+    const limited = await body(
+      await getUsage(usageQueryRequest(owner.cookie, tenantId.toHexString(), { limit: "1" }))
+    );
+    expect(usageBodySchema.parse(limited).data).toHaveLength(1);
+    const limitedPage = usagePageSchema.parse(limited.page);
+    expect(limitedPage.limit).toBe(1);
+    expect(limitedPage.hasMore).toBe(true);
+    expect(limitedPage.nextCursor).not.toBeNull();
+
+    const clamped = await body(
+      await getUsage(usageQueryRequest(owner.cookie, tenantId.toHexString(), { limit: "5000" }))
+    );
+    expect(usageBodySchema.parse(clamped).data).toHaveLength(2);
+    // §0.8's ceiling is 100, so `?limit=5000` is clamped, not rejected.
+    expect(usagePageSchema.parse(clamped.page).limit).toBe(100);
+  });
+
+  it("L2 (RED): an unparseable `?cursor=` is a 400 `invalid_cursor` (§0.8)", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-bad-cursor",
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+
+    const response = await getUsage(
+      usageQueryRequest(owner.cookie, tenantId.toHexString(), { cursor: "not-a-cursor" })
+    );
+
+    expect(response.status).toBe(400);
+    expect((await errorEnvelope(response)).code).toBe("invalid_cursor");
   });
 });
