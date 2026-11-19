@@ -495,3 +495,21 @@ describe("claimPendingEvents — driver failures and malformed rows", () => {
     ).rejects.toThrow(/ObjectId/);
   });
 });
+
+describe("emitDomainEvent — gate precedence when both gates refuse", () => {
+  it("U4: answers unknown_event_key when the unregistered eventKey also carries a forbidden payload key", async () => {
+    const fake = makeFakeMongo();
+
+    // Characterization pin (ADR-0845): `emitDomainEvent` asks the catalogue gate
+    // before the payload gate, so a doubly-invalid input answers the key fault.
+    // Both gates refuse and neither lets a row through.
+    await expect(
+      emitDomainEvent(
+        makeDomainEventInput({ eventKey: "totally.unknown.event", payload: { email: "leak" } }),
+        { db: fake.db, clock: fixedClock(T0) }
+      )
+    ).rejects.toMatchObject({ code: "unknown_event_key" });
+
+    expect(fake.calls.some((call) => call.method === "insertOne")).toBe(false);
+  });
+});
