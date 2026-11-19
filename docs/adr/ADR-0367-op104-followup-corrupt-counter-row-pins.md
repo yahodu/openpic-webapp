@@ -184,3 +184,175 @@ number after the sibling's reservation, and the lane cell advances from `0366`
 to **`0368`** so the sibling's `0366` stays claimable. `0364` and `0365` are
 consumed and are never renumbered. No number outside the lane range `0360`–`0379`
 is touched.
+
+## Review and landing — PR #707 (squash dbf93bf3)
+
+Reviewed head `cedb8440` on card `t_d614b82a`; this sign-off is card
+`t_0f3d134a`, which consumes **no ADR number** and changes no cell. **Verdict:
+APPROVED WITH FINDINGS (one Low)** — §Consequences claimed a loosened or dropped
+`storedCounterSchema.parse` fails on L8; the review measured that claim false and
+corrects it below.
+
+Nothing above is retracted. §Context, §Decision, §Evidence, §Out of scope and the
+`L7`/`L8` decisions stand as written; the header's Status line was already
+`Accepted` at delivery, so no `pending` marker needed clearing; and what followed
+the delivery is carried by the follow-ups' own records —
+[ADR-0368](ADR-0368-op104-followup-counter-parse-pin.md) for the parse pin, and
+§Correction below for the one sentence that proves inexact.
+
+### Landing proof
+
+- **Squash.** `git log --oneline -6 dbf93bf3` puts `dbf93bf3` directly on
+  `513284e5` (the trunk's own `docs(adr): …` sign-off commit for `ADR-0362` and
+  `ADR-0363`), and `git log -1 --format='%H %P' dbf93bf3` prints exactly one
+  parent, `513284e5`. PR [#707](https://github.com/yahodu/openpic-webapp/pull/707)
+  is `MERGED` with `mergedAt 2026-11-19T05:50:21Z`, `headRefOid cedb8440` and
+  `mergeCommit dbf93bf3`.
+- **Scoped diff is empty.** `git diff --stat cedb8440 dbf93bf3` over the PR's
+  three paths (`entitlements-endpoints.test.ts`, this record, `docs/adr/README.md`)
+  prints nothing, so the review's runs apply to the shipped bytes verbatim. The
+  spec blob is `8b613ac0…` at `cedb8440` and at `dbf93bf3`; this record's blob is
+  `b2e8fc1a…` at both.
+- **Whole-diff files.** `git diff --name-only cedb8440 dbf93bf3` lists only
+  `ADR-0362` and `ADR-0363` — the trunk commit `513284e5` folded in by the
+  squash, not part of this delivery.
+- **`origin/main` at handoff** was `dbf93bf3`. It has since advanced through
+  `200eaf97` (PR #708), `9b604e44` (PR #711), `0659da33` (the `1.66.5` release
+  chore), `b120866c` (PR #713) and `432366b0` (PR #712), so the checks below were
+  re-measured on the current trunk, not only at the handoff SHA.
+
+### Reviewer-run evidence
+
+Measured by the review of `t_d614b82a` and re-measured at this sign-off, real
+command output:
+
+- **Focused integration**
+  (`CI=true TMPDIR=/root/tmp-mongo … --project integration
+apps/web/src/test/integration/entitlements-endpoints.test.ts`): **33 passed
+  (33)** in the lane worktree and **33 passed (33)** on a probe worktree at
+  `dbf93bf3`; the same probe re-ran **33 passed (33)** at this sign-off. On
+  today's trunk the same file answers **35 passed (35)**, the two extra cases
+  being card `t_8f1dac13`'s `entitlementGrants` arms (PR #712).
+- **Standalone selection.** `-t "L7"` and `-t "L8"` each answer **1 passed | 32
+  skipped (33)** at `dbf93bf3`, so each pin carries its own seed.
+- **Case count.** The spec holds **31** `it(` blocks at `84378fa0` and **33** at
+  `cedb8440`/`dbf93bf3`; `git diff --stat 84378fa0 cedb8440` over it reads
+  **+133 −0**, so no carried case, L5 and L6 included, was removed or rewritten.
+- **Gates at the head.** `prettier --check` clean on the spec, this record and the
+  ledger; `tsc` exit 0 on all three projects; ADR guards **236 passed (236)**.
+- **Remote checks on PR #707.** `statusCheckRollup` holds 15 rows, all `SUCCESS`:
+  14 gates (`ci`, `unit_test`, `test_coverage`, `lint`, `audit`, `audit-dev`,
+  `secret-scan`, `env-changes`, `validate-branch-name`, `validate-pr-title`,
+  `CodeQL`, two `Analyze` jobs and `Assert CI evidence for the pushed head`) plus
+  `notify-discord`, the close side-effect.
+
+### Load-bearing, re-measured
+
+Two mutations in throwaway probe worktrees — never in the lane tree — both at
+`dbf93bf3`, with the spec byte-identical to the shipped copy:
+
+- `git checkout 5e1a05de -- apps/web/src/server/services/entitlements/view.ts`
+  (the pre-ADR-0365 unbounded `find().toArray()`) → full file
+  **`1 failed | 32 passed (33)`**, the one red being
+  `L7 characterization: a malformed counter row in a closed period is ignored,
+and the view still answers 200` with
+  `AssertionError: expected 500 to be 200 // Object.is equality` at its
+  `expect(response.status).toBe(200)` line. **L8 is among the 32 passed** under
+  that same mutation.
+- `storedCounterSchema.parse(row)` replaced by a pass-through cast at
+  `view.ts:261` → full file **`33 passed (33)`**: the delivered pair cannot tell a
+  dropped parse from a working one. This is the measurement the correction below
+  rests on.
+
+`git checkout HEAD -- <same path>` returned `view.ts` to
+`sha256 bbb9d32a…359071`, `git status --porcelain` empty, and the same command
+answered **33 passed (33)**.
+
+### Correction to §Consequences
+
+§Consequences' second bullet reads:
+
+> A regression that loosens or drops `storedCounterSchema.parse` on the fetched
+> rows now fails on L8 instead of serving a non-numeric `value` as `used`.
+
+That is **measured false**, and it is corrected here without retracting the
+intent: the served `value` must never come from a row the schema rejects, but L8
+is not the seam that enforces it. Under the pass-through cast above, `L8` stays
+**green** (`1 passed | 32 skipped`) and the route still answers
+`500 internal_error` — the corrupt `value` fails later, in the response-model
+serialisation, so the wire is fail-closed under both mechanisms and a
+`500 internal_error` pair cannot tell them apart. Re-measured on today's trunk
+`432366b0`, L8 answers **`1 passed | 34 skipped (35)`** under that same cast.
+
+The bullet's true form:
+
+> A regression that widens the counter fetch back to `find().toArray()` — or to
+> any set that includes closed periods — now fails as `expected 500 to be 200` on
+> L7. A regression that loosens or drops `storedCounterSchema.parse` is caught by
+> the unit pin at the service seam (card `t_3dd46e5f`,
+> [ADR-0368](ADR-0368-op104-followup-counter-parse-pin.md)), not by L8: L8 is a
+> **wire-contract** anchor — a corrupt served-period counter row never yields
+> `200` — and holds whichever mechanism refuses it.
+
+The first bullet (`L7` catches a widened fetch set) is unchanged: it is measured
+above. And the corrected half is measured too — on `432366b0` with the same cast
+in place, the unit pin answers **`2 failed | 1 passed (3)`**
+(`AssertionError: promise resolved "…" instead of rejecting`), so the mechanism is
+pinned where it can be seen.
+
+The bullet is corrected beside itself rather than rewritten in place for two
+reasons: this sign-off is additive by card (`git diff --stat` must read `+N −0`),
+and [ADR-0366](ADR-0366-op104-followup-bound-entitlement-grants-read.md)'s
+sign-off set the precedent — the historical text stays, the supersession is
+stated next to it.
+
+### ADR-number ruling
+
+The implementer asked the review to arbitrate the `0367` reservation. **`0367`
+stands and no re-cut is needed.** `origin/main` `84378fa0` did read the lane cell
+`0366`, but `git show 5b46aa31:docs/adr/README.md` already carried the cell at
+`0367` with `docs/adr/ADR-0366-op104-followup-bound-entitlement-grants-read.md`
+in place, and that head is public as PR
+[#708](https://github.com/yahodu/openpic-webapp/pull/708) — `MERGED`,
+`headRefOid 9e1b822e`, `mergeCommit 200eaf97`, `mergedAt 2026-11-19T06:29:25Z`.
+The mandated sweep therefore prevented a real duplicate: taking `0366` would have
+put two records under one number in this lane.
+
+§“ADR number allocation” states exactly this, and its cell advance is consistent
+with what followed: it sets `0368`, and `0368` is the number the doc-card sibling
+`t_3dd46e5f` consumed for
+[ADR-0368](ADR-0368-op104-followup-counter-parse-pin.md) (PR #711, squash
+`9b604e44`), which advanced the cell to `0369` — the value the lane reads on the
+trunk today. No cell is changed here.
+
+### Two trunk moves this sign-off records
+
+- **This record's `Consumers:` line** gained
+  `apps/web/src/test/unit/entitlements-counter-parse.test.ts` in `9b604e44`
+  (PR #711), measured necessary by the `adr-consumers` guard; the blob moved
+  `b2e8fc1a…` → `b3d1056c…` and nothing else in this record changed. This
+  sign-off builds on `432366b0`, so its own diff is the appended section only.
+- **`view.ts`** moved `bbb9d32a…` → `92e83ccd…` in `200eaf97` (PR #708, the
+  `entitlementGrants` window bound). The pins were re-run on the current trunk
+  with that change in place — **35 passed (35)**, L7 and L8 included — so they
+  still describe the shipped code.
+
+### Findings routing
+
+| Finding | Severity | Subject                                                              | Routed to                      |
+| ------- | -------- | -------------------------------------------------------------------- | ------------------------------ |
+| F1      | Low      | §Consequences' L8 claim is false; the parse is pinned at the seam    | corrected above                |
+| F2      | Low      | the parse mechanism had no pin until ADR-0368                        | `t_3dd46e5f` (landed)          |
+| F3      | Info     | the three new arms reuse the `U10` id within the entitlements family | no action; ids are per-subject |
+
+No finding was Critical, High or Medium, so the delivery ships; F1 is answered by
+this section and F2 by the follow-up record.
+
+### Checks at this sign-off
+
+- **`prettier --check`** clean on this record; the six ADR guards
+  (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`, `adr-consumers`,
+  `adr-source-references`, `adr-inline-code-spans`) **236 passed (236)**.
+- **Scope proof.** `git diff --stat origin/main...HEAD` lists exactly this file and
+  reads **`+N −0`**, so `docs/adr/README.md` is byte-identical, no number is
+  minted and no existing sentence is deleted.
