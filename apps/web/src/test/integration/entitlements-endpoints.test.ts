@@ -127,6 +127,28 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   answers `500 internal_error`. Green on both heads by design (the unbounded
  *   read fetched it too); the narrowing is only ever *outside* the served
  *   period.
+ *
+ * ## Characterization pins — OP-104 L9/L10 (green on arrival, ADR-0370)
+ *
+ * The `entitlementGrants` read ADR-0366 bounded to the **active window**
+ * narrows corruption detection in exactly one arm — the same shape ADR-0365's
+ * counter bound had for L7/L8. Both cases below are **characterization** too:
+ * they pass against the shipped trunk and exist only to make a change visible,
+ * so a red means the shipped behaviour moved — never that the spec is ahead of
+ * the code.
+ *
+ * - **L9 — a malformed grant row in a *closed* window is ignored.** The row's
+ *   `validFrom`/`validUntil` window excludes `now`, so the bounded read never
+ *   fetches it and `storedGrantSchema` never parses it: the view answers `200`
+ *   and serves exactly the numbers the healthy, open-window grant produces.
+ *   Under the pre-ADR-0366 unbounded `find().toArray()` read the same seed
+ *   threw (`500 internal_error`). **A red L9 means the fetch set widened
+ *   again.**
+ * - **L10 — a malformed grant row in a *served* window is still refused.** The
+ *   window covers `now`, so the row is fetched, `storedGrantSchema.parse`
+ *   throws and the route answers `500 internal_error`. Green on both heads by
+ *   design (the unbounded read fetched it too); the narrowing is only ever
+ *   *outside* the served window.
  */
 
 const TENANTS_PATH = "/api/v1/tenants";
@@ -1299,6 +1321,168 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
       periodKey: currentMonthKey(),
       value: "corrupt",
       updatedAt: new Date("2026-09-15T10:00:00.000Z"),
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(500);
+    expect((await errorEnvelope(response)).code).toBe("internal_error");
+  });
+
+  /**
+   * **Characterization** pin of ADR-0366's bounded grant read (ADR-0370).
+   *
+   * The view fetches only the grants whose `validFrom`/`validUntil` window
+   * covers `now` (`find({ validFrom: { $lte: now }, $or: [{ validUntil: null },
+   * { validUntil: { $gt: now } }] })` in `view.ts`), so a grant row the window
+   * **excludes** is never parsed. A row whose stored `delta` is not a number
+   * therefore no longer trips `storedGrantSchema.parse`: the response stays
+   * `200` and the served numbers come from the one healthy, open-window grant.
+   *
+   * This records a deliberate narrowing of corruption detection — it does *not*
+   * promise the old row is harmless. **A red here means the fetch set widened
+   * again** (e.g. back to `find().toArray()`), which would restore the `500
+   * internal_error` that the pre-ADR-0366 head answered for this exact seed.
+   */
+  it("L9 characterization: a malformed grant row in a closed window is ignored, and the view still answers 200", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-closed-grant",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    // The healthy arm: one well-formed grant whose open window covers `now`.
+    await seedGrant({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: 4,
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+    });
+    // `used` comes from the counter at this key's `lifetime` period, so the
+    // served `remaining` is a consequence of both the grant sum and the usage.
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      periodKey: "lifetime",
+      value: 7,
+    });
+    // `seedGrant` types `delta` as `number`, so the corruption goes in raw. The
+    // window closed long before `FROZEN_NOW`, so the bounded read never fetches
+    // this row; `entitlementGrants` carries no unique index over
+    // `(tenantId, entitlementKey)`, so a second row for the same key is legal.
+    await app.db.collection(COLLECTIONS.entitlementGrants).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: "not-a-number",
+      overrideLimit: null,
+      source: { kind: "purchase", billingTransactionId: new ObjectId(), note: null },
+      validFrom: new Date("2025-01-01T00:00:00.000Z"),
+      validUntil: new Date("2025-02-01T00:00:00.000Z"),
+      createdAt: new Date("2025-01-01T00:00:00.000Z"),
+      createdByUserId: null,
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    // §3.5 types `grants[].delta` as an integer, so a corrupt delta folded into
+    // the served `grants[]` would fail this parse rather than ship silently.
+    expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
+    const row = entitlementRowFrom(payload, "storage.bytes");
+    // 100 (plan) + 4 (the one open-window grant); `used` is the seeded counter,
+    // so `remaining` proves the corrupt row contributed no delta.
+    expect(row).toMatchObject({
+      key: "storage.bytes",
+      limit: 100,
+      effectiveLimit: 104,
+      used: 7,
+      remaining: 97,
+      periodKey: "lifetime",
+      unlimited: false,
+    });
+    // Exactly one served grant: the closed-window row appears in neither
+    // `effectiveLimit` nor `grants[]`.
+    expect(row.grants).toEqual([{ delta: 4, source: "purchase", validUntil: null }]);
+  });
+
+  /**
+   * **Characterization** pin: the narrowing is only ever *outside* the served
+   * window (ADR-0370).
+   *
+   * This corrupt row's window **covers** `now` (`validFrom` in the past,
+   * `validUntil: null`), so it is inside the fetched set,
+   * `storedGrantSchema.parse` still throws and the route answers `500
+   * internal_error`. Green on both heads by design — the pre-ADR-0366 `find()`
+   * read fetched it as well — so this pin is a contract, not a delta: a red
+   * means a malformed *served-window* grant row can now reach a served
+   * `effectiveLimit` or `grants[]`.
+   */
+  it("L10 characterization: a malformed grant row in a served window is still refused with 500 `internal_error`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-served-grant",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    // The well-formed arm beside it proves the seed is otherwise servable, so a
+    // `500` here is the corrupt row's parse and not a broken workspace.
+    await seedGrant({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: 4,
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+    });
+    // Same corruption, but the window covers `FROZEN_NOW` — so the bounded read
+    // fetches it and the parse still refuses it.
+    await app.db.collection(COLLECTIONS.entitlementGrants).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: "not-a-number",
+      overrideLimit: null,
+      source: { kind: "purchase", billingTransactionId: new ObjectId(), note: null },
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      createdByUserId: null,
     });
 
     const response = await getEntitlements(
