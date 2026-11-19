@@ -1,3 +1,9 @@
+## [1.66.6](https://github.com/yahodu/openpic-webapp/compare/v1.66.5...v1.66.6) (2026-11-19)
+
+### Performance Improvements
+
+- **entitlements:** OP-104 add a validUntil index for the bounded grant read ([#714](https://github.com/yahodu/openpic-webapp/issues/714)) ([4cb7252](https://github.com/yahodu/openpic-webapp/commit/4cb72527a155c598b4c9a0985e89c8f82d3821b2))
+
 ## [1.66.5](https://github.com/yahodu/openpic-webapp/compare/v1.66.4...v1.66.5) (2026-11-19)
 
 ### Performance Improvements
