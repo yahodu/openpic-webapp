@@ -17,9 +17,10 @@ lane`), whose `Next free` cell read **`0841`** at this base. There is **no `test
   **`0841`** and advances **only** the `OP-135 worker interface lane` cell to `0842`; the OP-136
   cell stays `0860`, the `OP-129 attendee identity lane` cell and the two `unallocated (future
 lanes)` cells stay `0869`, and no range is re-cut.
-- **Consumers:** `vitest.config.ts` (the `integration` project's `testTimeout`, and the only file
-  this record governs). The guard sweeps `apps/` and `packages/`, so this root-level config file is
-  outside the citation population — the field is declarative here, exactly as the record states.
+- **Consumers:** `vitest.config.ts` (the `integration` project's `testTimeout` and, since
+  §Amendment, its `hookTimeout` — the only file this record governs). The guard sweeps `apps/` and
+  `packages/`, so this root-level config file is outside the citation population — the field is
+  declarative here, exactly as the record states.
 - **Consumes:** [ADR-0037](ADR-0037-integration-spec-ci-readiness-budget.md) §Decision 3 (the
   `INTEGRATION_TEST_TIMEOUT_MS = 30_000` budget two specs already pin for themselves) and its
   §Alternatives (raising `testTimeout` **globally** was rejected there; this record raises it for
@@ -113,11 +114,15 @@ than deriving a delta, and the delivered change leaves that number identical —
    **1455** before and **1455** after at the delivered base (the red measurement above was taken on
    `cbab1f0f`, which reads `1452`; the base moved through #644's three cases, and the delivered diff
    contains no test file at all).
-4. **`hookTimeout` is left at its default (10 000 ms).** The measured reds are all inside timed
-   cases, not hooks, and every DB-backed `beforeAll` already passes an explicit
-   `MONGO_READY_HOOK_TIMEOUT_MS` (35 000 ms) budget (ADR-0037 §Amendment). Raising an unmeasured
-   budget would be the guess this card forbids; if a hook red is ever observed, it gets its own
-   measurement.
+4. **`hookTimeout` gets the same 30 000 ms ceiling, on the `integration` project only**
+   (`INTEGRATION_HOOK_TIMEOUT_MS`, amendment below). It was **left at Vitest's 10 000 ms default**
+   when this record first landed, on the ground that every measured red was inside a timed case
+   rather than a hook, and every DB-backed `beforeAll` already passes an explicit
+   `MONGO_READY_HOOK_TIMEOUT_MS` (35 000 ms) budget (ADR-0037 §Amendment), with the reservation that
+   _"if a hook red is ever observed, it gets its own measurement."_ A hook red has since been
+   observed, so §Amendment — the hook clock records the measurement and raises the hook timer to the
+   case timer. Hooks that pass an explicit budget keep their own value; the `unit` project keeps the
+   10 000 ms default.
 5. **Concurrency is left alone** (see §Alternatives 1).
 
 ### Sizing
@@ -220,3 +225,122 @@ and the full `unit` project `184 passed (184)` files / `3077 passed | 3 skipped 
 6. **Fix the harness's cold-connect cost instead.** Already done — ADR-0037's readiness probe and
    per-worker `waitForMongoReady` keep connection setup in hooks. The remaining tail is steady-state
    contention, which is what a per-test ceiling is for.
+
+## Amendment note — the hook clock (t_c053a028)
+
+§Decision 4 left `hookTimeout` on Vitest's 10 000 ms default, because no hook red had been measured,
+and promised that a hook red would get "its own measurement". One has now been observed, so this note
+records the observation, the measurement it forced, and the amendment. **The case-timer decision above
+is unchanged** — this record now bounds the hook timer with the same ceiling.
+
+### The observed hook red
+
+The review of this record's card ran two full runs of the identical tree (2026-11-18, detached
+worktree at trunk `88d65749`, `TMPDIR=/root/tmp-mongo`, `vitest run --project integration`):
+
+- run 1 — `1 failed | 1479 passed (1480)`, 141 files, 365.20 s, **zero** `Test timed out` and **one**
+  `Error: Hook timed out in 10000ms` at `uploads-batch-status.test.ts:279`, which is that file's
+  `beforeEach` (a 21-collection `deleteMany` sweep). Card `t_c053a028` carries the block verbatim; the
+  file's `beforeAll` is not the hook that reddened, and it passes `MONGO_READY_HOOK_TIMEOUT_MS`.
+- run 2 — `141 files passed (141)` / `1480 passed (1480)`, 262.57 s, zero timeout lines of either kind.
+- `uploads-batch-status.test.ts` alone — `10 passed (10)` in 7.56 s.
+
+That is the signature §Context records for case timeouts — red on one run, green on the next full run
+of the same tree, green in isolation — on the other timer. **Rate at 10 000 ms: one hook red in two
+full runs on this host**, against zero case timeouts in both.
+
+### The measurement
+
+Taken on card `t_c053a028` at `4d13bebb` (this branch rebased onto the trunk; 145 files / **1 530**
+cases — the card's figures are at `88d65749` and the count moved with the trunk, so every figure below
+is stated at the tree it was taken on), `TMPDIR=/root/tmp-mongo`,
+`vitest run --project integration`:
+
+- **The sweep is milliseconds, not seconds.** A throwaway probe timed the `uploads-batch-status.test.ts`
+  `beforeEach` body in-hook across its ten cases: `15.2`, `23.4`, `28.0`, `29.7`, `30.6`, `35.9`,
+  `36.9`, `37.6`, `40.5`, `41.6` ms (median 33.2 ms). The probe was reverted before the config
+  commit, so the diff carries no test file.
+- **A full run never needs more than 1 000 ms for any hook.** A full run with a throwaway
+  `hookTimeout: 1_000` on the `integration` project was green — `145 files passed (145)` /
+  `1530 passed (1530)`, 225.61 s, zero `Hook timed out` lines. A second full run with a throwaway
+  `hookTimeout: 3_000` was green as well — `145 files passed (145)` / `1530 passed (1530)`, 225.11 s —
+  and a third at the unchanged 10 000 ms default was green, `145 files passed (145)` /
+  `1530 passed (1530)`, 229.79 s. Both throwaway configs were reverted before the commit.
+- **The violation is a stall, not hook work.** A hook whose body is 15–42 ms cannot "gradually" reach
+  10 000 ms; the red run spent 365.20 s on work the green run finished in 262.57 s, which is the
+  descheduled-worker contention §Context measured for cases (3 fork workers over one
+  `MongoMemoryReplSet`, suite 84 % CPU-bound). The 10 000 ms violation is therefore a **censored**
+  measurement: it proves the tail crosses 10 s, not by how much.
+
+### The amendment
+
+`vitest.config.ts` gains `INTEGRATION_HOOK_TIMEOUT_MS = 30_000` beside `INTEGRATION_TEST_TIMEOUT_MS`,
+and the `integration` project sets `hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS`. The `unit` project
+keeps the 10 000 ms default, exactly as it keeps the 5 000 ms case default. Nothing else moves: no
+test file, no case, no `it(` body, no hook body, no matcher, no retry, no skip. A hook that passes an
+explicit budget keeps its own value — the DB `beforeAll`s at `MONGO_READY_HOOK_TIMEOUT_MS`
+(35 000 ms) and `notification-seed.test.ts`'s `vi.setConfig` are unaffected — so the new value is the
+default for the hooks that carry none, which are exactly the per-case collection sweeps and the
+`afterAll` cleanups around them.
+
+**Why the number is 30 000 ms.** The measurement above says the hook timer faces what the case timer
+faces: a normally-millisecond hook that a stall can push past its clock, with the excess unbounded by
+measurement. The case timer's contention ceiling, from §Sizing, is 30 000 ms, and a case and the sweep
+hooks that bracket it are descheduled by the same host; two clocks that disagree about how long a
+stall may last would only move the false red from the case to the hook, which is exactly what was
+observed. 30 000 ms is also inside the 35 000 ms `MONGO_READY_HOOK_TIMEOUT_MS` the DB hooks already
+use, so the harness gains **one** ceiling per direction rather than a new number of its own. The
+`INTEGRATION_HOOK_TIMEOUT_MS` name exists even though the value equals the case budget, so the two
+timers can move independently if a later measurement separates them, and so a reader of the config
+sees which timer a change affects.
+
+**The budget is load-bearing, and the raise is the only reason a slow hook passes.** A throwaway
+probe (`4 000 ms` hook body, no per-hook timeout argument, never committed, deleted before the
+commit) ran at two configs:
+
+- at the delivered config — `1 passed (1)`;
+- with a throwaway `hookTimeout: 3_000` — `1 failed (1)`, `Error: Hook timed out in 3000ms`.
+
+**Verification.** Five consecutive full `integration` runs at the delivered tree (the config commit
+`2277d50f`, rebased onto the trunk `750c0398`; it has since been replayed unchanged as `9c4bc8c7` onto
+`14186080`, whose only new commit is a docs sign-off, and the commit carrying this record adds markdown
+only — the shape ADR-0037's first amendment used), same head, nothing changed between runs,
+`TMPDIR=/root/tmp-mongo`:
+
+- run 1 — `145 files passed (145)` / `1532 passed (1532)`, 242.55 s
+- run 2 — `145 files passed (145)` / `1532 passed (1532)`, 237.89 s
+- run 3 — `145 files passed (145)` / `1532 passed (1532)`, 252.59 s
+- run 4 — `145 files passed (145)` / `1532 passed (1532)`, 222.81 s
+- run 5 — `145 files passed (145)` / `1532 passed (1532)`, 224.43 s
+
+Zero `Hook timed out` lines and zero `Test timed out` lines in all five. Trunk moved twice while the
+card was in flight (`#725`, then the OP-132 confirm fix `f7246b9d` and its release chore `750c0398`), so
+the set above was run at the rebased head; the two earlier delivered trees recorded the same result —
+five runs at `4d13bebb`'s successor read `145` files / `1 530` cases each (243.88, 287.73, 313.93,
+223.46 and 227.64 s) and five at `2b9b1613` read `145` files / `1 532` cases each (234.35, 239.94,
+241.23, 237.60 and 244.43 s), all with zero timeout lines of either kind. The case count is therefore
+unchanged by the amendment at every base it was measured on: this branch's diff is
+`vitest.config.ts` (+26/−0) and this record only, so a tree's case count is its trunk's. Those sets
+also carry the load evidence — the slowest runs are 313.93 s and 252.59 s against the 262.57 s baseline
+the case budget was sized on, and every one of them is green.
+
+Gates at the same tree: `prettier --check .` clean, `tsc -p tsconfig.json --noEmit`,
+`tsc -p packages/contracts/tsconfig.json --noEmit` and `tsc -p apps/web/tsconfig.json --noEmit` exit
+`0`, `eslint .` exit `0`, and the six `adr-*` guards green.
+
+### Alternatives rejected for the hook timer
+
+1. **Pass `MONGO_READY_HOOK_TIMEOUT_MS` (35 000 ms) to the sweep hooks.** Rejected: it edits the ~38
+   integration specs that carry the loop-shaped sweep to change a default, and the measured red set
+   rotates — a per-file list is a list of today's victims, which is the argument §Alternatives 3
+   already makes for cases. The project scope is the smallest scope that covers the class, and the
+   delivered diff is one config file plus this record.
+2. **`Promise.all` over the collection list in each sweep.** Measured and rejected: the whole sweep
+   body is 15–42 ms, so parallelising it removes milliseconds from a hook whose cost is not the
+   problem, and a descheduled worker stalls whether its round trips are sequential or concurrent. It
+   would also edit the same ~38 test files for no measured gain.
+3. **`retry`.** Still rejected (§Alternatives 4): a retry would hide the hook's first attempt and let
+   a genuine intermittent defect through.
+4. **Raising the hook timer only on the specs that reddened.** Rejected: the reddened spec is not
+   special — its sweep is the same shape as the other 37, and it was green in isolation and on the
+   next full run of the same tree.
