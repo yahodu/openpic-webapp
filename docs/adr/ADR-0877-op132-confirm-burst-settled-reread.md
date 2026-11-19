@@ -144,12 +144,11 @@ head and the squash: `d8a10754^{tree}` == `f7246b9d^{tree}` ==
 `98e31ed8b559c67888fbacbf2224b3690f45862c`, which was `origin/main^{tree}` at merge time (the trunk
 then stood at `f7246b9d`). The blind spot the lane's merges of `origin/main` create is closed with
 blob identity instead: the reviewed head `a0668d4e`, the final head `d8a10754`, the squash `f7246b9d`
-and the trunks that followed (`14186080`, then `187eafb8`) all carry `6f48ab5f` for the confirm route,
-`340ba06e` for `selfie-confirm-publication.test.ts` and `c5ce4fc1` for this record. So every number
-below was measured on the bytes `main` carries. The trunk advanced twice after the merge
-(`14186080`, this record's sibling DOCS landing #726 with release `1.66.7` at `750c0398`, then
-`187eafb8`, #728 and the F1 pin #727), and none of those landings edits a line of the three blobs
-above.
+and the trunks that followed up to `187eafb8` all carry `6f48ab5f` for the confirm route, `340ba06e`
+for `selfie-confirm-publication.test.ts` and `c5ce4fc1` for this record. So every number below was
+measured on the bytes `main` carries. The trunk advanced after the merge (`14186080`, this record's
+sibling DOCS landing #726 with release `1.66.7` at `750c0398`, then `da6ed432`, then the F1 pin
+`187eafb8`), and none of those landings edits a line of the three blobs above.
 
 **Scope measured, not transcribed.** `git diff --stat f7246b9d^ f7246b9d` is exactly three paths —
 `3 files changed, 226 insertions(+), 9 deletions(-)`: the confirm route `+97/−9`, this record `+131`
@@ -192,9 +191,9 @@ merged tree carries both sides: the trunk's own newer material (`0319` board-wid
 `0372` OP-104, the `0282`–`0287` and `0318` rows, `0843`, `0844`, and the OP-135 lane cell at `0845`)
 **and** this lane's `0877` row, its prose note, and the `OP-136` lane cell and pool cursor at `0878`.
 No number is re-minted: the sweep over every `ADR-NNNN` path on the merged tree returns no name twice,
-and the tree holds 397 records at `d8a10754` and at `f7246b9d`. The one record added after the merge is
-`ADR-0878`, the F1 pin's own (below); this append adds none and touches no ledger cell. A third merge
-of `origin/main` (`187eafb8`) carries that pin and #728 onto this sign-off's branch, conflicts with
+and the tree holds 397 records at `d8a10754` and at `f7246b9d`. Records minted after the merge are
+other cards' (`ADR-0878` is the F1 pin's, below); this append adds none and touches no ledger cell. One
+merge of `origin/main` (`187eafb8`) carries that pin onto this sign-off's branch, conflicts with
 nothing, and continues the same union.
 
 **Findings and their post-review routing.** **F1 (Low)** — no shipped case forces the exhausted arm:
