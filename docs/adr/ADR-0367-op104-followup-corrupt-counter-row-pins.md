@@ -5,7 +5,7 @@
 - **Card:** OP-104 TEST follow-up (`t_d614b82a`) · **Branch:** `OP-104-task-corrupt-counter-pins` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_d614b82a`
 - **Relates to:** [ADR-0365](ADR-0365-op104-followup-bounded-counters-and-usage-sort-index.md) (the bounded counter read these pins characterize), [ADR-0364](ADR-0364-op104-followup-usage-cursor-edges-pins.md) (the sibling characterization-pin record and its posture), [ADR-0362](ADR-0362-op104-followup-usage-bound-and-plan-keys-red.md) (the RED half of the `/usage` bound), [ADR-0361](ADR-0361-op104-entitlements-usage-endpoints-green.md) (the entitlements view), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §3.5 (entitlements & usage), §0.7 (status codes) · **Schema:** §14.2
-- **Consumers:** `apps/web/src/test/integration/entitlements-endpoints.test.ts`
+- **Consumers:** `apps/web/src/test/integration/entitlements-endpoints.test.ts`, `apps/web/src/test/unit/entitlements-counter-parse.test.ts`
 
 ## Context
 
