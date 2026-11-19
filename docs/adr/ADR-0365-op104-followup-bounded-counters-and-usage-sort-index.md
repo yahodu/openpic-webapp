@@ -151,3 +151,169 @@ was re-read from this checkout's ledger immediately before committing, and
 `0365` was free on `main`, in this worktree and on every remote ref at the cut,
 so this record consumes `0365` and the cell advances to `0366`. No number
 outside the lane range `0360`–`0379` is touched.
+
+## Review and landing — PR [#705](https://github.com/yahodu/openpic-webapp/pull/705)
+
+Reviewed head `63b25f74`; docs sign-off `t_8f2bc499`, which consumes no ADR number.
+**Verdict: APPROVED WITH FINDINGS (round 1, artifact lens)** — no Critical, High or
+Medium finding, and three follow-ups routed by card id. Squash-merged as `c2f079da`
+(`mergedAt 2026-11-19T05:22:11Z`) onto `origin/main` `5e1a05de`; PR `#705` is
+`MERGED` and the lane branch was auto-deleted by the repository.
+
+### Landing proof
+
+- **Tree identity.** `git rev-parse 63b25f74^{tree} c2f079da^{tree}` prints the tree
+  `fce20e21c407def9ef570fd7368ba202cdc4c173` twice, and
+  `git diff --stat 63b25f74 c2f079da` is empty: the bytes the review measured are
+  the bytes on the trunk. `git merge-base --is-ancestor c2f079da origin/main` exits
+  `0`.
+- **Merge cleanliness.** `git merge-tree --write-tree 5e1a05de 63b25f74`, measured
+  against the trunk the branch was cut from, exits `0` and prints `fce20e21…`.
+  Against the trunk as it stands at this sign-off the same command exits `1` on one
+  path, `docs/adr/README.md`, because the OP-104 `Next free` cell moved from `0366`
+  to `0368` after the merge. That is expected of a squash-merged branch: the squash
+  carries the head's whole tree, so the ledger hunk is never replayed and nothing is
+  lost.
+- **Blob identity of this record.** `git rev-parse` of this file at `63b25f74`, at
+  `c2f079da` and at `origin/main` prints `9374741b…` three times.
+- **The production tree did not move after the merge either.** The `view.ts` blob
+  (`abe342a5…`) and the `indexes.ts` blob (`f2547ddf…`) are identical between
+  `63b25f74` and today's trunk, and `git diff --stat 63b25f74 origin/main` over
+  `apps/web/src`, `packages` and the schema document is empty, so the gates below
+  still describe the code the trunk carries.
+
+### Checks the review ran at `63b25f74`
+
+- **Focused integration** (`entitlements-endpoints`, `entitlements`,
+  `index-bootstrap`): **48 passed (48)** — the `/usage` file at 31 cases with L5 and
+  L6 green, and the index bootstrap creating and reconciling the new index by name.
+- **Focused unit** (`indexes.test.ts`, `adr-numbering`): **44 passed (44)**.
+- **Full `unit` + `integration` with coverage**: **exit 0 — 332 files / 4681 passed
+  (3 skipped)**; global **91.82 % statements / 80.76 % branches**, and
+  `server/services/entitlements` **99.37 % branches**. That is the review's own
+  reading, two hundredths of a point above the handoff's 91.80 / 80.69; both are
+  above the gates.
+- **`tsc`** exit `0` on all three projects. **`eslint`** 0 errors on both touched
+  production files, with the same two pre-existing
+  `security/detect-object-injection` warnings in `indexes.ts` — proved pre-existing
+  by running the same lint at `5e1a05de`, where they sit thirteen lines earlier.
+  **`prettier --check`** clean on all five touched files.
+- **ADR guards** (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`,
+  `adr-consumers`, `adr-source-references`, `adr-inline-code-spans`): **236 passed
+  (236)**.
+- **`next build`** exit `0`, with `/api/v1/tenants/[tenantId]/usage` in the route
+  table beside `/entitlements`.
+- **Remote checks 14/14**, `secret-scan` and the aggregate `ci` included. The merged
+  PR's `statusCheckRollup` lists **15** rows, every one `SUCCESS`; the fifteenth is
+  the `notify-discord` close side-effect run, which is not a gate.
+
+Re-measured while writing this section, at the trunk `dbf93bf3` that carries the
+squash: the tree, blob and production-tree identities above; the six ADR guards at
+**236 passed (236)**; focused unit **44 passed (44)**; `eslint` 0 errors with the
+same two warnings (`indexes.ts:961`, `indexes.ts:982`); and
+`prettier --check "docs/adr/**/*.md"` clean. The focused integration files read **50
+passed (50)** there rather than 48 — the two cases `t_d614b82a` added in PR `#707` —
+so the reviewed figure is quoted at the head it was measured on. The full suite with
+coverage, `tsc` and `next build` were not re-run here; they are the review's
+measurements at `63b25f74`, on a production tree that is byte-identical to today's.
+
+### P1 measured: the read is bounded to the pairs the view serves
+
+A probe worktree at `63b25f74` spied on `db.collection` and recorded the filter
+`readEntitlementsView` hands the driver:
+
+```
+{"$or":[{"entitlementKey":"events.active","periodKey":"2026-09"},
+        {"entitlementKey":"storage.bytes","periodKey":"2026-09"},
+        {"entitlementKey":"media.uploads","periodKey":"lifetime"}],
+ "tenantId":"…"}
+```
+
+The tenant scope survives the `$or` (the repository's `scopeFilter` merges
+`tenantId` beside it, not inside the branches). On a seeded history of **36** counter
+rows — three plan keys × twelve periods, plus a key no plan names — the two shapes
+explain as:
+
+| Filter                    | Winning plan                                            | docsExamined | nReturned |
+| ------------------------- | ------------------------------------------------------- | ------------ | --------- |
+| new `$or` of served pairs | `FETCH` over `OR` of three `IXSCAN` on the unique index | 2            | 2         |
+| old bare `{tenantId}`     | one `IXSCAN` on the same unique index                   | 36           | 36        |
+
+So the gain is served by the existing unique `(tenantId, entitlementKey, periodKey)`
+index and is 36 → 2 documents, not a client-side filter. A plan with no
+`tenant`-scoped key issues **no** `usageCounters` find at all, so the `$or: []`
+driver error is unreachable by construction.
+
+### P2 measured: the new index is load-bearing
+
+`explain("executionStats")` of the `/usage` query after `ensureIndexes`:
+
+- **with** `usage_counters_tenant_period_id`: `LIMIT`, then `FETCH`, then
+  `IXSCAN(usage_counters_tenant_period_id)` — **no `SORT` stage** — docsExamined
+  **41**;
+- **with the index dropped** in the probe: `SORT`, then `FETCH`, then
+  `IXSCAN(usage_counters_tenant_key_period_unique)` — docsExamined **96**.
+
+The keyset page takes the same index: the probe recorded the identical stage chain
+and the same 41 documents with a cursor bound. The index is therefore
+**load-bearing** for the §0.8 pagination of this route, not a cosmetic addition —
+drop it and every page sorts the tenant's counter rows in memory.
+
+### One measured qualification to §Status and §Out of scope
+
+Both of those lines state that the delivery changes no status code. That holds for
+the arms the pins cover, but it is not exact in one arm. Measured A/B with the same
+seed and the same spec:
+
+- a `usageCounters` row for a plan key whose `value` is not a number, sitting in a
+  **closed** period (`2019-01`) while the served period is `2026-09`, made
+  `5e1a05de` throw and the route answer `500 internal_error`, and makes `63b25f74`
+  serve normally — `ok: true` with `used: 4` taken from the current-period row;
+- the same malformed row in the **served** period is refused with the
+  `500 internal_error` answer on both heads.
+
+The delta is exactly one behaviour: a corrupt row outside the served period is no
+longer fetched, so it is no longer parsed. The direction is defensible — one bad
+historical row should not take out the whole view — and it is what §P1 bought; what
+is inexact is the blanket wording, not the decision. This section records the
+measurement and does not rewrite §Status or §Out of scope; the routing is in
+§"Findings routing" below.
+
+**No decision in §Decision is retracted** — §P1 and §P2 stand exactly as written,
+neither narrowed, withdrawn nor re-scoped. (The record carries no §D-numbered
+clause, so its two decisions are named by their section headings.)
+
+### Ledger and no-collision proof
+
+- **`ADR-0365` is unique.** `0` on `origin/main` `5e1a05de` at the cut, and
+  `git rev-list --objects --all -- docs/adr` counts **1** `ADR-0365` object across
+  every ref, so only this lane minted it. `checkAdrDirectory` is green.
+- **The cell moved as intended.** The OP-104 `Next free` cell read `0365` on the
+  trunk the branch was cut from and `0366` at the reviewed head (`0364` was already
+  consumed by the sibling pin record). At this sign-off it reads `0368`: PR `#707`
+  took `0367` and left `0366` to the reservation held by `t_6fdc277b`.
+- **This section consumes no number and moves no cell.** `docs/adr/README.md` is
+  byte-identical to `origin/main` in the sign-off PR — no row, no cell, no lane
+  paragraph — and `git diff --name-only origin/main...HEAD` lists only this file.
+
+### Findings routing
+
+- **F1 (Low) — `t_6fdc277b`**: bound the `entitlementGrants` read to the active
+  window. Same class as §P1. The probe recorded that read's filter as a bare
+  `{"tenantId":"…"}` with no window, while `isGrantActive` and `effectiveLimit` bound
+  the selection before use, so an active-window filter would be provably identical
+  in output. Not a blocker for this delivery.
+- **F2 (Low) — `t_d614b82a`**: characterization pins for both arms of the corruption
+  delta recorded above. Landed as PR `#707` (squash `dbf93bf3`); its own record is
+  `0367` on the trunk.
+- **F3 — this sign-off `t_8f2bc499`**: records F1 and F2 without touching the
+  delivery.
+- **Recording-only notes, no card:** the plan read is now serial ahead of the grants
+  and counters, one extra round-trip on a hot path (already in §Out of scope); the
+  new index adds one index to maintain on every `consumeEntitlement` `$inc`; the two
+  `periodKey(spec.resetPeriod, now)` derivations in `view.ts` must stay equal or
+  `used` silently becomes `0`, and the current contract is covered by the specs;
+  `ensureIndexes` is the manual `pnpm db:ensure-indexes` script rather than a boot
+  step, so §P2 takes effect on an environment only after it runs; and the review's
+  coverage reading differs from the handoff's by 0.02 points of statements, both
+  above the gates.
