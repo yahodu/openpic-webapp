@@ -94,6 +94,8 @@ Before `git commit` or `git push`, run the verification pipeline:
   deployment notes, and env var changes (see `.github/pull_request_template.md`).
 - CI runs: branch name validation, PR title validation, tests, linting.
 - Merge via squash (`gh pr merge --squash --delete-branch`).
+- The merger runs the merge gate on the exact head SHA before `gh pr merge`
+  (`docs/CONVENTIONS.md` §9.1, ADR-0318); `--admin` never passes a failed gate.
 - Only merge when all CI checks pass and review is approved.
 
 ## 3. Agent Roles

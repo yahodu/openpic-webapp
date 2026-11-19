@@ -5,6 +5,7 @@
 - **Card:** OP-104 GREEN (`t_72aaa13f`) · **Branch:** `OP-104-task-entitlements-usage-endpoints` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_e7539f55`
 - **Relates to:** [ADR-0360](ADR-0360-op104-entitlements-usage-endpoints-red.md) (the RED contract this turns green), [ADR-0340](ADR-0340-op103-entitlements-red.md) / [ADR-0341](ADR-0341-op103-entitlements-green.md) (the decision surface this reads), [ADR-0260](ADR-0260-op100-tenant-provisioning-red.md) (the reusable tenant stage), [ADR-0280](ADR-0280-op101-tenant-members-red.md) (the owner-only gate shape), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §3.5 (entitlements & usage), §0.4 (tenancy), §0.5 (envelopes), §0.14 (entitlement enforcement) · **Schema:** §14.1, §14.2, §14.3
+- **Amended in place:** OP-104 TEST follow-up (`t_cafac01c`) — the five `(view.ts:NNN)` parentheticals are gone from the integration spec titles (each replaced by the contract/schema clause it pins) and the monthly `periodKey`/`resetsAt` cases now run on one frozen `Date`. No assertion, no production file and no ADR number touched; see the "Amendment" section at the end.
 
 ## Context
 
@@ -346,3 +347,43 @@ branch ref was kept. Findings routed, none blocking: test-title line-number
 coupling and real-clock month keys (test card), an unbounded `/usage` read and
 silent `"free"` subscription defaults (implementation card). No ADR number was
 consumed and `docs/adr/README.md` is byte-identical to the merged tree.
+
+## Amendment — the OP-104 TEST follow-up (`t_cafac01c`, 2026-11-18)
+
+The round-1 review routed two non-blocking test-quality findings to a TEST
+follow-up card. This section records their fix and its evidence. **No assertion
+changed, no production file changed and no ADR number was consumed**:
+`docs/adr/README.md` stays byte-identical to `origin/main` and this lane's
+`Next free` cell remains `0362`.
+
+- **M1 — implementation line numbers in spec titles.** Five titles in
+  `apps/web/src/test/integration/entitlements-endpoints.test.ts` carried a
+  `(view.ts:NNN)` parenthetical. The assertions under them are behavioural, so
+  each citation was stale the moment `view.ts` gained or lost a line. Each is
+  replaced by the clause the assertion actually pins: `(contract §3.5 grants[])`,
+  `(contract §3.5)` twice, `(contract §3.5, §0.5 envelope)` and `(schema §14.2)`.
+  No spec body, helper, fixture or assertion changed.
+- **L1 — real-clock month keys.** `currentMonthKey()` and `nextMonthStartIso()`
+  defaulted to `new Date()` and the counter seeds used the same derivation, so a
+  run straddling a UTC month boundary could seed period key `K`, have the route
+  read `K+1`, find no counter and fail `used: 1`. Fix option 1 of the card: every
+  case now runs on one frozen instant (`FROZEN_NOW`, the mid-month
+  `2026-09-15T12:00:00.000Z`), installed in a `beforeEach` by
+  `vi.useFakeTimers({ toFake: ["Date"] })` plus `vi.setSystemTime(FROZEN_NOW)` and
+  released in an `afterEach` by `vi.useRealTimers()`. Faking `Date` alone leaves
+  `setTimeout`/`setInterval` real for the driver's sockets and heartbeats, the
+  `attendee-sessions.test.ts` precedent. The observable meaning is unchanged: the
+  served `periodKey`/`resetsAt` remain the UTC month of the instant the route
+  reasons about, and the seeds use that same instant.
+
+Evidence off `origin/main` `9931d702`: focused integration **20/20**; full
+`unit`+`integration` green; `pnpm typecheck`, `eslint` and `prettier --check`
+clean; the ADR guard suite green. The freeze was proved load-bearing, not
+cosmetic: (a) each request's log `ts` is `2026-09-15T12:00:00.000Z`, i.e.
+`systemClock.now()` returned the frozen instant; (b) moving `FROZEN_NOW` to
+`2027-06-05T03:00:00.000Z` — far from the wall clock — still gives 20/20, so no
+wall-clock read survives in either the route or the spec's own derivation; (c)
+simulating the straddle (seeding one month ahead of the read) reddens exactly the
+two counter-dependent cases — `I1: a free tenant's monthly quota …` and the
+tenant-scoped unlimited-quota case — at assertion level, which is the failure
+class the freeze removes.

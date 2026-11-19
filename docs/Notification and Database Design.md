@@ -985,7 +985,7 @@ prices: [
 { tenantId, entitlementKey: "storage.bytes", periodKey: "lifetime", value: 73400320000, updatedAt }
 ```
 
-**Index:** `{tenantId:1, entitlementKey:1, periodKey:1}` unique
+**Index:** `{tenantId:1, entitlementKey:1, periodKey:1}` unique · `{tenantId:1, periodKey:-1, _id:-1}` — serves the `/usage` keyset list's sort (§0.8); the unique index above cannot, because `entitlementKey` sits between `tenantId` and `periodKey`
 
 ```js
 // entitlementGrants — additive top-ups
@@ -995,7 +995,7 @@ prices: [
   validFrom, validUntil: null, createdAt, createdByUserId }
 ```
 
-**Index:** `{tenantId:1, entitlementKey:1, validFrom:1}`
+**Index:** `{tenantId:1, entitlementKey:1, validFrom:1}` · `{tenantId:1, validUntil:1}` — bounds the `/entitlements` grant read to the window covering `now`; the first index cannot do it because its `validFrom` bound skips no expired row (every expired grant satisfies `validFrom <= now`) and `validUntil` sat in no index, so the planner walked the tenant's whole expired-grant history (ADR-0369)
 
 Effective limit:
 

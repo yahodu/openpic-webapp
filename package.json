@@ -1,6 +1,6 @@
 {
   "name": "openpic-webapp",
-  "version": "1.66.0",
+  "version": "1.66.6",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.18.0",
