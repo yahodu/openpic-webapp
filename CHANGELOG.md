@@ -1,3 +1,9 @@
+## [1.66.7](https://github.com/yahodu/openpic-webapp/compare/v1.66.6...v1.66.7) (2026-11-19)
+
+### Bug Fixes
+
+- **confirm:** OP-132 answer the settled outcome when a confirm burst spends its budget ([#688](https://github.com/yahodu/openpic-webapp/issues/688)) ([f7246b9](https://github.com/yahodu/openpic-webapp/commit/f7246b9d4ccff9f1d111de9b664d166855659aa7))
+
 ## [1.66.6](https://github.com/yahodu/openpic-webapp/compare/v1.66.5...v1.66.6) (2026-11-19)
 
 ### Performance Improvements
