@@ -1,3 +1,9 @@
+## [1.66.4](https://github.com/yahodu/openpic-webapp/compare/v1.66.3...v1.66.4) (2026-11-19)
+
+### Bug Fixes
+
+- **entitlements:** OP-104 bound the counter read and index the usage sort ([#705](https://github.com/yahodu/openpic-webapp/issues/705)) ([c2f079d](https://github.com/yahodu/openpic-webapp/commit/c2f079daae6740a7aaba4d96cd4a0a100a228a88))
+
 ## [1.66.3](https://github.com/yahodu/openpic-webapp/compare/v1.66.2...v1.66.3) (2026-11-19)
 
 ### Bug Fixes
