@@ -318,3 +318,26 @@ implementation-shaped literals are the §15.3/§16.2 field defaults a seed needs
 
 No assertion was loosened, no case skipped or `.only`-ed, and no test file other
 than the new spec is in the squash. **APPROVED WITH FINDINGS.**
+
+## Amendment — the absent stall index reads `updatedAt`
+
+§Known limits above names `{ status: 1, createdAt: 1 }` as the partial index the
+stall sweep is missing. The field is **`updatedAt`**, not `createdAt`. The pair
+the sweep reads is `status` + `updatedAt`: the candidate predicate pins
+`status: "in_progress"` (`apps/web/src/server/jobs/upload-session-sweep.ts:74`)
+and bounds `updatedAt` (`:75` — `updatedAt: { $lt: addDays(now,
+-IDLE_LIMIT_DAYS) }`), and §16.2 of the design document lists exactly
+`{status:1, updatedAt:1}` partial on `in_progress` as the index for
+`upload.session.stalled` detection
+(`docs/Notification and Database Design.md:1351`). `createdAt` is in neither
+surface.
+
+The recorded conclusion is unchanged: that index is absent from `INDEX_SPECS`, so
+the candidate queries are collection scans.
+`apps/web/src/server/db/indexes.ts` still declares only
+`upload_sessions_expire_at_ttl` and `upload_sessions_event_batch_status` on
+`uploadSessions`, and still carries **no** `attendeeEventProfiles` entry. This
+note corrects the citation only — it adds no index spec and changes no code — so
+a later card that adds the index adds `{ status: 1, updatedAt: 1 }` partial on
+`in_progress`. Raised as finding **R1** by the review recorded above; amended by
+card `t_47f104cb`.
