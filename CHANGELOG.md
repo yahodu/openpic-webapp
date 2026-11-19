@@ -1,3 +1,9 @@
+## [1.66.5](https://github.com/yahodu/openpic-webapp/compare/v1.66.4...v1.66.5) (2026-11-19)
+
+### Performance Improvements
+
+- **entitlements:** OP-104 bound the entitlementGrants read to the active window ([#708](https://github.com/yahodu/openpic-webapp/issues/708)) ([200eaf9](https://github.com/yahodu/openpic-webapp/commit/200eaf974858f239e35eedae8a6dbabbb3274af4))
+
 ## [1.66.4](https://github.com/yahodu/openpic-webapp/compare/v1.66.3...v1.66.4) (2026-11-19)
 
 ### Bug Fixes
