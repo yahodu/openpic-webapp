@@ -163,3 +163,158 @@ No test, fixture, helper or frozen pin is edited; `ADR-0879` is untouched. No
 dedupe key changed, `emitDomainEvent` is unchanged, `verificationNudgePoint`
 and `NUDGE_RUNGS` are unchanged, and `hasMore` keeps `scanned >= limit`. No index
 specs are added.
+
+## Review — the landed drain verified at the merged head
+
+- **Reviewer:** `openpic-webapp-reviewer`, card `t_68888596` (Medium), the review
+  leg behind this GREEN.
+- **Heads verified:** the squash `b3b1e68d` (PR #732, merged
+  2026-11-19T14:18:51Z) and the trunk `ba17e839`, from which this sign-off was
+  cut. `git diff b3b1e68d origin/main` over the three job modules, the spec and
+  `sweep-decisions.ts` is **empty**, so every `file:line` below holds at both.
+- **Scope:** documentation only. This section adds no product code, mints no ADR
+  number, and leaves every `Next free` cell byte-identical (`0881`).
+- **Verdict:** **APPROVED WITH FINDINGS.** No pin was weakened, no dedupe key,
+  `emitDomainEvent`, `verificationNudgePoint` or `hasMore` changed, the latch is
+  stamped on every evaluated candidate (a deduped emit included), and the three
+  emit-only sweeps drain their page.
+
+### §1 `attendee-no-match-check.ts` — the candidate gate and the latch
+
+| fact                                                                                                       | evidence                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the candidate class is pinned on the match inputs                                                          | `:76-78` `status: "ready"`, `matchCount: 0`, `lastMatchRunAt: { $ne: null }`                                                                                    |
+| a missing disposition is accepted                                                                          | `:81` `{ $eq: [{ $type: "$noMatchNotifiedFor" }, "missing"] }`                                                                                                  |
+| a moved input re-opens the row                                                                             | `:83` `matchRunAt` vs `$lastMatchRunAt`; `:85` `matchCount` vs `$matchCount`                                                                                    |
+| a stored disposition that matches **both** live inputs fails all three arms, so the row is not a candidate | `:79-87` — `$or` of three `$ne`/`missing` terms, no fourth arm                                                                                                  |
+| an explicit `null` disposition is a candidate                                                              | `:83`/`:85` `$ifNull` → `null`, `$ne` true; `$type` is `"null"`, not `"missing"`                                                                                |
+| the page is ordered before it is cut                                                                       | `:89` `.sort({ _id: 1 })`, `:90` `.limit(limit)`                                                                                                                |
+| the latch is stamped for **every** evaluated row, deduped or not                                           | `:114-121` — the `updateOne` has no `result.deduped` guard; it sits after the emit `:100-110`; `:122` `noneFound += result.deduped ? 0 : 1` is the counter only |
+| the dedupe key is profile-terminal and unchanged                                                           | `:107` `attendee.matches.none_found:${profileId}`                                                                                                               |
+| `hasMore` is unchanged                                                                                     | `:132` `scanned >= limit`                                                                                                                                       |
+
+**The re-open wedge is pinned, not asserted.** A single-anchor mutation made the
+latch conditional on `!result.deduped` (the exact S2 failure mode): `1 failed |
+4 passed (5)` on `job-sweep-drain.test.ts`, the re-opened-profile case **alone**,
+`the re-opened profile gives its scan slot back: both later profiles are reached
+in one page: expected 1 to be 2`. Restored byte-identically; the module's
+sha256 reads `9a726f47…b2aa5f` before and after and `git status --porcelain` is
+empty. The pin therefore fails if a deduped emit stops re-stamping — a
+disposition written only on a non-deduped emit is a red case, not a review
+opinion.
+
+### §2 `upload-session-sweep.ts` — the terminal latch
+
+| fact                                                                       | evidence                                                                                |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| the filter admits only an unstamped row                                    | `:77` `stallNotifiedAt: null`                                                           |
+| the idle threshold is unchanged                                            | `:75` `updatedAt: { $lt: addDays(now, -IDLE_LIMIT_DAYS) }`, `:32` `IDLE_LIMIT_DAYS = 1` |
+| the part predicate is unchanged                                            | `:76` `"externalRefs.kind": "multipart_upload"`                                         |
+| the latch is stamped after the emit, for every emitted row                 | `:95-109` emit, `:112` `$set: { stallNotifiedAt: now }`, no `deduped` guard             |
+| the unannounceable row is still skipped before its emit and is not stamped | `:91-94`                                                                                |
+| the page is ordered before it is cut                                       | `:79` `.sort({ _id: 1 })`, `:80` `.limit(limit)`                                        |
+| the dedupe key and `hasMore` are unchanged                                 | `:106` `upload.session.stalled:${sessionId}`, `:123` `scanned >= limit`                 |
+
+The latch is terminal by decision (ADR-0879 §2, this record's §2) and the rows
+are TTL-reaped; `S3` pins both halves — the second run reaches the session the
+first page left behind, and a resumed-then-restalled session announces nothing
+and takes no slot.
+
+### §3 `verification-nudge.ts` — the clock window, no marker
+
+| fact                                                     | evidence                                                                                                                                            |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the upper bound exists                                   | `:116` `$gt: addMilliseconds(now, -MAX_CANDIDATE_AGE_MS)` beside `:115` `$lte` → window `(now − 96 h, now − 24 h]`                                  |
+| it is a named constant                                   | `:44` `const MAX_CANDIDATE_AGE_MS = 4 * MS_PER_DAY`                                                                                                 |
+| its docblock ties it to the ladder plus one cadence day  | `:33-43` — last rung 72 h, walk by count capped at two, one cadence day absorbs one missed run; the residual is stated as a `shortcut:`             |
+| the ladder is byte-identical to `78b70894`               | `git diff 78b70894 b3b1e68d -- apps/web/src/server/jobs/sweep-decisions.ts` is **empty** → `NUDGE_RUNGS` `:55`, `verificationNudgePoint` `:209-218` |
+| the `$inc` is unchanged and still runs on a deduped emit | `:162-167`                                                                                                                                          |
+| the dedupe key is unchanged and rung-scoped              | `:158` `account.verification.incomplete:${userId}:${point}`                                                                                         |
+| the page is ordered before it is cut                     | `:119` `.sort({ _id: 1 })`, `:120` `.limit(limit)`                                                                                                  |
+| `hasMore` is unchanged                                   | `:178` `scanned >= limit`                                                                                                                           |
+
+### §4 The diff — what shipped
+
+`git show --stat b3b1e68d` = **8 files, +1155/−19**: the three job modules, the
+new spec `job-sweep-drain.test.ts`, `docs/Notification and Database Design.md`,
+`ADR-0879`, `ADR-0880` and `docs/adr/README.md`. That is exactly the set this
+change is allowed to touch; nothing unrelated is in it.
+
+The card's own baseline `78b70894` cannot be used for this check:
+`git diff --stat 78b70894 b3b1e68d` spans **103 files** (`+21807/−1554`) because
+that base predates other merged lanes (entitlements, internal-worker, OP-101,
+OP-104, OP-135). The scoped diff is the squash commit, and it is clean.
+
+### §5 Schema and ledger
+
+- `docs/Notification and Database Design.md:1231` carries the §15.3
+  `noMatchNotifiedFor` row (`object — { matchRunAt, matchCount } | null`) and
+  `:1349` the §16.2 `stallNotifiedAt` row (`date \| null`).
+- The known limit is true as recorded: `apps/web/src/server/db/indexes.ts`
+  declares only `upload_sessions_expire_at_ttl` (`:105-112`) and
+  `upload_sessions_event_batch_status` (`:113-122`) on that collection, and
+  **no** `attendeeEventProfiles` entry at all, so the three candidate queries
+  are collection scans today. The accepted `verification-nudge` residual is
+  stated above and pinned by `S5`.
+- `docs/adr/README.md:76-77`: `OP-136 jobs lane` `0849`–`0868`, next free
+  **`0881`**; `unallocated (future lanes)` **`0881`**. `:75` `OP-135 worker
+interface lane` `0847` and `:74` `OP-129 attendee identity lane` `0869`
+  (item 19's exhausted-block encoding) are the trunk's values, untouched.
+  Rows `0879` (`:530`) and `0880` (`:531`) are present, ascending, adjacent, and
+  their relative links resolve.
+- `0868` is absent from the trunk. That is a **gap inside the block**, which the
+  allocation policy allows and never reissues; `0868` is held by another card.
+  No `ADR-NNNN` prefix is duplicated: `uniq -d` over the `402` record basenames
+  prints nothing.
+
+### §6 Tests, measured at the heads above
+
+| run                                                                                      | result                                               |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `vitest run --project integration apps/web/src/test/integration/job-sweep-drain.test.ts` | `Test Files 1 passed (1)` / **`Tests 5 passed (5)`** |
+| `vitest run --project unit apps/web/src/test/unit/adr-numbering.test.ts`                 | **`Tests 29 passed (29)`**                           |
+| `job-sweep-failure-windows.test.ts` + `job-account-lifecycle.test.ts`                    | `Test Files 2 passed (2)` / `Tests 11 passed (11)`   |
+| `vitest run --project unit …/jobs/sweep-decisions.test.ts`                               | `Tests 76 passed (76)`                               |
+| `prettier --check` on the eight touched paths                                            | `All matched files use Prettier code style!`         |
+| duplicate `ADR-NNNN` scan over `docs/adr/`                                               | no output (`uniq -d` empty)                          |
+
+The pins name no marker field, no constant, no sort key and no `scanned` /
+`hasMore` value (`job-sweep-drain.test.ts:70-85` states it and the five cases
+honour it); `S2` is the only case that exercises a deduped emit, and it reds if
+the re-stamp goes away.
+
+### Findings
+
+**R1 — Low (record accuracy), routed to a follow-up docs card.** This record's
+§Known limits (`:129`) names `{status: 1, createdAt: 1}` as the absent stall
+index. The schema documents `{status:1, updatedAt:1}` partial on `in_progress`
+(`docs/Notification and Database Design.md:1351`) and the job's predicate reads
+`updatedAt` (`upload-session-sweep.ts:75`). The substance of the limit — that
+`INDEX_SPECS` serves none of these predicates — is **correct and verified**; only
+the field name is wrong. An accepted record is not edited for it; a follow-up
+card corrects the citation so a later index card does not add the wrong field.
+
+**R2 — Info, the card's baselines were stale.** The card named `0861`/`0862`,
+the cell `0863` and the pool cursor `0869`. The landed values are `0879` and
+`0880`, both cells `0881`. The allocator's notes on `t_68888596` (`t_3072cd38`,
+`t_f21a0110`) and ADR-0300 §11 item 18 (a pool draw, the block being exhausted)
+are the authority; this sign-off consumes no number.
+
+**R3 — Info, `hasMore` stays a weak signal.** `scanned >= limit` is still true
+for a page that drained its class exactly. The semantics are unchanged on
+purpose — it is not this change's to alter — and the spec says so at `:76-80`.
+Recorded so a later card does not read `hasMore` as a backlog measure.
+
+**R4 — Info, the third gate is inert today.** `attendee-no-match-check.ts:85`
+cannot select while `:77` pins `matchCount: 0` and `:118` stores the live count.
+This is this record's own §Finding F2; the verification confirms it and confirms
+that the writer stores `row.matchCount`, so a widened predicate re-opens
+correctly.
+
+**Honesty audit.** The three modules carry no fixture-specific hardcoding, no
+test-environment conditional, no `@ts-ignore`, `eslint-disable` or
+`console.*`, and the squash adds no dependency. The spec's only
+implementation-shaped literals are the §15.3/§16.2 field defaults a seed needs.
+
+No assertion was loosened, no case skipped or `.only`-ed, and no test file other
+than the new spec is in the squash. **APPROVED WITH FINDINGS.**
