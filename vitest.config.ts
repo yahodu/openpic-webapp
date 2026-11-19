@@ -27,6 +27,31 @@ const webSrc = fileURLToPath(new URL("./apps/web/src/", import.meta.url));
  */
 const INTEGRATION_TEST_TIMEOUT_MS = 30_000;
 
+/**
+ * Per-hook budget for the `integration` project, in ms (ADR-0841 §Decision 4).
+ *
+ * Hooks were left on Vitest's 10 000 ms default when the case budget above was
+ * raised, and a hook red of the same class has since been observed: a full run
+ * at trunk `88d65749` failed `uploads-batch-status.test.ts` with
+ * `Error: Hook timed out in 10000ms` in a `beforeEach` whose body is a
+ * 21-collection `deleteMany` sweep — a hook that measures 15–42 ms in-hook and
+ * that a whole full run finishes under 1 000 ms (145 files / 1 530 cases,
+ * `hookTimeout: 1_000`, green). The violation is a descheduled worker over one
+ * `MongoMemoryReplSet`, the same contention that sized the case budget, not
+ * hook work that grew.
+ *
+ * So hooks are sized against the same ceiling as the cases they sit between:
+ * 30 000 ms, the `integration` case budget, and comfortably inside the
+ * 35 000 ms `MONGO_READY_HOOK_TIMEOUT_MS` the database-backed `beforeAll`s
+ * already pass — the number is not new in this harness. A hook that passes an
+ * explicit budget keeps its own value; this is the default those hooks that
+ * carry none inherit.
+ *
+ * This is a ceiling for contention, not a performance gate: no assertion is
+ * relaxed by it, and the `unit` project keeps the 10 000 ms default.
+ */
+const INTEGRATION_HOOK_TIMEOUT_MS = 30_000;
+
 export default defineConfig({
   resolve: {
     alias: [{ find: /^@\//, replacement: webSrc }],
@@ -49,6 +74,7 @@ export default defineConfig({
           setupFiles: ["apps/web/src/test/integration/setup.ts"],
           globalSetup: ["apps/web/src/test/integration/global-setup.ts"],
           testTimeout: INTEGRATION_TEST_TIMEOUT_MS,
+          hookTimeout: INTEGRATION_HOOK_TIMEOUT_MS,
         },
       },
     ],
