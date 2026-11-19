@@ -51,11 +51,56 @@ interface UserProfileDocument {
 }
 
 /**
+ * The closed window of instants the wire can carry (ADR-0285 §D1).
+ *
+ * `isoDateTimeSchema` keeps four year digits, and `toISOString()` leaves that
+ * form outside these bounds: `0000-01-01T00:00:00.000Z` is the first accepted
+ * instant and `9999-12-31T23:59:59.999Z` the last, one millisecond before
+ * `+010000-01-01T00:00:00.000Z`.
+ */
+const WIRE_MIN_MILLIS = -62167219200000;
+const WIRE_MAX_MILLIS = 253402300799999;
+
+/**
+ * Read a stored `joinedAt` as epoch milliseconds (ADR-0283 §D1, ADR-0285 §D1).
+ *
+ * Only a `Date` with a finite `getTime()`, or a string or number that parses to
+ * one, names an instant, and only inside the wire's four-digit-year window: an
+ * instant outside it cannot be serialized as an `isoDateTimeSchema` string, so
+ * it is undatable for this purpose (ADR-0285 §D1). Everything else — absent,
+ * `null`, `NaN`, an invalid `Date`, an unparseable or empty string, a boolean,
+ * an object, an out-of-window instant — cannot name one and yields `null`,
+ * which the projection degrades to the epoch sentinel (ADR-0283 §D2). This
+ * duplicates the shape of the events read's `instantMillis` rather than
+ * importing it: that helper is module-private in another bounded context and
+ * its skip-the-row policy is the opposite of the listing's (§D2).
+ *
+ * @param value - The stored `joinedAt`, typed `unknown` because the row may hold
+ *   a value the write path never produced.
+ * @returns The instant in epoch milliseconds, or `null` when the value names none.
+ */
+function joinedAtMillis(value: unknown): number | null {
+  const millis =
+    value instanceof Date
+      ? value.getTime()
+      : typeof value === "string" || typeof value === "number"
+        ? new Date(value).getTime()
+        : Number.NaN;
+  return Number.isFinite(millis) && millis >= WIRE_MIN_MILLIS && millis <= WIRE_MAX_MILLIS
+    ? millis
+    : null;
+}
+
+/**
  * Project one membership row onto the §2.2 DTO.
  *
  * Stored values are read straight from the schema §13.4 document shapes, so the
  * only normalisation needed is the two §2.2 conventions the wire fixes: the
  * contact is masked, and a missing invited-by becomes `null`.
+ *
+ * A `joinedAt` that cannot name an instant degrades to the epoch sentinel
+ * instead of throwing: one corrupt row must never deny the whole listing to
+ * every caller (ADR-0283 §D2).
  *
  * @param membership - The stored `tenantMembers` row.
  * @param user - The member's Better Auth user document, when it exists.
@@ -73,7 +118,7 @@ export function projectMember(
     emailMasked: maskEmail(user?.email ?? ""),
     role: asTenantRole(membership.role),
     status: membership.status === "removed" ? "removed" : "active",
-    joinedAt: new Date(membership.joinedAt as string | number | Date).toISOString(),
+    joinedAt: new Date(joinedAtMillis(membership.joinedAt) ?? 0).toISOString(),
     invitedByUserId:
       membership.invitedByUserId === undefined ? null : membership.invitedByUserId.toHexString(),
     avatarUrl: null,
