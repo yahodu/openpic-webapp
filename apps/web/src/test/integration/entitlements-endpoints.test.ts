@@ -149,6 +149,24 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   throws and the route answers `500 internal_error`. Green on both heads by
  *   design (the unbounded read fetched it too); the narrowing is only ever
  *   *outside* the served window.
+ *
+ * ## Characterization pins — OP-104 L11/L12 (green on arrival, ADR-0371)
+ *
+ * L9's corrupt row is excluded by the **`$or`** (`validUntil`) clause alone, so
+ * the read's two other clauses had no pin. The two cases below close that gap,
+ * one clause each. Both are **characterization** pins too: they pass against
+ * the shipped trunk and exist only to make a change visible, so a red means the
+ * shipped behaviour moved — never that the spec is ahead of the code.
+ *
+ * - **L11 — a corrupt grant row whose window has not *started* is ignored.** The
+ *   row is `validFrom 2027-01-01` / `validUntil: null`, so only
+ *   `validFrom: { $lte: now }` excludes it: the view answers `200` and serves
+ *   the healthy numbers. **A red L11 means the read lost its `validFrom`
+ *   bound** (and the pre-ADR-0366 `500 internal_error` returns).
+ * - **L12 — a corrupt grant row whose window ends *exactly* at `now` is
+ *   ignored.** `validUntil` equals `FROZEN_NOW`, so only the strict `$gt` (not
+ *   `$gte`) excludes it. **A red L12 means the `$or` relaxed to `$gte`** and a
+ *   grant is counted on its own expiry instant.
  */
 
 const TENANTS_PATH = "/api/v1/tenants";
@@ -1491,6 +1509,179 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
 
     expect(response.status).toBe(500);
     expect((await errorEnvelope(response)).code).toBe("internal_error");
+  });
+
+  /**
+   * **Characterization** pin of the bounded grant read's `validFrom` clause
+   * (ADR-0371).
+   *
+   * The read keeps only grants that have already **started**
+   * (`find({ validFrom: { $lte: now }, … })` in `view.ts`), so a corrupt row
+   * scheduled to start in the future is never fetched and
+   * `storedGrantSchema.parse` never sees it: the response stays `200` and the
+   * served numbers come from the one healthy, open-window grant. L9's corrupt
+   * row is excluded by the `$or` alone, so **this** is the only case that pins
+   * the `validFrom` bound. **A red here means the read dropped it** (e.g. back
+   * to `find({ $or: … })`), which would restore the `500 internal_error` the
+   * pre-ADR-0366 head answered for this exact seed.
+   */
+  it("L11 characterization: a malformed grant row whose window has not started is ignored, and the view still answers 200", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-future-grant",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    // The healthy arm: one well-formed grant whose open window covers `now`.
+    await seedGrant({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: 4,
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      periodKey: "lifetime",
+      value: 7,
+    });
+    // Same corruption as L9, but the window has not **begun** at `FROZEN_NOW`
+    // (`validFrom` is 2027, `validUntil` is open), so the `validFrom` clause —
+    // not the `$or` — is what keeps this row out of the fetched set.
+    await app.db.collection(COLLECTIONS.entitlementGrants).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: "not-a-number",
+      overrideLimit: null,
+      source: { kind: "purchase", billingTransactionId: new ObjectId(), note: null },
+      validFrom: new Date("2027-01-01T00:00:00.000Z"),
+      validUntil: null,
+      createdAt: new Date("2026-09-15T00:00:00.000Z"),
+      createdByUserId: null,
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
+    const row = entitlementRowFrom(payload, "storage.bytes");
+    expect(row).toMatchObject({
+      key: "storage.bytes",
+      limit: 100,
+      effectiveLimit: 104,
+      used: 7,
+      remaining: 97,
+      periodKey: "lifetime",
+      unlimited: false,
+    });
+    // The not-yet-started row appears in neither `effectiveLimit` nor `grants[]`.
+    expect(row.grants).toEqual([{ delta: 4, source: "purchase", validUntil: null }]);
+  });
+
+  /**
+   * **Characterization** pin of the bounded grant read's strict upper bound
+   * (ADR-0371).
+   *
+   * The window is half-open: `$or: [{ validUntil: null }, { validUntil: { $gt:
+   * now } }]`. A corrupt row whose `validUntil` is **exactly** the frozen clock
+   * instant is excluded only by the strict `$gt`, so the response stays `200`
+   * and serves the healthy numbers. **A red here means the bound relaxed to
+   * `$gte`**, which would fetch — and so parse-refuse — a grant on its own
+   * expiry instant.
+   */
+  it("L12 characterization: a malformed grant row whose window ends exactly at `now` is ignored, and the view still answers 200", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-boundary-grant",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    // The healthy arm: one well-formed grant whose open window covers `now`.
+    await seedGrant({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: 4,
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      periodKey: "lifetime",
+      value: 7,
+    });
+    // This row started in the past (so `validFrom` keeps it) and ends at
+    // exactly `FROZEN_NOW`: a fresh `Date` of the frozen instant, so the strict
+    // `$gt` — and nothing else — excludes it. A `$gte` bound would fetch it and
+    // the parse would answer `500 internal_error`.
+    await app.db.collection(COLLECTIONS.entitlementGrants).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: "not-a-number",
+      overrideLimit: null,
+      source: { kind: "purchase", billingTransactionId: new ObjectId(), note: null },
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: new Date(FROZEN_NOW.getTime()),
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      createdByUserId: null,
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
+    const row = entitlementRowFrom(payload, "storage.bytes");
+    expect(row).toMatchObject({
+      key: "storage.bytes",
+      limit: 100,
+      effectiveLimit: 104,
+      used: 7,
+      remaining: 97,
+      periodKey: "lifetime",
+      unlimited: false,
+    });
+    // The expiring-at-`now` row appears in neither `effectiveLimit` nor
+    // `grants[]`.
+    expect(row.grants).toEqual([{ delta: 4, source: "purchase", validUntil: null }]);
   });
 });
 
