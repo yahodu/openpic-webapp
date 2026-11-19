@@ -5,7 +5,9 @@
 - **Card:** `t_6d67d20f` (OP-135 TEST, Low — finding **F1** of the round-1 review of `t_c7abcc83`) ·
   **Branch:** `OP-135-task-unknown-key-before-payload` · **Worktree:**
   `/root/openpic/openpic-webapp/.worktrees/t_ca95e452` · **Base:** `origin/main` `da6ed432` (the squash
-  of PR #728), read at the branch cut.
+  of PR #728), read at the branch cut; `origin/main` advanced to `187eafb8` (PR #727) while this branch
+  was open, and was merged here before the PR, resolving the shared ledger as a **union** (this
+  record's row, cell and note kept beside PR #727's `0878` row and its cell moves).
 - **Lane:** the OP-135 lane block `0829`–`0848` (row `OP-135 worker interface lane`), whose `Next free`
   cell read **`0845`** at this base (ADR-0844 advanced it `0844` → `0845`). The sweep immediately
   before minting found no `ADR-0845`–`ADR-0848` path in `docs/adr` (397 ADR records at `da6ed432`; the
