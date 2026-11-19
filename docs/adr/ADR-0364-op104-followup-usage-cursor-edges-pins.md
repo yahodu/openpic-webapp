@@ -149,8 +149,8 @@ is touched, and the still-in-flight sibling card `t_8ac61afe` is told to take
 
 Reviewed head `56cfe2e1`; docs sign-off `t_7b3d9947`. **Verdict: APPROVED** —
 round 1, artifact lens, no finding that required a card. Squash-merged as
-`5e1a05de` onto `origin/main` `6c4fb8b3`, followed by the release commit
-`84378fa0`; PR `#704` is `MERGED` at `2026-11-19T04:37:21Z`.
+`5e1a05de` onto `origin/main` `6c4fb8b3`; PR `#704` is `MERGED` at
+`2026-11-19T04:37:21Z`.
 
 ### Landing proof
 
@@ -163,10 +163,13 @@ round 1, artifact lens, no finding that required a card. Squash-merged as
   index row, the cell `0364` → `0365` and the lane note). No production file is
   touched, which is what a characterization-pin delivery must show.
 - **The head branch was auto-deleted.** `git ls-remote --heads origin` lists no
-  `OP-104-task-usage-cursor-edge-pins`, and local `main` equals `origin/main` at
-  `513284e5` — the squash plus the two later trunk commits (`c2f079da` for
-  [ADR-0365](ADR-0365-op104-followup-bounded-counters-and-usage-sort-index.md)
-  and `513284e5` for the ADR-0363 sign-off).
+  `OP-104-task-usage-cursor-edge-pins`, and local `main` matched `origin/main` at
+  `513284e5`, the commit this note was written on top of: the squash plus the
+  three trunk commits after it — `c2f079da`
+  ([ADR-0365](ADR-0365-op104-followup-bounded-counters-and-usage-sort-index.md)),
+  the `1.66.4` release chore `84378fa0` and `513284e5` (the ADR-0363 sign-off).
+  The trunk advanced once more while this sign-off PR was open (`dbf93bf3`, PR
+  `#707`); this section is docs-only and depends on neither head.
 
 ### Checks run by the review at `56cfe2e1`
 
