@@ -169,3 +169,59 @@ Gates on the delivered commit: `tsc -p apps/web/tsconfig.json --noEmit` exit `0`
 `prettier --check` clean on the spec, this record and `docs/adr/README.md`; the `adr-*` guard family
 green (6 files, 236 tests); the host spec `33 passed (33)` with all 32 pre-existing cases green. No
 production file, helper, fixture or mock is touched: the delivered diff is `+82/−0` in the one spec.
+
+## Review sign-off (round 1, artifact lens)
+
+The round-1 review of this pin was posted on PR
+[#725](https://github.com/yahodu/openpic-webapp/pull/725) as comment `#issuecomment-7008095164`;
+this sign-off is card `t_bfeda273`, which consumes **no** ADR number, changes no ledger cell and
+leaves `docs/adr/README.md` byte-identical. **Verdict: APPROVED.** The deliverable had already merged
+when the review ran (`gh pr merge 725 --squash --admin`, `2026-11-19T11:27:20Z`, squash `4ba8c1fc`), so
+the review is a verification of **the merged bytes**, not of a proposed head.
+
+**Tree identity — the review measures what shipped.** `800fd8ca^{tree}` == `4ba8c1fc^{tree}` ==
+`9a4cba36998fa78257ce89f18e6e9db4a6f84192`, which was `origin/main^{tree}` at review time (`origin/main`
+then stood at `4ba8c1fc`), and `git diff --stat 800fd8ca 4ba8c1fc` is empty over the whole tree, so no
+path differs between the reviewed head and the squash. PR #725 reads **15/15 checks pass**, CI on
+`4ba8c1fc` is `success`, and local `main` == `origin/main` == `4ba8c1fc`. The trunk has since advanced
+to `750c0398` (the OP-132 fix `f7246b9d` and release `1.66.7`), and this record is byte-identical at
+both trees — `git diff --stat 4ba8c1fc origin/main` over this file is empty — so the sign-off still
+describes the bytes on `main`.
+
+**Scope measured, not transcribed.** `git diff --name-only e4273dd7 800fd8ca` lists exactly three
+paths, `+256/−1`: this record, `docs/adr/README.md` (its one cell, one row and one note) and
+`apps/web/src/test/integration/internal-worker-endpoints.test.ts` at `+82/−0` — one `describe`/`it`
+appended **after** F-B's block, with no existing case, helper, fixture or spec literal touched. No
+production file is in the diff, which is the shape a characterization pin must have.
+
+**Counts re-measured at the merged tree, not transcribed.** The host spec reads `33 passed (33)`; the
+six `adr-*` guards read **6 files / 236 passed (236)**; `tsc -p apps/web/tsconfig.json --noEmit` exits
+`0`; `eslint` exits `0`; `prettier --check` is clean on all three paths; the ledger holds 396 ADR files
+with an empty duplicate-number sweep, and the only cell that moved is the OP-135 lane's `0844` →
+`0845`. The recorded `32 → 33` reproduces independently: `32 passed (32)` at `e4273dd7`, measured in a
+throwaway detached worktree, so the appended case is the only delta in the count.
+
+**Both probes reproduced independently.** In a throwaway worktree at `800fd8ca`, with the route
+reverted byte-identically (`sha256 4eb0d7f045a9fa2ea503070cb82fcbd2aacfe6619aa4fd8ba40c77923728fb2f`
+before and after), both probes reproduce. **P2**, the route-local forbidden-key pre-check placed
+**ahead** of the window branch, gives `1 failed | 32 passed (33)` — **this case alone**, with
+`- "reason": "occurred_at_out_of_window"` / `+ "reason": "forbidden_payload_field"` in the assertion
+diff. **P1**, the window bound widened to 365 days, gives `2 failed | 31 passed (33)` — this case and
+F-B. §Evidence's two rows therefore hold as written, and the pin discriminates the rung it names and
+nothing else.
+
+**Findings and their post-review status.** **F1 (Low)** — the next rung down is still unpinned and was
+ownerless: the catalogue gate against the payload gate **inside** `emitDomainEvent`, where an
+unregistered key that also carries a forbidden payload answers `unknown_event_key`.
+`apps/web/src/server/domain/domain-events.test.ts` pins each gate alone (U1 and U2) and no case
+carries both. Routed to a TEST card created by this review, **`t_6d67d20f`**, gated behind this
+sign-off. **F2 (Info)** — the appended case derives its instants from `Date.now()` like its F-B
+sibling; the margins are ±1 h and +25 h, far above execution jitter, and two consecutive runs were
+green. **F3 (Info)** — this record's claim that the emitter's own spec owns `forbidden_payload_field`
+is accurate (`apps/web/src/server/domain/domain-events.test.ts:196,245`), and a `grep` scoped to
+`apps/web/src/test` misses it only because that spec is colocated next to its module.
+
+**Nothing above is retracted.** §Context, §Decision, §Consequences, §Alternatives and §Evidence stand
+as written: the review changed no decision, added no number and touched no other file. F1's outcome is
+not decided here — the TEST card `t_6d67d20f` carries it, and that card's own record documents what
+follows.
