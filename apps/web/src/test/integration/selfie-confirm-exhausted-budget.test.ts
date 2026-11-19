@@ -52,6 +52,10 @@ import {
  * itself (a zero-attempt budget is the one budget it always exceeds) and thrown
  * before the callback runs. Nothing of the loser's transaction is written, which
  * is exactly the state the production arm exists to answer (ADR-0878 §Decision).
+ * The cases that read the settled-outcome predicate take that signal. The case
+ * that reads the catch's **class** test cannot: a signal the predicate recognizes
+ * never exercises the term that refuses every other failure, so that one is
+ * handed a driver-shaped error of its own (ADR-0877 decision item 1).
  * The seam is armed per case and one-shot, and every case asserts it fired on the
  * request under test, so a case can never pass by racing its way past the arm.
  *
@@ -68,6 +72,11 @@ import {
  *   pre-worker `processing`/`0` with the announcement missing (the pointer-only
  *   control), a row whose cached total is **lower** than this request's computed
  *   total, and a row that activates **another** selfie.
+ * - **The class term.** A transaction that fails for a reason the wrapper does
+ *   not report as a spent budget keeps its `500 internal_error` even when the row
+ *   already shows this request's outcome: a settled row is not permission to
+ *   answer `200`, so the catch stays the narrow one ADR-0877 decision item 1
+ *   chose and never becomes a broad `catch`.
  *
  * ## Assumptions
  *
@@ -96,6 +105,19 @@ const confirmExhaustedArm = vi.hoisted(() => {
   let calls = 0;
   let before: (() => Promise<void>) | null = null;
   let rivalRunning = false;
+  let failure: Error | null = null;
+
+  /**
+   * Register the one-shot arm both variants share.
+   *
+   * @param beforeExhaust - Work a rival performs at the lost transaction
+   *   boundary.
+   */
+  const register = (beforeExhaust: (() => Promise<void>) | undefined): void => {
+    pending = 1;
+    calls = 0;
+    before = beforeExhaust ?? null;
+  };
 
   return {
     /**
@@ -106,14 +128,33 @@ const confirmExhaustedArm = vi.hoisted(() => {
      *   exhausted signal is raised.
      */
     arm(beforeExhaust?: () => Promise<void>): void {
-      pending = 1;
-      calls = 0;
-      before = beforeExhaust ?? null;
+      register(beforeExhaust);
+      failure = null;
+    },
+    /**
+     * Arm the next `withTransaction` call to reject with a failure that is
+     * **not** the wrapper's own exhausted-budget signal.
+     *
+     * The catch's class test, `!isTransactionRetryLimitError(error)`, can only
+     * be exercised by a failure the predicate does not recognize, so this
+     * variant hands the call an error of the spec's own instead of the
+     * wrapper's.
+     *
+     * @param error - The failure the armed call rejects with.
+     */
+    armFailure(error: Error): void {
+      register(undefined);
+      failure = error;
     },
     /** Disarm, whatever is left. */
     disarm(): void {
       pending = 0;
       before = null;
+      failure = null;
+    },
+    /** The failure an armed {@link armFailure} call must reject with, if any. */
+    failure(): Error | null {
+      return failure;
     },
     /**
      * Consume the arm for one wrapper call.
@@ -165,6 +206,13 @@ vi.mock("@/server/db/transaction", async (importOriginal) => {
         // The rival's work, for the case that needs the row to move while this
         // request is spending its budget.
         await confirmExhaustedArm.runRivalWork();
+        // A case that arms a failure of its own gets that failure, so the
+        // catch's class test — not only its settled-outcome predicate — is
+        // exercised.
+        const failure = confirmExhaustedArm.failure();
+        if (failure !== null) {
+          throw failure;
+        }
         // The wrapper's own retry-limit error, raised by the wrapper: a
         // zero-attempt budget is the one budget it always exceeds, so this
         // throws the real `TransactionRetryLimitError` without running `fn` and
@@ -433,6 +481,30 @@ async function confirmWithExhaustedBudget(
   beforeExhaust?: () => Promise<void>
 ): Promise<Response> {
   confirmExhaustedArm.arm(beforeExhaust);
+  try {
+    return await confirmSelfie(slug, selfieId, { cookie: caller.cookie, ip: caller.ip });
+  } finally {
+    confirmExhaustedArm.disarm();
+  }
+}
+
+/**
+ * Fire the confirm under test with its own transaction rejecting with a failure
+ * that is **not** the wrapper's exhausted-budget signal, then disarm.
+ *
+ * @param slug - The event's active access-link slug.
+ * @param selfieId - The selfie to confirm.
+ * @param caller - The caller's credential and client address.
+ * @param failure - The failure the request's transaction rejects with.
+ * @returns The route's response, whatever its status.
+ */
+async function confirmWithNonRetryFailure(
+  slug: string,
+  selfieId: string,
+  caller: Caller,
+  failure: Error
+): Promise<Response> {
+  confirmExhaustedArm.armFailure(failure);
   try {
     return await confirmSelfie(slug, selfieId, { cookie: caller.cookie, ip: caller.ip });
   } finally {
@@ -738,6 +810,92 @@ describe("when a rival settles the same selfie at a status this request did not 
 
     // The refusal changed neither the row nor the outbox.
     expect((await profileRow()).matchCount).toBe(0);
+    expect(await matchesNewRows()).toHaveLength(0);
+  });
+});
+
+/* ── F1.8: the catch recognizes a spent budget, never every failure ────────── */
+
+describe("when a confirm's transaction fails for a reason that is not the spent budget", () => {
+  /**
+   * The failure a real transaction produces when it is not out of attempts:
+   * the driver's "not primary" (`code: 91`), which carries no
+   * `TransientTransactionError` label, so the wrapper rethrows it unchanged.
+   *
+   * @returns The failure the armed transaction rejects with.
+   */
+  function nonRetryFailure(): Error {
+    return Object.assign(new Error("not primary"), { code: 91 });
+  }
+
+  it("keeps its 500 even though a rival already committed the outcome", async () => {
+    const ready = await readyEvent("op132-f4-non-retry-settled");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+    const submitted = await submitOne(ready.event.slug, ready, "f4-non-retry-settled");
+    await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+
+    // The row is settled exactly as F1.1's is: the rival committed this
+    // request's activation result, status, total and announcement, so the
+    // settled-outcome predicate alone would answer the ordinary 200.
+    const rival = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(rival.status).toBe("ready");
+    expect((await profileRow()).matchCount).toBe(FIRST_RUN_MATCHES);
+
+    const response = await confirmWithNonRetryFailure(
+      ready.event.slug,
+      submitted.selfieId,
+      ready,
+      nonRetryFailure()
+    );
+    expectTheArmFired("non-retry failure on a settled row");
+    // The catch answers only the wrapper's own exhausted-budget signal
+    // (ADR-0877 decision item 1), so this failure is rethrown. A broad `catch`
+    // would read the settled row as permission and hide the failed write.
+    expect(
+      response.status,
+      `a confirm whose transaction failed with a non-retry error answered ${String(response.status)}; only a spent budget may answer the settled 200`
+    ).toBe(500);
+    expect((await errorBody(response)).code).toBe("internal_error");
+
+    // The settled row did not authorize a success: the refusal wrote nothing
+    // and announced nothing beyond what the rival committed.
+    const profile = await profileRow();
+    expect(profile.activeSelfieId?.toHexString()).toBe(submitted.selfieId);
+    expect(profile.status).toBe("ready");
+    expect(profile.matchCount).toBe(FIRST_RUN_MATCHES);
+    const notifications = await matchesNewRows();
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.payload).toMatchObject({
+      eventId: eventContext.eventId,
+      count: FIRST_RUN_MATCHES,
+    });
+  });
+
+  it("keeps its 500 when no one settled the outcome either", async () => {
+    const ready = await readyEvent("op132-f4-non-retry-unsettled");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+    const submitted = await submitOne(ready.event.slug, ready, "f4-non-retry-unsettled");
+    // This request owed the profile its activation, its total and its
+    // announcement; none of them landed, and its transaction failed for a
+    // reason that is not a spent budget.
+    await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+
+    const response = await confirmWithNonRetryFailure(
+      ready.event.slug,
+      submitted.selfieId,
+      ready,
+      nonRetryFailure()
+    );
+    expectTheArmFired("non-retry failure on an unsettled row");
+    expect(
+      response.status,
+      `a confirm whose transaction failed with a non-retry error answered ${String(response.status)}; it must keep its 500`
+    ).toBe(500);
+    expect((await errorBody(response)).code).toBe("internal_error");
+
+    const profile = await profileRow();
+    expect(profile.activeSelfieId ?? null).toBeNull();
+    expect(profile.matchCount).toBe(0);
     expect(await matchesNewRows()).toHaveLength(0);
   });
 });
