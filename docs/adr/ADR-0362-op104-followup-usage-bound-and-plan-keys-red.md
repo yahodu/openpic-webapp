@@ -134,3 +134,25 @@ The OP-104 lane holds `0360`–`0379` with `Next free = 0362`; `0362` was free o
 worktree (tracked and untracked) and on every remote `OP-104*` ref at the time of the cut, so this
 record consumes `0362` and the cell advances to `0363`. No other lane's row, range or number is
 touched.
+
+## Carried unchanged — PR [#703](https://github.com/yahodu/openpic-webapp/pull/703)
+
+This pin record was delivered on branch `OP-104-task-usage-bound-subscription-pins`
+as draft PR `#693` (RED by design: 7 fails, 22 passes) and landed **verbatim**
+inside the GREEN PR `#703`, whose squash is `8c539a3b`. Nothing in it was
+reworded, renumbered or re-pinned on the way in.
+
+- **The card's diff is empty.**
+  `git diff 472766ad 9e2ba5f2 -- apps/web/src/test/integration/entitlements-endpoints.test.ts docs/adr/ADR-0362-op104-followup-usage-bound-and-plan-keys-red.md`
+  prints nothing.
+- **Blob identity is the stronger form.** The spec is `3692388e…` at `472766ad`,
+  at `9e2ba5f2` and at the squash, and this record is `ab4ea1c9…` at all three —
+  one OID each, three times.
+- **What the squash adds relative to its own parent** `b6f10412`: the spec
+  `+468 / −2` and this record as a new file (`A`, 136 lines). Those 468 lines are
+  this card's pins carried in, not GREEN-side edits, which is why the empty diff
+  above is the right reading and not a lucky one.
+- **No number and no ledger row are consumed by the sign-off** (`t_621fba28`):
+  this note adds none, and `docs/adr/README.md` stays byte-identical to
+  `origin/main` in that PR. Draft PR `#693` was closed as superseded at
+  `2026-11-19T03:59:02Z`, so `0362` and `0363` were each minted once.
