@@ -1,4 +1,5 @@
 import { getDb } from "@/server/db/mongo";
+import { parsePageQuery } from "@/server/http/cursor";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { readUsageCounters, usageCountersSchema } from "@/server/services/entitlements";
@@ -6,12 +7,14 @@ import { requireTenantScope, userAuth } from "@/server/tenancy/route-scope";
 import { tenantStage } from "@/server/tenancy/route-stage";
 
 /**
- * `GET /api/v1/tenants/{tenantId}/usage?periodKey=` — the raw usage counters
- * (OP-104, contract §3.5, schema §14.2; ADR-0360).
+ * `GET /api/v1/tenants/{tenantId}/usage?periodKey=&cursor=&limit=` — the raw
+ * usage counters (OP-104, contract §3.5, schema §14.2; ADR-0360, ADR-0362).
  *
  * For support and reconciliation: the unconverted `usageCounters` rows,
- * filtered to `?periodKey=` when supplied, answered as the §0.5 collection
- * envelope `{ data: […] }` and **never** with the driver's `_id`.
+ * filtered to `?periodKey=` when supplied and paged with the shared cursor
+ * contract (§0.8: default 40, ceiling 100; `periodKey` then `_id` descending),
+ * answered as the §0.5 collection envelope `{ data, page }` and **never** with
+ * the driver's `_id`.
  *
  * The role gate is `owner`|`admin` — a plain `member` is `403 forbidden`
  * (support data is not part of a member's surface). Membership itself is still
@@ -28,12 +31,13 @@ export const GET = defineRoute({
     if (scope.role !== "owner" && scope.role !== "admin") {
       throw appError("forbidden");
     }
-    const periodKey = new URL(ctx.request.url).searchParams.get("periodKey");
-    const body = await readUsageCounters(
-      getDb(),
-      scope.tenantId.toHexString(),
-      periodKey ?? undefined
-    );
+    const params = new URL(ctx.request.url).searchParams;
+    const { limit, cursor } = parsePageQuery(params);
+    const body = await readUsageCounters(getDb(), scope.tenantId.toHexString(), {
+      periodKey: params.get("periodKey"),
+      limit,
+      cursor,
+    });
     return { body };
   },
 });
