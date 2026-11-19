@@ -43,14 +43,15 @@ import { recordingLogger } from "../helpers/recording-logger";
  * 2. `upload-session-sweep` — three stalled sessions, examined two at a time,
  *    are all announced within two runs, and a session that resumes and then
  *    stalls again is never announced twice and keeps no slot (`S3`).
- * 3. `verification-nudge` — an account whose ladder is already exhausted sits
- *    at the head of the class for ever and spends a page slot on every run; the
- *    two eligible accounts behind it are nudged in one page instead (`S4`), and
- *    the window's edges are the ladder's own: a 20-hour account is too young, a
- *    30-hour one is due its first rung, an 80-hour one its last, and an account
- *    past the whole ladder is not a candidate at all (`S5`, which states the
- *    lane's accepted residual — such a row is left un-nudged rather than nudged
- *    late).
+ * 3. `verification-nudge` — the clock window is what gives a page slot back: a
+ *    row past the window is not a candidate at all, so the two eligible
+ *    accounts behind it are nudged in one page (`S4`). A row inside the window
+ *    that has no rung left still spends its slot, and that is the lane's
+ *    **bounded** residual, pinned executably by `S6`. The window's edges are the
+ *    ladder's own: a 20-hour account is too young, a 30-hour one is due its
+ *    first rung, an 80-hour one its last, and an account past the whole ladder
+ *    is not a candidate at all (`S5`, which states the lane's accepted residual
+ *    — such a row is left un-nudged rather than nudged late).
  *
  * ## One correction to the card, measured not assumed
  *
@@ -62,10 +63,18 @@ import { recordingLogger } from "../helpers/recording-logger";
  * third account is reached when the first two age out, not on the next run. A
  * near-fix probe of the decided shape measured exactly that (`run 1 nudged 2,
  * run 2 nudged 0`), so `S4` is pinned on what the shape actually changes and
- * what the defect actually is: the ladder-exhausted row never leaves the class
- * and spends a slot on every single run, where a live row leaves by the clock.
- * Widening the pin into an unbounded drain would have been a pin no correct
- * implementation of the decision could satisfy.
+ * what the defect actually is: the ladder-exhausted row never leaves the class,
+ * where a live row leaves by the clock. Widening the pin into an unbounded
+ * drain would have been a pin no correct implementation of the decision could
+ * satisfy.
+ *
+ * The guarantee is therefore *not* "an exhausted ladder never spends a slot":
+ * `S4`'s 120-hour row is spared by its **age** (it is past the clock window), not
+ * by its exhausted ladder. Put the same exhausted row inside the window and it
+ * is examined, so it does cost a page slot and the eligible account behind it
+ * waits for a later run. That residual is bounded — a row can keep a slot only
+ * while it is inside the window, so the drain still terminates — and `S6` pins
+ * it executably.
  *
  * ## What is *not* prescribed
  *
@@ -79,9 +88,10 @@ import { recordingLogger } from "../helpers/recording-logger";
  * `scanned` or `hasMore`, which a draining window and a starved one report
  * identically (`hasMore: scanned >= limit` is true of both).
  *
- * Every seed order is fixed: the row that can never leave the class is
- * inserted **first**, so the page a starving run examines is a fixed prefix and
- * a run that re-examines it announces nothing.
+ * Every seed order is fixed: the row a case turns on is inserted **first**, so
+ * the page a run examines is a deterministic prefix of the class — and, on the
+ * two jobs that latch on the row, a run that re-examines that prefix announces
+ * nothing.
  */
 
 const HOUR_MS = 3_600_000;
@@ -461,9 +471,10 @@ describe("when the stalled-upload notice has more candidates than one run may ex
 });
 
 describe("when the verification ladder has more candidates than one run may examine", () => {
-  it("the page is not spent on a ladder-exhausted account, so the two accounts behind it are reached", async () => {
-    // Arrange — the exhausted account is inserted FIRST: both rungs were sent
-    // long ago, so it has no rung left and it sits at the head of the class.
+  it("a row past the clock window gives its page slot back, so the accounts behind it are reached", async () => {
+    // Arrange — the exhausted account is inserted FIRST. Both rungs were sent
+    // long ago, so it has no rung left; at 120 hours it is also past the clock
+    // window, so it is spared the page by its age, not by its exhausted ladder.
     const accounts = {
       exhausted: await seedAccount({
         createdAt: new Date(NOW.getTime() - 120 * HOUR_MS),
@@ -490,14 +501,14 @@ describe("when the verification ladder has more candidates than one run may exam
       logger: recordingLogger(),
     });
 
-    // ── Assert: the page carries two eligible accounts, not the exhausted one ──
+    // ── Assert: the page carries two eligible accounts, not the aged-out one ──
     expect(
       detail(run, "nudged"),
-      "the page is two candidates: an account with no rung left must not spend one of them"
+      "the page is two candidates: a row past the clock window takes no slot, so two eligible accounts fit"
     ).toBe(2);
     expect(
       await outboxCounts(NUDGE, accounts),
-      "the two accounts due their first rung are nudged, the exhausted ladder never is, and the page stops at its size"
+      "the two accounts due their first rung are nudged and the page stops at its size; the exhausted 120-hour row is past the clock window, so it is not a candidate at all"
     ).toEqual({ exhausted: 0, thirty: 1, forty: 1, fifty: 0 });
   });
 
@@ -547,5 +558,44 @@ describe("when the verification ladder has more candidates than one run may exam
       lastRungRows[0]?.payload,
       "the 80-hour account is still owed the last rung, so no window bound may exclude it"
     ).toEqual({ rung: "t+72h" });
+  });
+
+  it("a ladder-exhausted row inside the clock window still spends a page slot, so the eligible row behind it waits", async () => {
+    // Arrange — the residual the clock window bounds rather than removes. The
+    // exhausted account is 50 hours old, so it is inside the window and is a
+    // candidate; it is inserted FIRST, so it heads the page. Both rungs are
+    // already sent, so the run examines it and has nothing to deliver to it.
+    const accounts = {
+      exhaustedInsideWindow: await seedAccount({
+        createdAt: new Date(NOW.getTime() - 50 * HOUR_MS),
+        nudgesSent: 2,
+      }),
+      thirty: await seedAccount({
+        createdAt: new Date(NOW.getTime() - 30 * HOUR_MS),
+        nudgesSent: 0,
+      }),
+      forty: await seedAccount({
+        createdAt: new Date(NOW.getTime() - 40 * HOUR_MS),
+        nudgesSent: 0,
+      }),
+    };
+
+    // ── Act: one hourly run, bounded to two candidates ──
+    const run = await verificationNudgeJob.run({
+      requestedLimit: PAGE,
+      clock: fixedClock(NOW),
+      logger: recordingLogger(),
+    });
+
+    // ── Assert: the exhausted row costs the slot, so only the 30-hour account
+    // behind it is reached and the 40-hour one waits for a later run ──
+    expect(
+      detail(run, "nudged"),
+      "the page carries the exhausted row and one eligible account, so exactly one nudge is due"
+    ).toBe(1);
+    expect(
+      await outboxCounts(NUDGE, accounts),
+      "the exhausted account inside the window costs a page slot without a nudge, the 30-hour account behind it is nudged, and the 40-hour one is not reached on this run"
+    ).toEqual({ exhaustedInsideWindow: 0, thirty: 1, forty: 0 });
   });
 });
