@@ -995,7 +995,7 @@ prices: [
   validFrom, validUntil: null, createdAt, createdByUserId }
 ```
 
-**Index:** `{tenantId:1, entitlementKey:1, validFrom:1}`
+**Index:** `{tenantId:1, entitlementKey:1, validFrom:1}` · `{tenantId:1, validUntil:1}` — bounds the `/entitlements` grant read to the window covering `now`; the first index cannot do it because `entitlementKey` is unconstrained, so `validFrom` has nothing to range-bound and the planner walks the tenant's whole grant history (ADR-0369)
 
 Effective limit:
 
