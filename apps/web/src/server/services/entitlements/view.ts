@@ -247,8 +247,13 @@ export async function readEntitlementsView(
     .filter(([, spec]) => spec.scope === "tenant")
     .map(([key, spec]) => ({ entitlementKey: key, periodKey: periodKey(spec.resetPeriod, now) }));
 
+  // `effectiveLimit` and `grants[]` both select on `isGrantActive`, so only the
+  // grants whose window covers `now` need fetching (ADR-0366).
   const [grantRows, counterRows] = await Promise.all([
-    tenantRepo(tenantId, db).collection(COLLECTIONS.entitlementGrants).find().toArray(),
+    tenantRepo(tenantId, db)
+      .collection(COLLECTIONS.entitlementGrants)
+      .find({ validFrom: { $lte: now }, $or: [{ validUntil: null }, { validUntil: { $gt: now } }] })
+      .toArray(),
     counterPairs.length === 0
       ? Promise.resolve([])
       : tenantRepo(tenantId, db)
