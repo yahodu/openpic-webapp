@@ -17,6 +17,12 @@ import type { SweepJobRunOptions } from "./run-options";
  * client stopped mid-transfer and the window is burning. The message is keyed by
  * the session id, so the outbox's unique index is the "once per session" latch.
  *
+ * The page drains: `stallNotifiedAt` is stamped after the emit and the filter
+ * admits only an unstamped row, so an announced session leaves the page. The
+ * latch is terminal on purpose — the dedupe key is session-terminal, so
+ * re-admitting a resumed-then-restalled session could only re-take a slot
+ * (ADR-0880 §2). The rows are TTL-reaped within five days.
+ *
  * shortcut: parts are never stored (the live `ListParts` answer is the only part
  * truth, §16.2), so the stored proxy for "has parts" is the multipart upload the
  * session's `externalRefs` carry; upgrade when a part counter is persisted.
@@ -68,7 +74,9 @@ export async function uploadSessionSweep(options: SweepJobRunOptions): Promise<C
       status: "in_progress",
       updatedAt: { $lt: addDays(now, -IDLE_LIMIT_DAYS) },
       "externalRefs.kind": "multipart_upload",
+      stallNotifiedAt: null,
     })
+    .sort({ _id: 1 })
     .limit(limit)
     .toArray();
   const candidates = Array.isArray(raw)
@@ -99,6 +107,9 @@ export async function uploadSessionSweep(options: SweepJobRunOptions): Promise<C
       },
       { db, clock }
     );
+    // Emit first, marker second (ADR-0880 §2) — for every emitted candidate,
+    // deduped or not, or the row re-takes its slot on every run.
+    await sessions.updateOne({ _id: row._id }, { $set: { stallNotifiedAt: now } });
     stalled += result.deduped ? 0 : 1;
   }
 
