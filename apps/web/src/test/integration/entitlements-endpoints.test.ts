@@ -6,6 +6,7 @@ import { z } from "zod";
 import { GET as getEntitlements } from "@/app/api/v1/tenants/[tenantId]/entitlements/route";
 import { GET as getUsage } from "@/app/api/v1/tenants/[tenantId]/usage/route";
 import { COLLECTIONS } from "@/server/db/collections";
+import { encodeCursor } from "@/server/http/cursor";
 import type { Entitlement } from "@/server/plans/plans";
 
 import { body } from "../helpers/auth-requests";
@@ -90,6 +91,22 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   read picks an arbitrary one, so the pin asserts only what holds for any
  *   pick: the served plan is one of the live rows' plans, `subscriptionStatus`
  *   belongs to that same row, and the cancelled row's plan is never served.
+ *
+ * ## Characterization pins — OP-104 L5/L6 (green on arrival)
+ *
+ * Two arms the bounded `/usage` read introduced are pinned, not changed. Both
+ * cases are **characterization**: they pass against the shipped implementation
+ * and exist only to make a regression visible (ADR-0364), so a red L5/L6 means
+ * the guard or the keyset regressed — never that the spec is ahead of the code.
+ *
+ * - **L5 — a decodable cursor whose `_id` half is not 24-hex is `400
+ *   invalid_cursor`.** `decodeCursor` (`@/server/http/cursor`) guarantees only
+ *   two non-empty strings, so `{ c: "2026-09", i: "zz" }` decodes; the read must
+ *   still reject it *before* the keyset filter builds `new ObjectId(i)`.
+ * - **L6 — a cursor whose period precedes every row is an empty terminal page.**
+ *   The `$or` keyset excludes every seeded row, so the answer is `200` with
+ *   `data: []` and `page: { nextCursor: null, hasMore: false, limit: 40 }` —
+ *   never a `500`, a silently repeated page, or an unfollowable cursor.
  */
 
 const TENANTS_PATH = "/api/v1/tenants";
@@ -1504,5 +1521,66 @@ describe("GET /api/v1/tenants/{tenantId}/usage", () => {
 
     expect(response.status).toBe(400);
     expect((await errorEnvelope(response)).code).toBe("invalid_cursor");
+  });
+
+  it("L5 characterization: a decodable cursor whose `_id` half is not 24-hex answers 400 `invalid_cursor`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-non-hex-cursor",
+    });
+    // A row in the cursor's own period, so a missing guard is a `500` from
+    // `new ObjectId("zz")` rather than a quietly empty page.
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+    // `decodeCursor` only guarantees two non-empty strings, so this cursor is
+    // decodable; the non-hex `i` half must still be refused at the read.
+    const cursor = encodeCursor({ c: "2026-09", i: "zz" });
+
+    const response = await getUsage(
+      usageQueryRequest(owner.cookie, tenantId.toHexString(), { cursor })
+    );
+
+    expect(response.status).toBe(400);
+    expect((await errorEnvelope(response)).code).toBe("invalid_cursor");
+  });
+
+  it("L6 characterization: a cursor whose period precedes every row answers an empty terminal page", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-stale-cursor",
+    });
+    // Both rows are newer than the cursor's period, so only the keyset `$or`
+    // excludes them: an unfiltered or repeated page would serve them instead.
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-10",
+      value: 1,
+    });
+    const cursor = encodeCursor({ c: "2020-01", i: "0123456789abcdef01234567" });
+
+    const response = await getUsage(
+      usageQueryRequest(owner.cookie, tenantId.toHexString(), { cursor })
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(payload.data).toEqual([]);
+    // A terminal page: nothing follows the end of the keyset.
+    expect(payload.page).toEqual({ nextCursor: null, hasMore: false, limit: 40 });
   });
 });
