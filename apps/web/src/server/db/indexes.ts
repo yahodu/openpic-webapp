@@ -785,6 +785,19 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     ],
     unique: true,
   },
+  // usage_counters — the `/usage` listing (§0.8) reads one tenant's rows sorted
+  // `periodKey` descending then `_id` descending; the unique index above cannot
+  // serve that order because `entitlementKey` sits between `tenantId` and
+  // `periodKey`, so this index keeps the read from sorting in memory (ADR-0365).
+  {
+    collection: COLLECTIONS.usageCounters,
+    name: "usage_counters_tenant_period_id",
+    keys: [
+      ["tenantId", 1],
+      ["periodKey", -1],
+      ["_id", -1],
+    ],
+  },
   // entitlement_grants — the entitlement service reads every active grant for a
   // key by (tenant, key) window, so the compound index leads with `tenantId`
   // (schema §14.2; ADR-0341).

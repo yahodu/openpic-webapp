@@ -985,7 +985,7 @@ prices: [
 { tenantId, entitlementKey: "storage.bytes", periodKey: "lifetime", value: 73400320000, updatedAt }
 ```
 
-**Index:** `{tenantId:1, entitlementKey:1, periodKey:1}` unique
+**Index:** `{tenantId:1, entitlementKey:1, periodKey:1}` unique · `{tenantId:1, periodKey:-1, _id:-1}` — serves the `/usage` keyset list's sort (§0.8); the unique index above cannot, because `entitlementKey` sits between `tenantId` and `periodKey`
 
 ```js
 // entitlementGrants — additive top-ups

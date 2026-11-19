@@ -150,7 +150,7 @@ const storedCounterSchema = z.object({
  * @param key - The entitlement key.
  * @param spec - The stored entitlement spec.
  * @param grants - Every grant row for this key.
- * @param counters - Every usage counter row for this tenant.
+ * @param counters - The tenant's counter rows for the keys' current periods.
  * @param now - The instant the read reasons about.
  * @returns The served row.
  */
@@ -212,8 +212,11 @@ function toEntitlementState(
  * Read the §3.5 advisory entitlements view for one workspace.
  *
  * The live subscription (defaulting to `free` with status `none` when the
- * tenant has no document, schema §14.3) picks the plan; the plan, its grants
- * and this tenant's counters are then read **in parallel**. Nothing is written
+ * tenant has no document, schema §14.3) picks the plan; the plan is read first
+ * because it names the counters to fetch, then its grants and those counters
+ * are read **in parallel**. Only the current period of each `tenant`-scoped key
+ * can be served, so the counter read is bounded to those `(key, period)` pairs
+ * rather than the tenant's whole history (ADR-0365). Nothing is written
  * (§0.14).
  *
  * @param db - The database handle.
@@ -234,13 +237,26 @@ export async function readEntitlementsView(
 
   const planKey = subscription === null ? "free" : subscription.activePlanKey;
 
-  const [planRow, grantRows, counterRows] = await Promise.all([
-    platformRepo(db).collection(COLLECTIONS.plans).findOne({ key: planKey }),
+  const planRow = await platformRepo(db).collection(COLLECTIONS.plans).findOne({ key: planKey });
+  const specs: Record<string, EntitlementSpec> =
+    planRow === null ? {} : planSchema.parse(planRow).entitlements;
+
+  // `toEntitlementState` only ever consults the row at a key's current period,
+  // so fetching every past period would grow the read without bound (ADR-0365).
+  const counterPairs = Object.entries(specs)
+    .filter(([, spec]) => spec.scope === "tenant")
+    .map(([key, spec]) => ({ entitlementKey: key, periodKey: periodKey(spec.resetPeriod, now) }));
+
+  const [grantRows, counterRows] = await Promise.all([
     tenantRepo(tenantId, db).collection(COLLECTIONS.entitlementGrants).find().toArray(),
-    tenantRepo(tenantId, db).collection(COLLECTIONS.usageCounters).find().toArray(),
+    counterPairs.length === 0
+      ? Promise.resolve([])
+      : tenantRepo(tenantId, db)
+          .collection(COLLECTIONS.usageCounters)
+          .find({ $or: counterPairs })
+          .toArray(),
   ]);
 
-  const specs = planRow === null ? {} : planSchema.parse(planRow).entitlements;
   const grants = grantRows.map((row) => storedGrantSchema.parse(row));
   const counters = counterRows.map((row) => storedCounterSchema.parse(row));
 
