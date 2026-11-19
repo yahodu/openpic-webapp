@@ -1,3 +1,45 @@
+## [1.66.6](https://github.com/yahodu/openpic-webapp/compare/v1.66.5...v1.66.6) (2026-11-19)
+
+### Performance Improvements
+
+- **entitlements:** OP-104 add a validUntil index for the bounded grant read ([#714](https://github.com/yahodu/openpic-webapp/issues/714)) ([4cb7252](https://github.com/yahodu/openpic-webapp/commit/4cb72527a155c598b4c9a0985e89c8f82d3821b2))
+
+## [1.66.5](https://github.com/yahodu/openpic-webapp/compare/v1.66.4...v1.66.5) (2026-11-19)
+
+### Performance Improvements
+
+- **entitlements:** OP-104 bound the entitlementGrants read to the active window ([#708](https://github.com/yahodu/openpic-webapp/issues/708)) ([200eaf9](https://github.com/yahodu/openpic-webapp/commit/200eaf974858f239e35eedae8a6dbabbb3274af4))
+
+## [1.66.4](https://github.com/yahodu/openpic-webapp/compare/v1.66.3...v1.66.4) (2026-11-19)
+
+### Bug Fixes
+
+- **entitlements:** OP-104 bound the counter read and index the usage sort ([#705](https://github.com/yahodu/openpic-webapp/issues/705)) ([c2f079d](https://github.com/yahodu/openpic-webapp/commit/c2f079daae6740a7aaba4d96cd4a0a100a228a88))
+
+## [1.66.3](https://github.com/yahodu/openpic-webapp/compare/v1.66.2...v1.66.3) (2026-11-19)
+
+### Bug Fixes
+
+- **entitlements:** OP-104 bound the usage read and require the subscription plan keys ([#703](https://github.com/yahodu/openpic-webapp/issues/703)) ([8c539a3](https://github.com/yahodu/openpic-webapp/commit/8c539a3be4571fbee2d7c31936329654c62ffe6f)), closes [#279](https://github.com/yahodu/openpic-webapp/issues/279)
+
+## [1.66.2](https://github.com/yahodu/openpic-webapp/compare/v1.66.1...v1.66.2) (2026-11-18)
+
+### Bug Fixes
+
+- **tenancy:** OP-101 bound the joinedAt reader to the wire instant window ([#698](https://github.com/yahodu/openpic-webapp/issues/698)) ([f4558e3](https://github.com/yahodu/openpic-webapp/commit/f4558e3e314e8b9c55d07bc31270a25b46645bb4))
+
+## [1.66.1](https://github.com/yahodu/openpic-webapp/compare/v1.66.0...v1.66.1) (2026-11-18)
+
+### Bug Fixes
+
+- **tenancy:** OP-101 make the members listing survive an undatable joinedAt ([#694](https://github.com/yahodu/openpic-webapp/issues/694)) ([d42032b](https://github.com/yahodu/openpic-webapp/commit/d42032b4bd1fe35b71b68612bef9dbfced31d61b))
+
+## [1.66.0](https://github.com/yahodu/openpic-webapp/compare/v1.65.10...v1.66.0) (2026-11-18)
+
+### Features
+
+- **entitlements:** OP-104 entitlements and usage endpoints ([#279](https://github.com/yahodu/openpic-webapp/issues/279)) ([8e5b09a](https://github.com/yahodu/openpic-webapp/commit/8e5b09a7dd3d4ca35ecf35a47ae5049eb69cbe27))
+
 ## [1.65.10](https://github.com/yahodu/openpic-webapp/compare/v1.65.9...v1.65.10) (2026-11-17)
 
 ### Bug Fixes

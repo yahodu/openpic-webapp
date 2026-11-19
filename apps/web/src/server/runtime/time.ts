@@ -33,3 +33,27 @@ export function addMilliseconds(instant: Date, milliseconds: number): Date {
 export function addDays(instant: Date, days: number): Date {
   return addMilliseconds(instant, days * MS_PER_DAY);
 }
+
+/**
+ * The first instant of the next **UTC** month.
+ *
+ * The entitlement quota bar's countdown counts to this boundary; UTC (not the
+ * tenant time zone) keeps it aligned with the UTC `periodKey` the counters use
+ * (ADR-0340 §4, ADR-0360 §1).
+ *
+ * @param instant - The instant to derive the boundary from.
+ * @returns `2026-09-15T10:00:00.000Z` → `2026-10-01T00:00:00.000Z`.
+ */
+export function startOfNextUtcMonth(instant: Date): Date {
+  return new Date(Date.UTC(instant.getUTCFullYear(), instant.getUTCMonth() + 1, 1));
+}
+
+/**
+ * The first instant of the next **UTC** year.
+ *
+ * @param instant - The instant to derive the boundary from.
+ * @returns `2026-09-15T10:00:00.000Z` → `2027-01-01T00:00:00.000Z`.
+ */
+export function startOfNextUtcYear(instant: Date): Date {
+  return new Date(Date.UTC(instant.getUTCFullYear() + 1, 0, 1));
+}
