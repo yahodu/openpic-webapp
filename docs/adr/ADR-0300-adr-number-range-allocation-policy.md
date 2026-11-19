@@ -374,3 +374,119 @@ It is the cheapest reading of the ledger and it is the one that fails: the cell
 names a consumed pool number, so the next record would collide with the record
 that already holds it. The practice of drawing from the pool is already recorded
 ad hoc (ADR-0799, ADR-0800, ADR-0811, ADR-0818); items 18–21 give it a clause.
+
+## §12 — The reservation is written on the card, and the cell only moves up (2026-11-19, card `t_b3edd8a0`)
+
+**The trigger.** Three same-lane ADR-number incidents hit the OP-104 lane
+(`0360`–`0379`) in one day, and the rules meant to stop them (§8 rule A, §9 rule
+B) were already in force. What still propagated the defect was the **card-body
+template**: lane cards were still written as "take the lane `Next free` cell
+immediately before committing", so every worker obeyed the template literally and
+derived its number from the same shared snapshot. Rules A and B stand unchanged;
+this section records the template half that let workers bypass them, plus the two
+monotonicity clauses the cell itself needed. It is an in-place amendment: no
+number is consumed, `docs/adr/README.md` stays byte-identical, and the board-wide
+cell stays at `0318`.
+
+| measured (2026-11-19, `origin/main` `b120866c`) | value                                                                                                                                                                                                                                                        |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| OP-104 lane cell / highest landed record        | `0369` / `0368`                                                                                                                                                                                                                                              |
+| in-flight `OP-104` reservations                 | `0369` on PR [#714](https://github.com/yahodu/openpic-webapp/pull/714) (card `t_a3fcf2e2`), `0370` on PR [#712](https://github.com/yahodu/openpic-webapp/pull/712) (card `t_8f1dac13`) — neither on the trunk; each visible only in a worktree and a PR head |
+| the double read                                 | cards `t_d614b82a` and `t_6fdc277b`, both cut off `origin/main` `84378fa0`, both read the OP-104 cell `0366`                                                                                                                                                 |
+| what each wrote                                 | `t_6fdc277b` holds `0366` and wrote the cell `0367` on its branch; `t_d614b82a` swept the worktrees, found `0366` held by a worktree with no PR, took `0367` and wrote the cell `0368`                                                                       |
+| the landing                                     | the trunk cell had already advanced to `0368`, so the branch's `0367` was a **rewind**; the README-only conflict resolved as a union that kept `0368` and renumbered nothing                                                                                 |
+| the cell-versus-PR case                         | PR [#711](https://github.com/yahodu/openpic-webapp/pull/711) held `0368` while the trunk cell also read `0368`, so a card cut from that trunk and obeying "take the cell" would have minted a number a live PR already held                                  |
+
+The card that raised this section also listed a `0362`/`0363` collision between
+sibling cards. That instance is **not** cited as evidence: trunk history cannot
+reproduce it — `ADR-0362` was added once (`472766ad`), `ADR-0363` once
+(`9e2ba5f2`), and both landed together in squash `8c539a3b`; ADR-0362's own
+carried-unchanged section carries the no-collision proof ("`0362` and `0363` were
+each minted once"). The two instances above are measured, and they are enough:
+both are failures of the **cell**, not of the number a worker chose.
+
+22. **The reservation is written on the card, and "take the cell" is retired.**
+    Every ADR-minting card body states its number as `**Consumes: NNNN**` — or
+    `Consumes: none` for a card that mints nothing — and its lane-facing sentence
+    reads "**Your reservation is `NNNN`. Use it as given, and never lower the
+    lane `Next free` cell.**" The three phrasings "take the lane `Next free` cell
+    immediately before committing", "re-read the cell at your branch cut" and
+    "advance the counter to the number you just minted" are **retired from card
+    bodies**: each makes the number a function of a value two concurrent cards
+    read identically, so the §7/§8 defect re-enters through the template after
+    the rule itself was fixed.
+23. **The allocation sweep includes every open PR head.** §9 rule B enumerated
+    three sources — live worktrees' `docs/adr/` files, the lane's non-`done`
+    cards' `Consumes` values, and `git ls-remote --heads origin "OP-<n>*"`. A
+    reservation can be invisible to all three: a branch named outside the ticket
+    prefix (`wt/<task-id>`, a lane worktree branch) is missed by the prefix glob,
+    and a file committed but never pushed is missed by the remote listing. The
+    sweep is the union of (a) every live worktree's `docs/adr/` listing,
+    (b) `git rev-list --objects --all -- docs/adr` (committed in any reachable
+    tree, pushed or not), (c) every non-`done` card's `Consumes` value, and
+    (d) **every open PR head** — `gh pr list --state open --json
+number,headRefName,headRefOid`, then `git fetch origin <headRefName>` (or
+    `git ls-tree <headOid> docs/adr/`) per head. The number handed to a card is
+    `max(every number seen above) + 1`, per §9.
+24. **The cell never moves down.** A card that lands a ledger row writes the
+    lane's `Next free` cell as the **higher** of the value on `origin/main` and
+    one more than the highest number consumed in the lane — a high-water mark,
+    never a computed count and never the value its own branch carried.
+    `t_6fdc277b` wrote `0367` off a cell read of `0366` while the sibling card
+    had already put `0368` on the trunk; both computations are individually
+    correct against their own snapshot, and only the maximum loses no
+    reservation. A lane cell is therefore monotonic, and a lower value is never
+    evidence that a number is free.
+25. **A merge keeps the higher cell — a lower branch cell is discarded, never
+    repaired by renumbering.** On a README-only conflict, §8 item 10's union
+    applies with the cell set to the higher of the two sides; when the trunk's
+    value is higher, the branch's value is dropped without touching a record. A
+    rewind is not a lost number, it is a lost **reservation**: the next card
+    reads the rewound value and mints a number a live card already holds. Only a
+    duplicate _number_ justifies a renumber (§9 item 9), and renumbering to make
+    the ledger look tidy is what this policy exists to end.
+26. **A card that mints no number writes `none` and leaves the ledger
+    byte-identical.** A sign-off, a review appendix, an in-place amendment such
+    as this section, or any docs card whose record already exists consumes no
+    number, appends no index row and moves no cell — the PR's
+    `git diff --name-only origin/main...HEAD` may then name only the record it
+    amends. A card that does consume a number appends its row and advances the
+    cell (§8 item 8).
+
+**The card-body template line that changes.** Before:
+
+> Take the lane `Next free` cell from `docs/adr/README.md` immediately before
+> committing, and set the cell to the next unallocated number.
+
+After:
+
+> **Your reservation is `NNNN`** — allocator-assigned at card creation. Use it as
+> given and do not derive a number from the ledger. **Never lower the lane
+> `Next free` cell:** write it as the higher of the trunk's value and one more
+> than the highest number consumed in the lane; if the trunk's value is already
+> higher, keep the trunk's value.
+
+**Rejected alternative — a CI check on cell monotonicity instead of a template
+rule.** A PR checkout does not guarantee a fetched `origin/main` (the guard's
+second documented out-of-scope item, `docs/CONVENTIONS.md` §11), both branches of
+the `0366` read stayed green under their own guard, and the trunk only reddens
+_after_ the squash, by which time the row must be repaired at merge. A check also
+cannot see a reservation that is not yet committed.
+
+**Rejected alternative — reserve by writing the trunk ledger from the allocating
+card.** This is the reserve-first trunk edit ADR-0312 already rejects: a trunk
+write per reservation re-creates the shared-file serialization point that
+per-lane ranges were introduced to remove.
+
+**Rejected alternative — have the worker renumber when it sees a lower cell.**
+Renumbering hides the collision (§9 item 9) and rewrites every citation of the
+number; the cell is the cheap place to lose nothing, and the reservation is the
+allocator's to re-issue.
+
+Rationale for stating the rule on the card rather than in the ledger: the ledger
+is a value, and a value can only be read; a card is an instruction, and the
+instruction was the stale part. The two clauses that need an invariant rather
+than a value are the cell's monotonicity (§7 gives it a meaning, nothing gave it
+a direction) and its merge resolution (§8 item 10 gave the _rows_ a union and
+left the cell to "max(consumed)+1", which computes from the squashed branch's own
+view). The choice is recorded on card `t_b3edd8a0`.
