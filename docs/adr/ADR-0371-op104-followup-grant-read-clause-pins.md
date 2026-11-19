@@ -5,7 +5,7 @@
 - **Card:** OP-104 TEST follow-up (`t_6d79f7d6`) · **Branch:** `OP-104-task-grant-read-clause-pins` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_6d79f7d6`
 - **Relates to:** [ADR-0366](ADR-0366-op104-followup-bound-entitlement-grants-read.md) (the bounded grant read these pins characterize), [ADR-0370](ADR-0370-op104-followup-corrupt-grant-row-pins.md) (the L9/L10 pair whose two unpinned clauses this record closes), [ADR-0367](ADR-0367-op104-followup-corrupt-counter-row-pins.md) (the counter-row twins), [ADR-0364](ADR-0364-op104-followup-usage-cursor-edges-pins.md) (the pin-card posture), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (range allocation)
 - **Contract:** §3.5 (entitlements & usage), §0.7 (status codes) · **Schema:** §14.2
-- **Consumers:** `apps/web/src/test/integration/entitlements-endpoints.test.ts`
+- **Consumers:** `apps/web/src/test/integration/entitlements-endpoints.test.ts`; §"Separating the executed set" (appended below) is cited by the `F5` duplicate-create latch in `apps/web/src/test/integration/event-invitations.test.ts` and by the `completeStoredUpload` budget seam in `apps/web/src/test/integration/uploads-single-put.test.ts`
 
 ## Context
 
@@ -409,3 +409,213 @@ landing proof and every section-level statement above. The verdict for PR #716
 remains **APPROVED WITH FINDINGS**, now with I1 withdrawn. This subsection claims
 no re-review, mints no pin and routes no code change: the delivery is green and
 shipped.
+
+### Separating the executed set
+
+**The band is two arms, not a noise floor.** The subsection above proves the
+summary moves by `+3` statements, `+5` branches, `+1` function and `+3` lines on
+an unchanged tree, but it cannot say _which_ points move: a global count pair
+names a delta, not a place. This subsection diffs the executed sets themselves,
+names the flipping points of the **two** timing-dependent arms behind the band,
+names each mechanism, and closes both.
+
+**What was measured.** `origin/main` `43c76a0f` (the tree this section was cut
+on), the identical command
+`CI=true TMPDIR=/root/tmp-mongo ./node_modules/.bin/vitest run --project unit
+--project integration --coverage`, three consecutive runs, with `coverage/lcov.info`
+kept per run so the per-line, per-branch and per-function hit records survive:
+
+| Run | Files / Tests                 | Statements           | Branches            | Functions           | Lines               |
+| --- | ----------------------------- | -------------------- | ------------------- | ------------------- | ------------------- |
+| 1   | 333 / 4690 passed (3 skipped) | `91.81` (9395/10232) | `80.75` (5521/6837) | `96.06` (1831/1906) | `91.93` (9165/9969) |
+| 2   | 333 / 4690 passed (3 skipped) | `91.81` (9395/10232) | `80.75` (5521/6837) | `96.06` (1831/1906) | `91.93` (9165/9969) |
+| 3   | 333 / 4690 passed (3 skipped) | `91.79` (9392/10232) | `80.67` (5516/6837) | `96.01` (1830/1906) | `91.90` (9162/9969) |
+
+Run 3 is the band's bottom edge, at the same stable denominators
+(`10232 / 6837 / 1906 / 9969`) and the same `333 files / 4690 passed (3
+skipped)` as runs 1 and 2: nine executed points differ between two runs of one
+tree.
+
+**The executed set, point by point.** `lcov.info` run 1 against run 3, every
+point whose hit count crosses zero — the whole of the band, and nothing else:
+
+| File                                      | Point                                                     | Runs 1–2  | Run 3     |
+| ----------------------------------------- | --------------------------------------------------------- | --------- | --------- |
+| `…/events/[eventId]/invitations/route.ts` | `DA:108` — `return (` of `isDuplicateKeyError`            | `1`       | `0`       |
+| `…/events/[eventId]/invitations/route.ts` | `DA:307` — `if (isDuplicateKeyError(error))`              | `1`       | `0`       |
+| `…/events/[eventId]/invitations/route.ts` | `DA:308` — `throw appError("invitation_already_pending")` | `1`       | `0`       |
+| `…/events/[eventId]/invitations/route.ts` | `FNDA:isDuplicateKeyError`                                | `1`       | `0`       |
+| `…/events/[eventId]/invitations/route.ts` | `BRDA:109` block 0, four branches (the `&&` chain)        | `1,1,1,1` | `0,0,0,0` |
+| `…/events/[eventId]/invitations/route.ts` | `BRDA:307` block 9, branch 0 (the `if`'s taken edge)      | `1`       | `0`       |
+
+Three statements, three lines, one function and five branches: exactly the
+band's `+3 / +5 / +1 / +3`. No other file in the `include` set flips between the
+three runs, so the whole two-decimal wobble is this one arm of this one route.
+
+**The mechanism: which of two correct refusal arms answers a duplicate create.**
+`POST /api/v1/tenants/:tenantId/events/:eventId/invitations` refuses a duplicate
+twice over, deliberately. The pre-write check reads
+`{ eventId, status: "pending", …invitee }` and answers `409` from the read, so
+the common case never takes a failed write; the §13.6 partial unique index is the
+race-safe guard, and its `E11000` is mapped by the `catch` to the same
+`409 invitation_already_pending`. Which arm answers is decided by MongoDB write
+visibility: if the loser's read lands **after** the winner's commit it sees the
+row and answers from the read; if it lands **before** the commit both requests
+insert and the loser meets the index. Same tree, same case, same wire answer
+(`[201, 409]`, one stored row) — different executed set.
+
+**Reproduction at spec granularity.** The band is not confined to the full-suite
+session: four focused runs of `apps/web/src/test/integration/event-invitations.test.ts`
+alone (`--project integration --coverage`, one file) split `2 / 2` on the same
+tree, with all `35` of the file's cases green every run:
+
+| Focused run | Cases          | `DA:108` | `FNDA:isDuplicateKeyError` | Arm that answered the loser     |
+| ----------- | -------------- | -------- | -------------------------- | ------------------------------- |
+| 1           | 35 passed (35) | `1`      | `1`                        | partial unique index (`E11000`) |
+| 2           | 35 passed (35) | `1`      | `1`                        | partial unique index            |
+| 3           | 35 passed (35) | `0`      | `0`                        | pre-write read                  |
+| 4           | 35 passed (35) | `0`      | `0`                        | pre-write read                  |
+
+The case is `F5` — "answers exactly one 201 and one 409
+invitation_already_pending, and stores one row" — the only case in the file that
+creates the same invitee twice, and it fires the pair through `Promise.all`,
+which is precisely the construct ADR-0666 measured as **not** a pin: the event
+loop, not the contract, decided the interleaving.
+
+**Disposition — pin the index arm, not the read arm.** The case is pinned with a
+bounded latch on the create's transaction boundary, in the shape ADR-0666 already
+established for the accept pair: a `vi.hoisted` latch plus a pass-through
+`vi.mock` of `@/server/db/transaction`, inert unless the case arms it. The first
+racer to arrive at the boundary parks until its rival also arrives — and the rival
+can only arrive **after** its own pre-write read returned `null`, so both reads
+miss the still-uncommitted winner — and then the second racer waits for the first
+racer's commit before it opens its transaction. Both requests therefore lose
+their read and the loser's insert meets a committed duplicate: the index arm runs
+on every run.
+
+The index arm, not the read arm, because the read arm is **already** pinned
+deterministically by `I2` ("refuses a duplicate live invite with `409` and keeps
+one redeemable row"), a sequential second create that always answers from the
+read. Pinning `F5` to the read arm would delete three statements and five
+branches from the executed set on every run and leave the `E11000` mapping — the
+route's own comment calls the index "the race-safe duplicate guard" — unpinned.
+The case's wire contract is unchanged: one `201`, one `409`, one stored row. One
+assertion is added, on the latch itself
+(`expect(invitationCreateGate.arrivalsSeen).toBe(2)`), because the two arms are
+indistinguishable on the wire: without it, an implementation that serialised the
+pair — or answered the loser from the read again — would silently restore the
+flip instead of failing.
+
+**After the first pin.** Four focused runs of the same file again, all `35 passed
+(35)`, and `DA:108` / `DA:307` / `DA:308` / `FNDA:isDuplicateKeyError` hit in
+all four: the invitations arm no longer flips.
+
+**The first pin exposed a second arm.** Three full runs on the pinned tree gave
+`91.81 / 80.75 / 96.06 / 91.93`, then `91.85 / 80.82 / 96.06 / 91.97` — `+4`
+statements and `+5` branches in the other direction, so the executed set was
+still not a constant. Diffing those two runs' `lcov.info` puts every flipping
+point in one place, and it is not the invitations route:
+
+| File                                                 | Point                                                                      | Run A | Run B |
+| ---------------------------------------------------- | -------------------------------------------------------------------------- | ----- | ----- |
+| `apps/web/src/server/uploads/complete-upload.ts`     | `DA:282` — `const settled = await settledCompletion(undefined)`            | `0`   | `1`   |
+| `apps/web/src/server/uploads/complete-upload.ts`     | `DA:283` — `if (settled === null)`                                         | `0`   | `1`   |
+| `apps/web/src/server/uploads/complete-upload.ts`     | `DA:286` — `outcome = settled`                                             | `0`   | `1`   |
+| `apps/web/src/server/uploads/complete-upload.ts`     | `BRDA:267` block 10, branch 0 (`isQuotaRefusal` taken edge)                | `0`   | `1`   |
+| `apps/web/src/server/uploads/complete-upload.ts`     | `BRDA:279` block 11, branch 0 (`!isDuplicateKeyError` taken edge)          | `0`   | `1`   |
+| `apps/web/src/server/uploads/complete-upload.ts`     | `BRDA:283` block 13, branch 1 (`settled !== null`)                         | `0`   | `1`   |
+| `apps/web/src/server/uploads/batch-notifications.ts` | `DA:328` and `BRDA:327` block 22, branch 0 (`isQuotaRefusal`'s first test) | `0`   | `1`   |
+
+Four statements, five branches — the second arm's whole weight, and the
+`batch-notifications.ts` points are only its callee: `isQuotaRefusal` is called
+from inside the `catch`, so it is unreachable when the `catch` is.
+
+**The second mechanism: which of two correct duplicate arms answers a completed
+upload.** `completeStoredUpload` answers a duplicate twice over, exactly as the
+invitations route does. The transaction's own `settledCompletion` read finds the
+committed winner and returns `duplicate: true` **without a write**; and the
+`catch` answers the same winner from `settledCompletion(undefined)` when the
+transaction _failed_ — the loser of a write race either exhausts its retry budget
+inside the winner's open transaction or meets the `{eventId, assetId}` unique
+index. Which arm answers depends on whether the loser re-reads after the winner's
+commit or spends its budget first, so `I4`'s concurrent pair answers `200`
+either way while the executed set moves. The case says so itself: "the loser's
+status is deliberately not pinned".
+
+**Disposition — cover it directly.** This arm needs no latch, because unlike the
+invitations route it **cannot** be reached by construction: the throw that arms
+the `catch` is a spent budget or a duplicate key, and neither can be produced by
+data alone. So a case is added that always spends the budget:
+`I4: a completion whose transaction spends its whole budget still answers the
+committed image and charges nothing` in
+`apps/web/src/test/integration/uploads-single-put.test.ts`. It seeds the state a
+winning completion leaves (asset, image row, event counters — the same arrange as
+the existing `I4` "already holds" case), arms a pass-through `vi.mock` of
+`@/server/db/transaction` that gives the **real** wrapper `maxAttempts: 0` for
+one call, and asserts the wire answer: `200` with the settled image, one
+`event_images` row, `refCount` `1`, no storage charge, counters unchanged. The
+error that reaches the route is the wrapper's own `TransactionRetryLimitError`,
+not a fabricated one, so the `catch` and its two guards run for real. Coverage is
+a union across cases, so `I4`'s concurrent pair keeps its deliberately unpinned
+loser and stops moving the summary; the existing `I4` "already holds" case keeps
+the in-transaction read covered on every run.
+
+**The second pin, measured.** One focused run of
+`uploads-single-put.test.ts` with the new case present: `26 passed (26)` (the file
+goes from `25` to `26`), and `DA:282` / `DA:283` / `DA:286`, `BRDA:267` block 10
+branch 0, `BRDA:279` block 11 branch 0, `BRDA:283` block 13 branch 1 and
+`batch-notifications.ts` `DA:328` all hit — the whole second arm, on one run, by
+construction.
+
+**After both.** Three consecutive full runs of the same command on the pinned
+tree:
+
+| Run | Files / Tests                 | Statements           | Branches            | Functions           | Lines               |
+| --- | ----------------------------- | -------------------- | ------------------- | ------------------- | ------------------- |
+| 1   | 333 / 4691 passed (3 skipped) | `91.85` (9399/10232) | `80.82` (5526/6837) | `96.06` (1831/1906) | `91.97` (9169/9969) |
+| 2   | 333 / 4691 passed (3 skipped) | `91.85` (9399/10232) | `80.82` (5526/6837) | `96.06` (1831/1906) | `91.97` (9169/9969) |
+| 3   | 333 / 4691 passed (3 skipped) | `91.85` (9399/10232) | `80.82` (5526/6837) | `96.06` (1831/1906) | `91.97` (9169/9969) |
+
+**The executed set is a constant now.** Diffing the three runs' `lcov.info`
+reports **zero** flips — `0` lines, `0` branches, `0` functions crossing zero —
+and both arms are hit in all three: `invitations/route.ts` `108` / `307` / `308`
+with `isDuplicateKeyError`, `complete-upload.ts` `282` / `283` / `286` and
+`batch-notifications.ts` `328`. The band `91.79`–`91.85 / 80.67`–`80.82 /
+96.01`–`96.06 / 91.90`–`91.97` collapses to one observation, and its bottom edge
+no longer exists: the floor is now the ceiling. The denominators are unchanged
+(`10232 / 6837 / 1906 / 9969`) and the suite is `333 files / 4691 passed (3
+skipped)` — one passing case more than the baseline every earlier run in this
+record reports, that being the budget case added above, with no production line
+added.
+
+**What stays run-sensitive.** Raw hit counts still move: `194` line points, `127`
+branch points and `60` function points that are executed in all three runs report
+different counts between them (for example `domain-events.ts:179` reads `5380` in
+one run and `5374` in the next), because instrumentation and worker sharding
+differ every run. The _set_ is a constant; a _count_ is not. So the rule in the
+subsection above stands for anything that is not a zero crossing: a two-decimal
+pair or a raw hit count is still not evidence, and only an executed-set diff, or
+a count delta at a stable denominator, is.
+
+**The margin.** Branches read `80.82` on every run against the `80` gate in
+`vitest.config.ts` lines 64–68 — `0.82` pp of constant headroom, where the band's
+bottom edge left `0.67` and a red `test_coverage` job sat one unlucky schedule
+away. Statements `91.85`, functions `96.06`, lines `91.97`. The
+`server/domain/**` and `server/services/**` sub-thresholds at `90` are untouched
+and unmoved. **No threshold was edited**: raising or lowering the gate is a policy
+decision for a human, and after this card no such decision is needed for the
+reason this card was opened.
+
+**Scope.** Four files, all of them this card's: the two specs (`F5`'s latch in
+`event-invitations.test.ts`, the budget seam and its case in
+`uploads-single-put.test.ts`) and two records' `- **Consumers:**` lists. The
+Consumers edits are guard-mandated, not editorial: citing a record from a source
+file turns `adr-consumers` red — three `consumer-mismatch` issues were measured —
+until that record's list names the file. `docs/adr/README.md` is byte-identical,
+no ADR number is minted, and no production file, shared fixture or config file is
+touched.
+
+**Provenance.** Card `t_e29bcc7c`, branch `OP-104-task-coverage-executed-set`,
+cut on `origin/main` `43c76a0f`. Every figure above was measured in that worktree
+by the command quoted at the top of this section, with `coverage/lcov.info` kept
+per run.

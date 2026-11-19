@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { ObjectId, type Document } from "mongodb";
+import { ObjectId, type ClientSession, type Document } from "mongodb";
 import { http, HttpResponse } from "msw";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -150,6 +150,7 @@ const HASH_HAPPY = hashFor("happy");
 const HASH_MISMATCH = hashFor("mismatch");
 const HASH_OVER_LIMIT = hashFor("over-limit");
 const HASH_CONCURRENT = hashFor("concurrent");
+const HASH_BUDGET = hashFor("budget");
 const HASH_LINKED = hashFor("linked");
 const HASH_ENQUEUE_FAILS = hashFor("enqueue-fails");
 const HASH_GRACE = hashFor("grace");
@@ -821,6 +822,59 @@ async function readEventImage(eventId: ObjectId): Promise<EventImageRow | null> 
   return rows.length === 1 ? (rows[0] as unknown as EventImageRow) : null;
 }
 
+/**
+ * A seam that spends one completion's transaction budget, so the retry-limit arm
+ * runs on every run instead of only when the schedule makes two completions
+ * collide.
+ *
+ * `completeStoredUpload` answers a duplicate through two arms, and both are
+ * correct: the transaction's own `settledCompletion` read finds the committed
+ * winner and returns `duplicate: true` without a write, or the loser's
+ * transaction fails and the `catch` answers the committed winner from
+ * `settledCompletion(undefined)`. Which arm answers depends on whether the loser
+ * re-reads after the winner's commit or spends its budget first — measured on
+ * one tree, consecutive full runs differ by `+4` statements and `+5` branches,
+ * all of them inside that `catch` (ADR-0371 §"Separating the executed set"). The
+ * pair in `I4` deliberately leaves the loser's status unpinned, so the arm is
+ * whatever the schedule produced.
+ *
+ * The seam removes the schedule from the question: it wraps the real
+ * `withTransaction` and, for the one call the case arms it for, passes
+ * `maxAttempts: 0` — so the **real** wrapper raises its own
+ * `TransactionRetryLimitError` and the route's own `catch` handles it. No error
+ * is fabricated and no production file changes; the module is pass-through
+ * unless a case arms it.
+ */
+const completionBudgetSeam = vi.hoisted(() => {
+  let spendNext = false;
+  return {
+    /** Spend the budget of the next transaction this file opens. */
+    spendNextBudget(): void {
+      spendNext = true;
+    },
+    /** Read and clear the arming, so at most one transaction is affected. */
+    take(): boolean {
+      const armed = spendNext;
+      spendNext = false;
+      return armed;
+    },
+  };
+});
+
+vi.mock("@/server/db/transaction", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/db/transaction")>();
+  return {
+    ...actual,
+    withTransaction: async <T>(
+      fn: (session: ClientSession) => Promise<T>,
+      options?: Parameters<typeof actual.withTransaction>[1]
+    ): Promise<T> =>
+      completionBudgetSeam.take()
+        ? actual.withTransaction(fn, { ...options, maxAttempts: 0 })
+        : actual.withTransaction(fn, options),
+  };
+});
+
 describe("POST …/uploads/params — the single-PUT presign (I1, contract §5.3)", () => {
   it("I1: answers 201 with an opaque presigned PUT and no bucket, key or location field", async () => {
     // Arrange
@@ -1194,6 +1248,70 @@ describe("POST …/uploads/{id}/complete — the registration transaction (I1, c
     );
 
     // Assert
+    expect(response.status).toBe(200);
+    const image = (await body(response)) as unknown as EventImageAnswer;
+    expect(image.id).toBe(existingImageId.toHexString());
+    expect(await app.db.collection(COLLECTIONS.eventImages).countDocuments({})).toBe(1);
+    const asset = await app.db.collection(COLLECTIONS.mediaAssets).findOne({ _id: assetId });
+    expect(asset).toMatchObject({ refCount: 1 });
+    expect(await readStorageCounter(workspace.tenantKey)).toBe(0);
+    const event = await readEvent(workspace.eventId);
+    expect(event.counters.imageCount).toBe(1);
+    expect(event.sequence).toBe(2);
+  });
+
+  it("I4: a completion whose transaction spends its whole budget still answers the committed image and charges nothing", async () => {
+    // Arrange — the event already holds the asset (a co-organizer's duplicate
+    // upload), and this completion's transaction spends its whole retry budget
+    // without committing: the seam gives the real wrapper a zero budget, so the
+    // failure is the wrapper's own `TransactionRetryLimitError`, exactly the
+    // error a loser of the write race produces when it is slower than the
+    // winner's commit.
+    const workspace = await seedWorkspace("op124-budget");
+    await seedPlanFor(workspace.tenantKey, "op124-budget-roomy", {
+      "storage.bytes": makeEntitlement({
+        limit: ROOMY_STORAGE_LIMIT,
+        scope: "tenant",
+        resetPeriod: "monthly",
+      }),
+    });
+    const assetId = await seedAsset(workspace.tenantKey, HASH_BUDGET, SMALL_BYTES);
+    const existingImageId = await seedEventImage(
+      workspace.tenantKey,
+      workspace.eventId,
+      assetId,
+      workspace.organizer.userId
+    );
+    await app.db
+      .collection(COLLECTIONS.events)
+      .updateOne(
+        { _id: workspace.eventId },
+        { $set: { sequence: 2, "counters.imageCount": 1, "counters.storageBytes": SMALL_BYTES } }
+      );
+    const claim = claimFor(HASH_BUDGET, { size: SMALL_BYTES });
+    const paramsResponse = await uploadParams(
+      paramsRequest(workspace.organizer.cookie, workspace.tenantKey, workspace.eventId, claim)
+    );
+    const { uploadSessionId } = (await body(paramsResponse)) as unknown as ParamsAnswer;
+    storeObject(HASH_BUDGET, makeBytes(SMALL_BYTES, JPEG_PREFIX), "image/jpeg");
+
+    // Act — the spent budget must never surface as an error (§16.3): the route
+    // answers the committed winner, exactly as a retried attempt would.
+    completionBudgetSeam.spendNextBudget();
+    const response = await uploadComplete(
+      completeRequest(
+        workspace.organizer.cookie,
+        workspace.tenantKey,
+        workspace.eventId,
+        uploadSessionId,
+        {
+          etag: STORED_ETAG,
+          bytes: SMALL_BYTES,
+        }
+      )
+    );
+
+    // Assert — 200 with the settled image, one row, one charge, nothing written.
     expect(response.status).toBe(200);
     const image = (await body(response)) as unknown as EventImageAnswer;
     expect(image.id).toBe(existingImageId.toHexString());
