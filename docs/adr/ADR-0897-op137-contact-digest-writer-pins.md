@@ -6,8 +6,9 @@
   [#763](https://github.com/yahodu/openpic-webapp/pull/763), squash `b15e0268`). Branch
   `OP-137-task-contact-digest-writer-pins`, worktree
   `/root/openpic/openpic-webapp/.worktrees/t_1039146a` (the GREEN's worktree, reused so the lane stays
-  one-worker-at-a-time), cut from `origin/main` at `c0bc6f1e`. The fix is present on that base:
-  `grep -n "createHash" apps/web/src/server/notifications/fan-out.ts` returns nothing.
+  one-worker-at-a-time), cut from `origin/main` at `c0bc6f1e` and merged with `origin/main` `2578e95e`
+  (the ADR-0894 sign-off) before delivery, so the delivered head is `13aef7d4`. The fix is present on that
+  base: `grep -n "createHash" apps/web/src/server/notifications/fan-out.ts` returns nothing.
 - **Pins:** contract §10.1.3 (a suppression is keyed on `{channel, contactHash}`) and design §19.5/§19.6
   (one `{channel, contactHash}` key, one digest for every writer).
 - **Consumes:** [ADR-0888](ADR-0888-op137-contact-digest-pins.md) (the pin pack this record extends, and
@@ -117,8 +118,10 @@ stated otherwise.
   byte-identical; the canonical-address cases are not opened.
 - **Gates:** `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` on the spec 0 errors / 0
   warnings ("No issues found"); `prettier --check` clean; the seven `adr-*` guard files green.
-- **Full suites:** `unit` and `integration` measured at the delivered head, both exit `0` — the exact
-  file/test counts are in the card handoff and in the PR body.
+- **Full suites, at the delivered head `13aef7d4`** (the merge of `origin/main` `2578e95e` into the two
+  commits), both exit `0`: `unit` `190 files / 3185 passed | 3 skipped (3188)` and `integration`
+  `152 files / 1593 passed`. Delivered as PR
+  [#768](https://github.com/yahodu/openpic-webapp/pull/768).
 
 ## Consequences and known limits
 
