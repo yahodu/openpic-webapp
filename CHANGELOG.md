@@ -1,3 +1,9 @@
+## [1.71.0](https://github.com/yahodu/openpic-webapp/compare/v1.70.0...v1.71.0) (2026-11-20)
+
+### Features
+
+- **compliance:** OP-138 implement the pinned DSR/consent storage contract ([#781](https://github.com/yahodu/openpic-webapp/issues/781)) ([50a5e56](https://github.com/yahodu/openpic-webapp/commit/50a5e56fc9944b7a2d9a66fb0a15a5299d588dc2))
+
 ## [1.70.0](https://github.com/yahodu/openpic-webapp/compare/v1.69.1...v1.70.0) (2026-11-20)
 
 ### Features
