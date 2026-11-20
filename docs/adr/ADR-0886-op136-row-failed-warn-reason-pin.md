@@ -98,7 +98,7 @@ ADR-0860 §4 names.
 ### 1. The pin asserts the message on the wire, not the field name
 
 One case is appended in a new block at the end of
-`apps/web/src/test/integration/job-pipeline-indexed-check.test.ts` (+165/−0: the
+`apps/web/src/test/integration/job-pipeline-indexed-check.test.ts` (+168/−0: the
 new block, its three helpers and one import line; the 30 delivered cases and every
 existing helper, fixture and constant stay byte-identical):
 
