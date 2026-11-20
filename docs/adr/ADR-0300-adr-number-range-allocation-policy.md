@@ -387,7 +387,7 @@ ad hoc (ADR-0799, ADR-0800, ADR-0811, ADR-0818); items 18–21 give it a clause.
     cursor value **in the same edit**, because that value is now reserved by the
     new block. A cell is still never a reservation (item 19): a value equal to,
     or inside, another row's reserved block is a consumed count, no consumer may
-    mint from it, and the allocator repairs it by **advancing it with the cursor** —
+    mint from it, and the allocator **advances it with the cursor** —
     never by lowering it into its own range, which item 20 forbids. Item 27
     continues the file-wide item counter (§12's items are 22–26), so §11 carries
     18–21 and 27 and neither section is renumbered.
