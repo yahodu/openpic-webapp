@@ -186,10 +186,20 @@ the clean-page control and the discovery abort.
   string projection passes it while dropping `name`/`stack`; the documented-key
   requirement is stated by the GREEN, not enforced here.
 - Hotspot: `apps/web/src/test/integration/job-pipeline-indexed-check.test.ts`
-  already carries an in-flight appended case on PR #749 (`I30`, a sibling pin of
-  the multi-row containment). Both branches append at the file's end, so the merge
-  is a union of two appended blocks and renumbering of at most one case id — no
-  existing byte is contested.
+  carries an in-flight appended case on PR
+  [#749](https://github.com/yahodu/openpic-webapp/pull/749) (the multi-row
+  containment sibling pin), and that case is
+  `I31: every failing row is counted and named, including two in one chunk` — not
+  `I30`, as an earlier draft of this paragraph said: `I30` is already a **trunk**
+  case, [ADR-0883](ADR-0883-op136-discovery-abort-pin.md)'s discovery abort, so
+  the contested id is this pin's own `I31`. Both branches append at the file's end,
+  so the merge is a union of two appended blocks and no existing byte is contested.
+- The rule for that merge: **whichever of PR #749 and this GREEN lands second
+  renumbers its own case id** to the next free one, changing only the case title
+  string and every mention of the id in its own record — no assertion, matcher,
+  helper or fixture moves. Re-sweep with
+  `grep -oE 'it\("I[0-9]+' <spec> | sort | uniq -c | awk '$1>1'` before either
+  merge; it must print nothing.
 
 ## Alternatives
 
