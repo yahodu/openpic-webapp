@@ -375,6 +375,29 @@ names a consumed pool number, so the next record would collide with the record
 that already holds it. The practice of drawing from the pool is already recorded
 ad hoc (ADR-0799, ADR-0800, ADR-0811, ADR-0818); items 18–21 give it a clause.
 
+27. **A fresh block cut advances the exhausted cells it consumes.** A new lane
+    block starts at the `unallocated (future lanes)` cursor value (item 16) and
+    the cursor jumps to the block's end + 1. Every **exhausted** lane cell, in the
+    items 18–19 sense, that named the pre-cut cursor value advances to the post-cut
+    cursor value **in the same edit**, because that value is now reserved by the
+    new block. A cell is still never a reservation (item 19): a value equal to,
+    or inside, another row's reserved block is a consumed count, no consumer may
+    mint from it, and the allocator repairs it by **advancing it with the cursor** —
+    never by lowering it into its own range, which item 20 forbids. Item 27
+    continues the file-wide item counter (§12's items are 22–26), so §11 carries
+    18–21 and 27 and neither section is renumbered.
+
+**The trigger for item 27.** The OP-138 RED card `t_a99f5cce` (branch
+`OP-138-task-dsr-consent-policy-red`, committed 2026-11-20) reserved
+`0897`–`0916`. At that moment the `OP-136 jobs lane` `Next free` cell read
+`0897` and the pool cursor moved to `0917`; that lane's own range is
+`0849`–`0868`, so it was exhausted and had already drawn `0896` from the pool.
+The guard cannot see the defect: `lane-range-overlap` compares reserved
+**ranges** only (`apps/web/src/test/helpers/adr-lane-ranges.ts`, header note).
+After any repair that sets an exhausted lane's cell equal to the pool cursor,
+the next block cut from that cursor recreates the defect — hence the rule, not
+a cleanup.
+
 ## §12 — The reservation is written on the card, and the cell only moves up (2026-11-19, card `t_b3edd8a0`)
 
 **The trigger.** Three same-lane ADR-number incidents hit the OP-104 lane
