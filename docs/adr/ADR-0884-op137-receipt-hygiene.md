@@ -347,3 +347,13 @@ to all six guards, which read `236 passed (236)` with the break present. Card
 `t_0fb7e9b0` pins that discriminator in both directions. D2 and D3 are
 prose-only miscounts: the mutations and cases they describe were correct, and
 the counts now match the table.
+
+The trunk moved while this card was in review (`f370cf5b`, PR #757, which brought
+`ADR-0886` and `ADR-0890`), so the branch carries one merge of `origin/main`
+(`21840194`) and `docs/adr/README.md` was resolved as a union: the shared `0887`
+note kept once, in the trunk's exact bytes, then this record's `0884` note and the
+trunk's `0890` note. `0884` is still free on the trunk — the highest record is
+`0890` and no `ADR-0884` path exists there — so the number does not change. The
+merge touches no file of this delivery: `git diff --numstat origin/main` is
+`329 0` in the pin spec, `359 0` in this record and `3 0` in the ledger, and both
+production hashes are unchanged from §7.
