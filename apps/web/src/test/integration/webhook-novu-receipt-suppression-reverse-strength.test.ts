@@ -1,5 +1,5 @@
 import { ObjectId } from "mongodb";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * `next/server`'s `after` is again the seam this suite drains for the "answer
@@ -14,7 +14,6 @@ import { POST as receiveNovuReceipt } from "@/app/api/v1/webhooks/novu/route";
 import { memoryMessageTransport } from "@/server/adapters/memory-message-transport";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
-import { getLogger, setLogger } from "@/server/logging";
 import { contactHashOf } from "@/server/notifications/contact-hash";
 import { runNotificationFanOut, type RecipientRepository } from "@/server/notifications/fan-out";
 import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
@@ -35,7 +34,9 @@ import {
 
 /**
  * Integration / contract — the **reverse direction** of the same-key
- * suppression ladder (OP-137, contract §10.1.3 and §19.6; ADR-0894).
+ * suppression ladder (OP-137, contract §10.1.3 and §19.6; ADR-0894, ADR-0896).
+ * `P7`, added by the round-1 review of ADR-0894's delivery, is the weaker
+ * write's `expiresAt` arm.
  *
  * The pins' own file (`webhook-novu-receipt-suppression-strength.test.ts`)
  * pins the upgrade direction and the unsubscribe route's non-downgrade. The
@@ -59,6 +60,12 @@ import {
  *    scope: "all"}` — both `complaint` and `dnd_rejection` are all-scope kinds,
  *    so the ladder is reason-aware and not only a scope comparison of the two
  *    writers.
+ *  - **P7** the same weaker `unsubscribed` receipt arriving after a
+ *    **future-dated** `hard_bounce`/`all` row must leave `expiresAt` at exactly
+ *    the seeded instant: a weaker write may not clear a temporary
+ *    suppression's expiry and so make it permanent. The still-live row must
+ *    keep suppressing the next transactional fan-out, which proves the seeded
+ *    row was in force rather than already lapsed.
  *
  * ## Contract expected of the implementation
  *
@@ -120,9 +127,6 @@ interface StoredDispatch {
 
 let app: TestApp;
 
-/** The process logger in place before the suite touches it. */
-let ambientLogger: ReturnType<typeof getLogger>;
-
 beforeAll(async () => {
   app = await startTestApp({ prefix: "op137-reverse-strength", env: RECEIPT_ENV });
   // The unique indexes of §18.4 and §19.6 **are** the dedupe, so the suite
@@ -132,7 +136,6 @@ beforeAll(async () => {
   await app.db
     .collection(COLLECTIONS.notificationTemplates)
     .insertMany([...SEED_NOTIFICATION_TEMPLATES]);
-  ambientLogger = getLogger();
 }, MONGO_READY_HOOK_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -151,10 +154,6 @@ beforeEach(async () => {
     app.db.collection(COLLECTIONS.providerWebhookEvents).deleteMany({}),
     app.db.collection(COLLECTIONS.domainEvents).deleteMany({}),
   ]);
-});
-
-afterEach(() => {
-  setLogger(ambientLogger);
 });
 
 /** A fresh hex id. */
@@ -477,6 +476,63 @@ describe("suppression reverse direction — a dnd_rejected receipt upgrades a ma
 
     // The observable consequence: a transactional OTP that a marketing opt-out
     // must never block is now suppressed, because the row is all-scope.
+    const transport = memoryMessageTransport();
+    const sentBefore = await sentDispatchIds(userId, OTP_EVENT_KEY);
+    await insertEvent({ eventKey: OTP_EVENT_KEY, subjectUserId: userId });
+    await runFanOut(transport);
+    expect(await sentDispatchIds(userId, OTP_EVENT_KEY)).toEqual(sentBefore);
+    expect(transport.outbox).toEqual([]);
+    expect(await dispatchesOfType(userId, OTP_EVENT_KEY)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "skipped", skipReason: "suppressed" }),
+      ])
+    );
+  });
+});
+
+describe("suppression reverse direction — a weaker write never re-arms expiresAt (P7)", () => {
+  it("P7: a signed unsubscribed receipt after a future-dated hard-bounce row leaves expiresAt at the seeded instant and the row still suppresses", async () => {
+    // Arrange — the ledger row, and exactly the temporary all-scope row an
+    // earlier hard-bounce receipt wrote for the same key: it lapses in an hour.
+    const userId = newId();
+    await seedRecipient({ userId, email: RECIPIENT_EMAIL });
+    const dispatch = await fanOutOtp(userId);
+    const key = suppressionContactHash(RECIPIENT_EMAIL);
+    const future = new Date(new Date(T0).getTime() + 60 * 60 * 1000);
+    await seedSuppression({
+      contactHash: key,
+      reason: "hard_bounce",
+      scope: "all",
+      expiresAt: future,
+      source: { provider: "novu", providerEventId: NOVU_RECEIPT_WEBHOOK_ID },
+    });
+
+    // Act — the provider reports the contact unsubscribed from marketing, the
+    // weaker write the projection drafts as `{reason: "unsubscribe",
+    // scope: "marketing"}`.
+    const response = await deliverReceipt({ dispatch, status: "unsubscribed" });
+
+    // Assert — the receipt was accepted…
+    expect(response.status).toBe(200);
+
+    // …and the stronger row is untouched, expiry included: the weaker write
+    // may not clear `expiresAt` and so make a temporary suppression permanent.
+    const row = await onlySuppression();
+    expect(row).toEqual({
+      _id: expect.any(ObjectId),
+      channel: "email",
+      contactHash: key,
+      reason: "hard_bounce",
+      scope: "all",
+      source: { provider: "novu", providerEventId: NOVU_RECEIPT_WEBHOOK_ID },
+      createdAt: new Date(T0),
+      expiresAt: future,
+    });
+
+    // The observable consequence, and the proof the seeded row was live rather
+    // than already lapsed: an unexpired all-scope row still stops the next
+    // transactional send — no new `sent` dispatch, an empty outbox, one
+    // recorded suppression skip.
     const transport = memoryMessageTransport();
     const sentBefore = await sentDispatchIds(userId, OTP_EVENT_KEY);
     await insertEvent({ eventKey: OTP_EVENT_KEY, subjectUserId: userId });
