@@ -601,6 +601,40 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
     expireAfterSeconds: 0,
   },
 
+  // dataSubjectRequests — schema §20.3. The collection is platform-scoped (a
+  // request belongs to its data subject, never to a tenant), so the U1
+  // tenant-prefix rule has no `tenantId` lead to govern here (ADR-0902).
+  // The caller's own list: `GET /me/data-requests` filters on `subject.userId`
+  // and sorts `{receivedAt:-1, _id:-1}`.
+  {
+    collection: COLLECTIONS.dataSubjectRequests,
+    name: "dataSubjectRequests_subject_received",
+    keys: [
+      ["subject.userId", 1],
+      ["receivedAt", -1],
+    ],
+  },
+  // The SLA sweep reads the open requests by deadline; the partial filter keeps
+  // completed and rejected rows out of the index (§20.3).
+  {
+    collection: COLLECTIONS.dataSubjectRequests,
+    name: "dataSubjectRequests_status_sla_open",
+    keys: [
+      ["status", 1],
+      ["slaDueAt", 1],
+    ],
+    partialFilterExpression: { status: { $in: ["received", "verifying", "in_progress"] } },
+  },
+  // The regulation breakdown aggregates requests by regime and status (§20.3).
+  {
+    collection: COLLECTIONS.dataSubjectRequests,
+    name: "dataSubjectRequests_regulation_status",
+    keys: [
+      ["regulation", 1],
+      ["status", 1],
+    ],
+  },
+
   // plans — one document per plan key (§14.1). This is the database backstop
   // that makes the seed's upsert safe under concurrent deploy instances: even a
   // racing insert cannot persist a second document for the same key (OP-83).

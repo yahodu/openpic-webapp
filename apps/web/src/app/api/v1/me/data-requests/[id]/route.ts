@@ -1,8 +1,7 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 
-import { getAuth } from "@/server/auth";
-import { requireAuth } from "@/server/auth/guards";
+import { findRequestAttendeeSession } from "@/server/attendee/session-resolver";
 import { isoOf } from "@/server/compliance/serialize";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
@@ -11,15 +10,18 @@ import { appError } from "@/server/http/errors";
 import { platformRepo } from "@/server/repos";
 
 import { acknowledgementFor } from "../_lib/acknowledgement";
+import { dsrAuth } from "../_lib/principal";
 
 /**
  * `GET /api/v1/me/data-requests/{id}` — the data subject reads their own request
- * back (OP-138, contract §8.1, schema §20.3; ADR-0898).
+ * back (OP-138, contract §8.1, schema §20.3; ADR-0898, ADR-0902 §5).
  *
- * The row belongs to its own data subject alone: another user's id is
- * `404 not_found`, never `403`, so the endpoint is not an existence oracle. The
- * owner gets the counted `executionLog` — "we deleted 412 embeddings" is the
- * whole point — and `export` stays `null` until an export exists.
+ * The row belongs to its own data subject alone — the signed-in user **or** the
+ * anonymous attendee session that filed it, so the `pollUrl` a receipt named
+ * answers its recipient. Any other credential is `404 not_found`, never `403`,
+ * so the endpoint is not an existence oracle. The owner gets the counted
+ * `executionLog` — "we deleted 412 embeddings" is the whole point — and `export`
+ * stays `null` until an export exists.
  */
 
 /** One counted execution step (schema §20.3). */
@@ -55,24 +57,34 @@ function requestIdFrom(request: Request): ObjectId | null {
 export const GET = defineRoute({
   route: "/api/v1/me/data-requests/:id",
   response: detailSchema,
-  auth: (ctx, request) => requireAuth("user", { auth: getAuth(), database: getDb() })(ctx, request),
+  auth: dsrAuth,
   handler: async (ctx) => {
+    const db = getDb();
     const principal = ctx.principal;
+
+    // The owner is the signed-in user, or else the anonymous session that filed
+    // it — the same credential the `202` receipt was handed to.
+    let owner: Record<string, unknown>;
     if (principal === undefined) {
-      throw appError("authentication_required");
+      const session = await findRequestAttendeeSession({ database: db }, ctx.request);
+      if (session === null) {
+        throw appError("unauthenticated");
+      }
+      owner = {
+        "subject.kind": "anonymous",
+        "subject.attendeeSessionId": session._id.toHexString(),
+      };
+    } else {
+      owner = { "subject.kind": "user", "subject.userId": new ObjectId(principal) };
     }
 
     const requestId = requestIdFrom(ctx.request);
     const row =
       requestId === null
         ? null
-        : ((await platformRepo(getDb())
+        : ((await platformRepo(db)
             .collection(COLLECTIONS.dataSubjectRequests)
-            .findOne({
-              _id: requestId,
-              "subject.kind": "user",
-              "subject.userId": new ObjectId(principal),
-            })) as Record<string, unknown> | null);
+            .findOne({ _id: requestId, ...owner })) as Record<string, unknown> | null);
 
     if (row === null) {
       throw appError("not_found", { details: { resource: "data_request" } });

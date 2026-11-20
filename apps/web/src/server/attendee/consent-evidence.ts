@@ -26,7 +26,16 @@ export interface ConsentEvidenceInput {
   readonly userAgent: string | null;
   /** The raw `accept-language` header, or `null`. */
   readonly acceptLanguage: string | null;
+  /**
+   * How consent was given, when the surface is not the attendee checkbox.
+   * Defaults to `"checkbox"` (contract §6.2); the in-app acknowledgement is
+   * `"in_app_action"` (§8.2).
+   */
+  readonly method?: ConsentMethod;
 }
+
+/** How consent was given (schema §15.4). */
+export type ConsentMethod = "checkbox" | "in_app_action";
 
 /** The four fields schema §15.4 stores under `consents.evidence`. */
 export interface ConsentEvidence {
@@ -34,8 +43,8 @@ export interface ConsentEvidence {
   readonly ipHash: string;
   /** A 64-character lowercase hex SHA-256 of the user agent. */
   readonly uaHash: string;
-  /** How consent was given on the attendee surface (contract §6.2). */
-  readonly method: "checkbox";
+  /** How consent was given (contract §6.2, §8.2). */
+  readonly method: ConsentMethod;
   /** The served locale the consent was given in (schema §15.4). */
   readonly locale: string;
 }
@@ -50,7 +59,7 @@ export function buildConsentEvidence(input: ConsentEvidenceInput): ConsentEviden
   return {
     ipHash: hashFingerprint({ ip: input.ip }, input.salt),
     uaHash: hashFingerprint({ userAgent: input.userAgent }, input.salt),
-    method: "checkbox",
+    method: input.method ?? "checkbox",
     locale: parseLocale(input.acceptLanguage),
   };
 }
