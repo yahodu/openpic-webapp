@@ -5,6 +5,7 @@ import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
 import { derivePipelineStatus, type ProcessingCounts } from "@/server/events/pipeline";
 import { pipelineIndexedCheckJob } from "@/server/jobs/pipeline-indexed-check";
+import { createLogger, type LogEntry, type LogTransport } from "@/server/logging";
 import { fixedClock } from "@/server/runtime/clock";
 
 import { startTestApp, type TestApp } from "../helpers/authed-app";
@@ -2423,5 +2424,172 @@ describe("pipeline-indexed-check: a throw from the grouped batch discovery abort
       stamped.map((row) => row?.pipeline?.indexedCheckedCounters),
       "the retried tick stamps every row it evaluated with its checked triple"
     ).toEqual(page.map(() => ({ imageCount: 3, processedImageCount: 3, failedImageCount: 0 })));
+  });
+});
+
+/**
+ * Integration / contract — the contained-row warning tells an operator **why**
+ * the row failed, in the entry the transport actually receives (ADR-0872 §1;
+ * finding **F1** of the landing review of PR #741, card `t_05687f95`, squash
+ * `b3f63308`; card `t_3b30fc42`, record ADR-0886).
+ *
+ * ## Why this block exists
+ *
+ * ADR-0872 §1 makes a row's own arm failure a contained `warn` that names the
+ * row by its event id, and `I27` pins the naming. `I27` reads the **recording**
+ * logger, which keeps the call-site fields object exactly as it was written, and
+ * it projects a thrown `Error` with a replacer of its own
+ * (`(key, value) => value instanceof Error ? value.message : value`) — a
+ * projection no transport performs. The real logging port serializes a thrown
+ * error for exactly one key, the documented `err`
+ * (`apps/web/src/server/logging/index.ts`, which hands `merged.err` to
+ * `serializeError`), and passes every other key through `redactEntry`, which
+ * leaves a non-plain object such as an `Error` untouched. `JSON.stringify` of
+ * such an entry — the shape the stdout and vendor transports write — drops
+ * `name`, `message` and `stack` entirely, so the line an operator reads names
+ * the event id but not the reason it failed.
+ *
+ * ## How to read it
+ *
+ * The pin runs the job through the **real** port: a capturing `LogTransport`
+ * and `createLogger({ level: "warn", env: "test" })`, so the entry asserted on is
+ * the one a transport was handed, JSON round-tripped to its wire shape. It
+ * asserts the level, the event key, the event id and the run's `errors: 1` — the
+ * control `I26`/`I27` already carry — and the one thing they cannot see: the
+ * thrown error's **message is present in that entry**. It names no field,
+ * because the key is the logging port's contract rather than this job's; the
+ * property under pin is that the reason survives the port, whichever documented
+ * shape carries it (ADR-0886 §1).
+ *
+ * RED at the trunk: the shipped call site writes `error: outcome.reason`, whose
+ * value the port does not serialize, so the wire entry carries `{}` where the
+ * error was and the message is absent. The GREEN is one word — `error:` → `err:`
+ * (ADR-0886 §2).
+ */
+describe("pipeline-indexed-check: the contained-row warn carries the failure reason on the wire", () => {
+  /**
+   * The per-run cap: room for the single candidate, so the page is not what the
+   * case is measuring.
+   */
+  const SINGLE_ROW_LIMIT = 4;
+
+  /**
+   * The message the poison row's own arm read throws. `failFindWhen` builds it
+   * from the collection name, so the assertion below reads the injection's own
+   * text rather than a literal that could drift from it.
+   */
+  const POISON_READ_MESSAGE = `injected failure: find on ${COLLECTIONS.eventImages}`;
+
+  /**
+   * Seed one `indexed` candidate (`I26`'s shape): a clean event whose two-file
+   * batch the worker already settled, so the OP-126 arm reads that batch's
+   * `event_images` rows — the read this case arms.
+   *
+   * @returns The seeded event.
+   */
+  async function seedPoisonCandidate(): Promise<SeededEvent> {
+    const event = await seedEvent(ALL_PROCESSED);
+    const batchId = new ObjectId().toHexString();
+    const uploader = new ObjectId();
+    for (const sequence of [1, 2]) {
+      await seedCompletedSession(event, {
+        batchId,
+        createdByUserId: uploader,
+        contentHash: hashFor(`op136-row-failed-wire-${String(sequence)}`),
+        fileName: `DSC_9${String(sequence).padStart(3, "0")}.JPG`,
+      });
+      await seedBatchImage(event, { batchId, status: "done", sequence });
+    }
+    return event;
+  }
+
+  /**
+   * Arm the poison shape on the candidate's batch: every `event_images` read of
+   * that event throws, for the whole case.
+   *
+   * @param eventId - The event whose batch reads fail.
+   * @returns The injection, whose `fired` count proves every call reached it.
+   */
+  function poisonBatchReads(eventId: ObjectId): InjectedReadFailure {
+    return failFindWhen(
+      COLLECTIONS.eventImages,
+      (filter) => filter.eventId instanceof ObjectId && filter.eventId.equals(eventId)
+    );
+  }
+
+  /**
+   * Build a `LogTransport` that keeps every entry it is handed, and the buffer
+   * it keeps them in.
+   *
+   * @returns The buffer the logger writes into and the transport itself.
+   */
+  function capturingTransport(): {
+    readonly entries: LogEntry[];
+    readonly transport: LogTransport;
+  } {
+    const entries: LogEntry[] = [];
+    return {
+      entries,
+      transport: {
+        write(entry: LogEntry): void {
+          entries.push(entry);
+        },
+      },
+    };
+  }
+
+  it("I31: the warn the transport receives carries the failure reason, not only the event id", async () => {
+    // Arrange — one `indexed` candidate whose own batch arm cannot read its
+    // `event_images` rows, and a real logger over a capturing transport.
+    const poison = await seedPoisonCandidate();
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const captured = capturingTransport();
+    const logger = createLogger({
+      level: "warn",
+      env: "test",
+      transports: [captured.transport],
+    });
+    const injection = poisonBatchReads(poison.eventId);
+    try {
+      // Act — the job runs through the real logging port, not the recording helper.
+      const result = await pipelineIndexedCheckJob.run({
+        requestedLimit: SINGLE_ROW_LIMIT,
+        clock: fixedClock(NOW),
+        logger,
+      });
+
+      // Sanity — the armed read was reached, or the case proves nothing.
+      expect(
+        injection.fired(),
+        "the poison row's arm read must have failed, or the seed is not poison"
+      ).toBeGreaterThanOrEqual(1);
+
+      // Assert — the control: the row was contained, so the run still resolved.
+      expect(result.errors, "one failing row is one counted error").toBe(1);
+      expect(result.scanned, "a contained failure does not shorten the page").toBe(1);
+
+      // …and what reached the transport is the entry a vendor would store: the
+      // in-memory object is round-tripped so the assertion is the wire shape.
+      const wire = JSON.parse(JSON.stringify(captured.entries)) as readonly Record<
+        string,
+        unknown
+      >[];
+      const failed = wire.filter((entry) => entry.event === ROW_FAILED_EVENT);
+      expect(failed, "a row whose own arm work throws must be named exactly once").toHaveLength(1);
+      const named = failed[0];
+      expect(named?.level, "a contained row failure is a warning, not a run failure").toBe("warn");
+      expect(named?.eventId, "the line must name the failing event").toBe(
+        poison.eventId.toHexString()
+      );
+
+      // …and the operator's only per-row signal must say *why*: the reason
+      // survives the logging port, so the entry a transport stores carries it.
+      expect(
+        JSON.stringify(named),
+        "the row-failed warn must reach the transport carrying the thrown error's message, or an operator cannot tell why the event failed"
+      ).toContain(POISON_READ_MESSAGE);
+    } finally {
+      injection.restore();
+    }
   });
 });
