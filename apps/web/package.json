@@ -14,7 +14,7 @@
     "@openpic/contracts": "workspace:*",
     "better-auth": "^1.7.7",
     "mongodb": "^6.12.0",
-    "next": "^15.5.27",
+    "next": "^15.5.29",
     "pdf-lib": "^1.17.1",
     "pino": "^10.3.1",
     "qrcode": "^1.5.4",
