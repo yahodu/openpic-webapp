@@ -137,9 +137,12 @@ windowSeconds: 86_400}`, contract §8.1's "5 / day / principal". Contract §0.11
   both halves** of that addition, because `rate-limit/classes.test.ts` is the
   executable copy of §0.11 and an implementer may not edit a test: the lane
   appends `compliance.dsr` to `CONTRACT_CLASSES`, its exact rule to
-  `CONTRACT_RULES` (`[{ scope: "user", limit: 5, windowSeconds: 86400 }]`,
-  asserted with `toEqual`, so neither the limit nor the window can drift) and its
-  policy membership to `FAIL_OPEN`. Those arrays are typed on the production
+  `LANE_RULES` (`[{ scope: "user", limit: 5, windowSeconds: 86400 }]`, asserted
+  with `toEqual`, so neither the limit nor the window can drift) and its policy
+  membership to `FAIL_OPEN`. The rule sits in `LANE_RULES` and not in
+  `CONTRACT_RULES` for the reason `attendee.session` does: `CONTRACT_RULES` is
+  the trunk-owned copy of §0.11 and §0.11 has no DSR row yet, so writing it there
+  would claim the contract already declares a class it does not. Those arrays are typed on the production
   `RateLimitClass` union, so until the GREEN adds the member the spec carries a
   `tsc` diagnostic naming it — the same compile-time contract `attendee.session`
   carries (ADR-0787 §Review), and the intended RED for "the union must gain this
