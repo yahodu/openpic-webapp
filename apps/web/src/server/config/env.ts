@@ -470,6 +470,12 @@ export interface NovuRuntimeConfig {
   readonly baseUrl: string;
   /** The Novu API key; an empty string means "not configured". */
   readonly apiKey: string;
+  /**
+   * The Svix signing secret of `POST /api/v1/webhooks/novu`; an empty string
+   * means "not configured", which refuses every receipt (OP-137 — a missing
+   * credential is a refusal, never a wildcard).
+   */
+  readonly webhookSecret: string;
 }
 
 /**
@@ -481,6 +487,7 @@ export function getNovuRuntimeConfig(): NovuRuntimeConfig {
   return {
     baseUrl: process.env.NOVU_BASE_URL ?? DEFAULT_NOVU_BASE_URL,
     apiKey: process.env.NOVU_API_KEY ?? "",
+    webhookSecret: process.env.NOVU_WEBHOOK_SECRET ?? "",
   };
 }
 
