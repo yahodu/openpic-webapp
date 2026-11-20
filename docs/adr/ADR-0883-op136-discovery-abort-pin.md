@@ -278,6 +278,26 @@ notes:
 - the gates of §Evidence were re-run on the merged tree, and the six `adr-*`
   guards and the focused spec are re-quoted in the PR body against the new head.
 
+Measured on the merged tree (`5da78fce`, `origin/main` `41aec3b0` merged in):
+`unit` `189 files / 3171 passed | 3 skipped (3174)`, exit `0`; `integration`
+`148 files / 1566 passed (1566)` in 362.11 s, exit `0`; the focused spec
+`1 file / 30 passed (30)`; `tsc -p apps/web/tsconfig.json --noEmit` exit `0`;
+`eslint` `0` on the spec; `prettier --check` clean on the three delivered paths;
+the six `adr-*` guards `6 files / 236 passed (236)`. The pre-merge numbers in
+§Evidence are the delivered head's (`4b3f9a07`) and differ only by the OP-137
+suite the merge brought in: `unit` `188 files / 3162 passed | 3 skipped (3165)`
+and `integration` `147 files / 1552 passed (1552)`; the focused spec and the
+guards count the same both times.
+
+One environment note, so the runs are reproducible: `node_modules` in this
+worktree is a **symlink** to the sibling `t_0924f321` worktree's, and after the
+merge `pnpm exec vitest` refuses to run (pnpm's deps-status check aborts a
+modules purge for lack of a TTY, `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`).
+Every merged-tree figure above was produced with
+`node node_modules/vitest/vitest.mjs run --project <name>`, which is the same
+vitest binary the `pnpm` script uses, and no install was attempted (a purge would
+have disturbed the sibling worktree).
+
 Numbers in §Evidence that name the base (`acade549`) are the base this delivery
 was cut from and measured on; they are not restated, because the merge changes
 neither the spec nor the production module.
