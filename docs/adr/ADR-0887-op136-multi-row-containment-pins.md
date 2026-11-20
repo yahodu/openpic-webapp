@@ -49,7 +49,8 @@ settled[firstFailed].reason }) }`, later chunks still running — the then-29-ca
 The card's own remedy — two poison rows, **one per chunk** (the lowest `_id` of chunk 1 and the
 ninth, alone in chunk 2) — was measured while writing this case and is **also vacuous** against the
 same mutation: a per-chunk count lands on the same total (`2`) and names the same two rows, so the
-page answers **`30 passed (30)`** under the chunk-level head. Only a chunk that holds **two**
+page answers **`30 passed (30)`** on the `acade549` trunk — re-measured **`31 passed (31)`** at
+`efa034ff` — under the chunk-level head. Only a chunk that holds **two**
 failures separates the two shapes. That measurement, not a preference, is why this record's page
 differs from the card's literal shape (see §3).
 
@@ -92,7 +93,8 @@ secret-shaped string, no `.only`, no skip, no loosened matcher.
 ### 3. Deviation from the card's literal shape, and why
 
 The card specified two poison rows, one per chunk, `errors: 2`. That shape is measured **vacuous**
-(§Context: `30 passed (30)` under the chunk-level head). The case therefore keeps the card's page
+(§Context: `30 passed (30)` on the `acade549` trunk and `31 passed (31)` at the delivered head, both
+under the chunk-level head). The case therefore keeps the card's page
 size, chunk boundaries, `requestedLimit`, run count, warn contract, "announced once" arm and
 "unstamped" arm, and adds a **second failure inside chunk 1**: the page carries three failing rows
 and `errors` expectation `3`, which is the smallest page that separates a per-row containment from a
@@ -111,7 +113,7 @@ empty after each restore):
 | positive control                                                      | shipped per-row loop                                                        | `31 passed (31)` (the 29 delivered cases + `ADR-0883`'s `I30` + `I31`)                                                                                                                                                     |
 | **M1** chunk-level                                                    | count once per chunk, name `chunk[firstFailed]`, later chunks still run     | `1 failed \| 30 passed (31)` — `I31` alone, `AssertionError: three failing rows are three counted errors — the count is per row, not per chunk: expected 2 to be 3`                                                        |
 | **M2** count per row, name the chunk's first failure                  | `errors += 1` per rejection, then `continue` unless `index === firstFailed` | `1 failed \| 30 passed (31)` — `I31` alone, `AssertionError: each failing row is named exactly once, as a warning — two of them in the same chunk: expected [ 'warn', 'warn' ] to deeply equal [ 'warn', 'warn', 'warn' ]` |
-| **V1** card's literal shape (two poison rows, one per chunk) under M1 | chunk-level                                                                 | `30 passed (30)` — **vacuous**, the measurement that produced §3 (taken before `ADR-0883`'s `I30` landed)                                                                                                                  |
+| **V1** card's literal shape (two poison rows, one per chunk) under M1 | chunk-level                                                                 | `31 passed (31)` — **vacuous**, the measurement that produced §3 (re-measured at the delivered head; first measured `30 passed (30)` on the `acade549` trunk, before `ADR-0883`'s `I30` landed)                            |
 
 So the count arm and the name arm are each independently load-bearing, and the card's literal page is
 not.
