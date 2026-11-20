@@ -58,6 +58,16 @@ import { recordingLogger } from "../helpers/recording-logger";
  * (§18.1), so `202` and the contract's body are asserted **after** the logger
  * field and stay as they are.
  *
+ * - **C (characterization, green on arrival).** Cases B1/B2 send `x-request-id`,
+ *   so they only exercise `requestLogger`'s header fallback. Most real traffic —
+ *   a browser or a CDN — sends no such header, and then the id must come from
+ *   the **request context** `defineRoute` sets (`context?.requestId ??
+ *   header ?? minted`). C sends the cookie only and pins the observable: the
+ *   single `queue.enqueue_failed` warn's `requestId` **equals the
+ *   `x-request-id` the response itself carries**, and its `route` is the bulk
+ *   template. The minted id is a ULID, so equality with the response header —
+ *   not a literal — is the contract.
+ *
  * ## Fixtures
  *
  * Pin A seeds the `event_images` row directly and reads it back through the
@@ -495,15 +505,16 @@ describe("requeueImages: the §18.1 enqueue warn", () => {
     // Assert — a healthy enqueue warns about nothing…
     expect(logger.entriesForEvent(ENQUEUE_FAILED_EVENT)).toHaveLength(0);
 
-    // …and the accepted pointer is the adapter's own minted message. This case
-    // runs before any other case in this file enqueues, so the memoised memory
-    // adapter mints its first id (`memory-1`) here.
+    // …and the accepted pointer is the adapter's own minted message. The id is
+    // the adapter's running sequence, which no case resets, so assert its shape
+    // (house pattern, `liveness-selfie-submit.test.ts`): a literal would only
+    // hold while this case is the first in the file to enqueue.
     const processing = await readProcessing(imageId);
-    expect(processing?.queueRef).toEqual({
+    expect(processing?.queueRef).toMatchObject({
       queueKey: "q:image",
       provider: "memory",
-      messageId: "memory-1",
     });
+    expect(processing?.queueRef?.messageId).toMatch(/^memory-\d+$/);
     expect(processing?.status).toBe("queued");
 
     // …and exactly one work item for exactly this image went on the wire.
@@ -648,5 +659,51 @@ describe("the reprocess routes: the enqueue warn carries the request's correlati
     };
     expect(answer.id).toBe(workspace.imageId.toHexString());
     expect(answer.processing?.status).toBe("queued");
+  });
+
+  it("C1: a header-less request correlates queue.enqueue_failed with the id the response mints", async () => {
+    // Arrange — a signed-in organizer, one failed image, and **no**
+    // x-request-id: the caller sends the session cookie only, as a browser or a
+    // CDN would.
+    const workspace = await seedWorkspace("op136-headerless");
+    const request = new Request(new URL(reprocessFailedPath(workspace), APP_ORIGIN), {
+      method: "POST",
+      headers: { cookie: workspace.organizerCookie },
+    });
+
+    // Act — the process logger is swapped for a recorder for this request only.
+    const previousLogger = getLogger();
+    const recorder = recordingLogger();
+    setLogger(recorder);
+    const restore = refuseEnqueue();
+    const response = await reprocessFailed(request).finally(() => {
+      restore();
+      setLogger(previousLogger);
+    });
+
+    // Assert — the response echoes the id `defineRoute` minted for the request…
+    const responseId = response.headers.get(REQUEST_ID_HEADER);
+    expect(responseId).not.toBeNull();
+    if (responseId === null) {
+      throw new Error("the header-less response carried no x-request-id");
+    }
+
+    // …and the request succeeds: a refused enqueue is not a failed request.
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toEqual({ requeuedCount: 1 });
+
+    // Assert — exactly one warn for the refused enqueue…
+    const warns = recorder.entriesForEvent(ENQUEUE_FAILED_EVENT);
+    expect(warns).toHaveLength(1);
+    const warn = warns[0];
+    if (warn === undefined) {
+      throw new Error("a refused enqueue printed no queue.enqueue_failed warn");
+    }
+
+    // …carrying the id the request scope resolved, which is the one the caller
+    // can see on its own response. A logger built before the context exists (or
+    // read from the header alone) mints a different id here.
+    expect(warn.fields.requestId).toBe(responseId);
+    expect(warn.fields.route).toBe(ROUTE_TEMPLATE_BULK);
   });
 });
