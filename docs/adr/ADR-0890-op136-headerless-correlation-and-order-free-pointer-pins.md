@@ -189,3 +189,76 @@ PR [#752](https://github.com/yahodu/openpic-webapp/pull/752)) and `ADR-0889`
 stops at `0889`. This record is that highest in-flight number plus one. No
 `ADR-0890` file, object or PR-head path exists on any surface, and no number
 outside `0890` is consumed.
+
+## Review — round 1
+
+Sign-off card `t_a2174a66` records the round-1 review of the pin card `t_26366405` (PR
+[#757](https://github.com/yahodu/openpic-webapp/pull/757)). The delivery merged by its own card's
+mandate before the review ran, so this is a **post-merge verification** of the bytes the trunk
+carries. Every figure below is the reviewer's own measurement; none is transcribed from the
+delivery comment. The trunk figures were measured at the squash `f370cf5b`; this section lands on
+`origin/main` `1c2d519f`, which has since taken three other lanes' commits (`3da2dae1`,
+`63dbe750`, `a69f0340`) and the release chore `1c2d519f` — `git log f370cf5b..origin/main -- <this
+record>` is empty, so this record's bytes are unchanged.
+
+- **Verdict:** accepted, `APPROVED WITH FINDINGS` — posted as PR comment
+  [`issuecomment-7038383669`](https://github.com/yahodu/openpic-webapp/pull/757#issuecomment-7038383669).
+  One **Low** docs finding (**F-A**, the ledger note's closing italic) is corrected by this
+  sign-off card; no code finding is open.
+- **Merge proof.** Head `708df0d0`, squash `f370cf5b0f0d90104f1aff79eb5d5888d454a537b`.
+  `git diff --stat 708df0d0 f370cf5b` over the three PR paths
+  (`apps/web/src/test/integration/image-requeue-enqueue-warn-pins.test.ts`, `docs/adr/README.md`
+  and this record) is **empty**: the spec blob is `e92b116a`, the README blob `0baa2186` and this
+  record's blob `91b9f4c2` on both sides. The one whole-tree difference to the branch head is
+  `docs/adr/ADR-0886-op136-row-failed-warn-reason-pin.md` (+54), added by trunk commit `9e8b2f96`
+  (`docs(adr): OP-136 sign off ADR-0886 round 1 (#756)`) — a commit that is **not** an ancestor of
+  the branch, so the squash carries exactly the branch's bytes.
+- **Re-run at the merged squash `f370cf5b`** (throwaway worktree, not the shared checkout): the pin
+  file and `event-images-management.test.ts` → `2 files / 32 passed (32)` (`5 passed (5)` and
+  `27 passed (27)`); the six `adr-*` guards → `6 files / 236 passed (236)`;
+  `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `prettier --check` clean on the spec, this
+  record and the README; **15/15** check runs `success` on `708df0d0` (`ci`, `unit_test`,
+  `test_coverage`, `lint`, `secret-scan`, `audit`, `audit-dev`, `env-changes`,
+  `validate-branch-name`, `validate-pr-title`, `Assert CI evidence`, CodeQL ×3, `notify-discord`).
+- **P1 is load-bearing (F-1), reproduced by an independent probe.** `requestLogger` mutated to
+  `request.headers.get(REQUEST_ID_HEADER) ?? newRequestId()` (the context arm dropped) →
+  `1 failed | 4 passed (5)`, `C1` alone
+  (`expected 'req_01M7WB9RW1VS9EN7B028VGTC7B' to be 'req_01M7WB9RVN262WA266GB8WW21G'`), `B1`/`B2`
+  green; `apps/web/src/server/logging/index.ts` restored byte-identically
+  (`sha256 9b993118b9fadc5ce36341bbc5ae6d8b5ad14ac40eff5dc964f9121d5d91b302`, `git status` clean).
+- **P2 is order-independent (F-2), reproduced by a probe other than the delivery's.** Instead of
+  inserting a case above `A1`, the adapter's sequence was started at `1`
+  (`apps/web/src/server/adapters/memory-queue.ts`, `let sequence = 0` → `1`) — the state any
+  preceding enqueuing case creates, and a wider one than a single insertion. The delivered
+  assertion stays `5 passed (5)`; with the old literal restored under the same sequence, `A1`'s
+  pre-delivery `toEqual(… messageId: "memory-1")` reads `1 failed | 3 passed (4)`, `A1` alone:
+
+  ```
+  -   "messageId": "memory-1",
+  +   "messageId": "memory-2",
+  ```
+
+  Probe worktree restored clean.
+
+- **Ledger.** At `f370cf5b`: 413 records, `uniq -d` over the numbers **empty**, `ADR-0890` present
+  once, both `Next free` cells `0891`, rows ascending, both prose blocks kept. On this section's
+  base `1c2d519f` the ledger reads **416** records with `ADR-0891` landed and both cells `0892`, no
+  duplicate number and no gap below the cursor; this section mints no number and moves no cell.
+- **F-A — the ledger note's closing italic (Low, docs).** The `docs/adr/README.md` note this
+  delivery added ended `… the two cells and this note.__` while every other note in the file ends
+  `this note._` — `od -c` read `n o t e . _ _ \n` and `prettier` does not normalize emphasis, so
+  the gate was blind to it. This sign-off corrects that one character:
+  `git diff --numstat docs/adr/README.md` is `1 1`, no row, cell, number or other lane's prose is
+  touched, and `prettier --check` is clean on the file.
+- **Residuals accepted, not retracted.** The single-image route stays unpinned — it shares
+  `requestLogger` and `defineRoute` with the bulk route `C1` drives, so a second case there would
+  measure the same line twice — and `C1` asserts an equality rather than a value, which is the only
+  ordering-free form that discriminates (§Alternatives).
+- **The two in-flight OP-137 branches' cells lag the trunk.** Their `Next free` cells read `0889`
+  and `0890` while the trunk is at `0892` and holds the numbers those cells name, so their merges
+  take the highest cell, not their recorded one ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md)
+  §10 item 14); neither branch holds an `ADR-0890` file, so no duplicate exists.
+- **No retraction.** Nothing in §Context, §Decision, §Evidence, §Consequences and known limits,
+  §Alternatives or §Number allocation is retracted, reworded or re-badged, and every measurement
+  those sections state stands — including the `6 passed (6)` the delivery's own insertion probe
+  read, which this review's shifted-sequence probe reproduces in a second, independent form.
