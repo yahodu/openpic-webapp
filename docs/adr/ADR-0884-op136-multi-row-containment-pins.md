@@ -54,9 +54,9 @@ differs from the card's literal shape (see §3).
 
 ## Decision
 
-### 1. One appended case, `I30`: three failing rows, two of them in one chunk
+### 1. One appended case, `I31`: three failing rows, two of them in one chunk
 
-`I30` — "every failing row is counted and named, including two in one chunk" — is appended to the
+`I31` — "every failing row is counted and named, including two in one chunk" — is appended to the
 existing containment block of `apps/web/src/test/integration/job-pipeline-indexed-check.test.ts`
 (+140/−0; no existing case, helper, fixture, constant or assertion is edited). It seeds the block's
 page (`PAGE_SIZE` 9 = `ROW_CHECK_CONCURRENCY` 8 + 1, `requestedLimit: PAGE_LIMIT` 12) `_id`-ascending
@@ -107,9 +107,9 @@ empty after each restore):
 
 | run                                                                   | shape                                                                       | result                                                                                                                                                                                                                     |
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| positive control                                                      | shipped per-row loop                                                        | `30 passed (30)` (the 29 delivered cases + `I30`)                                                                                                                                                                          |
-| **M1** chunk-level                                                    | count once per chunk, name `chunk[firstFailed]`, later chunks still run     | `1 failed \| 29 passed (30)` — `I30` alone, `AssertionError: three failing rows are three counted errors — the count is per row, not per chunk: expected 2 to be 3`                                                        |
-| **M2** count per row, name the chunk's first failure                  | `errors += 1` per rejection, then `continue` unless `index === firstFailed` | `1 failed \| 29 passed (30)` — `I30` alone, `AssertionError: each failing row is named exactly once, as a warning — two of them in the same chunk: expected [ 'warn', 'warn' ] to deeply equal [ 'warn', 'warn', 'warn' ]` |
+| positive control                                                      | shipped per-row loop                                                        | `30 passed (30)` (the 29 delivered cases + `I31`)                                                                                                                                                                          |
+| **M1** chunk-level                                                    | count once per chunk, name `chunk[firstFailed]`, later chunks still run     | `1 failed \| 29 passed (30)` — `I31` alone, `AssertionError: three failing rows are three counted errors — the count is per row, not per chunk: expected 2 to be 3`                                                        |
+| **M2** count per row, name the chunk's first failure                  | `errors += 1` per rejection, then `continue` unless `index === firstFailed` | `1 failed \| 29 passed (30)` — `I31` alone, `AssertionError: each failing row is named exactly once, as a warning — two of them in the same chunk: expected [ 'warn', 'warn' ] to deeply equal [ 'warn', 'warn', 'warn' ]` |
 | **V1** card's literal shape (two poison rows, one per chunk) under M1 | chunk-level                                                                 | `30 passed (30)` — **vacuous**, the measurement that produced §3                                                                                                                                                           |
 
 So the count arm and the name arm are each independently load-bearing, and the card's literal page is
@@ -132,7 +132,7 @@ not.
 
 - The granularity of both halves of ADR-0871 §1 is now pinned by behaviour, at the envelope
   (`errors`) and at the log (`fields.eventId` set + level + count), so a future "count once per
-  chunk" refactor of the row loop reds `I30` alone.
+  chunk" refactor of the row loop reds `I31` alone.
 - The page is `_id`-ordering dependent by design: the case asserts its own page order before acting
   (`pageOrder` equals its sorted form), so a seeding change fails loudly instead of silently moving
   which rows are the first and ninth.
@@ -140,3 +140,12 @@ not.
   not serialised by the logging port is `t_3b30fc42`'s pin and the Implementer card behind it), the
   abort half of ADR-0867 §2 (the sibling `ADR-0883` card), and the delivery ordering of the outbox
   rows.
+
+## Id reconciliation
+
+`I31` was written and measured as `I30`. Before this branch could land, `origin/main` took
+`efa034ff` (PR #746, the sibling card `t_b13a68d7` / ADR-0883), which appends its own case under the
+same id in a _different_ block of the same spec. That card landed first, so its `I30` stands and this
+case takes the next free id, `I31`: the id is a label, the assertions are unchanged, and the merged
+file reads `31 passed (31)` (29 delivered + ADR-0883's case + this one). The mutation evidence in
+§Evidence was measured under the earlier label and reds the same case, now `I31`.

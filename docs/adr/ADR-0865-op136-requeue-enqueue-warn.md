@@ -124,3 +124,86 @@ touched files, `prettier --check` clean on all six paths.
   logger's bindings; the enqueue path adds nothing to the request context.
 - A broker refusal still leaves the row `queued` with no `queueRef` — the sweep
   owns recovery (§18.1); this record only makes the refusal observable.
+
+## Review sign-off (round 1, artifact + execution lens) — APPROVED WITH FINDINGS
+
+Reviewed at head `bf576b08`, the head of PR #667 (squash `268c842e`), on two lenses: the
+artifact (the merged bytes) and execution (the reviewer's own probe). The verdict is
+**APPROVED WITH FINDINGS**: the pass-through, the optional field and the type widening
+are correct and shipped as decided, and two Low findings plus one record correction are
+recorded here rather than retracted from the frozen sections above.
+
+### 1. What was reviewed and how
+
+- Head `bf576b08`, the head of PR #667 — `docs(adr): OP-136 restate the evidence at the head merged with PR #666`.
+- PR #667 `fix(images): OP-136 warn when a reprocess enqueue is refused`, squash `268c842e`.
+- `apps/web/src/test/integration/event-images-management.test.ts`: `27 passed (27)`.
+- The six `adr-*` guards: `6 files / 236 passed (236)`.
+- `tsc -p apps/web/tsconfig.json --noEmit` exit `0`, `eslint` 0 findings on the four touched files, `prettier --check` clean on all six paths.
+- `git merge-tree --write-tree origin/main HEAD`: clean, exit `0`.
+- CI on that head: the aggregate `ci` job passes, and the only red check is `audit`,
+  which fails repo-wide on `GHSA-fc5q-39xc-vjpf` (`picomatch` ReDoS, `Severity: 1 high`,
+  path `apps__web>better-auth>vitest`, 9 paths), read from the job log of run
+  `44160790998` — not a red of this delivery. `audit-dev`, `unit_test`,
+  `test_coverage`, `lint`, `secret-scan` and the three `CodeQL` jobs all pass.
+
+### 2. The reviewer's own probe
+
+A detached worktree at `bf576b08`, deleted afterwards, drove `requeueImages` with a
+recording logger:
+
+- refused broker: **exactly one** `queue.enqueue_failed` at `warn` with `fields.kind: "event_image"`, and **no** `queueRef` write (the row stays `queued`);
+- healthy broker: **zero** `queue.enqueue_failed`, plus the accepted pointer `{ queueKey: "q:image", provider: "memory", messageId: "memory-1" }`;
+- the durable writes arrive in the order `["event_images.updateOne","event_images.updateOne"]`, so the reset write precedes the enqueue;
+- negative control: deleting `logger: input.logger` from `images/requeue.ts` prints `{"warnCount":0}` and the probe reddens with `expected [] to have a length of 1 but got +0`, so the forwarded line is what emits the warn.
+
+### 3. Finding F1 (Low) and the record correction
+
+Both routes pass `getLogger()`, the **process** logger, so the §18.1 warn carries no
+request identity. Measured inside a request scope: `getLogger()` emits the keys
+`["event"]`, while `requestLogger(request, { route })` emits
+`["requestId","route","event"]` with `requestId: "req_probe_scope"`; the process logger
+is built with `service` and `env` bindings only.
+
+This corrects **§3** ("Both routes pass `logger: getLogger()`"), whose prose calls it
+"the request's logger", and the Consequences bullet "The warn is written through the
+process request logger, so it carries the logger's bindings". **Nothing in §1–§3 is
+retracted**: the pass-through, the optional field and the type widening all shipped and
+are correct — only the identity of the logger is stated wrongly. Routed to `t_76021c6a` (pins, draft PR) and to `t_9e0979c4` (GREEN: `requestLogger(ctx.request, { route: ctx.route })` at both routes).
+
+### 4. Finding F2 (Low) — the observable was unpinned
+
+At review time `grep -rn enqueue_failed apps/web/src/test` returned only
+`job-sweep-observability-pins.test.ts`, `queue-followup-pins.test.ts`,
+`queue-upstash.test.ts` and `uploads-single-put.test.ts`; nothing drove a reprocess route
+into a refused enqueue, so the one forwarded line could be deleted with the whole suite
+green. Routed to `t_76021c6a`.
+
+### 5. Info — the ledger cell moved past an in-flight number
+
+This record advanced the `OP-136 jobs lane` cell to `0866` while `ADR-0866` was already
+in flight on `OP-136-task-batch-arm-retry-pins` (draft PR #668). There is no duplicate
+number — this record is `0865` — but the next mint in the lane must re-sweep the
+in-flight heads rather than trust the cell.
+
+### 6. Post-review status
+
+- The merge landed as squash `268c842e`; local `main` == `origin/main` == `268c842e` at that point, and the trunk's own intervening commits (`47d36617` ADR-0315, `031423ce` the 1.65.8 release) are main-owned and untouched by this lane.
+- `t_9e0979c4` then landed the F1 GREEN as squash `8b2a7f2c` (PR #748, 09:12:13Z), whose
+  tree equals its branch tree, and the superseded draft pin PR #747 was closed rather
+  than merged; `origin/main` == local `main` == `8b2a7f2c` at that point.
+- This append is cut from `a5300714`, the 1.68.1 release bot commit and the only one
+  above `8b2a7f2c`, and it re-measures the same gates there: `27 passed (27)`, the six
+  guards `236 passed (236)`, `tsc` exit `0`, `eslint` 0 on the four touched files,
+  `prettier --check` clean, `merge-tree` clean. `audit` is `success` on `33f8d430`, so
+  the `GHSA-fc5q-39xc-vjpf` red has cleared since the review.
+- Ledger state: ADR-0868's index row still reads that its PR is a draft that must not be
+  merged because Pin B reds the trunk. After `8b2a7f2c` that state is superseded — Pin B
+  is green on the trunk, and ADR-0885's own row records it (`4 passed (4)` where the pin
+  head read `2 failed | 2 passed (4)`). The ledger is append-only, so the resolution is
+  recorded by the newer row; the frozen `0868` row, ADR-0868 and ADR-0885 are not edited.
+
+### 7. What follows
+
+The follow-ups, not this record, document what follows: `t_76021c6a` (the pins, via its
+draft PR) and `t_9e0979c4` (the F1 GREEN). No prospective ADR number is named here.
