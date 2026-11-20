@@ -59,6 +59,7 @@
 - [ ] No hard-coded tunables — runtime knobs read from `platformSettings`.
 - [ ] An ADR was added in `docs/adr/` for any new decision.
 - [ ] The ADR number is the `Consumes` value reserved in the card body — never derived from `docs/adr/README.md` — and no same-lane ADR-minting sibling card is in flight.
+- [ ] The merge gate printed PASS on the exact head SHA and its output is in the PR (`docs/CONVENTIONS.md` §9.1).
 
 ## Screenshots (if any)
 

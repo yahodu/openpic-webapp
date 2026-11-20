@@ -985,7 +985,7 @@ prices: [
 { tenantId, entitlementKey: "storage.bytes", periodKey: "lifetime", value: 73400320000, updatedAt }
 ```
 
-**Index:** `{tenantId:1, entitlementKey:1, periodKey:1}` unique
+**Index:** `{tenantId:1, entitlementKey:1, periodKey:1}` unique · `{tenantId:1, periodKey:-1, _id:-1}` — serves the `/usage` keyset list's sort (§0.8); the unique index above cannot, because `entitlementKey` sits between `tenantId` and `periodKey`
 
 ```js
 // entitlementGrants — additive top-ups
@@ -995,7 +995,7 @@ prices: [
   validFrom, validUntil: null, createdAt, createdByUserId }
 ```
 
-**Index:** `{tenantId:1, entitlementKey:1, validFrom:1}`
+**Index:** `{tenantId:1, entitlementKey:1, validFrom:1}` · `{tenantId:1, validUntil:1}` — bounds the `/entitlements` grant read to the window covering `now`; the first index cannot do it because its `validFrom` bound skips no expired row (every expired grant satisfies `validFrom <= now`) and `validUntil` sat in no index, so the planner walked the tenant's whole expired-grant history (ADR-0369)
 
 Effective limit:
 
@@ -1218,19 +1218,20 @@ Rotation pushes a new element and sets `active: false` + `revokedAt` on the old 
 
 The attendee's participation record — the hub of the whole attendee experience.
 
-| Field                    | Type                                                                                   | Purpose                                                                                              |
-| ------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `tenantId`, `eventId`    | ObjectId                                                                               | Tenant boundary + event scope                                                                        |
-| `subject`                | object                                                                                 | `{kind:"user"\|"anonymous", userId?, attendeeSessionId?}` (§10.3)                                    |
-| `status`                 | `"selfie_pending" \| "processing" \| "ready" \| "no_match" \| "failed" \| "withdrawn"` | Drives the attendee UI without querying selfies/matches                                              |
-| `activeSelfieId`         | ObjectId                                                                               | The selfie currently used for matching (PRD: attendee may reuse a previous selfie)                   |
-| `matchCount`             | int                                                                                    | Cache: PRD requires a live total count. `$inc`'d on match insert.                                    |
-| `lastMatchRunAt`         | date                                                                                   | **Watermark for incremental matching** (§17.4) — only faces created after this are scored on re-runs |
-| `lastSeenGalleryAt`      | date                                                                                   | Powers the PRD's "New" badge: an image is new if `faceMatches.createdAt > lastSeenGalleryAt`         |
-| `firstMatchNotifiedAt`   | date \| null                                                                           | Guarantees `attendee.matches.ready` (and its SMS) fires exactly once                                 |
-| `consentId`              | ObjectId                                                                               | The biometric-processing consent in force                                                            |
-| `claimedAt`              | date \| null                                                                           | When anonymous → identified                                                                          |
-| `createdAt`, `updatedAt` |                                                                                        |                                                                                                      |
+| Field                    | Type                                                                                   | Purpose                                                                                                                                |
+| ------------------------ | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenantId`, `eventId`    | ObjectId                                                                               | Tenant boundary + event scope                                                                                                          |
+| `subject`                | object                                                                                 | `{kind:"user"\|"anonymous", userId?, attendeeSessionId?}` (§10.3)                                                                      |
+| `status`                 | `"selfie_pending" \| "processing" \| "ready" \| "no_match" \| "failed" \| "withdrawn"` | Drives the attendee UI without querying selfies/matches                                                                                |
+| `activeSelfieId`         | ObjectId                                                                               | The selfie currently used for matching (PRD: attendee may reuse a previous selfie)                                                     |
+| `matchCount`             | int                                                                                    | Cache: PRD requires a live total count. `$inc`'d on match insert.                                                                      |
+| `lastMatchRunAt`         | date                                                                                   | **Watermark for incremental matching** (§17.4) — only faces created after this are scored on re-runs                                   |
+| `lastSeenGalleryAt`      | date                                                                                   | Powers the PRD's "New" badge: an image is new if `faceMatches.createdAt > lastSeenGalleryAt`                                           |
+| `firstMatchNotifiedAt`   | date \| null                                                                           | Guarantees `attendee.matches.ready` (and its SMS) fires exactly once                                                                   |
+| `noMatchNotifiedFor`     | object — `{ matchRunAt, matchCount } \| null`                                          | The latched empty-gallery disposition: the `attendee-no-match-check` candidate query reads it, and it re-opens when either input moves |
+| `consentId`              | ObjectId                                                                               | The biometric-processing consent in force                                                                                              |
+| `claimedAt`              | date \| null                                                                           | When anonymous → identified                                                                                                            |
+| `createdAt`, `updatedAt` |                                                                                        |                                                                                                                                        |
 
 **Indexes:**
 
@@ -1345,6 +1346,7 @@ erDiagram
 | `assetId`                                      | ObjectId \| null                                         | Set on completion                                                                                                                                                                                                                                                                 |
 | `createdAt`, `updatedAt`, `completedAt`        |                                                          |                                                                                                                                                                                                                                                                                   |
 | `expireAt`                                     | date                                                     | **TTL 5 days**, staggered before the storage lifecycle rule that aborts incomplete multipart uploads at 7 days                                                                                                                                                                    |
+| `stallNotifiedAt`                              | date \| null                                             | The once-per-session stalled-upload latch (`upload.session.stalled`)                                                                                                                                                                                                              |
 
 **Indexes:** `{tenantId:1, createdByUserId:1, contentHash:1}` · `{eventId:1, batchId:1, status:1}` (batch progress) · `{status:1, updatedAt:1}` partial on `in_progress` (`upload.session.stalled` detection) · `{expireAt:1}` TTL 0
 

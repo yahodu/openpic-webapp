@@ -166,8 +166,52 @@ A story is complete only when **all** of the following hold:
 - [ ] No hard-coded tunables — runtime knobs are read from `platformSettings`.
 - [ ] An ADR was added in `docs/adr/` for any new decision.
 - [ ] The ADR number is the `Consumes` value reserved in the card body — never derived from `docs/adr/README.md` — and no same-lane ADR-minting sibling card is in flight.
+- [ ] The merge gate printed PASS on the exact head SHA and its output is in the PR (§9.1).
 
 This list is mirrored, copy-pasteably, in `.github/pull_request_template.md`.
+
+### 9.1 The merge gate (ADR-0318)
+
+The ruleset requires no status check, and the identity that merges is an `always`
+bypass actor on it, so the merge is decided by the agent that runs it. Before
+`gh pr merge`, evaluate these six conditions against the PR's **current head SHA**
+and paste the output into the PR:
+
+- **G1** `mergeable == "MERGEABLE"` and `mergeStateStatus` ∉ {`DIRTY`, `UNKNOWN`};
+  re-poll up to 5 × 3 s when `UNKNOWN`.
+- **G2** every entry in `statusCheckRollup` for the head is `status: COMPLETED`
+  with `conclusion: SUCCESS` — no `FAILURE`, no `PENDING`, no `CANCELLED`, no
+  `SKIPPED` on a gating name.
+- **G3** the gating name set is present on the head: `ci`, `audit`, `audit-dev`,
+  `secret-scan`, `lint`, `unit_test`, `test_coverage`, `env-changes`,
+  `validate-branch-name`, `validate-pr-title`,
+  `Assert CI evidence for the pushed head`.
+- **G4 (audit freshness)** No commit on `origin/main` in
+  `<merge-base>..origin/main` may touch the audit input surface —
+  `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `package.json`,
+  `.github/workflows/ci.yml` — with a commit date later than the head's `audit`
+  check `completedAt`. If one did, the green predates a change in what `audit`
+  means: **STALE**.
+- **G5** `git diff --quiet <merge-base> origin/main -- pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/ci.yml` — if false, the merge would change the audited tree, so the head's evidence cannot cover the merge result.
+- **G6** on any failure: **do not merge**, do not rebase, do not `gh run rerun`,
+  do not `--admin`. Comment the failing condition on the PR and route —
+  reconcile through the lane owner (merge `origin/main` in, push to re-trigger
+  CI and get a fresh merge ref) or close as superseded.
+
+```
+N=<pr>; SHA=$(gh pr view "$N" --json headRefOid -q .headRefOid)
+gh pr view "$N" --json mergeable,mergeStateStatus
+gh pr view "$N" --json statusCheckRollup \
+  -q '.statusCheckRollup[] | "\(.name)\t\(.status)\t\(.conclusion)\t\(.completedAt)"'
+BASE=$(git merge-base "$SHA" origin/main)
+git log --format='%cI %h %s' "$BASE"..origin/main -- \
+  pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/ci.yml
+git diff --quiet "$BASE" origin/main -- \
+  pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/ci.yml && echo G5-pass
+```
+
+The decision, its measured context and the rejected alternatives are recorded in
+`docs/adr/ADR-0318-agent-enforced-merge-gate.md`.
 
 ## 10. Authority order when documents conflict
 
@@ -188,23 +232,33 @@ it assigns the lane a disjoint block of numbers, and it reserves each ADR number
 given and **never** derives one from the ledger — not from the block counter, not
 from the `Next free` cell, not from the shared high-water mark, not from the tail
 of `docs/adr/README.md`. The `Next free` cell is **informational**: the card that
-lands a ledger row sets it to `max(consumed)+1`. A card with no reserved number
+lands a ledger row sets it to the **higher** of the trunk's value and one more than
+the highest number consumed in the lane — the cell never moves down (ADR-0300 §12,
+items 24–25). A card with no reserved number
 asks the allocator; it never invents one. Reserving at creation — rather than each
 worker deriving a number at its branch cut from a shared snapshot — is what makes
 a lane closed under concurrency. The authority for this rule, its rationale and
 the rejected alternatives are
-`docs/adr/ADR-0300-adr-number-range-allocation-policy.md` §8–§9. Numbers
+`docs/adr/ADR-0300-adr-number-range-allocation-policy.md` §8–§9 and §12. Numbers
 allocated before the policy (`≤ 0145`) are frozen history and are never moved.
 
-- **In-flight-aware allocation (ADR-0300 §9, rule B).** Before it hands a number
-  to any card the allocator **enumerates the lane's in-flight reservations** and
-  takes the next free number **above the highest in-flight one** — never the trunk
-  `Next free` cell, never a snapshot of shared state. Enumerate all three sources:
-  every live worktree's `docs/adr/` files, the lane's non-`done` cards' `Consumes`
-  values, and the lane's open remote refs (`git ls-remote --heads origin "OP-<n>*"`,
-  reading `docs/adr/` at each head where reachable). The rule binds **whoever mints
-  a card**, not the orchestrator alone. No ADR-carrying PR may squash-merge until
-  the duplicate check has run **on the merged tree** (merge the incoming head into
+- **In-flight-aware allocation (ADR-0300 §9, rule B; §12 item 23).** Before it
+  hands a number to any card the allocator **enumerates the lane's in-flight
+  reservations** and takes the next free number **above the highest in-flight
+  one** — never the trunk `Next free` cell, never a snapshot of shared state.
+  Enumerate all **four** sources: (a) every live worktree's `docs/adr/` files;
+  (b) `git rev-list --objects --all -- docs/adr` — a number committed in any
+  reachable tree, pushed or not; (c) the lane's non-`done` cards' `Consumes`
+  values; and (d) **every open PR head** — list the open PRs with
+  `gh pr list --state open --json number,headRefName,headRefOid`, then
+  `git fetch origin <headRefName>` before `git ls-tree <headOid> docs/adr/` at
+  each head — `ls-tree` needs the object locally. A branch named outside the
+  ticket prefix (`wt/<task-id>`, a lane worktree branch) is invisible to
+  `git ls-remote --heads origin "OP-<n>*"`, and an unpushed commit is invisible to
+  any remote listing, so the open-PR-head sweep is not optional. The rule binds
+  **whoever mints a card**, not the orchestrator alone. No ADR-carrying PR may
+  squash-merge until the duplicate check has run **on the merged tree** (merge the
+  incoming head into
   a throwaway worktree off `origin/main`, then run
   `apps/web/src/test/unit/adr-*.test.ts` and `uniq -d` over the `ADR-NNNN`
   prefixes there): a lone `docs/adr/README.md` conflict resolves cleanly while
@@ -224,14 +278,18 @@ allocated before the policy (`≤ 0145`) are frozen history and are never moved.
   and the merged-tree duplicate check above is unchanged.
 - **The ledger.** The live range table is `docs/adr/README.md` § "ADR number
   allocation" (ADR-0300) — the single source of truth. Do not copy or re-derive
-  the ranges anywhere else, including here. **The `Next free` column is a
-  reservation counter, not a landed-file count.** A number is _taken_ once it is
-  landed on `main` **or** allocated to any in-flight card/ref of that lane (an
-  open PR/branch, or a live card assigned the number). Lanes reserve at
-  allocation time — the cell always names the number the next _new_ card in the
-  lane will receive, so a card that consumes `0NNN` writes the next number above
-  `0NNN`. Two concurrent cards in one lane therefore never compute the same
-  "next free" (ADR-0300 §7).
+  the ranges anywhere else, including here. **The `Next free` column is the lane's
+  reservation counter (ADR-0300 §7) — a monotonic high-water mark, not a computed
+  count and not a landed-file count — and it is never written lower or moved
+  down.** A number is _taken_
+  once it is landed on `main` **or** allocated to any in-flight card/ref of that
+  lane (an open PR/branch, or a live card assigned the number). Lanes reserve at
+  allocation time: a card that lands a ledger row writes the cell as the **higher**
+  of the trunk's value and one more than the highest number consumed in the lane,
+  and a merge keeps the higher of the two sides and discards the lower one without
+  renumbering a record. A lower value is therefore never evidence that a number is
+  free, and two concurrent cards in one lane never compute the same "next free"
+  (ADR-0300 §7, §12 items 24–25).
 - **The guard.** `pnpm test:unit` fails on a duplicate `ADR-NNNN` prefix or a
   malformed `ADR-*.md` name
   (`apps/web/src/test/unit/adr-*.test.ts` — the guard is one spec per invariant,

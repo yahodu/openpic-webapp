@@ -1,7 +1,9 @@
-import type { Db } from "mongodb";
+import { ObjectId, type Db, type Document } from "mongodb";
 import { z } from "zod";
 
 import { COLLECTIONS } from "@/server/db/collections";
+import { buildCursorPage, type Cursor } from "@/server/http/cursor";
+import { appError } from "@/server/http/errors";
 import { formatEntitlementDisplay } from "@/server/plans/plan-display";
 import {
   enforcementSchema,
@@ -83,8 +85,18 @@ const servedUsageRowSchema = z.object({
   updatedAt: isoDateTimeSchema.optional(),
 });
 
-/** The `{ data }` collection envelope of the raw usage rows (contract §0.5). */
-export const usageCountersSchema = z.object({ data: z.array(servedUsageRowSchema) });
+/** The `page` object of a `{ data, page }` collection envelope (contract §0.8). */
+const usagePageSchema = z.object({
+  nextCursor: z.string().nullable(),
+  hasMore: z.boolean(),
+  limit: z.number().int(),
+});
+
+/** The `{ data, page }` collection envelope of the raw usage rows (contract §0.5, §0.8). */
+export const usageCountersSchema = z.object({
+  data: z.array(servedUsageRowSchema),
+  page: usagePageSchema,
+});
 
 /** A served entitlement row. */
 export type EntitlementState = z.infer<typeof entitlementStateSchema>;
@@ -95,10 +107,16 @@ export type EntitlementsBody = z.infer<typeof entitlementsSchema>;
 /** The served raw usage list. */
 export type UsageCountersBody = z.infer<typeof usageCountersSchema>;
 
-/** The stored fields of a live `subscriptions` row this view reads. */
+/**
+ * The stored fields of a live `subscriptions` row this view reads.
+ *
+ * Schema §14.3 marks both plan keys **required**, so neither carries a default:
+ * a partial (corrupt) row fails the parse and the route answers `500
+ * internal_error` instead of laundering the tenant into the free tier.
+ */
 const storedSubscriptionSchema = z.object({
-  activePlanKey: z.string().default("free"),
-  subscribedPlanKey: z.string().default("free"),
+  activePlanKey: z.string(),
+  subscribedPlanKey: z.string(),
   status: subscriptionStatusSchema,
 });
 
@@ -114,6 +132,7 @@ const storedGrantSchema = z.object({
 
 /** The stored fields of a `usageCounters` row. */
 const storedCounterSchema = z.object({
+  _id: z.instanceof(ObjectId),
   entitlementKey: z.string(),
   periodKey: z.string(),
   value: z.number(),
@@ -131,7 +150,7 @@ const storedCounterSchema = z.object({
  * @param key - The entitlement key.
  * @param spec - The stored entitlement spec.
  * @param grants - Every grant row for this key.
- * @param counters - Every usage counter row for this tenant.
+ * @param counters - The tenant's counter rows for the keys' current periods.
  * @param now - The instant the read reasons about.
  * @returns The served row.
  */
@@ -193,8 +212,11 @@ function toEntitlementState(
  * Read the §3.5 advisory entitlements view for one workspace.
  *
  * The live subscription (defaulting to `free` with status `none` when the
- * tenant has no document, schema §14.3) picks the plan; the plan, its grants
- * and this tenant's counters are then read **in parallel**. Nothing is written
+ * tenant has no document, schema §14.3) picks the plan; the plan is read first
+ * because it names the counters to fetch, then its grants and those counters
+ * are read **in parallel**. Only the current period of each `tenant`-scoped key
+ * can be served, so the counter read is bounded to those `(key, period)` pairs
+ * rather than the tenant's whole history (ADR-0365). Nothing is written
  * (§0.14).
  *
  * @param db - The database handle.
@@ -215,13 +237,31 @@ export async function readEntitlementsView(
 
   const planKey = subscription === null ? "free" : subscription.activePlanKey;
 
-  const [planRow, grantRows, counterRows] = await Promise.all([
-    platformRepo(db).collection(COLLECTIONS.plans).findOne({ key: planKey }),
-    tenantRepo(tenantId, db).collection(COLLECTIONS.entitlementGrants).find().toArray(),
-    tenantRepo(tenantId, db).collection(COLLECTIONS.usageCounters).find().toArray(),
+  const planRow = await platformRepo(db).collection(COLLECTIONS.plans).findOne({ key: planKey });
+  const specs: Record<string, EntitlementSpec> =
+    planRow === null ? {} : planSchema.parse(planRow).entitlements;
+
+  // `toEntitlementState` only ever consults the row at a key's current period,
+  // so fetching every past period would grow the read without bound (ADR-0365).
+  const counterPairs = Object.entries(specs)
+    .filter(([, spec]) => spec.scope === "tenant")
+    .map(([key, spec]) => ({ entitlementKey: key, periodKey: periodKey(spec.resetPeriod, now) }));
+
+  // `effectiveLimit` and `grants[]` both select on `isGrantActive`, so only the
+  // grants whose window covers `now` need fetching (ADR-0366).
+  const [grantRows, counterRows] = await Promise.all([
+    tenantRepo(tenantId, db)
+      .collection(COLLECTIONS.entitlementGrants)
+      .find({ validFrom: { $lte: now }, $or: [{ validUntil: null }, { validUntil: { $gt: now } }] })
+      .toArray(),
+    counterPairs.length === 0
+      ? Promise.resolve([])
+      : tenantRepo(tenantId, db)
+          .collection(COLLECTIONS.usageCounters)
+          .find({ $or: counterPairs })
+          .toArray(),
   ]);
 
-  const specs = planRow === null ? {} : planSchema.parse(planRow).entitlements;
   const grants = grantRows.map((row) => storedGrantSchema.parse(row));
   const counters = counterRows.map((row) => storedCounterSchema.parse(row));
 
@@ -245,30 +285,76 @@ export async function readEntitlementsView(
   };
 }
 
+/** A 24-hex ObjectId, the only accepted `_id` tiebreaker in a cursor. */
+const OBJECT_ID_HEX = /^[0-9a-f]{24}$/i;
+
 /**
- * Read the raw `usageCounters` rows for one workspace.
+ * The keyset filter that follows `cursor` on a `periodKey`-desc list (§0.8).
  *
- * Answers the §0.5 collection envelope, filtered to `periodKey` when supplied,
- * and never leaks the driver's `_id` (it is projected out).
+ * The compound `(periodKey, _id)` key keeps rows that share a period from being
+ * skipped or repeated at a page boundary.
+ *
+ * @param cursor - The decoded cursor, or `null` on the first page.
+ * @returns The filter fragment, or the empty object.
+ * @throws {AppError} `invalid_cursor` (400) when the `_id` half is not a hex id.
+ */
+function cursorFilterFor(cursor: Cursor | null): Document {
+  if (cursor === null) {
+    return {};
+  }
+  if (!OBJECT_ID_HEX.test(cursor.i)) {
+    throw appError("invalid_cursor");
+  }
+  return {
+    $or: [
+      { periodKey: { $lt: cursor.c } },
+      { periodKey: cursor.c, _id: { $lt: new ObjectId(cursor.i) } },
+    ],
+  };
+}
+
+/**
+ * Read one cursor page of the raw `usageCounters` rows for one workspace.
+ *
+ * Answers the §0.5 collection envelope as `{ data, page }` (§0.8): the rows are
+ * sorted `periodKey` descending then `_id` descending, at most `limit` per page,
+ * and the page's `nextCursor` follows the same compound key. The driver's `_id`
+ * is never served.
  *
  * @param db - The database handle.
  * @param tenantId - The workspace id (string).
- * @param periodKey - The period to filter to, or `undefined` for every period.
- * @returns The §0.5 `{ data }` envelope.
+ * @param query - The bounded page query: the `periodKey` filter (or `null`) and
+ *   the `limit`/`cursor` `parsePageQuery` produced.
+ * @returns The §0.5 `{ data, page }` envelope.
+ * @throws {AppError} `invalid_cursor` (400) when the cursor's `_id` is malformed.
  */
 export async function readUsageCounters(
   db: Db,
   tenantId: string,
-  periodKey?: string
+  query: {
+    readonly periodKey: string | null;
+    readonly limit: number;
+    readonly cursor: Cursor | null;
+  }
 ): Promise<UsageCountersBody> {
-  const filter = periodKey === undefined ? {} : { periodKey };
+  const filter: Document = {
+    ...(query.periodKey === null ? {} : { periodKey: query.periodKey }),
+    ...cursorFilterFor(query.cursor),
+  };
   const rows = await tenantRepo(tenantId, db)
     .collection(COLLECTIONS.usageCounters)
     .find(filter)
+    .sort({ periodKey: -1, _id: -1 })
+    .limit(query.limit + 1)
     .toArray();
 
+  const page = buildCursorPage(rows, query.limit, (row) => {
+    const counter = storedCounterSchema.parse(row);
+    return { c: counter.periodKey, i: counter._id.toHexString() };
+  });
+
   return {
-    data: rows.map((row) => {
+    data: page.items.map((row) => {
       const counter = storedCounterSchema.parse(row);
       return {
         entitlementKey: counter.entitlementKey,
@@ -277,5 +363,6 @@ export async function readUsageCounters(
         ...(counter.updatedAt === undefined ? {} : { updatedAt: counter.updatedAt.toISOString() }),
       };
     }),
+    page: { nextCursor: page.nextCursor, hasMore: page.hasMore, limit: query.limit },
   };
 }

@@ -1,11 +1,12 @@
 import type { Document, WithId } from "mongodb";
 import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { GET as getEntitlements } from "@/app/api/v1/tenants/[tenantId]/entitlements/route";
 import { GET as getUsage } from "@/app/api/v1/tenants/[tenantId]/usage/route";
 import { COLLECTIONS } from "@/server/db/collections";
+import { encodeCursor } from "@/server/http/cursor";
 import type { Entitlement } from "@/server/plans/plans";
 
 import { body } from "../helpers/auth-requests";
@@ -66,6 +67,106 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *   `used`/`remaining` (contract §3.5).
  * - `/usage` answers `{ data: […] }` (§0.5 collection envelope) and never leaks
  *   the driver's `_id` (§0.5: "never expose `_id`").
+ *
+ * ## Follow-up pins — OP-104 L2/L3/L4 (RED at ADR-0362)
+ *
+ * - **L2 — `/usage` is bounded by the platform cursor contract (§0.8),
+ *   additively.** `?cursor=&limit=` go through the existing `parsePageQuery`
+ *   (`@/server/http/cursor`): limit default `40`, clamped to `100`, and an
+ *   unparseable or foreign cursor is `400 invalid_cursor`. The body stays
+ *   `{ data }` and **gains** `page: { nextCursor, hasMore, limit }` (§0.5's
+ *   collection example); `nextCursor` is `null` when `hasMore` is `false`. The
+ *   sort is fixed: **`periodKey` descending, then `_id` descending**, so a tie
+ *   inside one period never skips or duplicates a row. `usageBodySchema` stays
+ *   `{ data }` on purpose — it is the "existing clients still work" control —
+ *   so the envelope assertions read `payload.page` explicitly instead.
+ * - **L3 — both plan keys are required on a present row (§14.3).**
+ *   `activePlanKey`/`subscribedPlanKey` lose their silent `"free"` default: a
+ *   live `subscriptions` row missing either field is server-side corruption and
+ *   answers `500 internal_error` (§0.7 "unhandled — never leak internals"),
+ *   never a laundered free tier. No row at all still reads as `free`/`none`
+ *   (I1, unchanged).
+ * - **L4 — the `$ne: "cancelled"` selection is pinned, not changed.** An
+ *   `expired` row is live and resolves its paid plan; with several live rows the
+ *   read picks an arbitrary one, so the pin asserts only what holds for any
+ *   pick: the served plan is one of the live rows' plans, `subscriptionStatus`
+ *   belongs to that same row, and the cancelled row's plan is never served.
+ *
+ * ## Characterization pins — OP-104 L5/L6 (green on arrival)
+ *
+ * Two arms the bounded `/usage` read introduced are pinned, not changed. Both
+ * cases are **characterization**: they pass against the shipped implementation
+ * and exist only to make a regression visible (ADR-0364), so a red L5/L6 means
+ * the guard or the keyset regressed — never that the spec is ahead of the code.
+ *
+ * - **L5 — a decodable cursor whose `_id` half is not 24-hex is `400
+ *   invalid_cursor`.** `decodeCursor` (`@/server/http/cursor`) guarantees only
+ *   two non-empty strings, so `{ c: "2026-09", i: "zz" }` decodes; the read must
+ *   still reject it *before* the keyset filter builds `new ObjectId(i)`.
+ * - **L6 — a cursor whose period precedes every row is an empty terminal page.**
+ *   The `$or` keyset excludes every seeded row, so the answer is `200` with
+ *   `data: []` and `page: { nextCursor: null, hasMore: false, limit: 40 }` —
+ *   never a `500`, a silently repeated page, or an unfollowable cursor.
+ *
+ * ## Characterization pins — OP-104 L7/L8 (green on arrival, ADR-0367)
+ *
+ * The counter read ADR-0365 bounded to each `tenant`-scoped key's **current**
+ * period narrows corruption detection in exactly one arm. Both cases below are
+ * **characterization** too: they pass against the shipped trunk and exist only
+ * to make a change visible (ADR-0367), so a red means the shipped behaviour
+ * moved — never that the spec is ahead of the code.
+ *
+ * - **L7 — a malformed counter row in a *closed* period is ignored.** The row
+ *   is outside the fetched `(entitlementKey, periodKey)` pair set, so it is
+ *   never parsed by `storedCounterSchema` and the view still answers `200` from
+ *   the current-period row. Under the pre-ADR-0365 `find().toArray()` read the
+ *   same seed threw (`500 internal_error`). This pin documents that narrowing:
+ *   **a red L7 means the fetch set widened again.**
+ * - **L8 — a malformed counter row in the *served* period is still refused.**
+ *   The row is inside the pair set, so the parse still throws and the route
+ *   answers `500 internal_error`. Green on both heads by design (the unbounded
+ *   read fetched it too); the narrowing is only ever *outside* the served
+ *   period.
+ *
+ * ## Characterization pins — OP-104 L9/L10 (green on arrival, ADR-0370)
+ *
+ * The `entitlementGrants` read ADR-0366 bounded to the **active window**
+ * narrows corruption detection in exactly one arm — the same shape ADR-0365's
+ * counter bound had for L7/L8. Both cases below are **characterization** too:
+ * they pass against the shipped trunk and exist only to make a change visible,
+ * so a red means the shipped behaviour moved — never that the spec is ahead of
+ * the code.
+ *
+ * - **L9 — a malformed grant row in a *closed* window is ignored.** The row's
+ *   `validFrom`/`validUntil` window excludes `now`, so the bounded read never
+ *   fetches it and `storedGrantSchema` never parses it: the view answers `200`
+ *   and serves exactly the numbers the healthy, open-window grant produces.
+ *   Under the pre-ADR-0366 unbounded `find().toArray()` read the same seed
+ *   threw (`500 internal_error`). **A red L9 means the fetch set widened
+ *   again.**
+ * - **L10 — a malformed grant row in a *served* window is still refused.** The
+ *   window covers `now`, so the row is fetched, `storedGrantSchema.parse`
+ *   throws and the route answers `500 internal_error`. Green on both heads by
+ *   design (the unbounded read fetched it too); the narrowing is only ever
+ *   *outside* the served window.
+ *
+ * ## Characterization pins — OP-104 L11/L12 (green on arrival, ADR-0371)
+ *
+ * L9's corrupt row is excluded by the **`$or`** (`validUntil`) clause alone, so
+ * the read's two other clauses had no pin. The two cases below close that gap,
+ * one clause each. Both are **characterization** pins too: they pass against
+ * the shipped trunk and exist only to make a change visible, so a red means the
+ * shipped behaviour moved — never that the spec is ahead of the code.
+ *
+ * - **L11 — a corrupt grant row whose window has not *started* is ignored.** The
+ *   row is `validFrom 2027-01-01` / `validUntil: null`, so only
+ *   `validFrom: { $lte: now }` excludes it: the view answers `200` and serves
+ *   the healthy numbers. **A red L11 means the read lost its `validFrom`
+ *   bound** (and the pre-ADR-0366 `500 internal_error` returns).
+ * - **L12 — a corrupt grant row whose window ends *exactly* at `now` is
+ *   ignored.** `validUntil` equals `FROZEN_NOW`, so only the strict `$gt` (not
+ *   `$gte`) excludes it. **A red L12 means the `$or` relaxed to `$gte`** and a
+ *   grant is counted on its own expiry instant.
  */
 
 const TENANTS_PATH = "/api/v1/tenants";
@@ -138,13 +239,49 @@ const usageRowSchema = z.object({
 /** The `/usage` collection envelope (§0.5). */
 const usageBodySchema = z.object({ data: z.array(usageRowSchema) });
 
+/**
+ * The `page` object `/usage` gains (§0.5 collection example, §0.8).
+ *
+ * Deliberately **not** merged into {@link usageBodySchema}: that schema is the
+ * "an existing client still parses the body" control, so the bound is asserted
+ * against the raw payload here.
+ */
+const usagePageSchema = z.object({
+  nextCursor: z.string().nullable(),
+  hasMore: z.boolean(),
+  limit: z.number().int(),
+});
+
+/** One served `/usage` row, as {@link usageRowSchema} types it. */
+type UsageRow = z.infer<typeof usageRowSchema>;
+
 let app: TestApp;
+
+/**
+ * The instant every spec in this file reasons about.
+ *
+ * The view derives `periodKey` and `resetsAt` from the route's injected
+ * `systemClock.now()`, and the counters are seeded with the *same* derivation.
+ * Freezing the clock keeps the seed and the read on one instant, so a run that
+ * would straddle a UTC month boundary (seed at `T-1ms`, read at `T+1ms`) cannot
+ * look up the next period key and find no counter. A mid-month instant keeps
+ * `nextMonthStartIso()` unambiguous.
+ */
+const FROZEN_NOW = new Date("2026-09-15T12:00:00.000Z");
 
 beforeAll(async () => {
   // Boots a private database, the real auth surface and the readiness probe;
   // the cold connect belongs in this hook, never inside a timed spec.
   app = await startTestApp({ prefix: "op104-endpoints" });
 }, MONGO_READY_HOOK_TIMEOUT_MS);
+
+beforeEach(() => {
+  // Fake `Date` only: `setTimeout`/`setInterval` stay real for the driver's
+  // sockets and heartbeats, while `new Date()` (and so `systemClock.now()`)
+  // returns {@link FROZEN_NOW} for every case.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FROZEN_NOW);
+});
 
 beforeEach(async () => {
   // One database is booted for the whole file (`beforeAll`), so a reused plan
@@ -162,6 +299,10 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await app.cleanup();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /** Merge fields into a caller's auto-provisioned `userProfiles` row. */
@@ -260,8 +401,10 @@ async function seedPlan(fields: {
 async function seedSubscription(fields: {
   tenantId: string;
   activePlanKey: string;
-  status: "active" | "downgraded" | "past_due";
+  status: "active" | "downgraded" | "past_due" | "cancelled" | "expired";
   subscribedPlanKey?: string;
+  /** Set to timestamp a `cancelled` row; omitted leaves `cancelledAt: null`. */
+  cancelledAt?: Date;
 }): Promise<void> {
   await app.db.collection(COLLECTIONS.subscriptions).insertOne({
     tenantId: fields.tenantId,
@@ -281,7 +424,7 @@ async function seedSubscription(fields: {
     currency: "INR",
     dunning: { attemptCount: 0, lastAttemptAt: null, remindersSent: [], nextReminderAt: null },
     cancelAt: null,
-    cancelledAt: null,
+    cancelledAt: fields.cancelledAt ?? null,
     cancelReason: null,
     scheduledChange: null,
     previousSubscriptionId: null,
@@ -290,6 +433,52 @@ async function seedSubscription(fields: {
     createdAt: new Date("2026-09-01T00:00:00.000Z"),
     updatedAt: new Date("2026-09-01T00:00:00.000Z"),
   });
+}
+
+/**
+ * Insert a **live** `subscriptions` row (schema §14.3) that is missing one of
+ * the two required plan keys.
+ *
+ * A state {@link seedSubscription} cannot build (it always writes both keys):
+ * §14.3 marks `activePlanKey` and `subscribedPlanKey` required, so a document
+ * without one is server-side corruption, not a free tier.
+ */
+async function seedSubscriptionMissingPlanKey(fields: {
+  tenantId: string;
+  missing: "activePlanKey" | "subscribedPlanKey";
+}): Promise<void> {
+  const shared = {
+    tenantId: fields.tenantId,
+    subscribedPlanVersion: 1,
+    status: "active" as const,
+    priceKey: "starter-monthly-inr",
+    paymentMethodKind: "mandate_upi",
+    mandateStatus: "active",
+    billingCycle: "monthly",
+    currentPeriodStart: new Date("2026-09-01T00:00:00.000Z"),
+    currentPeriodEnd: new Date("2026-10-01T00:00:00.000Z"),
+    nextChargeAt: new Date("2026-10-01T00:00:00.000Z"),
+    gracePeriodEndsAt: null,
+    pendingDueMinor: 0,
+    currency: "INR",
+    dunning: { attemptCount: 0, lastAttemptAt: null, remindersSent: [], nextReminderAt: null },
+    cancelAt: null,
+    cancelledAt: null,
+    cancelReason: null,
+    scheduledChange: null,
+    previousSubscriptionId: null,
+    statusHistory: [],
+    externalRefs: [],
+    createdAt: new Date("2026-09-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-09-01T00:00:00.000Z"),
+  };
+  await app.db
+    .collection(COLLECTIONS.subscriptions)
+    .insertOne(
+      fields.missing === "activePlanKey"
+        ? { ...shared, subscribedPlanKey: "starter" }
+        : { ...shared, activePlanKey: "starter" }
+    );
 }
 
 /** Seed an additive top-up (schema §14.2) for a tenant (string id). */
@@ -333,12 +522,41 @@ async function seedCounter(fields: {
   });
 }
 
-/** The current UTC period key for a monthly cadence. */
+/**
+ * Seed `count` counter rows for one tenant in one period, one per distinct
+ * `entitlementKey`.
+ *
+ * `usageCounters` holds one row per `(entitlementKey, periodKey)` (schema
+ * §14.2), so a page bound needs more rows than the limit *within a single
+ * period* — that is also what makes the `_id` tiebreak load-bearing.
+ *
+ * @returns The seeded entitlement keys, in seed order.
+ */
+async function seedCounterPage(
+  tenantId: string,
+  options: { periodKey: string; count: number; prefix: string }
+): Promise<string[]> {
+  const keys = Array.from(
+    { length: options.count },
+    (_, index) => `${options.prefix}.metric-${String(index + 1).padStart(2, "0")}`
+  );
+  for (const entitlementKey of keys) {
+    await seedCounter({ tenantId, entitlementKey, periodKey: options.periodKey, value: 0 });
+  }
+  return keys;
+}
+
+/**
+ * The current UTC period key for a monthly cadence.
+ *
+ * Reads the frozen clock of the running spec (see {@link FROZEN_NOW}), i.e. the
+ * same instant the route's `systemClock.now()` sees.
+ */
 function currentMonthKey(now = new Date()): string {
   return `${String(now.getUTCFullYear())}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-/** The start of the next UTC month. */
+/** The start of the next UTC month, from the frozen clock of the running spec. */
 function nextMonthStartIso(now = new Date()): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
 }
@@ -356,6 +574,22 @@ function usageRequest(cookie: string, tenantId: string, periodKey?: string): Req
   const url = new URL(`${TENANTS_PATH}/${tenantId}/usage`, APP_ORIGIN);
   if (periodKey !== undefined) {
     url.searchParams.set("periodKey", periodKey);
+  }
+  return new Request(url, { method: "GET", headers: { cookie } });
+}
+
+/**
+ * A `GET /tenants/{t}/usage` request carrying explicit query parameters
+ * (`?cursor=`, `?limit=` — contract §0.8).
+ */
+function usageQueryRequest(
+  cookie: string,
+  tenantId: string,
+  query: Readonly<Record<string, string>>
+): Request {
+  const url = new URL(`${TENANTS_PATH}/${tenantId}/usage`, APP_ORIGIN);
+  for (const [name, value] of Object.entries(query)) {
+    url.searchParams.set(name, value);
   }
   return new Request(url, { method: "GET", headers: { cookie } });
 }
@@ -396,6 +630,16 @@ async function countersFor(tenantId: ObjectId): Promise<WithId<Document>[]> {
     .collection(COLLECTIONS.usageCounters)
     .find({ tenantId: tenantId.toHexString() })
     .toArray();
+}
+
+/**
+ * The wire identities of served `/usage` rows.
+ *
+ * A counter is unique per `(entitlementKey, periodKey)` (schema §14.2), so that
+ * pair is what "the same row" means when two pages are compared.
+ */
+function usageRowIdentities(rows: readonly UsageRow[]): string[] {
+  return rows.map((row) => `${row.entitlementKey}|${row.periodKey}`);
 }
 
 describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
@@ -583,7 +827,7 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     expect(row.effectiveLimit).toBe(100);
   });
 
-  it("serves an active grant's non-null `validUntil` window beside its delta (view.ts:166)", async () => {
+  it("serves an active grant's non-null `validUntil` window beside its delta (contract §3.5 grants[])", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -630,7 +874,7 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     });
   });
 
-  it("serves `used` and a null `remaining` for a tenant-scoped unlimited quota (view.ts:188)", async () => {
+  it("serves `used` and a null `remaining` for a tenant-scoped unlimited quota (contract §3.5)", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -679,7 +923,7 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     });
   });
 
-  it("serves an empty `entitlements` array (still 200) when the resolved plan has no document (view.ts:224)", async () => {
+  it("serves an empty `entitlements` array (still 200) when the resolved plan has no document (contract §3.5)", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -819,6 +1063,626 @@ describe("GET /api/v1/tenants/{tenantId}/entitlements", () => {
     expect(response.status).toBe(401);
     expect((await errorEnvelope(response)).code).toBe("authentication_required");
   });
+
+  it("L3 (RED): a live subscription row missing `activePlanKey` answers 500 `internal_error`, never the free tier", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-partial-active-key",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "events.active": {
+          limit: 3,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    // §14.3 marks both plan keys required, so this row is server-side
+    // corruption — not client input and not a free tier.
+    await seedSubscriptionMissingPlanKey({
+      tenantId: tenantId.toHexString(),
+      missing: "activePlanKey",
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(500);
+    const payload = await body(response);
+    expect((payload.error as { code: string }).code).toBe("internal_error");
+    // §0.7: an unhandled failure never leaks internals — and never launders the
+    // corrupt row into a genuine-looking `free` tier body.
+    expect(payload).not.toHaveProperty("activePlanKey");
+    expect(payload).not.toHaveProperty("entitlements");
+    expect(JSON.stringify(payload)).not.toMatch(/"free"/);
+  });
+
+  it("L3 (RED): a live subscription row missing `subscribedPlanKey` answers 500 `internal_error`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-partial-subscribed-key",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "events.active": {
+          limit: 3,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscriptionMissingPlanKey({
+      tenantId: tenantId.toHexString(),
+      missing: "subscribedPlanKey",
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(500);
+    const payload = await body(response);
+    expect((payload.error as { code: string }).code).toBe("internal_error");
+    expect(payload).not.toHaveProperty("subscribedPlanKey");
+  });
+
+  it("L4 characterisation (green today and after the GREEN): an `expired` subscription is a live row and resolves its paid plan", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-expired-live",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "events.active": {
+          limit: 3,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      subscribedPlanKey: "starter",
+      status: "expired",
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
+    // `expired` is not `cancelled`: the `$ne: "cancelled"` read still selects it,
+    // so the tenant keeps its paid entitlements (ADR-0400 consistency).
+    expect(payload).toMatchObject({
+      activePlanKey: "starter",
+      subscribedPlanKey: "starter",
+      subscriptionStatus: "expired",
+    });
+    const keys = (payload.entitlements as { key: string }[]).map((row) => row.key).sort();
+    expect(keys).toEqual(["events.active", "storage.bytes"]);
+  });
+
+  it('L4 characterisation (green today and after the GREEN): the `$ne: "cancelled"` read never serves the cancelled row\'s plan', async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-multi-live",
+    });
+    await seedPlan({ key: "starter", entitlements: {} });
+    await seedPlan({ key: "plus", entitlements: {} });
+    await seedPlan({ key: "pro", entitlements: {} });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "pro",
+      subscribedPlanKey: "pro",
+      status: "cancelled",
+      cancelledAt: new Date("2026-09-02T00:00:00.000Z"),
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      subscribedPlanKey: "starter",
+      status: "active",
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "plus",
+      subscribedPlanKey: "plus",
+      status: "expired",
+    });
+    // The read has no sort, so which live row wins is arbitrary. Pin only what
+    // holds for any pick: the served plan is a LIVE row's plan and the served
+    // status belongs to that same row — the cancelled `pro` row never wins.
+    const livePlanStatus = new Map<string, string>([
+      ["starter", "active"],
+      ["plus", "expired"],
+    ]);
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    const servedPlan = String(payload.activePlanKey);
+    const servedStatus = String(payload.subscriptionStatus);
+
+    expect([...livePlanStatus.keys()]).toContain(servedPlan);
+    expect(livePlanStatus.get(servedPlan)).toBe(servedStatus);
+    expect(servedPlan).not.toBe("pro");
+  });
+
+  /**
+   * **Characterization** pin of ADR-0365's bounded counter read (ADR-0367).
+   *
+   * The view fetches only each `tenant`-scoped key's *current* period (the `$or`
+   * over `counterPairs` in `view.ts`), so a counter row for the same key in a
+   * **closed** period is never parsed. A row whose stored `value` is not a
+   * number therefore no longer trips `storedCounterSchema.parse`: the response
+   * stays `200` and `used` comes from the current-period row.
+   *
+   * This records a deliberate narrowing of corruption detection — it does *not*
+   * promise the old row is harmless. **A red here means the fetch set widened
+   * again** (e.g. back to `find().toArray()`), which would restore the `500
+   * internal_error` that the pre-ADR-0365 head answered for this exact seed.
+   */
+  it("L7 characterization: a malformed counter row in a closed period is ignored, and the view still answers 200", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-closed-period",
+    });
+    await seedPlan({
+      key: "free",
+      entitlements: {
+        "events.active": {
+          limit: 5,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: currentMonthKey(),
+      value: 4,
+    });
+    // `seedCounter` types `value` as `number`, so the corruption goes in raw.
+    // A *different* period for the *same* key keeps the row off the
+    // `(tenantId, entitlementKey, periodKey)` unique index (schema §14.2)
+    // while still exercising "a corrupt row this tenant owns".
+    await app.db.collection(COLLECTIONS.usageCounters).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2019-01",
+      value: "corrupt",
+      updatedAt: new Date("2019-01-15T10:00:00.000Z"),
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const row = await entitlementRow(response, "events.active");
+    // `used` is the current-period row's value, never the corrupt row's.
+    expect(row).toMatchObject({
+      key: "events.active",
+      periodKey: currentMonthKey(),
+      used: 4,
+      remaining: 1,
+    });
+  });
+
+  /**
+   * **Characterization** pin: the narrowing is only ever *outside* the served
+   * period (ADR-0367).
+   *
+   * This corrupt row *is* inside the fetched pair set (same key, the current
+   * period), so `storedCounterSchema.parse` still throws and the route answers
+   * `500 internal_error`. Green on both heads by design — the pre-ADR-0365
+   * `find()` read fetched it as well — so this pin is a contract, not a delta:
+   * a red means a malformed *served-period* counter row can now reach a served
+   * `used` value.
+   */
+  it("L8 characterization: a malformed counter row in the served period is still refused with 500 `internal_error`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-served-period",
+    });
+    await seedPlan({
+      key: "free",
+      entitlements: {
+        "events.active": {
+          limit: 5,
+          resetPeriod: "monthly",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    // The one row for this `(entitlementKey, periodKey)` pair is the corrupt
+    // one: a valid row may not sit beside it (schema §14.2 uniqueness), and
+    // the arm under pin is "the served period is still parsed".
+    await app.db.collection(COLLECTIONS.usageCounters).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: currentMonthKey(),
+      value: "corrupt",
+      updatedAt: new Date("2026-09-15T10:00:00.000Z"),
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(500);
+    expect((await errorEnvelope(response)).code).toBe("internal_error");
+  });
+
+  /**
+   * **Characterization** pin of ADR-0366's bounded grant read (ADR-0370).
+   *
+   * The view fetches only the grants whose `validFrom`/`validUntil` window
+   * covers `now` (`find({ validFrom: { $lte: now }, $or: [{ validUntil: null },
+   * { validUntil: { $gt: now } }] })` in `view.ts`), so a grant row the window
+   * **excludes** is never parsed. A row whose stored `delta` is not a number
+   * therefore no longer trips `storedGrantSchema.parse`: the response stays
+   * `200` and the served numbers come from the one healthy, open-window grant.
+   *
+   * This records a deliberate narrowing of corruption detection — it does *not*
+   * promise the old row is harmless. **A red here means the fetch set widened
+   * again** (e.g. back to `find().toArray()`), which would restore the `500
+   * internal_error` that the pre-ADR-0366 head answered for this exact seed.
+   */
+  it("L9 characterization: a malformed grant row in a closed window is ignored, and the view still answers 200", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-closed-grant",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    // The healthy arm: one well-formed grant whose open window covers `now`.
+    await seedGrant({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: 4,
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+    });
+    // `used` comes from the counter at this key's `lifetime` period, so the
+    // served `remaining` is a consequence of both the grant sum and the usage.
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      periodKey: "lifetime",
+      value: 7,
+    });
+    // `seedGrant` types `delta` as `number`, so the corruption goes in raw. The
+    // window closed long before `FROZEN_NOW`, so the bounded read never fetches
+    // this row; `entitlementGrants` carries no unique index over
+    // `(tenantId, entitlementKey)`, so a second row for the same key is legal.
+    await app.db.collection(COLLECTIONS.entitlementGrants).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: "not-a-number",
+      overrideLimit: null,
+      source: { kind: "purchase", billingTransactionId: new ObjectId(), note: null },
+      validFrom: new Date("2025-01-01T00:00:00.000Z"),
+      validUntil: new Date("2025-02-01T00:00:00.000Z"),
+      createdAt: new Date("2025-01-01T00:00:00.000Z"),
+      createdByUserId: null,
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    // §3.5 types `grants[].delta` as an integer, so a corrupt delta folded into
+    // the served `grants[]` would fail this parse rather than ship silently.
+    expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
+    const row = entitlementRowFrom(payload, "storage.bytes");
+    // 100 (plan) + 4 (the one open-window grant); `used` is the seeded counter,
+    // so `remaining` proves the corrupt row contributed no delta.
+    expect(row).toMatchObject({
+      key: "storage.bytes",
+      limit: 100,
+      effectiveLimit: 104,
+      used: 7,
+      remaining: 97,
+      periodKey: "lifetime",
+      unlimited: false,
+    });
+    // Exactly one served grant: the closed-window row appears in neither
+    // `effectiveLimit` nor `grants[]`.
+    expect(row.grants).toEqual([{ delta: 4, source: "purchase", validUntil: null }]);
+  });
+
+  /**
+   * **Characterization** pin: the narrowing is only ever *outside* the served
+   * window (ADR-0370).
+   *
+   * This corrupt row's window **covers** `now` (`validFrom` in the past,
+   * `validUntil: null`), so it is inside the fetched set,
+   * `storedGrantSchema.parse` still throws and the route answers `500
+   * internal_error`. Green on both heads by design — the pre-ADR-0366 `find()`
+   * read fetched it as well — so this pin is a contract, not a delta: a red
+   * means a malformed *served-window* grant row can now reach a served
+   * `effectiveLimit` or `grants[]`.
+   */
+  it("L10 characterization: a malformed grant row in a served window is still refused with 500 `internal_error`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-served-grant",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    // The well-formed arm beside it proves the seed is otherwise servable, so a
+    // `500` here is the corrupt row's parse and not a broken workspace.
+    await seedGrant({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: 4,
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+    });
+    // Same corruption, but the window covers `FROZEN_NOW` — so the bounded read
+    // fetches it and the parse still refuses it.
+    await app.db.collection(COLLECTIONS.entitlementGrants).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: "not-a-number",
+      overrideLimit: null,
+      source: { kind: "purchase", billingTransactionId: new ObjectId(), note: null },
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      createdByUserId: null,
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(500);
+    expect((await errorEnvelope(response)).code).toBe("internal_error");
+  });
+
+  /**
+   * **Characterization** pin of the bounded grant read's `validFrom` clause
+   * (ADR-0371).
+   *
+   * The read keeps only grants that have already **started**
+   * (`find({ validFrom: { $lte: now }, … })` in `view.ts`), so a corrupt row
+   * scheduled to start in the future is never fetched and
+   * `storedGrantSchema.parse` never sees it: the response stays `200` and the
+   * served numbers come from the one healthy, open-window grant. L9's corrupt
+   * row is excluded by the `$or` alone, so **this** is the only case that pins
+   * the `validFrom` bound. **A red here means the read dropped it** (e.g. back
+   * to `find({ $or: … })`), which would restore the `500 internal_error` the
+   * pre-ADR-0366 head answered for this exact seed.
+   */
+  it("L11 characterization: a malformed grant row whose window has not started is ignored, and the view still answers 200", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-future-grant",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    // The healthy arm: one well-formed grant whose open window covers `now`.
+    await seedGrant({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: 4,
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      periodKey: "lifetime",
+      value: 7,
+    });
+    // Same corruption as L9, but the window has not **begun** at `FROZEN_NOW`
+    // (`validFrom` is 2027, `validUntil` is open), so the `validFrom` clause —
+    // not the `$or` — is what keeps this row out of the fetched set.
+    await app.db.collection(COLLECTIONS.entitlementGrants).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: "not-a-number",
+      overrideLimit: null,
+      source: { kind: "purchase", billingTransactionId: new ObjectId(), note: null },
+      validFrom: new Date("2027-01-01T00:00:00.000Z"),
+      validUntil: null,
+      createdAt: new Date("2026-09-15T00:00:00.000Z"),
+      createdByUserId: null,
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
+    const row = entitlementRowFrom(payload, "storage.bytes");
+    expect(row).toMatchObject({
+      key: "storage.bytes",
+      limit: 100,
+      effectiveLimit: 104,
+      used: 7,
+      remaining: 97,
+      periodKey: "lifetime",
+      unlimited: false,
+    });
+    // The not-yet-started row appears in neither `effectiveLimit` nor `grants[]`.
+    expect(row.grants).toEqual([{ delta: 4, source: "purchase", validUntil: null }]);
+  });
+
+  /**
+   * **Characterization** pin of the bounded grant read's strict upper bound
+   * (ADR-0371).
+   *
+   * The window is half-open: `$or: [{ validUntil: null }, { validUntil: { $gt:
+   * now } }]`. A corrupt row whose `validUntil` is **exactly** the frozen clock
+   * instant is excluded only by the strict `$gt`, so the response stays `200`
+   * and serves the healthy numbers. **A red here means the bound relaxed to
+   * `$gte`**, which would fetch — and so parse-refuse — a grant on its own
+   * expiry instant.
+   */
+  it("L12 characterization: a malformed grant row whose window ends exactly at `now` is ignored, and the view still answers 200", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-corrupt-boundary-grant",
+    });
+    await seedPlan({
+      key: "starter",
+      entitlements: {
+        "storage.bytes": {
+          limit: 100,
+          resetPeriod: "lifetime",
+          scope: "tenant",
+          enforcement: "hard",
+        },
+      },
+    });
+    await seedSubscription({
+      tenantId: tenantId.toHexString(),
+      activePlanKey: "starter",
+      status: "active",
+    });
+    // The healthy arm: one well-formed grant whose open window covers `now`.
+    await seedGrant({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: 4,
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: null,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      periodKey: "lifetime",
+      value: 7,
+    });
+    // This row started in the past (so `validFrom` keeps it) and ends at
+    // exactly `FROZEN_NOW`: a fresh `Date` of the frozen instant, so the strict
+    // `$gt` — and nothing else — excludes it. A `$gte` bound would fetch it and
+    // the parse would answer `500 internal_error`.
+    await app.db.collection(COLLECTIONS.entitlementGrants).insertOne({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      delta: "not-a-number",
+      overrideLimit: null,
+      source: { kind: "purchase", billingTransactionId: new ObjectId(), note: null },
+      validFrom: new Date("2026-01-01T00:00:00.000Z"),
+      validUntil: new Date(FROZEN_NOW.getTime()),
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      createdByUserId: null,
+    });
+
+    const response = await getEntitlements(
+      entitlementsRequest(owner.cookie, tenantId.toHexString())
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(() => entitlementsBodySchema.parse(payload)).not.toThrow();
+    const row = entitlementRowFrom(payload, "storage.bytes");
+    expect(row).toMatchObject({
+      key: "storage.bytes",
+      limit: 100,
+      effectiveLimit: 104,
+      used: 7,
+      remaining: 97,
+      periodKey: "lifetime",
+      unlimited: false,
+    });
+    // The expiring-at-`now` row appears in neither `effectiveLimit` nor
+    // `grants[]`.
+    expect(row.grants).toEqual([{ delta: 4, source: "purchase", validUntil: null }]);
+  });
 });
 
 describe("GET /api/v1/tenants/{tenantId}/usage", () => {
@@ -903,7 +1767,7 @@ describe("GET /api/v1/tenants/{tenantId}/usage", () => {
     expect(rows.map((row) => row.periodKey)).toEqual(["2026-10"]);
   });
 
-  it("serves every period when no `?periodKey=` filter is supplied (view.ts:264)", async () => {
+  it("serves every period when no `?periodKey=` filter is supplied (contract §3.5, §0.5 envelope)", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -935,7 +1799,7 @@ describe("GET /api/v1/tenants/{tenantId}/usage", () => {
     expect(rows.map((row) => row.periodKey).sort()).toEqual(["2026-09", "2026-10"]);
   });
 
-  it("omits `updatedAt` from a served row whose counter row has none (view.ts:277)", async () => {
+  it("omits `updatedAt` from a served row whose counter row has none (schema §14.2)", async () => {
     const owner = await app.signIn(makeIdentity("op104-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -1009,5 +1873,222 @@ describe("GET /api/v1/tenants/{tenantId}/usage", () => {
 
     expect(response.status).toBe(401);
     expect((await errorEnvelope(response)).code).toBe("authentication_required");
+  });
+
+  it("L2 (RED): `/usage` serves 40 rows plus a `page` envelope when 41 counters share one period", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-bound",
+    });
+    const seeded = await seedCounterPage(tenantId.toHexString(), {
+      periodKey: "2026-09",
+      count: 41,
+      prefix: "bound",
+    });
+    const seededIds = seeded.map((key) => `${key}|2026-09`);
+
+    const response = await getUsage(usageRequest(owner.cookie, tenantId.toHexString()));
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    // The change is additive: an existing client's `{ data }` parse still holds.
+    const rows = usageBodySchema.parse(payload).data;
+    expect(rows).toHaveLength(40);
+    // The bound is a page of the same rows, never a different query.
+    expect(usageRowIdentities(rows).filter((id) => !seededIds.includes(id))).toEqual([]);
+
+    const page = usagePageSchema.parse(payload.page);
+    expect(page.limit).toBe(40);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextCursor).toEqual(expect.stringMatching(/\S/));
+  });
+
+  it("L2 (RED): following `nextCursor` returns the one remaining row, and the pages neither skip nor duplicate", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-cursor",
+    });
+    const seeded = await seedCounterPage(tenantId.toHexString(), {
+      periodKey: "2026-09",
+      count: 41,
+      prefix: "cursor",
+    });
+    const seededIds = seeded.map((key) => `${key}|2026-09`);
+
+    const first = await body(await getUsage(usageRequest(owner.cookie, tenantId.toHexString())));
+    const firstRows = usageBodySchema.parse(first).data;
+    expect(firstRows).toHaveLength(40);
+    const firstPage = usagePageSchema.parse(first.page);
+    const cursor = firstPage.nextCursor ?? "";
+    expect(cursor).not.toBe("");
+
+    const second = await body(
+      await getUsage(usageQueryRequest(owner.cookie, tenantId.toHexString(), { cursor }))
+    );
+    const secondRows = usageBodySchema.parse(second).data;
+    expect(secondRows).toHaveLength(1);
+    const secondPage = usagePageSchema.parse(second.page);
+    expect(secondPage.hasMore).toBe(false);
+    expect(secondPage.nextCursor).toBeNull();
+    expect(secondPage.limit).toBe(40);
+
+    // One period, 41 rows: the `_id` tiebreak inside the period is what keeps
+    // the two pages disjoint and their union exactly the seeded set.
+    const firstIds = usageRowIdentities(firstRows);
+    const secondIds = usageRowIdentities(secondRows);
+    expect(firstIds.filter((id) => secondIds.includes(id))).toEqual([]);
+    expect([...firstIds, ...secondIds].sort()).toEqual([...seededIds].sort());
+  });
+
+  it("L2 (RED): rows come back `periodKey` descending, with no client-side sort", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-sort",
+    });
+    // Seeded oldest period first: insertion order is NOT the served order.
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-10",
+      value: 1,
+    });
+
+    const response = await getUsage(usageRequest(owner.cookie, tenantId.toHexString()));
+
+    expect(response.status).toBe(200);
+    const rows = usageBodySchema.parse(await body(response)).data;
+    expect(rows.map((row) => row.periodKey)).toEqual(["2026-10", "2026-09"]);
+  });
+
+  it("L2 (RED): `?limit=` is honoured (`1`) and echoed clamped (`100`) in `page.limit`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-limit",
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "storage.bytes",
+      periodKey: "2026-09",
+      value: 100,
+    });
+
+    const limited = await body(
+      await getUsage(usageQueryRequest(owner.cookie, tenantId.toHexString(), { limit: "1" }))
+    );
+    expect(usageBodySchema.parse(limited).data).toHaveLength(1);
+    const limitedPage = usagePageSchema.parse(limited.page);
+    expect(limitedPage.limit).toBe(1);
+    expect(limitedPage.hasMore).toBe(true);
+    expect(limitedPage.nextCursor).not.toBeNull();
+
+    const clamped = await body(
+      await getUsage(usageQueryRequest(owner.cookie, tenantId.toHexString(), { limit: "5000" }))
+    );
+    expect(usageBodySchema.parse(clamped).data).toHaveLength(2);
+    // §0.8's ceiling is 100, so `?limit=5000` is clamped, not rejected.
+    expect(usagePageSchema.parse(clamped.page).limit).toBe(100);
+  });
+
+  it("L2 (RED): an unparseable `?cursor=` is a 400 `invalid_cursor` (§0.8)", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-bad-cursor",
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+
+    const response = await getUsage(
+      usageQueryRequest(owner.cookie, tenantId.toHexString(), { cursor: "not-a-cursor" })
+    );
+
+    expect(response.status).toBe(400);
+    expect((await errorEnvelope(response)).code).toBe("invalid_cursor");
+  });
+
+  it("L5 characterization: a decodable cursor whose `_id` half is not 24-hex answers 400 `invalid_cursor`", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-non-hex-cursor",
+    });
+    // A row in the cursor's own period, so a missing guard is a `500` from
+    // `new ObjectId("zz")` rather than a quietly empty page.
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+    // `decodeCursor` only guarantees two non-empty strings, so this cursor is
+    // decodable; the non-hex `i` half must still be refused at the read.
+    const cursor = encodeCursor({ c: "2026-09", i: "zz" });
+
+    const response = await getUsage(
+      usageQueryRequest(owner.cookie, tenantId.toHexString(), { cursor })
+    );
+
+    expect(response.status).toBe(400);
+    expect((await errorEnvelope(response)).code).toBe("invalid_cursor");
+  });
+
+  it("L6 characterization: a cursor whose period precedes every row answers an empty terminal page", async () => {
+    const owner = await app.signIn(makeIdentity("op104-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op104-usage-stale-cursor",
+    });
+    // Both rows are newer than the cursor's period, so only the keyset `$or`
+    // excludes them: an unfiltered or repeated page would serve them instead.
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-09",
+      value: 5,
+    });
+    await seedCounter({
+      tenantId: tenantId.toHexString(),
+      entitlementKey: "events.active",
+      periodKey: "2026-10",
+      value: 1,
+    });
+    const cursor = encodeCursor({ c: "2020-01", i: "0123456789abcdef01234567" });
+
+    const response = await getUsage(
+      usageQueryRequest(owner.cookie, tenantId.toHexString(), { cursor })
+    );
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(payload.data).toEqual([]);
+    // A terminal page: nothing follows the end of the keyset.
+    expect(payload.page).toEqual({ nextCursor: null, hasMore: false, limit: 40 });
   });
 });

@@ -495,3 +495,42 @@ describe("claimPendingEvents — driver failures and malformed rows", () => {
     ).rejects.toThrow(/ObjectId/);
   });
 });
+
+describe("emitDomainEvent — gate precedence when both gates refuse", () => {
+  it("U4: answers unknown_event_key when the unregistered eventKey also carries a forbidden payload key", async () => {
+    const fake = makeFakeMongo();
+
+    // Characterization pin (ADR-0845): `emitDomainEvent` asks the catalogue gate
+    // before the payload gate, so a doubly-invalid input answers the key fault.
+    // Both gates refuse and neither lets a row through.
+    await expect(
+      emitDomainEvent(
+        makeDomainEventInput({ eventKey: "totally.unknown.event", payload: { email: "leak" } }),
+        { db: fake.db, clock: fixedClock(T0) }
+      )
+    ).rejects.toMatchObject({ code: "unknown_event_key" });
+
+    expect(fake.calls.some((call) => call.method === "insertOne")).toBe(false);
+  });
+});
+
+describe("emitDomainEvent — the structural schema gate precedes the semantic gates", () => {
+  it("answers invalid_domain_event when a structurally invalid input also carries a forbidden payload key", async () => {
+    const fake = makeFakeMongo();
+
+    // Characterization pin (ADR-0846): `emitDomainEvent` runs `domainEventInputSchema`
+    // before either semantic gate, so an input that fails the schema AND nests a
+    // forbidden payload key answers the structural fault. The payload gate never
+    // gets to speak, and no row is written. The `code` assertion carries the
+    // ordering verdict; the write assertion guards a refuse-then-write regression
+    // (both refusals precede the insert, so it is inert for the order itself).
+    await expect(
+      emitDomainEvent(makeDomainEventInput({ tenantId: "", payload: { email: "leak" } }), {
+        db: fake.db,
+        clock: fixedClock(T0),
+      })
+    ).rejects.toMatchObject({ code: "invalid_domain_event" });
+
+    expect(fake.calls.some((call) => call.method === "insertOne")).toBe(false);
+  });
+});

@@ -19,10 +19,29 @@ import { verificationNudgePoint } from "./sweep-decisions";
  * then T+72h, **max two ever**, and a completed account is never nudged again.
  * The count is `userProfiles.verificationNudges`, incremented in the same run
  * that emits the nudge, and each rung's delivery carries its own dedupe key.
+ *
+ * The page drains by the clock: an account older than
+ * {@link MAX_CANDIDATE_AGE_MS} is not a candidate, so a ladder-exhausted
+ * account — which sits at the head of the class for ever, since Better Auth
+ * never reaps it — stops spending a page slot (ADR-0880 §3).
  */
 
 /** One day: the age a candidate must have reached before any nudge. */
 const MIN_AGE_MS = MS_PER_DAY;
+
+/**
+ * The age past which an account is not a candidate: the ladder's last rung
+ * (72 h) plus one cadence day.
+ *
+ * The ladder is finite, so this bound cannot lose a rung: rungs are due at 24 h
+ * and 72 h, the cap is two and the walk is by count, so past `72 h + 24 h` no
+ * rung remains and the row is not a candidate by the feature's own definition.
+ * The extra cadence day absorbs one missed hourly run.
+ *
+ * shortcut: a row that misses both rungs by more than a day each is left
+ * un-nudged rather than nudged late; widen only if the ladder gains a rung.
+ */
+const MAX_CANDIDATE_AGE_MS = 4 * MS_PER_DAY;
 
 /** The Better Auth user collection (better-auth's own singular name). */
 const AUTH_USER_COLLECTION = "user";
@@ -90,7 +109,14 @@ export async function verificationNudge(options: SweepJobRunOptions): Promise<Cr
 
   const raw: unknown = await platform
     .collection(AUTH_USER_COLLECTION)
-    .find({ emailVerified: { $ne: true }, createdAt: { $lte: addMilliseconds(now, -MIN_AGE_MS) } })
+    .find({
+      emailVerified: { $ne: true },
+      createdAt: {
+        $lte: addMilliseconds(now, -MIN_AGE_MS),
+        $gt: addMilliseconds(now, -MAX_CANDIDATE_AGE_MS),
+      },
+    })
+    .sort({ _id: 1 })
     .limit(limit)
     .toArray();
   const candidates = Array.isArray(raw)
