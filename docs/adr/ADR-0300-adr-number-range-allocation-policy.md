@@ -399,7 +399,7 @@ ad hoc (ADR-0799, ADR-0800, ADR-0811, ADR-0818); items 18–21 give it a clause.
 `0849`–`0868`, so it was exhausted and had already drawn `0896` from the pool.
 The guard cannot see the defect: `lane-range-overlap` compares reserved
 **ranges** only (`apps/web/src/test/helpers/adr-lane-ranges.ts`, header note).
-After any repair that sets an exhausted lane's cell equal to the pool cursor,
+After any forward advance that sets an exhausted lane's cell equal to the pool cursor,
 the next block cut from that cursor recreates the defect — hence the rule, not
 a cleanup.
 
