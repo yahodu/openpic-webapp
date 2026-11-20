@@ -5,7 +5,8 @@
 - **Card:** OP-137 TEST (Medium) `t_8290f915`, branch
   `OP-137-task-contact-digest-pins`, worktree
   `/root/openpic/openpic-webapp/.worktrees/t_8290f915`, cut from `origin/main`
-  `efa034ff`.
+  `efa034ff`, delivered as draft PR
+  [#752](https://github.com/yahodu/openpic-webapp/pull/752).
 - **Implements:** contract §10.1.3; design §19.5/§19.6; ADR-0875 §1 (one shared
   digest for every suppression lookup key).
 - **Consumes:** [ADR-0875](ADR-0875-op137-delivery-receipts-red.md) (the pins
