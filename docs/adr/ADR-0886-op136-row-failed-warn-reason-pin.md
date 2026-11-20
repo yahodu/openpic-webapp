@@ -250,3 +250,57 @@ contain 'injected failure: find on event_images'`, received
   draft (OP-93 / [ADR-0306](ADR-0306-op101-stale-branch-deletion.md)) is never
   squash-merged; the GREEN lands the one-word fix and both jobs go green with the
   case carried byte-identically.
+
+## Review — round 1 (accepted)
+
+Sign-off card `t_b93b9615` records the round-1 review of the pin card `t_3b30fc42`. Every figure
+below was measured by the reviewer at the pin head `988336f0` (draft PR
+[#751](https://github.com/yahodu/openpic-webapp/pull/751)) unless the sentence names another
+commit; the landing figures were re-measured at `65d3017d`, the trunk this section lands on.
+
+- **Verdict:** accepted. The card's contract holds: one appended case, red at the trunk for the
+  recorded reason, load-bearing against the intended fix, and the record truthful apart from the
+  hotspot sentence the GREEN has since corrected in place (Finding 1).
+- **RED, reproduced independently.** The focused integration run reported
+  `1 failed | 30 passed (31)`: the appended case fails alone at the wire assertion, with
+  `error: {"code":91}` on the entry and the thrown message absent from it. An assertion failure,
+  not a compile error and not a missing fixture. Command and path:
+  `vitest run --project integration` on
+  `apps/web/src/test/integration/job-pipeline-indexed-check.test.ts`.
+- **Diff shape.** `git diff --numstat efa034ff 988336f0` reads `168 0` on the spec, `233 0` on this
+  record and `3 2` on `docs/adr/README.md` — one index row added and the two `Next free` cell lines
+  rewritten in place (`0886` → `0887`). The test side is additions only, so the 30 delivered cases
+  and every helper, fixture and constant are byte-identical, which is the claim §4 makes.
+- **Load-bearing.** `err:` → `31 passed (31)`; `error: String(outcome.reason)` → `31 passed (31)`,
+  the accepted residual §3 records; the shipped `error:` → red. The premise was re-measured on the
+  **real stdout transport**, not only on `JSON.stringify` of the entry: `error: <Error>` →
+  `{"error":{"code":91}}`; `err: <Error>` → `name`, `message` and `stack` present;
+  `error: "Error: …"` → the message present. The mechanism is one line of the port:
+  `apps/web/src/server/logging/index.ts:98` serializes the `err` key alone, through
+  `serializeError`, and every other key passes `redactEntry` untouched.
+- **Gates at the pin head.** The six `adr-*` guards `236 passed (236)` (re-run at `65d3017d`:
+  `236 passed (236)`); full `unit` `3171 passed | 3 skipped (3174)`; the `ci` job's integration run
+  `1 failed | 148 passed (149)` with one `FAIL` line; `test_coverage` red on that same case only;
+  `tsc` under both configs, `eslint` and `prettier` clean.
+- **Finding 1 (Low, resolved here).** §Consequences' hotspot sentence named PR #749's appended case
+  as `I30`. Measured on `origin/OP-136-task-multi-row-containment-pins` (head `6818f6ad`, merge-base
+  `efa034ff`) it is `I31`, and `I30` is already the trunk's own case (`ADR-0883`), so the contested
+  id was this record's own `I31`. The resolution, measured on the landing trunk: the
+  `it("I31` match in the spec now reads `I31: every failing row is counted` — PR #749's multi-row
+  case — and the wire case reads `I32: the warn the transport receives`, so the GREEN landed **its
+  own** case renumbered to `I32`, with only the title string moved, and §4, §Consequences and
+  §Evidence say so in place. The duplicate sweep over `it("I` ids prints nothing, and the spec
+  carries 32 cases.
+- **Findings 2 and 3 (Info, no card).** The pin asserts the message and not the `err` key, by design
+  and measured (§1 and §3: a hand-rolled `String(...)` projection passes it). The `error:` field in
+  a logging call existed at exactly one site in `apps/` + `packages/`, the row-failed warn at
+  `pipeline-indexed-check.ts:293` (`efa034ff`); at `65d3017d` a sweep of every logger call's field
+  block across 823 `.ts` files finds none, so the one-word rename closed the whole class.
+- **No retraction.** Nothing in §Context, §Decision or §Alternatives is retracted, and every
+  measurement they state stands. The GREEN's own record documents the fix: `ADR-0872` §1 is
+  corrected in place (its code block, its field sentence and its Consequences bullet, now stated as
+  a wire property of the log line), no new number is minted for it, and the pin landed through PR
+  [#753](https://github.com/yahodu/openpic-webapp/pull/753) as squash `02c3ab0d`, which closed draft
+  PR #751 as superseded. The header's **Status** paragraph still describes the draft PR of the
+  review, because a frozen record is not rewritten for a landing: this section is the landing
+  record.
