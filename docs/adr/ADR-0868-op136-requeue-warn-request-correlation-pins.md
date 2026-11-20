@@ -136,6 +136,13 @@ passed (4)` — A1 and A2 green, B1 and B2 red with
 - The six `adr-*` guard specs green: `6 passed (6)` files, `236 passed (236)`
   tests (numbering, lane ranges, consumers, record links, inline code spans,
   source references).
+- PR #747's checks at head `240432c`: `unit_test`, `lint`, `audit`,
+  `audit-dev`, `secret-scan`, `env-changes`, `validate-branch-name`,
+  `validate-pr-title`, `CodeQL` and both CodeQL analyses **pass**; `integration`
+  (and therefore `test_coverage` and the `ci` aggregate) is **red by design** —
+  its log reads `Test Files 1 failed | 147 passed (148)` / `Tests 2 failed |
+1553 passed (1555)` with exactly B1's `expected undefined to be
+'req_pin_0001'` and B2's `… 'req_pin_0002'`, and nothing else.
 - The PR is a **draft** and is not merged: Pin B fails on the trunk, so a merge
   would redden `main`'s unit/integration job (the OP-93 / ADR-0306
   RED-by-design carve-out, as with ADR-0864's sibling pins). The GREEN card
