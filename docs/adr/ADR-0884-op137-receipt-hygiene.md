@@ -1,7 +1,9 @@
 # ADR-0884 — OP-137 TEST: the receipt path's suppression idempotency, log hygiene and blank-secret refusal
 
 - **Status:** Accepted (characterization pins — green on arrival against the
-  landed OP-137 GREEN ADR-0882, so the PR is non-draft and merges)
+  landed OP-137 GREEN ADR-0882, so the PR is non-draft and merges). Delivered as
+  PR [#754](https://github.com/yahodu/openpic-webapp/pull/754), spec commit
+  `6ac2773e` + this record, base `origin/main` `c96c2d18`.
 - **Card:** OP-137 TEST `t_a587c8bd` (Medium). Branch
   `OP-137-task-receipt-hygiene-pins`, worktree
   `/root/openpic/openpic-webapp/.worktrees/t_a587c8bd`, cut from `origin/main`
