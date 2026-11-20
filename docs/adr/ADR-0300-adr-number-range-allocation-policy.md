@@ -353,6 +353,11 @@ of that row and that the `unallocated (future lanes)` cursor already held. This
 section states the rule the practice needed; ADR-0314 §2 carries the measurement
 and moves no cell.
 
+"Repair" in this section means one thing only: a rewrite that lowers an exhausted
+cell back inside its own reserved range, which item 20 forbids. Advancing that
+cell **forward** with the pool cursor — item 27 — is the required bookkeeping,
+not a repair.
+
 18. **An exhausted block keeps its range and draws from the pool.** A lane whose
     range is exhausted draws every further record from the `unallocated (future
 lanes)` cursor (item 16), exactly as a lane with no block would; each draw
