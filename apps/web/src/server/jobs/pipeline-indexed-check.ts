@@ -273,16 +273,25 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
   // A batch already summarised on an earlier run is re-checked when its event's
   // counters move again — the outbox's (batch, uploader) dedupe key makes the
   // repeat a no-op. The rows run a chunk at a time so a full page is one wave of
-  // round trips, not `limit` serialised ones; a throw inside a chunk surfaces
-  // after the chunk has settled, so no write outlives the rejected run.
+  // round trips, not `limit` serialised ones.
+  let errors = 0;
   for (let start = 0; start < candidates.length; start += ROW_CHECK_CONCURRENCY) {
-    const settled = await Promise.allSettled(
-      candidates.slice(start, start + ROW_CHECK_CONCURRENCY).map((row) => checkRow(row))
-    );
-    for (const outcome of settled) {
-      if (outcome.status === "rejected") {
-        throw outcome.reason;
+    const chunk = candidates.slice(start, start + ROW_CHECK_CONCURRENCY);
+    const settled = await Promise.allSettled(chunk.map((row) => checkRow(row)));
+    // A row's own check is contained (ADR-0872 §1): one failing event must not
+    // cost the page its remaining rows, so it is counted and named, and the
+    // next chunk still runs.
+    for (const [index, row] of chunk.entries()) {
+      const outcome = settled.at(index);
+      if (outcome?.status !== "rejected") {
+        continue;
       }
+      errors += 1;
+      logger.warn("pipeline indexed row check failed", {
+        event: "pipeline.indexed_check.row_failed",
+        eventId: row._id.toHexString(),
+        error: outcome.reason,
+      });
     }
   }
 
@@ -296,7 +305,7 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
     scanned,
     affected: indexed,
     skipped,
-    errors: 0,
+    errors,
     hasMore: scanned >= limit,
     details: { indexed, batches: pending.length },
   };
