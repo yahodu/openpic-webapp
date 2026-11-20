@@ -1,3 +1,9 @@
+## [1.69.0](https://github.com/yahodu/openpic-webapp/compare/v1.68.3...v1.69.0) (2026-11-20)
+
+### Features
+
+- **adr:** OP-137 guard the ledger's links against the tree and its history ([#761](https://github.com/yahodu/openpic-webapp/issues/761)) ([3f5d022](https://github.com/yahodu/openpic-webapp/commit/3f5d0225b1d96388ac82c48bcf9d4fcacc7095b1)), closes [#754](https://github.com/yahodu/openpic-webapp/issues/754)
+
 ## [1.68.3](https://github.com/yahodu/openpic-webapp/compare/v1.68.2...v1.68.3) (2026-11-20)
 
 ### Bug Fixes
