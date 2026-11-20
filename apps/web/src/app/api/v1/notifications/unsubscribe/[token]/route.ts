@@ -11,6 +11,7 @@ import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
 import { listEnabledNotificationTypes } from "@/server/notifications/notification-types-read";
 import { toStoredPreferences, type StoredPreferences } from "@/server/notifications/preferences";
+import { upsertSuppression } from "@/server/notifications/suppression-strength";
 import {
   applyUnsubscribeScope,
   verifyUnsubscribeToken,
@@ -167,19 +168,12 @@ async function persistApplication(
     );
 
   const contactHash = contactHashOf(email);
-  await repo.collection(COLLECTIONS.notificationSuppressions).updateOne(
-    { channel: EMAIL_GROUP, contactHash },
-    {
-      $set: {
-        channel: EMAIL_GROUP,
-        contactHash,
-        reason: "unsubscribe",
-        scope: "marketing",
-        expiresAt: null,
-      },
-      $setOnInsert: { createdAt: updatedAt },
-    },
-    { upsert: true }
+  // Upgrade-only: a marketing scope is the weakest row, so an existing
+  // all-scope suppression (a hard bounce) keeps its scope and reason.
+  await upsertSuppression(
+    repo.collection(COLLECTIONS.notificationSuppressions),
+    { channel: EMAIL_GROUP, contactHash, reason: "unsubscribe", scope: "marketing" },
+    updatedAt
   );
 }
 
