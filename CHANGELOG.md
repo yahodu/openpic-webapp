@@ -1,3 +1,9 @@
+## [1.68.0](https://github.com/yahodu/openpic-webapp/compare/v1.67.0...v1.68.0) (2026-11-20)
+
+### Features
+
+- **notifications:** OP-137 project delivery receipts into dispatches and suppressions ([#745](https://github.com/yahodu/openpic-webapp/issues/745)) ([c92ca81](https://github.com/yahodu/openpic-webapp/commit/c92ca81f71cc665104f3e7072fa280c162462325))
+
 ## [1.67.0](https://github.com/yahodu/openpic-webapp/compare/v1.66.8...v1.67.0) (2026-11-20)
 
 ### Features
