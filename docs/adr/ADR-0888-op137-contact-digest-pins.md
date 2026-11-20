@@ -156,3 +156,119 @@ Measured at `efa034ff` (branch `OP-137-task-contact-digest-pins`):
 - **Seed the address with different casing only.** `contactHashOf` already
   lowercases, so casing alone cannot show the raw-hash gap; the fixture carries
   padding too, which is the shape a stored Better Auth row can actually have.
+
+## Review — round 1 (artifact, then execution)
+
+Reviewed at the pin head `ce6e32a4` (branch `OP-137-task-contact-digest-pins`, draft PR
+[#752](https://github.com/yahodu/openpic-webapp/pull/752)) in a detached worktree of that commit, with
+the root, `apps/web` and `packages/contracts` `node_modules` symlinked from a healthy lane. Every figure
+below is this review's own run at that commit, not a transcription of the handoff.
+
+**Verdict: accepted as a RED pack.** The pins discriminate the defect they name, each carries a fixture
+guard that stops it going vacuous, and no production file, fixture, helper or delivered case is in the
+diff. The pack is RED by design, so the PR stayed a draft and was closed as superseded by the GREEN
+(card `t_1039146a`, PR [#763](https://github.com/yahodu/openpic-webapp/pull/763), squash `b15e0268`).
+Reproduced at `ce6e32a4`:
+
+- Unit, the appended block inside the delivered `U2` suite: `11 passed (11)`.
+- Integration, the new spec: `3 failed | 2 passed (5)`. `I9` — `AssertionError: expected 'efbc41026c263b1f113faf3040f2528de596e…' to be '5fe7165032ac04af8a67ae6328798fd765de6…'`. `I10` — the suppression row keyed `sha256:efbc41…`, not
+  `sha256:5fe716…`. `I11` — the marketing dispatch `status: 'sent'`, `skipReason: null`. `I12` and
+  `I13` passed on arrival, as intended.
+- Full suites at the same commit: `unit` `189 files / 3173 passed | 3 skipped (3176)`, exit `0`;
+  `integration` `150 files / 3 failed | 1573 passed (1576)`, the three being this pack's `I9`, `I10`
+  and `I11`.
+- Guards at the same commit: the six `adr-*` specs `6 files / 236 passed (236)`.
+
+One figure in §Evidence does not reproduce, and this section is the correction of record (the frozen
+text above is not edited): that section gives the full `integration` run as
+`150 files / 3 failed | 1572 passed (1575)`, while this run at the same commit read
+`1573 passed (1576)`. The failing three, the file count and every defect signature are identical; only
+the passed total differs, by one.
+
+### The pins were proved load-bearing, not merely red
+
+- **M1** — the projection's suppression key derived from the receipt's own address instead of the
+  ledger's `dispatch.contactHash`: `1 failed | 10 passed (11)`, the new discriminating case alone, with
+  `expected 'sha256:5efba3df…' to be 'sha256:be55f262…'`, and the delivered `U2` case still green. The
+  file was restored byte-identically (`sha256 fe6cebe8…`, `git status --porcelain` empty).
+- **M2** — the fan-out's private digest returning the shared one: the new integration spec
+  `5 passed (5)`.
+- **Third-copy probe** — the unsubscribe route's digest made raw (no `trim`, no lower-case), with M2 in
+  place: `2 failed | 3 passed (5)`, `I12` and `I13` alone. That route is the third copy of the digest,
+  and these two characterization pins are the only thing that puts it under test.
+
+### Findings
+
+- **F1 (Low/Medium, coverage) — the pack pins one of three ledger writers.** `fan-out.ts` wrote the
+  dispatch ledger's digest at three sites: `:909` (the quiet-hours `deferred` row), `:1013` (the
+  `queued` row an outbound `send` inserts — the only one `I9` reaches) and `:1647` (the synchronous
+  `sendTransactionalNow` builder). Measured: fixing the call site at `:1013` alone reads
+  `5 passed (5)` while `:909` and `:1647` still call the raw private hash, and `eslint` stays clean
+  (`0 errors`, 8 pre-existing warnings) because the private function is still used there. Neither the
+  suite nor the lint gate can see the two uncovered writers, so the GREEN's completeness proof is a
+  `createHash` grep rather than a test. Routed to TEST card `t_57c291d0`.
+- **F2 (Low) — the delegate leaves an unused import.** With M2 in place, `fan-out.ts:31`'s
+  `createHash` import is unused and `eslint` reports exactly one error there
+  (`'createHash' is defined but never used`, `@typescript-eslint/no-unused-vars`). Lint is a gate, so
+  the GREEN owes that deletion.
+- **F3 (Low) — rows written before the fix stay raw.** A pre-fix ledger row carries
+  `sha256(destination-as-stored)` and can never match a canonical suppression key, so the GREEN has to
+  decide between backfilling and accepting. It decided **accepted, not backfilled** (the ledger stores
+  only the digest, and the field is a lookup key rather than display data).
+- **F4 (Low, process) — the trunk's `Next free` cells lagged a consumed number.** At `c96c2d18` (the
+  trunk the pin branch merged) both cells read `0888` while the unmerged branch had already drawn
+  `0888` and advanced its own cells to `0889` (`63afdf06`), so a trunk-only sweep of that day could
+  have re-minted the number. Reservations were posted on the two cards about to draw — `t_df4e6eb3`
+  and `t_b7bcc125`, both at 2026-11-20 10:44 — and both drew above it.
+
+### Two corrections to the commissioning card
+
+Both were measured, and both are recorded here rather than silently omitted.
+
+- **(a) The worktree path.** The card named `.worktrees/t_838a93a7`, which does not exist in this
+  checkout; `git worktree list` has never carried it. The board row's `.worktrees/t_8290f915` is the
+  worktree the pins were authored in, and it is authoritative.
+- **(b) The ADR number.** The card reserved `0883`, and that number was already consumed by an OP-136
+  record (`ADR-0883-op136-discovery-abort-pin.md`, PR #746). The number was therefore drawn at the
+  author's own sweep — `origin/main`, every `.worktrees/*/docs/adr` tree and every open PR head — which
+  found no collision on any of them and no `0888` anywhere above the trunk's highest record.
+
+### What this review changed, and what it did not
+
+- The only reviewer-authored commit on the pin branch is `ce6e32a4`
+  (`author=openpic reviewer <reviewer@openpic.local>`, 2026-11-20 10:36 UTC): a merge of `origin/main`
+  `c96c2d18` into the pin tip `63afdf06`. Against the pin tip it introduces exactly three paths —
+  main's `job-pipeline-indexed-check.test.ts` and `ADR-0887` record, byte-identical to the trunk
+  (blobs `60a214ee…` and `16be20a5…`), and `docs/adr/README.md` (`+3`): main's `0887` index row, a
+  blank line and its `t_3d67936e` ledger paragraph, inserted in ascending position so the ledger reads
+  `0886`, `0887`, `0888`. Both `Next free` cells stay `0889`; main's `0888` cell is not carried.
+- No test, fixture, helper or delivered case was edited by the review.
+- The one-line `Consumers:` addition to [ADR-0875](ADR-0875-op137-delivery-receipts-red.md) — the new
+  spec named as a consumer — came with the pin author's commits, not with the merge, and it is
+  **guard-required**: removing it reddens the repository case of `adr-consumers` with
+  `{ code: 'consumer-mismatch' }` (`1 failed | 97 passed (98)`), and the restored line reads
+  `98 passed (98)`. That is not the same thing as this record's own `Consumers:` line, which later
+  gained the `I14`/`I15` spec as **disclosure** rather than a guard requirement (measured by card
+  `t_57c291d0`).
+
+### Status after this review
+
+No section above is retracted. Each finding has an owner and a landing:
+
+- **F1** → TEST card `t_57c291d0`, landed as PR
+  [#768](https://github.com/yahodu/openpic-webapp/pull/768) (squash `d1f99b8a`): `I14` pins the
+  `deferred` writer and `I15` the `queued` phone arm, each proved load-bearing by mutating its own line
+  back to the raw hash.
+- **F2, F3** → GREEN card `t_1039146a`, landed as PR
+  [#763](https://github.com/yahodu/openpic-webapp/pull/763) (squash `b15e0268`): the private digest
+  delegates to the shared one at every writer, the unused `createHash` import is gone (the trunk's
+  `fan-out.ts` imports no `createHash`), and the pre-fix rows are **accepted, not backfilled**, as
+  recorded in that GREEN's consequences.
+- **F4** → the reservations on `t_df4e6eb3` and `t_b7bcc125`; both drew above `0888` and landed, the
+  pins of the first carried in by the GREEN's PR
+  [#759](https://github.com/yahodu/openpic-webapp/pull/759) (squash `a69f0340`) and the second being
+  that GREEN's own record.
+
+The three writers are now measured rather than grepped: `I9` (the `queued` email arm), `I14` (the
+`deferred` email arm) and `I15` (the `queued` phone arm) are pinned, and the `sendTransactionalNow`
+builder is recorded as a deliberate residual in the follow-up's own record, not as a discovery.
