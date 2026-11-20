@@ -4,6 +4,7 @@ import type {
   AuthErrorCode,
   BillingErrorCode,
   CollaborationErrorCode,
+  ComplianceErrorCode,
   ConsentErrorCode,
   EntitlementErrorCode,
   ErrorCode,
@@ -627,6 +628,23 @@ export const SELFIE_ERROR_TRANSPORT: Readonly<Record<SelfieErrorCode, ErrorCatal
 };
 
 /**
+ * Transport for the data-subject-request codes (contract §8.1, ADR-0898 §4).
+ *
+ * Kept out of {@link ERROR_CATALOG} for the same reason as the consent and
+ * selfie rows: that table stays the exact base Appendix A copy.
+ * `invalid_scope` (`422`, non-retryable) refuses a scope naming an event the
+ * caller may not reference and carries `details.eventIds`.
+ */
+export const COMPLIANCE_ERROR_TRANSPORT: Readonly<Record<ComplianceErrorCode, ErrorCatalogEntry>> =
+  {
+    invalid_scope: {
+      status: 422,
+      retryable: false,
+      message: "The requested scope names an event you may not reference.",
+    },
+  };
+
+/**
  * Every client-facing code's transport: Appendix A first, then the pipeline,
  * auth, request-shape, internal, account, notification and tenancy tables.
  */
@@ -646,6 +664,7 @@ const TRANSPORT: Readonly<Record<AppErrorCode, ErrorCatalogEntry>> = {
   ...COLLABORATION_ERROR_TRANSPORT,
   ...CONSENT_ERROR_TRANSPORT,
   ...SELFIE_ERROR_TRANSPORT,
+  ...COMPLIANCE_ERROR_TRANSPORT,
 };
 
 /**

@@ -362,6 +362,21 @@ export const SELFIE_ERROR_CODES = ["liveness_challenge_invalid", "gallery_expire
 export type SelfieErrorCode = (typeof SELFIE_ERROR_CODES)[number];
 
 /**
+ * Data-subject-request codes (contract §8.1, Appendix A).
+ *
+ * `invalid_scope` (`422`, `{ eventIds }`) refuses a request that names an
+ * event the caller may not reference — an anonymous attendee's scope is the
+ * session's own `eventIds`. It is not an {@link ERROR_CODES} member, which the
+ * server catalogue pins to exactly the base Appendix A table, so it is
+ * appended to the client-facing enum and transported from its own table
+ * (OP-138, ADR-0898 §4). Append-only, like every other code.
+ */
+export const COMPLIANCE_ERROR_CODES = ["invalid_scope"] as const;
+
+/** A member of the closed {@link COMPLIANCE_ERROR_CODES} set. */
+export type ComplianceErrorCode = (typeof COMPLIANCE_ERROR_CODES)[number];
+
+/**
  * Codes a shared pipeline stage emits whose HTTP transport is defined by the
  * stage's own story (API contract §0.9) rather than by Appendix A.
  *
@@ -432,6 +447,7 @@ export const API_ERROR_CODES = [
   ...COLLABORATION_ERROR_CODES,
   ...CONSENT_ERROR_CODES,
   ...SELFIE_ERROR_CODES,
+  ...COMPLIANCE_ERROR_CODES,
 ] as const;
 
 /** A member of the {@link API_ERROR_CODES} set. */
@@ -457,7 +473,8 @@ export type AppErrorCode =
   | EventErrorCode
   | CollaborationErrorCode
   | ConsentErrorCode
-  | SelfieErrorCode;
+  | SelfieErrorCode
+  | ComplianceErrorCode;
 
 /** Zod enum mirroring {@link API_ERROR_CODES}, for validating `error.code`. */
 export const errorCodeSchema = z.enum(API_ERROR_CODES);

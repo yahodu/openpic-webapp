@@ -28,7 +28,8 @@ export type RateLimitClass =
   | "media.sign"
   | "admin"
   | "webhook"
-  | "internal";
+  | "internal"
+  | "compliance.dsr";
 
 /** One limit: a scope, its allowance and the sliding-window length in seconds. */
 export interface RateLimitRule {
@@ -67,6 +68,10 @@ export const RATE_LIMIT_CLASSES: Readonly<Record<RateLimitClass, readonly RateLi
   admin: [{ scope: "user", limit: 300, windowSeconds: 60 }],
   webhook: [],
   internal: [{ scope: "user", limit: 600, windowSeconds: 60 }],
+  // OP-138 (ADR-0898 §4): contract §8.1's "5 / day / principal" for
+  // `POST /me/data-requests`. §0.11 has no DSR row yet, so the lane's executable
+  // copy (`classes.test.ts` LANE_RULES) owns this rule until the contract catches up.
+  "compliance.dsr": [{ scope: "user", limit: 5, windowSeconds: 86_400 }],
 };
 
 /**

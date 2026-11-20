@@ -263,6 +263,15 @@ const selfieSchema = z.object({
   attemptsAllowed: z.number().int().positive(),
 });
 
+/** The terms policy the platform currently serves (contract §8.2, OP-138). */
+const TERMS_POLICY_VERSION = "tos-2026-03";
+
+/** The terms document's URL. */
+const TERMS_POLICY_URL = "https://openpic.in/legal/terms/2026-03";
+
+/** The instant both current policy documents took effect. */
+const LEGAL_EFFECTIVE_FROM = "2026-03-01T00:00:00.000Z";
+
 /**
  * `legal` — the current policy documents the attendee surface must name
  * (contract §6.1/§6.2, ADR-0784 §3).
@@ -273,6 +282,12 @@ const selfieSchema = z.object({
 const legalSchema = z.object({
   biometricPolicyVersion: z.string().min(1),
   biometricPolicyUrl: z.url(),
+  // OP-138 (ADR-0898 §4): the terms document §8.2 acknowledges against, and the
+  // one effective date both documents carry. Field-defaulted so a singleton
+  // seeded before this key still parses.
+  termsPolicyVersion: z.string().min(1).default(TERMS_POLICY_VERSION),
+  termsPolicyUrl: z.url().default(TERMS_POLICY_URL),
+  effectiveFrom: z.iso.datetime().default(LEGAL_EFFECTIVE_FROM),
 });
 
 /**
@@ -294,10 +309,32 @@ const ATTENDEE_SETTINGS_DEFAULTS: z.input<typeof attendeeSchema> = {
 /** The documented `selfie` defaults — what a tenant with no gated plan gets. */
 const SELFIE_SETTINGS_DEFAULTS: z.input<typeof selfieSchema> = { attemptsAllowed: 3 };
 
+/**
+ * `compliance` — the statutory windows a data-subject request falls due in
+ * (contract §8.1, ADR-0898 §4).
+ *
+ * One window per regulation, read when a request is filed so an operator can
+ * change the platform's deadline without a deploy.
+ */
+const complianceSchema = z.object({
+  slaDays: z.object({
+    gdpr: z.number().int().positive(),
+    dpdpa: z.number().int().positive(),
+  }),
+});
+
+/** The §8.1 defaults — the window §8.1's own example shows. */
+const COMPLIANCE_SETTINGS_DEFAULTS: z.input<typeof complianceSchema> = {
+  slaDays: { gdpr: 30, dpdpa: 30 },
+};
+
 /** The current biometric policy the attendee surface names (contract §6.1). */
-const LEGAL_SETTINGS_DEFAULTS: z.input<typeof legalSchema> = {
+const LEGAL_SETTINGS_DEFAULTS: z.output<typeof legalSchema> = {
   biometricPolicyVersion: "biometric-2026-03",
   biometricPolicyUrl: "https://openpic.in/legal/biometric/2026-03",
+  termsPolicyVersion: TERMS_POLICY_VERSION,
+  termsPolicyUrl: TERMS_POLICY_URL,
+  effectiveFrom: LEGAL_EFFECTIVE_FROM,
 };
 
 /** The full `platformSettings` singleton document (schema §20.4). */
@@ -314,6 +351,7 @@ export const platformSettingsSchema = z.object({
   selfie: selfieSchema.default(SELFIE_SETTINGS_DEFAULTS),
   legal: legalSchema.default(LEGAL_SETTINGS_DEFAULTS),
   attendee: attendeeSchema.default(ATTENDEE_SETTINGS_DEFAULTS),
+  compliance: complianceSchema.default(COMPLIANCE_SETTINGS_DEFAULTS),
   updatedAt: z.string(),
   updatedByUserId: z.string().nullable(),
 });
@@ -389,6 +427,7 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettingsValues = {
   selfie: { ...SELFIE_SETTINGS_DEFAULTS },
   legal: { ...LEGAL_SETTINGS_DEFAULTS },
   attendee: { ...ATTENDEE_SETTINGS_DEFAULTS },
+  compliance: { slaDays: { ...COMPLIANCE_SETTINGS_DEFAULTS.slaDays } },
 };
 
 /** A cached document and the instant its TTL elapses. */

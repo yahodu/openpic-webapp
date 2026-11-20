@@ -17,6 +17,7 @@ import { SELFIE_LOCATION_KEY, selfieObjectKey } from "@/server/attendee/selfie-s
 import { subjectForRequest } from "@/server/attendee/subject";
 import { getAuth } from "@/server/auth";
 import { requireAuth } from "@/server/auth/guards";
+import { policyDocumentHash } from "@/server/compliance/policies";
 import { getRateLimitConfig, getTrustedClientIpHeader } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
@@ -26,7 +27,6 @@ import { requestLogger } from "@/server/logging";
 import { createRateLimiter, rateLimitStage, resolveClientIp } from "@/server/rate-limit";
 import { tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
-import { sha256Hex } from "@/server/runtime/crypto";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
 
@@ -79,23 +79,6 @@ const grantResponseSchema = z.object({
 
 /** The `204` body placeholder: the pipeline serves no body for this status. */
 const noContentSchema = z.null();
-
-/**
- * The digest of the policy document one consent was given against (schema
- * §15.4).
- *
- * The settings pair names one immutable document — the version and its URL move
- * together — so the digest is deterministic per version: two attendees granting
- * the same version store the same value, which is what makes the evidence
- * verifiable.
- *
- * @param policyVersion - The current `legal.biometricPolicyVersion`.
- * @param policyUrl - The current `legal.biometricPolicyUrl`.
- * @returns `sha256:<64 hex>`.
- */
-function policyDocumentHash(policyVersion: string, policyUrl: string): string {
-  return `sha256:${sha256Hex(`${policyVersion}\u0000${policyUrl}`)}`;
-}
 
 /** A stored `selfies` row, as the withdrawal counts and deletes it (§16.4). */
 interface SelfieRow {
