@@ -1,7 +1,6 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 
-import { findRequestAttendeeSession } from "@/server/attendee/session-resolver";
 import { isoOf } from "@/server/compliance/serialize";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
@@ -63,17 +62,14 @@ export const GET = defineRoute({
     const principal = ctx.principal;
 
     // The owner is the signed-in user, or else the anonymous session that filed
-    // it — the same credential the `202` receipt was handed to.
+    // it — the credential `dsrAuth` already resolved, so no second read.
     let owner: Record<string, unknown>;
     if (principal === undefined) {
-      const session = await findRequestAttendeeSession({ database: db }, ctx.request);
-      if (session === null) {
+      const sessionId = ctx.attendeeSessionId;
+      if (sessionId === undefined) {
         throw appError("unauthenticated");
       }
-      owner = {
-        "subject.kind": "anonymous",
-        "subject.attendeeSessionId": session._id.toHexString(),
-      };
+      owner = { "subject.kind": "anonymous", "subject.attendeeSessionId": sessionId };
     } else {
       owner = { "subject.kind": "user", "subject.userId": new ObjectId(principal) };
     }
