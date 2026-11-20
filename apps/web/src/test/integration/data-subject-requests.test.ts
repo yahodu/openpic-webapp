@@ -1389,3 +1389,61 @@ describe("I26 — a tenantless filing emits no event (§8.1, characterization)",
     expect(await dsrEvents()).toHaveLength(0);
   });
 });
+
+/* ────────────── the verbatim `verifiedEmail` comparison (I27) ────────────── */
+
+/**
+ * The same mailbox written the way an autocapitalizing field leaves it: a
+ * leading capital in the local part and in the domain.
+ *
+ * `alice@example.com` becomes `Alice@Example.com` — one address, two cases.
+ *
+ * @param email - A stored address.
+ * @returns That address with only its two leading characters' case changed.
+ */
+function caseVariantOf(email: string): string {
+  const at = email.lastIndexOf("@");
+  const capitalise = (part: string): string => `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
+  return `${capitalise(email.slice(0, at))}@${capitalise(email.slice(at + 1))}`;
+}
+
+describe("I27 — the verifiedEmail comparison is verbatim, case included (§8.1, characterization)", () => {
+  it("I27: a case-variant of the caller's verified address answers 422 and writes nothing", async () => {
+    const { user, event } = await seedOwnerEvent("i27");
+
+    // The account holds the fixture's lowercase address and the claim differs
+    // from it only in case, so the two name one mailbox.
+    const storedEmail = user.identity.email;
+    const claimedEmail = caseVariantOf(storedEmail);
+    const account = (await app.db.collection("user").findOne({ _id: user.userId })) as {
+      email?: unknown;
+      emailVerified?: unknown;
+    } | null;
+    expect(account?.email).toBe(storedEmail);
+    expect(account?.emailVerified).toBe(true);
+    expect(claimedEmail).not.toBe(storedEmail);
+    expect(claimedEmail.toLowerCase()).toBe(storedEmail.toLowerCase());
+
+    const response = await postDataRequestHandler(
+      postDataRequest({
+        cookie: user.cookie,
+        body: {
+          requestType: "erasure",
+          scope: { eventIds: [event.id.toHexString()] },
+          verifiedEmail: claimedEmail,
+        },
+      })
+    );
+
+    // Verbatim, case included (ADR-0902 §9; ADR-0903 §2): the claim must be the
+    // account's address as stored, so a case variant is refused. `I19` is the
+    // control that the exact address is accepted.
+    expect(response.status).toBe(422);
+    const refusal = await errorBody(response);
+    expect(refusal.code).toBe("invalid_verified_email");
+    expect(refusal.details).toEqual({ field: "verifiedEmail" });
+    // A refused filing is not a filing: no row and no outbox event.
+    expect(await storedRequests()).toHaveLength(0);
+    expect(await dsrEvents()).toHaveLength(0);
+  });
+});
