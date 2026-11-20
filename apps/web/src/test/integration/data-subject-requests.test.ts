@@ -1056,3 +1056,336 @@ describe("I15 — an unregistered request type is refused by validation (§8.1)"
     expect(await dsrEvents()).toHaveLength(0);
   });
 });
+
+/* ────────── OP-138 pin pack (ADR-0901) — the round-1 review findings ───────── */
+
+/**
+ * These cases are **append-only**: they pin the contract details the shipped
+ * OP-138 GREEN (PR #776, ADR-0899) left unenforced, and none of `I1`–`I15`
+ * above is edited. Groups 1–3, 5 and 6 of card `t_df46c867` are red on that
+ * tree; the two characterization arms (repeat acknowledgement, tenantless
+ * filing) are green and stay green, so a later change cannot silently make the
+ * first idempotent or start emitting an event for the second.
+ */
+
+/** A bare 64-character lowercase hex digest, as `hashFingerprint` returns it. */
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * Build a `POST /me/consents/acknowledge` request for `purpose:
+ * terms_of_service`, the action target of `legal.terms.updated` (§8.2).
+ *
+ * @param cookie - The signed-in caller's session cookie.
+ * @param policyVersion - The version the client is acknowledging.
+ * @param headers - Extra request headers (evidence facts) to send.
+ * @returns The request the route handler is invoked with.
+ */
+function acknowledgeRequest(
+  cookie: string,
+  policyVersion: string,
+  headers: Record<string, string> = {}
+): Request {
+  return new Request(new URL("/api/v1/me/consents/acknowledge", APP_ORIGIN), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": nextIp(),
+      cookie,
+      ...headers,
+    },
+    body: JSON.stringify({ purpose: TERMS_PURPOSE, policyVersion }),
+  });
+}
+
+/** The current `terms_of_service` document, or a loud failure. */
+async function currentTermsPolicy(): Promise<PolicyEntry> {
+  const current = (await currentPolicies()).find((entry) => entry.purpose === TERMS_PURPOSE);
+  if (current === undefined) {
+    throw new Error("the policies endpoint served no terms_of_service document");
+  }
+  return current;
+}
+
+describe("I16 — the stored scope keeps both id arrays as ObjectIds (§20.3)", () => {
+  it("I16: a user's filing stores scope.tenantIds and scope.eventIds as ObjectIds", async () => {
+    const { user, tenantKey, event } = await seedOwnerEvent("i16");
+
+    const filed = await fileRequest({
+      cookie: user.cookie,
+      body: { requestType: "erasure", scope: { eventIds: [event.id.toHexString()] } },
+    });
+
+    const row = await storedRequest(filed);
+    const scope = row.scope as { tenantIds?: unknown[]; eventIds?: unknown[] };
+
+    // Same values as before — the *representation* is what is pinned here, so a
+    // reader never has to coerce one array and not the other (§20.3).
+    expect(scope.tenantIds?.map(asId)).toEqual([tenantKey]);
+    expect(scope.eventIds?.map(asId)).toEqual([event.id.toHexString()]);
+    expect(
+      scope.tenantIds?.every((tenantId) => tenantId instanceof ObjectId),
+      "scope.tenantIds must be stored as ObjectIds, like scope.eventIds"
+    ).toBe(true);
+    expect(
+      scope.eventIds?.every((eventId) => eventId instanceof ObjectId),
+      "scope.eventIds must be stored as ObjectIds"
+    ).toBe(true);
+  });
+});
+
+describe("I17 — the acknowledgement records the §15.4 evidence", () => {
+  it("I17: the stored row carries hashed evidence, the in-app method and a served locale", async () => {
+    const { user } = await seedOwnerEvent("i17");
+    const current = await currentTermsPolicy();
+
+    const acknowledged = await acknowledgeConsentHandler(
+      acknowledgeRequest(user.cookie, current.version, {
+        "accept-language": "fr-FR,fr;q=0.9",
+        "user-agent": "OP-138 evidence probe/1.0",
+        "x-forwarded-for": "203.0.113.77",
+      })
+    );
+    expect(acknowledged.status).toBe(201);
+
+    const rows = await consentRows();
+    expect(rows).toHaveLength(1);
+    const evidence = rows[0]?.evidence as
+      { ipHash?: unknown; uaHash?: unknown; method?: unknown; locale?: unknown } | undefined;
+
+    // §15.4's "how": this acknowledgement is the `legal.terms.updated` action
+    // target, so its method is the in-app one, not the attendee checkbox.
+    expect(evidence?.method).toBe("in_app_action");
+    expect(String(evidence?.ipHash)).toMatch(SHA256_HEX);
+    expect(String(evidence?.uaHash)).toMatch(SHA256_HEX);
+    // §0.15: the raw facts are never stored, only salted digests.
+    expect(evidence?.ipHash).not.toBe("203.0.113.77");
+    expect(evidence?.uaHash).not.toBe("OP-138 evidence probe/1.0");
+    // A stored tag is always one the product serves, never the raw header.
+    expect(evidence?.locale).toBe("en-IN");
+  });
+});
+
+describe("I18 — the consent history answers contract §8.2's row shape", () => {
+  it("I18: the history row carries policyUrl, eventId and method alongside the documented keys", async () => {
+    const { user } = await seedOwnerEvent("i18");
+    const current = await currentTermsPolicy();
+
+    const acknowledged = await acknowledgeConsentHandler(
+      acknowledgeRequest(user.cookie, current.version)
+    );
+    expect(acknowledged.status).toBe(201);
+
+    const listed = await listConsentsHandler(
+      getRequest(`/api/v1/me/consents?purpose=${TERMS_PURPOSE}`, { cookie: user.cookie })
+    );
+    const parsed = await jsonOf(listed, 200, "GET /me/consents");
+    expect(Array.isArray(parsed)).toBe(true);
+    const history = parsed as Record<string, unknown>[];
+
+    expect(history).toHaveLength(1);
+    // §8.2's eight keys plus the `policyDocumentHash` its prose keeps.
+    expect(keysOf(history[0])).toEqual([
+      "eventId",
+      "grantedAt",
+      "id",
+      "method",
+      "policyDocumentHash",
+      "policyUrl",
+      "policyVersion",
+      "purpose",
+      "withdrawnAt",
+    ]);
+    // The document the caller acknowledged is addressable, and the in-app
+    // acknowledgement is platform-scope: it names no event.
+    expect(history[0]?.policyUrl).toBe(current.url);
+    expect(history[0]?.eventId).toBeNull();
+    expect(history[0]?.method).toBe("in_app_action");
+  });
+});
+
+describe("I19 — a verifiedEmail that matches the caller is stored (§8.1/§20.3)", () => {
+  it("I19: a matching verifiedEmail answers 202 and is stored on the subject", async () => {
+    const { user, event } = await seedOwnerEvent("i19");
+
+    const filed = await fileRequest({
+      cookie: user.cookie,
+      body: {
+        requestType: "erasure",
+        scope: { eventIds: [event.id.toHexString()] },
+        verifiedEmail: user.identity.email,
+      },
+    });
+
+    const row = await storedRequest(filed);
+    const subject = row.subject as { verifiedEmail?: unknown };
+    expect(subject.verifiedEmail).toBe(user.identity.email);
+  });
+});
+
+describe("I20 — a verifiedEmail that differs from the caller is refused (§8.1)", () => {
+  it("I20: a mismatched verifiedEmail answers 422 invalid_verified_email and writes nothing", async () => {
+    const { user, event } = await seedOwnerEvent("i20");
+
+    const response = await postDataRequestHandler(
+      postDataRequest({
+        cookie: user.cookie,
+        body: {
+          requestType: "erasure",
+          scope: { eventIds: [event.id.toHexString()] },
+          verifiedEmail: "someone-else@example.com",
+        },
+      })
+    );
+
+    expect(response.status).toBe(422);
+    const refusal = await errorBody(response);
+    expect(refusal.code).toBe("invalid_verified_email");
+    expect(refusal.details).toEqual({ field: "verifiedEmail" });
+    // A refused filing is not a filing: no row, no outbox event.
+    expect(await storedRequests()).toHaveLength(0);
+    expect(await dsrEvents()).toHaveLength(0);
+  });
+});
+
+describe("I21 — an omitted verifiedEmail is not checked (§8.1)", () => {
+  it("I21: a filing without verifiedEmail answers 202 and stores no verifiedEmail", async () => {
+    const { user, event } = await seedOwnerEvent("i21");
+
+    const filed = await fileRequest({
+      cookie: user.cookie,
+      body: { requestType: "access", scope: { eventIds: [event.id.toHexString()] } },
+    });
+
+    const row = await storedRequest(filed);
+    const subject = row.subject as { verifiedEmail?: unknown };
+    expect(subject.verifiedEmail).toBeUndefined();
+  });
+});
+
+describe("I22 — an anonymous session carries no verifiedEmail (§8.1)", () => {
+  it("I22: an attendee filing with a verifiedEmail answers 422 invalid_verified_email", async () => {
+    const { event } = await seedOwnerEvent("i22");
+    const session = await createAttendeeSession(event.slug, nextIp());
+
+    const response = await postDataRequestHandler(
+      postDataRequest({
+        cookie: session.cookie,
+        body: { requestType: "erasure", verifiedEmail: "attendee@example.com" },
+      })
+    );
+
+    expect(response.status).toBe(422);
+    expect((await errorBody(response)).code).toBe("invalid_verified_email");
+    expect(await storedRequests()).toHaveLength(0);
+    expect(await dsrEvents()).toHaveLength(0);
+  });
+});
+
+describe("I23 — an anonymous session reads back the request it filed (§8.1)", () => {
+  it("I23: the session that filed reads its own row and its execution log", async () => {
+    const { event } = await seedOwnerEvent("i23");
+    const session = await createAttendeeSession(event.slug, nextIp());
+
+    const filed = await fileRequest({
+      cookie: session.cookie,
+      body: { requestType: "erasure" },
+    });
+
+    const row = await storedRequest(filed);
+    const subject = row.subject as { kind?: unknown; attendeeSessionId?: unknown };
+    expect(subject.kind).toBe("anonymous");
+    expect(asId(subject.attendeeSessionId)).toBe(session.sessionId);
+
+    const completedAt = new Date("2026-09-30T00:00:00.000Z");
+    await app.db.collection(DATA_SUBJECT_REQUESTS).updateOne(
+      { _id: new ObjectId(String(filed.id)) },
+      {
+        $set: {
+          status: "completed",
+          completedAt,
+          executionLog: [{ step: "faceMatches.deleted", count: 7, at: completedAt }],
+        },
+      }
+    );
+
+    // The receipt's own `pollUrl`, presented with the credential that filed it.
+    const response = await getDataRequestHandler(
+      getRequest(String(filed.pollUrl), { cookie: session.cookie })
+    );
+    const body = await bodyOf(response, 200, "GET /me/data-requests/:id");
+
+    expect(body.id).toBe(filed.id);
+    expect(body.status).toBe("completed");
+    const log = body.executionLog as { step: string; count: number }[];
+    expect(log.map((entry) => entry.step)).toEqual(["faceMatches.deleted"]);
+    expect(log.map((entry) => entry.count)).toEqual([7]);
+  });
+});
+
+describe("I24 — another attendee session never sees the request (§8.1)", () => {
+  it("I24: a different attendee session reads the same id as 404, never 403", async () => {
+    const { event } = await seedOwnerEvent("i24");
+    const filing = await createAttendeeSession(event.slug, nextIp());
+    const other = await createAttendeeSession(event.slug, nextIp());
+
+    const filed = await fileRequest({
+      cookie: filing.cookie,
+      body: { requestType: "access" },
+    });
+
+    const response = await getDataRequestHandler(
+      getRequest(String(filed.pollUrl), { cookie: other.cookie })
+    );
+
+    // 404, not 403: the endpoint must not answer "this exists but is not yours".
+    expect(response.status).toBe(404);
+    expect((await errorBody(response)).code).toBe("not_found");
+  });
+});
+
+describe("I25 — a repeated acknowledgement appends history (§8.2, characterization)", () => {
+  it("I25: the second POST answers 201 and the history lists both rows", async () => {
+    const { user } = await seedOwnerEvent("i25");
+    const current = await currentTermsPolicy();
+
+    const first = await acknowledgeConsentHandler(acknowledgeRequest(user.cookie, current.version));
+    const firstBody = await bodyOf(first, 201, "POST /me/consents/acknowledge (first)");
+    const second = await acknowledgeConsentHandler(
+      acknowledgeRequest(user.cookie, current.version)
+    );
+    const secondBody = await bodyOf(second, 201, "POST /me/consents/acknowledge (second)");
+
+    // History semantics, deliberately: consent records are an append-only
+    // record of what was acknowledged when, not a mutable current state.
+    expect(firstBody.id).not.toBe(secondBody.id);
+    const rows = await consentRows();
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.policyVersion)).toEqual([current.version, current.version]);
+
+    const listed = await listConsentsHandler(
+      getRequest(`/api/v1/me/consents?purpose=${TERMS_PURPOSE}`, { cookie: user.cookie })
+    );
+    const history = await jsonOf(listed, 200, "GET /me/consents");
+    expect(history as unknown[]).toHaveLength(2);
+  });
+});
+
+describe("I26 — a tenantless filing emits no event (§8.1, characterization)", () => {
+  it("I26: an unscoped platform-wide filing answers 202 and writes no domain event", async () => {
+    const { user } = await seedOwnerEvent("i26");
+
+    const filed = await fileRequest({
+      cookie: user.cookie,
+      body: { requestType: "portability" },
+    });
+
+    const row = await storedRequest(filed);
+    const scope = row.scope as { tenantIds?: unknown[]; eventIds?: unknown[] };
+    expect(scope.tenantIds).toEqual([]);
+    expect(scope.eventIds).toEqual([]);
+    // `emitDomainEvent` requires a tenant, so an unresolvable tenant writes no
+    // row: §8.1's "emits privacy.dsr.received" is conditional on one existing
+    // (ADR-0899 §3 item 3, ADR-0901 §5).
+    expect(await dsrEvents()).toHaveLength(0);
+  });
+});

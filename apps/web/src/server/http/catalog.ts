@@ -634,6 +634,9 @@ export const SELFIE_ERROR_TRANSPORT: Readonly<Record<SelfieErrorCode, ErrorCatal
  * selfie rows: that table stays the exact base Appendix A copy.
  * `invalid_scope` (`422`, non-retryable) refuses a scope naming an event the
  * caller may not reference and carries `details.eventIds`.
+ * `invalid_verified_email` (`422`, non-retryable) refuses a filing whose
+ * `verifiedEmail` is not the caller's verified address and carries
+ * `details.field: "verifiedEmail"` (ADR-0901 §2).
  */
 export const COMPLIANCE_ERROR_TRANSPORT: Readonly<Record<ComplianceErrorCode, ErrorCatalogEntry>> =
   {
@@ -641,6 +644,11 @@ export const COMPLIANCE_ERROR_TRANSPORT: Readonly<Record<ComplianceErrorCode, Er
       status: 422,
       retryable: false,
       message: "The requested scope names an event you may not reference.",
+    },
+    invalid_verified_email: {
+      status: 422,
+      retryable: false,
+      message: "The verifiedEmail does not match your verified email address.",
     },
   };
 

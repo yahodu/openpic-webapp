@@ -15,8 +15,8 @@ import { platformRepo } from "@/server/repos";
  * (OP-138, contract §8.2, schema §15.4; ADR-0898).
  *
  * Consent records are the evidence that a processing decision was lawful years
- * later, so every row carries the `policyDocumentHash` of the document the
- * caller acknowledged. §8.2 spells the answer as a bare array.
+ * later, so every row carries the `policyDocumentHash` and `policyUrl` of the
+ * document the caller acknowledged. §8.2 spells the answer as a bare array.
  */
 
 /** One stored consent record (§8.2). */
@@ -25,9 +25,25 @@ const consentRowSchema = z.object({
   purpose: z.string(),
   policyVersion: z.string(),
   policyDocumentHash: z.string(),
+  policyUrl: z.string().nullable(),
+  eventId: z.string().nullable(),
+  method: z.string().nullable(),
   grantedAt: z.iso.datetime(),
   withdrawnAt: z.iso.datetime().nullable(),
 });
+
+/** A stored string, or `null` for a row written before the field existed. */
+function textOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/** A stored id in its hex form, or `null` (a row written before the field). */
+function idOrNull(value: unknown): string | null {
+  if (value instanceof ObjectId) {
+    return value.toHexString();
+  }
+  return textOrNull(value);
+}
 
 export const GET = defineRoute({
   route: "/api/v1/me/consents",
@@ -56,6 +72,9 @@ export const GET = defineRoute({
         purpose: String(row.purpose),
         policyVersion: String(row.policyVersion),
         policyDocumentHash: String(row.policyDocumentHash),
+        policyUrl: textOrNull(row.policyUrl),
+        eventId: idOrNull(row.eventId),
+        method: textOrNull(row.method),
         grantedAt: isoOf(row.grantedAt),
         withdrawnAt: isoOrNull(row.withdrawnAt),
       })),

@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { findRequestAttendeeSession } from "@/server/attendee/session-resolver";
 import { getAuth } from "@/server/auth";
-import { enforceAuth, requireAuth, resolvePrincipal } from "@/server/auth/guards";
+import { requireAuth } from "@/server/auth/guards";
 import {
   DSR_REGULATIONS,
   DSR_REQUEST_TYPES,
@@ -18,7 +18,7 @@ import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { buildCursorPage, parsePageQuery } from "@/server/http/cursor";
-import { defineRoute, type RouteStage } from "@/server/http/define-route";
+import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { idempotencyStage, mongoIdempotencyStore } from "@/server/idempotency";
 import { requestLogger } from "@/server/logging";
@@ -28,6 +28,7 @@ import { systemClock } from "@/server/runtime/clock";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
 
 import { acknowledgementFor } from "./_lib/acknowledgement";
+import { dsrAuth } from "./_lib/principal";
 
 /**
  * `GET` / `POST /api/v1/me/data-requests` — file a data-subject request and read
@@ -66,6 +67,8 @@ const createBodySchema = z.object({
   requestType: z.enum(DSR_REQUEST_TYPES),
   regulation: z.enum(DSR_REGULATIONS).optional(),
   scope: z.object({ eventIds: z.array(z.string().min(1)).max(100) }).optional(),
+  // Optional: a caller may confirm the address the request is about (§8.1).
+  verifiedEmail: z.string().min(1).max(320).optional(),
 });
 
 /** One row of the caller's own list (§0.8). */
@@ -88,41 +91,25 @@ const listResponseSchema = z.object({
   }),
 });
 
+/** The Better Auth-owned user collection (schema §13.1). */
+const USER_COLLECTION = "user";
+
 /**
- * The combined `user` OR `attendee` credential (contract §0.2/§0.3).
- *
- * §0.3 lets an attendee session satisfy only the `attendee` label and a user
- * only the user labels, so neither single label admits both. The route resolves
- * the principal itself: a missing credential is `401 unauthenticated`, an
- * account runs the `user` rules with the §0.3 ban exemption, and an anonymous
- * session is admitted as-is. The user id is published on `ctx.principal` so the
- * identity rate tier keys the daily budget on the principal, not the IP.
+ * The caller's verified email address, or `null` when the account has none
+ * verified. A subject who is not a verified user has nothing to match against,
+ * so a body carrying a `verifiedEmail` from an attendee is a mismatch (§8.1).
  */
-const dsrAuth: RouteStage = async (ctx, request) => {
-  const database = getDb();
-  const principal = await resolvePrincipal(request, { auth: getAuth(), database });
-
-  if (principal === null) {
-    throw appError("unauthenticated");
-  }
-
-  if (principal.kind === "user") {
-    enforceAuth(
-      "user",
-      { principal, now: systemClock.now(), allowBanned: true },
-      request,
-      ctx.route
-    );
-    Object.assign(ctx, {
-      principal: principal.userId,
-      ...(principal.sessionId === null || principal.sessionId === undefined
-        ? {}
-        : { sessionId: principal.sessionId }),
-    });
-  }
-
-  return undefined;
-};
+async function verifiedEmailOf(db: Db, userId: string): Promise<string | null> {
+  const user = (await platformRepo(db)
+    .collection(USER_COLLECTION)
+    .findOne({ _id: new ObjectId(userId) }, { projection: { email: 1, emailVerified: 1 } })) as {
+    readonly email?: unknown;
+    readonly emailVerified?: unknown;
+  } | null;
+  return user !== null && user.emailVerified === true && typeof user.email === "string"
+    ? user.email
+    : null;
+}
 
 /** Parse a set of event ids into `ObjectId`s, keeping only well-formed ids. */
 function eventObjectIds(eventIds: readonly string[]): ObjectId[] {
@@ -193,15 +180,15 @@ async function resolveUserScope(
 /** The tenant's stored data region, when the scope names one. */
 async function tenantDataRegionOf(
   db: Db,
-  tenantIds: readonly string[]
+  tenantIds: readonly ObjectId[]
 ): Promise<TenantDataRegion | null> {
   const first = tenantIds[0];
-  if (first === undefined || !ObjectId.isValid(first)) {
+  if (first === undefined) {
     return null;
   }
   const tenant = (await platformRepo(db)
     .collection(COLLECTIONS.tenants)
-    .findOne({ _id: new ObjectId(first) })) as Record<string, unknown> | null;
+    .findOne({ _id: first })) as Record<string, unknown> | null;
   const region = tenant?.dataRegion;
   return region === "in" || region === "eu" ? region : null;
 }
@@ -229,6 +216,16 @@ export const POST = defineRoute({
     const requestedScope = ctx.body.scope?.eventIds;
     const userId = ctx.principal;
 
+    // §8.1: when the body names the address the request is about, it must be the
+    // caller's own verified address — an attendee has none, so any is a mismatch.
+    const claimedEmail = ctx.body.verifiedEmail;
+    if (claimedEmail !== undefined) {
+      const callerEmail = userId === undefined ? null : await verifiedEmailOf(db, userId);
+      if (claimedEmail !== callerEmail) {
+        throw appError("invalid_verified_email", { details: { field: "verifiedEmail" } });
+      }
+    }
+
     let subject: Record<string, unknown>;
     let eventIds: readonly string[];
     if (userId === undefined) {
@@ -242,12 +239,19 @@ export const POST = defineRoute({
         session.eventIds.map((eventId) => eventId.toHexString())
       );
     } else {
-      subject = { kind: "user", userId: new ObjectId(userId) };
+      subject = {
+        kind: "user",
+        userId: new ObjectId(userId),
+        // Omitted, never `undefined`: the driver would store it as `null`.
+        ...(claimedEmail === undefined ? {} : { verifiedEmail: claimedEmail }),
+      };
       eventIds = await resolveUserScope(db, userId, requestedScope);
     }
 
     const events = await eventsByIds(db, eventIds);
-    const tenantIds = [...new Set(events.map((event) => String(event.tenantId)))];
+    // Stored as `ObjectId`s like `scope.eventIds`; the hex form is only for the
+    // outbox event, which takes a string `tenantId` (§20.3, ADR-0902 §3).
+    const tenantIds = eventObjectIds([...new Set(events.map((event) => String(event.tenantId)))]);
     const regulation = resolveRegulation({
       ...(ctx.body.regulation === undefined ? {} : { requested: ctx.body.regulation }),
       tenantDataRegion: await tenantDataRegionOf(db, tenantIds),
@@ -286,7 +290,7 @@ export const POST = defineRoute({
       await emitDomainEvent(
         {
           eventKey: DSR_EVENT_KEY,
-          tenantId,
+          tenantId: tenantId.toHexString(),
           actorRef: { kind: String(subject.kind), id: userId ?? String(subject.attendeeSessionId) },
           subjectRef: {
             kind: String(subject.kind),
