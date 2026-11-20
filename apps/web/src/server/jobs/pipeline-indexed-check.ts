@@ -290,7 +290,7 @@ export async function pipelineIndexedCheck(options: SweepJobRunOptions): Promise
       logger.warn("pipeline indexed row check failed", {
         event: "pipeline.indexed_check.row_failed",
         eventId: row._id.toHexString(),
-        error: outcome.reason,
+        err: outcome.reason,
       });
     }
   }
