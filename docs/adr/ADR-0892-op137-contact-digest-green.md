@@ -26,7 +26,10 @@
   this record. No cell is lowered (§11 item 20), no range is re-cut and no number outside `0892` is
   consumed. **F4 resolved, no renumber:** `ADR-0888` is not minted by anyone else — the only `0888`
   record on any surface is this lane's own pin record on `OP-137-task-contact-digest-pins` — so the pin
-  record keeps its number.
+  record keeps its number. **Second union, before landing:** `origin/main` advanced to `fc79fc20` while
+  this PR's checks ran and its ledger now holds `ADR-0894` with both cells at `0895`; the second
+  index-only union keeps `0895` (a cell is never lowered, item 20), and `ADR-0892` is still held by no
+  other ref, so no renumber is due and this lane mints `0892` only.
 
 ## Context
 
