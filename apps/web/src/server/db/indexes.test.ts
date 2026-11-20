@@ -262,3 +262,78 @@ describe("index spec pins — OP-89 identity lifecycle (ADR-0050)", () => {
     expect(spec?.partialFilterExpression).toEqual({ status: "deletion_pending" });
   });
 });
+
+/**
+ * OP-138 pin pack (ADR-0901) — the schema §20.3 `dataSubjectRequests` indexes.
+ *
+ * The registry above is the single source of truth the bootstrap creates from,
+ * so an index the schema requires but the registry omits never exists in any
+ * environment. The shipped OP-138 GREEN declared none of §20.3's three, which
+ * leaves `GET /me/data-requests` (a `sort({receivedAt:-1,_id:-1})` behind a
+ * `subject.userId` filter) a collection scan with a blocking sort and gives
+ * `admin.dsr.sla_risk` no `{status, slaDueAt}` path.
+ *
+ * These cases are **append-only** additions and deliberately name the index by
+ * its *keys and options* rather than by its `name`, because the invariant the
+ * database owes is the path, not the label: renaming a declaration keeps them
+ * green, dropping, re-keying or de-partialling one turns them red.
+ */
+describe("index spec pins — OP-138 §20.3 data subject requests (ADR-0901)", () => {
+  /** Every declared spec on the §20.3 collection, whatever its name. */
+  function requestSpecs(): readonly IndexSpec[] {
+    return INDEX_SPECS.filter((spec) => spec.collection === COLLECTIONS.dataSubjectRequests);
+  }
+
+  /** The declared spec whose leading key is `field`, or `undefined`. */
+  function specLeading(field: string): IndexSpec | undefined {
+    return requestSpecs().find((spec) => spec.keys[0]?.[0] === field);
+  }
+
+  it('backs the caller\'s own list with {"subject.userId":1, receivedAt:-1}', () => {
+    const spec = specLeading("subject.userId");
+
+    expect(
+      spec,
+      "missing the §20.3 {subject.userId:1, receivedAt:-1} index on dataSubjectRequests: " +
+        "GET /me/data-requests sorts by receivedAt behind a subject.userId filter, so the read " +
+        "is a collection scan with a blocking sort without it"
+    ).toBeDefined();
+    expect(spec?.keys).toEqual([
+      ["subject.userId", 1],
+      ["receivedAt", -1],
+    ]);
+  });
+
+  it("backs the SLA sweep with a partial {status:1, slaDueAt:1} index on the open statuses", () => {
+    const spec = specLeading("status");
+
+    expect(
+      spec,
+      "missing the §20.3 {status:1, slaDueAt:1} index on dataSubjectRequests: the " +
+        "admin.dsr.sla_risk sweep reads open requests by deadline and has no path without it"
+    ).toBeDefined();
+    expect(spec?.keys).toEqual([
+      ["status", 1],
+      ["slaDueAt", 1],
+    ]);
+    // §20.3 scopes this index to the open statuses, so completed and rejected
+    // rows never pay for it and never compete in it.
+    expect(
+      spec?.partialFilterExpression,
+      "the {status:1, slaDueAt:1} index must be partial on the open statuses"
+    ).toEqual({ status: { $in: ["received", "verifying", "in_progress"] } });
+  });
+
+  it("backs the regulation breakdown with {regulation:1, status:1}", () => {
+    const spec = specLeading("regulation");
+
+    expect(
+      spec,
+      "missing the §20.3 {regulation:1, status:1} index on dataSubjectRequests"
+    ).toBeDefined();
+    expect(spec?.keys).toEqual([
+      ["regulation", 1],
+      ["status", 1],
+    ]);
+  });
+});
