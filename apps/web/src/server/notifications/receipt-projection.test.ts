@@ -267,6 +267,38 @@ describe("reduceDeliveryReceipt — the suppression key is the fan-out's digest 
     expect(projection.suppression?.contactHash).toBe(`sha256:${ledgerHash}`);
   });
 
+  it("U2: the suppression key follows the ledger's contact hash when the payload names another address", () => {
+    // Arrange — the ledger hashed an address that is *not* the one the provider
+    // echoed, so the two derivations cannot coincide: a reducer that re-hashes
+    // `receipt.contact` answers a key that no fan-out lookup ever builds
+    // (ADR-0888).
+    const receiptContact = `  ${EMAIL.toUpperCase()} `;
+    const ledgerHash: string = contactHashOf("previous@example.com");
+    expect(ledgerHash).not.toBe(contactHashOf(receiptContact));
+
+    // Act
+    const projection = reduceDeliveryReceipt({
+      receipt: receiptOf("hard_bounce", { contact: receiptContact }),
+      dispatch: sentDispatch({ contactHash: ledgerHash }),
+      now: NOW,
+    });
+
+    // Assert
+    expect(projection.suppression?.contactHash).toBe(`sha256:${ledgerHash}`);
+  });
+
+  it("U2: a ledger row with no contact hash falls back to the receipt's canonical digest", () => {
+    // Act — a legacy row that predates the digest carries `contactHash: null`.
+    const projection = reduceDeliveryReceipt({
+      receipt: receiptOf("hard_bounce", { contact: `  ${EMAIL.toUpperCase()} ` }),
+      dispatch: sentDispatch({ contactHash: null }),
+      now: NOW,
+    });
+
+    // Assert
+    expect(projection.suppression?.contactHash).toBe(suppressionKey(EMAIL));
+  });
+
   it("U2: contactHashOf returns one canonical lowercase SHA-256 hex digest for an address in any casing", () => {
     expect(contactHashOf(`  ${EMAIL.toUpperCase()} `)).toBe(contactHashOf(EMAIL));
     expect(contactHashOf(EMAIL)).toMatch(/^[0-9a-f]{64}$/);

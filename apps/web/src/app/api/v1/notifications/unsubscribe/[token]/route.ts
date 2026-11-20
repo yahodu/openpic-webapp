@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 
@@ -9,6 +7,7 @@ import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
+import { contactHashOf as sharedContactHashOf } from "@/server/notifications/contact-hash";
 import { listEnabledNotificationTypes } from "@/server/notifications/notification-types-read";
 import { toStoredPreferences, type StoredPreferences } from "@/server/notifications/preferences";
 import { upsertSuppression } from "@/server/notifications/suppression-strength";
@@ -98,9 +97,9 @@ function verifiedPayload(request: Request): UnsubscribeTokenPayload {
   return verdict.payload;
 }
 
-/** `sha256:` + the lowercase hex digest of a trimmed, lowercased contact (§19.6). */
+/** `sha256:` + the shared canonical digest of the contact (§19.6, ADR-0892 §1). */
 function contactHashOf(contact: string): string {
-  return `sha256:${createHash("sha256").update(contact.trim().toLowerCase()).digest("hex")}`;
+  return `sha256:${sharedContactHashOf(contact)}`;
 }
 
 /**

@@ -17,7 +17,9 @@
 - **Consumers:** `apps/web/src/server/notifications/receipt-projection.test.ts`
   (U1/U2) and `apps/web/src/test/integration/webhook-novu-receipts.test.ts`
   (I1–I8), plus the fixture
-  `apps/web/src/test/factories/novu-webhook.ts`. The modules they constrain are
+  `apps/web/src/test/factories/novu-webhook.ts` and
+  `apps/web/src/test/integration/notification-contact-digest.test.ts`
+  (I9–I13, the non-canonical-address pins of ADR-0888). The modules they constrain are
   `@/server/notifications/receipt-projection`,
   `@/server/notifications/contact-hash`, `@/app/api/v1/webhooks/novu/route`,
   `@/server/adapters/novu/schemas` and the suppression lookup the
