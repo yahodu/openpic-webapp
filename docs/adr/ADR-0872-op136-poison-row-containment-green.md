@@ -82,7 +82,14 @@ replaced by a skip. No summary is lost, only deferred until the row is fixed or 
 
 The grouped batch-discovery aggregate runs before the row loop and is **not** wrapped: a throw there
 stamps nothing and aborts the run, so the whole page retries next tick (ADR-0867 §2). Containment is
-scoped to a row's own check; a page-level read failure stays fatal. `I22` pins that half.
+scoped to a row's own check; a page-level read failure stays fatal. That half is **not** pinned in
+the suite: `I22` is the case of [ADR-0876](ADR-0876-op136-per-tenant-early-stop-pin.md) and it pins
+the **per-tenant early stop** of the grouped batch discovery (`pendingBatches`' `break` and its
+`$limit` budget), not the abort. No case in the suite makes the grouped `event_images` aggregate
+throw, so ADR-0867 §2's abort half stays unpinned today; the round-1 reviewer measured it out of
+band with a throwaway probe (see §Review — round 1). The follow-up card _OP-136 TEST — pin that a
+throwing grouped discovery aborts the whole indexed-check run and stamps nothing (ADR-0867 §2)_ owns
+the missing pin.
 
 ### 4. The pins are carried byte-identically
 
@@ -140,3 +147,107 @@ integration` fully green; coverage above the configured thresholds.
 - **Contain the discovery aggregate too.** Rejected: a page-level read that fails throws before any
   row is stamped, so retrying the same page next tick is already correct and cheap; containing it
   would only hide a broken read behind a permanent `errors` count.
+
+## Review — round 1 (post-merge verification at `b3f63308`)
+
+**Verdict: APPROVED WITH FINDINGS on PR #741.** One Medium finding and one Low finding are routed
+to other cards, and one Low citation finding (**F2**) is settled by the §3 correction above. The
+delivery is PR #741, reviewed at head `7f0de8de` and squash-merged as `b3f63308` before this append
+was written, so this section checks the landed bytes and is not a merge request. The reviewer made
+**zero edits** to the delivery — no test, fixture, helper or production line moved. Nothing in
+§Decision is retracted: §Context, §Decision 1, 2 and 4, §Consequences, §Evidence and §Alternatives
+stand as written, and §3 carries the one corrected citation.
+
+### The pins that landed are the pins that ran
+
+- The pin spec `apps/web/src/test/integration/job-pipeline-indexed-check.test.ts` is one git object
+  (`5fe966bc…add3a`, `sha256 5d4b9b1c…61a4`) at the RED head `7cc2b270`, at the reviewed head
+  `7f0de8de`, at the branch head `9bbadcfe`, at the squash `b3f63308` and on `origin/main`.
+- `docs/adr/ADR-0871-op136-poison-row-containment-pins.md` is likewise one object
+  (`a59cba03…6ef8`, `sha256 c859be63…cf6a`) across the same commits.
+- The spec reports `29 passed (29)` at the reviewed head and again on `b3f63308`. The delivery's five
+  paths hold no other test file, so the GREEN edits no test.
+
+### The containment is load-bearing — three mutations, all reverted
+
+Each mutation was applied to `apps/web/src/server/jobs/pipeline-indexed-check.ts`, run, and reverted
+with `git checkout --`. The file came back at `sha256 fa4f0b91…a72b4` after every arm, and
+`git status --short` was clean.
+
+| Mutation                                             | sha256 of the mutated file | Result                                                                          |
+| ---------------------------------------------------- | -------------------------- | ------------------------------------------------------------------------------- |
+| Rethrow after the chunk settles (the pre-GREEN file) | `0744e6b5…2112`            | `4 failed \| 25 passed` — `I26`, `I27` and the retired vacuity arms `I17`/`I23` |
+| Count kept, `warn` dropped                           | `9ab65e26…3d0f`            | `1 failed \| 28 passed` — `I27` alone                                           |
+| `warn` kept, count dropped                           | `5772abd9…9e25`            | `3 failed \| 26 passed` — `I26` on `expected +0 to be 1`, plus `I17`/`I23`      |
+
+The red sets separate counting from naming: `I27` is the only case that sees the `warn` go, and
+`I26` is the only case that sees the count go. Neither half rides on the other.
+
+### The abort half (ADR-0867 §2) holds — measured out of band
+
+No case in the suite makes the grouped `event_images` aggregate throw. This review therefore
+measured the property with a throwaway spec: a `Collection.prototype.aggregate` spy that throws on
+`event_images` makes the run **reject**. No row then carries `pipeline.indexedCheckedCounters` or
+`pipeline.indexedNotifiedAt`, `domain_events` stays empty, and the next tick over the same page
+resolves `scanned: 3`, `errors: 0` with one announcement per row. Containment did not swallow a
+page-level read failure. The probe file was deleted and the tree was clean afterwards. §3 above now
+states that the suite does not pin this half, and names the follow-up card that owns the pin.
+
+### Gates, all on the merged tree
+
+- `vitest run --project unit --project integration --coverage` — 335 files,
+  `4713 passed | 3 skipped (4716)`, exit `0`; statements 92.27, branches 81.18, functions 96.49,
+  lines 92.40 (branch gate 80).
+- `tsc -p apps/web/tsconfig.json --noEmit` — exit `0`.
+- `eslint .` — exit `0`, 0 errors, 188 pre-existing warnings.
+- `prettier --check` — clean.
+- The six ADR guards — 6 files, `236 passed (236)`.
+
+### Numbers
+
+- `ADR-0871` and `ADR-0872` are unique on the merged tree and on every open PR head, and the rows
+  ascend (`0867`, `0869`, `0871`, `0872`, `0876`).
+- Both ledger cells read `0882` on the merged tree. The trunk advanced them past the card's `0873`
+  and the orchestrator's `0875`; the union rule keeps the highest value, so no cell was lowered.
+- `ADR-0868` is still unminted on every ref.
+
+### Scope
+
+`git diff bffcc881..9bbadcfe --stat`, the trunk at review time, names five paths and no production
+path beyond the one job file:
+
+- `apps/web/src/server/jobs/pipeline-indexed-check.ts` (+18/−9)
+- `apps/web/src/test/integration/job-pipeline-indexed-check.test.ts` (carried, see above)
+- `docs/adr/ADR-0871-op136-poison-row-containment-pins.md` (+227)
+- `docs/adr/ADR-0872-op136-poison-row-containment-green.md` (+142)
+- `docs/adr/README.md` (+2 rows)
+
+The decision matches the decision card `t_39d7b19f` option 1 **plus** the `warn`. There is no
+option-2 or option-3 artefact, no dependency change, no route change and no contract change. The
+honesty audit is clean: no fixture-shaped logic, no test-environment conditional, no `@ts-ignore`,
+no new dependency and no TODO.
+
+### Landing, against the §9.1 gate (ADR-0318)
+
+G1 `MERGEABLE`/`BLOCKED` (the one-review rule, satisfied by the review comment posted before the
+merge) · G2 14 of 14 checks `COMPLETED`/`SUCCESS`, `audit` included at `07:21:48Z` · G3 all eleven
+gating names present · G4 empty range · G5 pass. The squash is `b3f63308`; the branch tree
+`76382864…` equals the squash tree; the squash is an ancestor of `origin/main`; local `main` equals
+`origin/main`.
+
+### Findings, routed
+
+- **F1 (Medium) — the `warn` passes the failure reason under a field the logging port drops.** The
+  `warn` passes the reason as `error`, but the port serializes only `err` (`serializeError`), so a
+  bare `Error` reaches the transport as `{}`. §1's snippet shows that shape, and `I27` hides the gap
+  with its own error-to-message replacer. Route: the Test Author pins the wire shape through the
+  real logger, then the Implementer renames one key and corrects §1's snippet. Owner card: _OP-136
+  TEST — pin that the contained-row warn carries the failure reason through the real logger (the
+  `error` field is dropped)_.
+- **F2 (Low) — this record's §3 cited `I22` for the abort half.** `I22` pins the per-tenant early
+  stop of the grouped discovery, not the abort. Corrected above, in place.
+- **F3 (Low) — ADR-0867 §2's abort half is unpinned.** The behaviour holds, measured out of band
+  here; the suite does not hold it. Route: the Test Author. Owner card: _OP-136 TEST — pin that a
+  throwing grouped discovery aborts the whole indexed-check run and stamps nothing (ADR-0867 §2)_.
+
+Nothing else is left unrouted, and no finding needs a change in this record beyond the §3 sentence.
