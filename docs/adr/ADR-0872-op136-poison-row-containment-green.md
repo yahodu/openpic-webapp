@@ -54,7 +54,7 @@ belongs to: on `rejected` it increments a run-local `errors` counter and emits o
 logger.warn("pipeline indexed row check failed", {
   event: "pipeline.indexed_check.row_failed",
   eventId: row._id.toHexString(),
-  error: outcome.reason,
+  err: outcome.reason,
 });
 ```
 
@@ -64,8 +64,14 @@ present meaning, and `defineCronJob` already reports a run with `errors > 0` at 
 (`cron-job.ts`), which is why that file is untouched.
 
 Counting and naming happen **per rejected row**, not per chunk: two rows that fail in one chunk are
-two errors and two warns, each naming its own event id. The field that carries the thrown error is
-`error`; the pins fix the event name and the id, not that key (ADR-0871 §1 item 4).
+two errors and two warns, each naming its own event id. The pins fix the event name and the id, not
+the field (§1 item 4 of [ADR-0871](ADR-0871-op136-poison-row-containment-pins.md)). The field that
+carries the thrown error is `err`, the logging port's canonical error key
+(`apps/web/src/server/logging/types.ts`: `LogField.err`, `SerializedError`), because
+`apps/web/src/server/logging/index.ts` serializes that key alone and every other key reaches a
+transport as a bare `Error` with its message dropped. This record first wrote `error` here;
+[ADR-0886](ADR-0886-op136-row-failed-warn-reason-pin.md) measured the consequence and its GREEN
+renamed the key (§Consequences).
 
 ### 2. Nothing else moves
 
@@ -110,8 +116,12 @@ clean-page control, and `I1`–`I25` untouched. The GREEN edits no test.
 - Known limit, measured: the follow-up card `t_3d67936e` exists because the shipped pins cannot tell
   per-row counting from per-chunk counting when the fails land in different chunks. This GREEN counts
   and names per row by construction; the measurement is in §Evidence.
-- The warn's field name for the thrown error stays unpinned; a contract that fixes one needs a new
-  pin.
+- The warn's field name for the thrown error is `err`, the logging port's canonical key. The record
+  first left it as `error` and pinned nothing, which read as a cosmetic choice: [ADR-0886](ADR-0886-op136-row-failed-warn-reason-pin.md)
+  measured that a transport then receives the bare `Error` — `{}`, or `{"code":91}` when the error
+  carries one — and the reason is gone. The name is a **wire property** of the log line, not a
+  spelling: it decides whether an operator sees why the row failed. `I31` pins that consequence (the
+  message on the wire) rather than the key, so a future carrier that keeps the message stays legal.
 
 ### Evidence at the GREEN head
 
