@@ -2198,3 +2198,230 @@ describe("pipeline-indexed-check: a persistently failing row is contained, count
     ).toEqual(page.map((row) => row.batchId).sort());
   });
 });
+
+/** The stored fields of an event row the discovery-abort case reads. */
+interface DiscoveryAbortRow {
+  readonly pipeline?: {
+    readonly indexedCheckedCounters?: unknown;
+    readonly indexedNotifiedAt?: unknown;
+  } | null;
+}
+
+/**
+ * Characterization / contract — a throw from the **grouped batch discovery**
+ * aborts the whole indexed-check run and stamps nothing, so the page retries as
+ * a whole (ADR-0867 §2; ADR-0872 §Review — round 1, finding **F3** of the review
+ * of the OP-136 GREEN `t_05687f95`, PR #741 / squash `b3f63308`; card
+ * `t_b13a68d7`, record ADR-0883).
+ *
+ * ## Why this block exists
+ *
+ * ADR-0872 §1 contains a **row's** failure: a candidate whose own OP-126 batch
+ * arm throws is counted in `errors`, named at `warn` and left unstamped, and the
+ * page keeps running (`I26`–`I29`). The other half of ADR-0867 §2 is the
+ * opposite: the run's **page-level** read — `pendingBatches`'s grouped
+ * `event_images` aggregate — is not contained. When it throws, discovery itself
+ * has failed, so no candidate row can be evaluated at all: the run rejects,
+ * nothing is stamped and nothing is emitted, and the next tick retries the same
+ * page.
+ *
+ * That half was claimed by ADR-0872 §3 to be pinned by `I22`, and it was not:
+ * `I22` is ADR-0876's per-tenant early-stop case, and no case in this file made
+ * an `aggregate` throw at all before this one. The property was true at the
+ * trunk only because it had been measured out of band, so a change that wrapped
+ * the discovery in a `catch` — silently turning a broken page read into a
+ * permanent `errors` count and a page that never advances — would have passed
+ * every case here.
+ *
+ * ## How to read it
+ *
+ * The failure is armed on the **collection**, not on a tenant or an event, and
+ * it stays armed for the whole first tick: this case is about the run's page
+ * read, not about a transient one-off. Every assertion is an observable — the
+ * run's own rejection, the stored `pipeline` fields of the seeded events, the
+ * outbox count, and, once the injection is cleared, the envelope of the tick
+ * that follows. No assertion names the query, the grouping, the sort or the
+ * catch, and nothing pins *when* the abort happens relative to the page read
+ * beyond the fact that no row was reached.
+ *
+ * This is a **characterization** pin (green on arrival): the shipped head
+ * already aborts the run, and the case exists so that it cannot stop.
+ */
+describe("pipeline-indexed-check: a throw from the grouped batch discovery aborts the whole run", () => {
+  /** The driver's own `Collection#aggregate`, captured before any spy replaces it. */
+  const driverAggregate = ((): typeof Collection.prototype.aggregate => {
+    const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "aggregate");
+    if (descriptor === undefined || typeof descriptor.value !== "function") {
+      throw new Error("the driver's Collection#aggregate is missing from the prototype");
+    }
+    return descriptor.value as typeof Collection.prototype.aggregate;
+  })();
+
+  /** The driver's own `aggregate` argument tuple. */
+  type DriverAggregateArgs = Parameters<typeof driverAggregate>;
+
+  /** The page this case reads: three clean candidates, the probe's measured size. */
+  const PAGE_SIZE = 3;
+
+  /** One seeded candidate: the event and the batch the worker settled for it. */
+  interface Candidate {
+    readonly event: SeededEvent;
+    readonly batchId: string;
+  }
+
+  /**
+   * Arm a driver failure on **every** `aggregate` of `collectionName`.
+   *
+   * The discovery is the only caller that aggregates this collection in the run,
+   * so the failure is the page read itself. The error carries `code: 91` (a
+   * replica-set election) — the shape of a transient read failure — and it is
+   * thrown, never resolved to an empty page: a discovery that answers "no
+   * batches" would let the run complete and silently lose every batch's §4.7
+   * summary. The counter proves the injection was reached rather than assumed.
+   *
+   * @param collectionName - The collection whose aggregate fails, matched on `this`.
+   * @returns The injection, whose `fired` count proves it was reached.
+   */
+  function failAggregateOn(collectionName: string): InjectedReadFailure {
+    let fired = 0;
+    const spy = vi.spyOn(Collection.prototype, "aggregate").mockImplementation(function (
+      this: Collection,
+      ...args: DriverAggregateArgs
+    ) {
+      if (this.collectionName === collectionName) {
+        fired += 1;
+        throw Object.assign(new Error(`injected failure: aggregate on ${collectionName}`), {
+          code: 91,
+        });
+      }
+      return driverAggregate.call(this, ...args);
+    });
+
+    return {
+      fired: () => fired,
+      restore: () => {
+        spy.mockRestore();
+      },
+    };
+  }
+
+  /**
+   * Seed one `indexed` candidate (contract §4.1) whose two-file batch the worker
+   * already settled (§16.2, §16.3) — `I26`/`I29`'s fixture shape.
+   *
+   * @param slug - A name unique to the candidate, which seeds its content hashes.
+   * @returns The event and its batch id.
+   */
+  async function seedCandidate(slug: string): Promise<Candidate> {
+    const event = await seedEvent(ALL_PROCESSED);
+    const batchId = new ObjectId().toHexString();
+    const uploader = new ObjectId();
+    for (const sequence of [1, 2]) {
+      await seedCompletedSession(event, {
+        batchId,
+        createdByUserId: uploader,
+        contentHash: hashFor(`${slug}-${String(sequence)}`),
+        fileName: `DSC_A${String(sequence).padStart(3, "0")}.JPG`,
+      });
+      await seedBatchImage(event, { batchId, status: "done", sequence });
+    }
+    return { event, batchId };
+  }
+
+  /**
+   * Read the stored `pipeline` fields of one seeded event.
+   *
+   * @param eventId - The event to read.
+   * @returns The row's `pipeline` sub-document, if any.
+   */
+  async function storedPipelineOf(eventId: ObjectId): Promise<DiscoveryAbortRow | null> {
+    return (await app.db
+      .collection(COLLECTIONS.events)
+      .findOne({ _id: eventId })) as unknown as DiscoveryAbortRow | null;
+  }
+
+  /**
+   * Run the job once over the block's page.
+   *
+   * @param at - The instant the run's windows are evaluated at.
+   * @returns The §10.2 run envelope (a rejection is the caller's to assert).
+   */
+  async function runPage(
+    at: Date
+  ): Promise<Awaited<ReturnType<typeof pipelineIndexedCheckJob.run>>> {
+    return pipelineIndexedCheckJob.run({
+      requestedLimit: PAGE_SIZE,
+      clock: fixedClock(at),
+      logger: recordingLogger(),
+    });
+  }
+
+  it("I30: the run rejects, stamps nothing and emits nothing, and the next tick retries the page", async () => {
+    // Arrange — three clean `indexed` candidates, each with a worker-settled
+    // two-file batch, all of them still on the candidate page.
+    const page: Candidate[] = [];
+    for (let index = 0; index < PAGE_SIZE; index += 1) {
+      page.push(await seedCandidate(`op136-discovery-abort-${String(index)}`));
+    }
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+
+    // Act — the grouped discovery's own aggregate throws for the whole tick.
+    const injection = failAggregateOn(COLLECTIONS.eventImages);
+    try {
+      const run = runPage(NOW);
+
+      // Assert — a page-level read failure is fatal, unlike a row-level one.
+      await expect(
+        run,
+        "a failing batch-discovery read must abort the run, not be absorbed into its errors"
+      ).rejects.toThrow(/injected failure: aggregate/);
+
+      // Sanity — the armed aggregate was reached, or the case proves nothing.
+      expect(
+        injection.fired(),
+        "the discovery's aggregate must have failed, or the seed never reached it"
+      ).toBeGreaterThanOrEqual(1);
+
+      // Assert — nothing was stamped: every seeded event keeps both pipeline
+      // fields unset, so every one of them is still a candidate…
+      const stored = await Promise.all(page.map((row) => storedPipelineOf(row.event.eventId)));
+      expect(
+        stored.map((row) => row?.pipeline?.indexedCheckedCounters),
+        "an aborted run must not stamp the checked triple on any row"
+      ).toEqual(page.map(() => undefined));
+      expect(
+        stored.map((row) => row?.pipeline?.indexedNotifiedAt),
+        "an aborted run must not latch any row as notified"
+      ).toEqual(page.map(() => undefined));
+
+      // …and nothing was emitted.
+      expect(
+        await app.db.collection(COLLECTIONS.domainEvents).countDocuments({}),
+        "an aborted run must not emit a single domain event"
+      ).toBe(0);
+    } finally {
+      injection.restore();
+    }
+
+    // Act — the read is cleared: the next tick over the same page.
+    const retried = await runPage(new Date(NOW.getTime() + NEXT_BUCKET_MS));
+
+    // Assert — the page is retried as a whole, with nothing to report…
+    expect(retried.scanned, "the retried page is read whole").toBe(PAGE_SIZE);
+    expect(retried.errors, "the retried page has no failing row to count").toBe(0);
+
+    // …every row is announced exactly once by that tick…
+    const announced = await Promise.all(page.map((row) => indexedRowsFor(row.event.eventId)));
+    expect(
+      announced.map((rows) => rows.length),
+      "the retry announces every row of the page it aborted on, once each"
+    ).toEqual(page.map(() => 1));
+
+    // …and every row is stamped, so it leaves the candidate page.
+    const stamped = await Promise.all(page.map((row) => storedPipelineOf(row.event.eventId)));
+    expect(
+      stamped.map((row) => row?.pipeline?.indexedCheckedCounters),
+      "the retried tick stamps every row it evaluated with its checked triple"
+    ).toEqual(page.map(() => ({ imageCount: 3, processedImageCount: 3, failedImageCount: 0 })));
+  });
+});
