@@ -837,6 +837,17 @@ async function currentPolicies(): Promise<PolicyEntry[]> {
   return body.policies as PolicyEntry[];
 }
 
+/**
+ * A `terms_of_service` triple no seed in this file ships, so the public route
+ * cannot answer it from a literal: it must read `platformSettings.legal`
+ * (§8.2, ADR-0898 §4; the pin is ADR-0900).
+ */
+const SEEDED_TERMS = {
+  version: "tos-2099-07",
+  url: "https://openpic.in/legal/terms/2099-07",
+  effectiveFrom: "2099-07-01T00:00:00.000Z",
+} as const;
+
 describe("I7 — the public policy document is cacheable for an hour (§8.2)", () => {
   it("I7: the current-policy answer carries the public one-hour cache header", async () => {
     const response = await legalPoliciesHandler(getRequest("/api/v1/legal/policies/current"));
@@ -863,6 +874,53 @@ describe("I7 — the public policy document is cacheable for an hour (§8.2)", (
     const biometric = policies.find((entry) => entry.purpose === BIOMETRIC_PURPOSE);
     expect(biometric?.version).toBe(settings.legal.biometricPolicyVersion);
     expect(biometric?.url).toBe(settings.legal.biometricPolicyUrl);
+  });
+
+  it("I7b: the default seed serves the settings' own terms document", async () => {
+    const policies = await currentPolicies();
+    const settings = await currentSettings();
+
+    // The control half: the terms entry is a real document from the seeded
+    // singleton, so the distinctive pin below cannot pass on an empty answer.
+    const terms = policies.find((entry) => entry.purpose === TERMS_PURPOSE);
+    expect(terms?.version).toBe(settings.legal.termsPolicyVersion);
+    expect(terms?.url).toBe(settings.legal.termsPolicyUrl);
+    expect(terms?.effectiveFrom).toBe(settings.legal.effectiveFrom);
+  });
+
+  it("I7c: the terms document follows a distinctive seeded platformSettings.legal triple", async () => {
+    const shipped = await currentSettings();
+    // The seed must differ from the document the defaults carry, or a
+    // hard-coded answer would satisfy this case by accident.
+    expect({
+      version: shipped.legal.termsPolicyVersion,
+      url: shipped.legal.termsPolicyUrl,
+      effectiveFrom: shipped.legal.effectiveFrom,
+    }).not.toEqual(SEEDED_TERMS);
+
+    await app.db.collection(PLATFORM_SETTINGS).deleteMany({});
+    await app.db.collection(PLATFORM_SETTINGS).insertOne(
+      makePlatformSettingsDocument({
+        compliance: { slaDays: { ...SLA_DAYS } },
+        legal: {
+          ...shipped.legal,
+          termsPolicyVersion: SEEDED_TERMS.version,
+          termsPolicyUrl: SEEDED_TERMS.url,
+          effectiveFrom: SEEDED_TERMS.effectiveFrom,
+        },
+      })
+    );
+    invalidatePlatformSettings();
+
+    const policies = await currentPolicies();
+    const terms = policies.find((entry) => entry.purpose === TERMS_PURPOSE);
+    if (terms === undefined) {
+      throw new Error("the policies endpoint served no terms_of_service document");
+    }
+
+    expect(terms.version).toBe(SEEDED_TERMS.version);
+    expect(terms.url).toBe(SEEDED_TERMS.url);
+    expect(terms.effectiveFrom).toBe(SEEDED_TERMS.effectiveFrom);
   });
 });
 
