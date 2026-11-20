@@ -122,6 +122,13 @@ export const COLLECTIONS = {
    */
   consents: "consents",
   /**
+   * Data-subject requests (schema §20.3; OP-138, ADR-0898 §4). One row per
+   * access/erasure/portability (and sibling) request, carrying the regulation,
+   * the resolved scope, the statutory deadline and the execution log the data
+   * subject reads back.
+   */
+  dataSubjectRequests: "dataSubjectRequests",
+  /**
    * Attendee selfies (schema §16.4). The row carries the face vector, the
    * liveness and quality verdicts and the `profileId` a withdrawal deletes by
    * (OP-131, ADR-0790).
