@@ -220,3 +220,14 @@ contain 'injected failure: find on event_images'`, received
 - Production file restored byte-identically after every arm:
   `sha256 fa4f0b917976721090e799b582fc52b754a028e7f90d5afcdceb7cdac39a72b4`,
   `git status --short` naming only the spec.
+- CI at the pushed head `7d0af839` (PR
+  [#751](https://github.com/yahodu/openpic-webapp/pull/751), **draft**):
+  `unit_test` pass (46 s), `lint` pass (2 m 2 s), `audit`, `audit-dev`,
+  `secret-scan`, `env-changes`, `validate-branch-name`, `validate-pr-title`,
+  `Analyze (javascript-typescript)` and `Assert CI evidence for the pushed head`
+  pass. `ci` and `test_coverage` **fail by design**: the `ci` job's integration run
+  reports `1 failed | 148 passed (149)` and the one failure is `I31` with the
+  assertion above, and `test_coverage` exits on that same case. A RED-by-design
+  draft (OP-93 / [ADR-0306](ADR-0306-op101-stale-branch-deletion.md)) is never
+  squash-merged; the GREEN lands the one-word fix and both jobs go green with the
+  case carried byte-identically.
