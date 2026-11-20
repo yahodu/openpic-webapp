@@ -80,7 +80,10 @@ subsequent fan-out is skipped" is unsatisfiable until the digest is shared.
    route. The payment inbox's first act is to compare the path segment with
    `config.payments.provider`; a transport receipt has no such selector, and
    folding two provider families into one segment comparison would make a
-   transport key and a payment key collide.
+   transport key and a payment key collide. The dispatch lookup is by
+   **`providerRef.messageId` alone**: the fan-out writes the lane-neutral
+   `providerRef.provider: "transport"` for both the memory and the Novu adapter,
+   so a vendor-shaped provider filter would never match a real row.
 3. **Signature: Svix, which is what Novu uses today.** Headers `webhook-id`,
    `webhook-timestamp` and `webhook-signature: v1,<base64>`; the signed content
    is **`<id>.<timestamp>.<rawBody>`** keyed by the base64-decoded
@@ -103,12 +106,11 @@ subsequent fan-out is skipped" is unsatisfiable until the digest is shared.
    normalized receipt + matched dispatch + `now` in, `{ processResult,
 dispatchPatch, suppression }` out. `projectDeliveryReceipt(inboxId, { db?,
 clock? })` is the applier (I1–I8): re-read the inbox row, parse `rawPayload`
-   through the adapter, look the dispatch up by
-   `{providerRef.provider, providerRef.messageId}`, apply the patch and upsert
-   the suppression. A row that cannot be parsed is `processResult: "error"` with
-   a `processError` naming the offending field, logged at `error` with the
-   provider — the provider is never told, exactly as the payment projection
-   records its own failures so the sweep can retry them.
+   through the adapter, look the dispatch up by `providerRef.messageId` alone,
+   apply the patch and upsert the suppression. A row that cannot be parsed is
+   `processResult: "error"` with a `processError` naming the offending field,
+   logged at `error` with the provider — the provider is never told, exactly as
+   the payment projection records its own failures so the sweep can retry them.
 6. **The fan-out resolves suppressions.** `fanOutToRecipient` builds the
    recipient's suppression list from `notificationSuppressions` (keyed
    `{channel, contactHash: "sha256:" + contactHashOf(contact)}`) and passes it to
@@ -190,6 +192,13 @@ apps/web/src/app/api/v1/webhooks` is **empty**, so it transfers to this head
 
 ## Out of scope (not pinned, deliberately)
 
+- **An MSW handler for the delivery itself.** The card words I6 as "an MSW payload
+  fixture"; the receipt route is _our own_ HTTP boundary, so the suite invokes the
+  handler directly with a constructed `Request` and the `novu-webhook.ts`
+  factory — exactly as the OP-108 inbox spec drives `[provider]/route.ts`
+  (ADR-0440) — and MSW stays where it belongs, on third-party HTTP (payments,
+  Upstash). The factory is the fixture the card asks for; an MSW layer over our
+  own route would exercise the mock, not the route.
 - **The storage webhook** (`POST /api/v1/webhooks/storage`,
   `STORAGE_WEBHOOKS_ENABLED`, §10.1.4) — the GREEN card's §5 makes it optional
   behind a flag; it shares no code with the receipt projection beyond the inbox.

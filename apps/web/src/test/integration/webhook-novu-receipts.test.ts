@@ -71,8 +71,9 @@ import {
  *   confined there (ADR-0875 §3).
  * - The projection is `projectDeliveryReceipt(inboxId, { db?, clock? })` from
  *   `@/server/notifications/receipt-projection` (the same seam the sweep can
- *   re-project), and the dispatch lookup is by
- *   `{providerRef.provider, providerRef.messageId}` (§10.1.3).
+ *   re-project), and the dispatch lookup is by `providerRef.messageId` — the
+ *   fan-out's `providerRef.provider` is the lane-neutral `"transport"` tag for
+ *   both adapters, so a vendor-shaped filter would never match (§10.1.3).
  * - The fan-out (`runNotificationFanOut`) resolves a candidate's suppressions
  *   from `notificationSuppressions` — keyed `{channel, contactHash}` with
  *   `contactHash = "sha256:" + contactHashOf(contact)` — instead of passing the
