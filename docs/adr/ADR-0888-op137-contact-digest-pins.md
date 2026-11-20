@@ -14,8 +14,10 @@
   (which recorded the ledger's private raw hash as a known limit), and the
   OP-99 unsubscribe route's suppression write (ADR-0240).
 - **Consumers:** `apps/web/src/test/integration/notification-contact-digest.test.ts`
-  (the new spec), and `apps/web/src/server/notifications/receipt-projection.test.ts`
-  (two appended U2 cases).
+  (the new spec), `apps/web/src/server/notifications/receipt-projection.test.ts`
+  (two appended U2 cases), and `apps/web/src/test/integration/notification-fan-out.test.ts`
+  (`I14`/`I15`, the writers this pack could not see — appended by
+  [ADR-0897](ADR-0897-op137-contact-digest-writer-pins.md)).
 - **Number allocation:** at the pin base `efa034ff` both `Next free` cells read
   `0886`, the trunk's highest record is `0885`, and the sweep found two numbers
   above it held by open refs: `ADR-0886-op136-row-failed-warn-reason-pin.md`
