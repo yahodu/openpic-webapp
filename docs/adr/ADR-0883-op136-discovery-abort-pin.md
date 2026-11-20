@@ -35,7 +35,9 @@
   `git rev-list --objects --all -- docs/adr` also tops out at `0882`. The other
   open PR heads — #743 (max `0881`) and #272 (max `0306`) — carry no `ADR-0883`.
   So this record takes the highest in-flight number plus one and advances **both**
-  cells to `0884`. No range is re-cut.
+  cells to `0884`. No range is re-cut. `0882` then landed on the trunk as
+  `c92ca81f` (PR #745) before this branch merged `origin/main`, so its row now
+  sits directly below this record's; see §Reconciliation.
 
 ## Context — a claim, a measurement, and nothing in the suite
 
@@ -253,3 +255,29 @@ this change: `@typescript-eslint/no-unnecessary-type-assertion`, cleared with
 `git diff --numstat` is `227 0` in the spec and `32 2` in `docs/adr/README.md`
 (two cells, one index row, one note), plus this record (+255 lines, a new file).
 No number outside `0883` is consumed.
+
+## Reconciliation — the merged `origin/main` after minting
+
+The number above was swept against `origin/main` `acade549`, where `0882` was in
+flight. It merged first: the branch `OP-137-task-delivery-receipts-green` landed
+as `c92ca81f` (PR #745), followed by the release commit `41aec3b0`, and this
+branch then merged `origin/main` to clear the `docs/adr/README.md` conflict the
+merge ref reported (`mergeable CONFLICTING`, `mergeStateStatus DIRTY` — §9.1 G1).
+
+The resolution is a union that keeps the higher cell and both sides' rows and
+notes:
+
+- `docs/adr/README.md` carries ADR-0882's index row **and** this record's, in
+  ascending order, with both notes appended after ADR-0881's;
+- both `Next free` cells stay `0884`: the merged trunk read `0883` (ADR-0882
+  advanced them), and ADR-0300 §11 item 20 forbids lowering a cell, so the
+  higher of `0883` and `0884` wins;
+- no other path conflicted, and the spec's diff against the merged trunk is still
+  `227 0`, so the 29 delivered cases are still byte-identical and the pin that
+  ran is the pin that is being merged;
+- the gates of §Evidence were re-run on the merged tree, and the six `adr-*`
+  guards and the focused spec are re-quoted in the PR body against the new head.
+
+Numbers in §Evidence that name the base (`acade549`) are the base this delivery
+was cut from and measured on; they are not restated, because the merge changes
+neither the spec nor the production module.
