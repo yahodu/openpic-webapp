@@ -103,7 +103,7 @@ new block, its three helpers and one import line; the 30 delivered cases and eve
 existing helper, fixture and constant stay byte-identical):
 
 - **Block:** `describe("pipeline-indexed-check: the contained-row warn carries the failure reason on the wire")`
-- **Case:** `I31: the warn the transport receives carries the failure reason, not only the event id`
+- **Case:** `I32: the warn the transport receives carries the failure reason, not only the event id`
 
 It seeds **one** `indexed` candidate of `I26`'s shape (a clean event with a
 two-file batch the worker already settled), arms `failFindWhen` on that event's
@@ -146,7 +146,7 @@ The pin is a **property** pin: it accepts any carrier whose serialized form keep
 the message. Measured at the pin head, with the production file restored
 byte-identically after each arm:
 
-| arm                           | change to `pipeline-indexed-check.ts` | `I31`                                                                                                                                                                                                                                            |
+| arm                           | change to `pipeline-indexed-check.ts` | `I32`                                                                                                                                                                                                                                            |
 | ----------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | M0 (the shipped shape)        | none — `error: outcome.reason`        | **`1 failed`** — `expected '{"env":"test","event":"pipeline.indexed_check.row_failed","eventId":"…","error":{"code":91},"ts":"…","level":"warn","msg":"pipeline indexed row check failed"}' to contain 'injected failure: find on event_images'` |
 | M1 (the GREEN)                | `error:` → `err:`                     | `1 passed`                                                                                                                                                                                                                                       |
@@ -167,7 +167,8 @@ order or the retry state — `I26`, `I28`, `I29` and `I30` own those.
 ### 4. The suite's other cases carry over byte-identically
 
 The diff's test side is additions only. At the pin head the file reports
-`1 failed | 30 passed (31)`: `I31` alone is red, at an assertion on the wire
+`1 failed | 30 passed (31)`: the appended case — `I32`, numbered `I31` then
+(§Consequences) — is red alone, at an assertion on the wire
 entry, and the 30 delivered cases (`I1`–`I30`) keep their behaviour — the
 containment envelope, the warn's event name and id, the retry and stamp shape,
 the clean-page control and the discovery abort.
@@ -178,7 +179,7 @@ the clean-page control and the discovery abort.
   `{ name, message, stack }` under the port's documented key — instead of a line
   that names the event and then drops the error body.
 - `I27` stays as delivered and remains green: it pins the event name, the id and
-  that _some_ projection of the fields carries the message. `I31` is the case that
+  that _some_ projection of the fields carries the message. `I32` is the case that
   can see the wire, so the two together pin naming **and** reason.
 - The pin is red at the trunk until the GREEN lands, so the branch is a draft and
   is never squash-merged (OP-93 / [ADR-0306](ADR-0306-op101-stale-branch-deletion.md)).
@@ -186,9 +187,9 @@ the clean-page control and the discovery abort.
   string projection passes it while dropping `name`/`stack`; the documented-key
   requirement is stated by the GREEN, not enforced here.
 - Hotspot: `apps/web/src/test/integration/job-pipeline-indexed-check.test.ts`
-  carries an in-flight appended case on PR
+  carries an appended case on PR
   [#749](https://github.com/yahodu/openpic-webapp/pull/749) (the multi-row
-  containment sibling pin), and that case is
+  containment sibling pin, whose own record is ADR-0887), and that case is
   `I31: every failing row is counted and named, including two in one chunk` — not
   `I30`, as an earlier draft of this paragraph said: `I30` is already a **trunk**
   case, [ADR-0883](ADR-0883-op136-discovery-abort-pin.md)'s discovery abort, so
@@ -200,6 +201,13 @@ the clean-page control and the discovery abort.
   helper or fixture moves. Re-sweep with
   `grep -oE 'it\("I[0-9]+' <spec> | sort | uniq -c | awk '$1>1'` before either
   merge; it must print nothing.
+- The rule applied here, and the trunk is where it landed: PR #749 merged first
+  (squash `c96c2d18`) and owns `I31`, so this GREEN renamed **its own** case to
+  `I32` — the wire case, "the warn the transport receives carries the failure
+  reason, not only the event id" — and only the title string moved. The case was
+  `I31` at the pin head, so every figure in §4 and §Evidence was measured under
+  that id; its body, its helpers and `I1`–`I31` are byte-identical across the
+  rename.
 
 ## Alternatives
 
@@ -219,13 +227,14 @@ the clean-page control and the discovery abort.
 
 ## Evidence at the pin head
 
-- Focused spec: `1 failed | 30 passed (31)` — `I31` alone, `AssertionError: the
+- Focused spec: `1 failed | 30 passed (31)` — the appended case (`I32` now,
+  `I31` then) alone, `AssertionError: the
 row-failed warn must reach the transport carrying the thrown error's message, or
 an operator cannot tell why the event failed: expected '{"env":"test",…}' to
 contain 'injected failure: find on event_images'`, received
   `{"env":"test","event":"pipeline.indexed_check.row_failed","eventId":"6b0013f3…","error":{"code":91},"ts":"…","level":"warn","msg":"pipeline indexed row check failed"}`
   — the field arrived as `{"code":91}`, the message gone.
-- The switch case `-t "I31"`: `1 failed | 30 skipped (31)` at the pin head;
+- The switch case `-t "I32"` (`-t "I31"` at the pin head): `1 failed | 30 skipped (31)` there;
   `1 passed | 30 skipped (31)` under M1 and under M2 (§3).
 - Production file restored byte-identically after every arm:
   `sha256 fa4f0b917976721090e799b582fc52b754a028e7f90d5afcdceb7cdac39a72b4`,
@@ -236,7 +245,7 @@ contain 'injected failure: find on event_images'`, received
   `secret-scan`, `env-changes`, `validate-branch-name`, `validate-pr-title`,
   `Analyze (javascript-typescript)` and `Assert CI evidence for the pushed head`
   pass. `ci` and `test_coverage` **fail by design**: the `ci` job's integration run
-  reports `1 failed | 148 passed (149)` and the one failure is `I31` with the
+  reports `1 failed | 148 passed (149)` and the one failure is `I32` with the
   assertion above, and `test_coverage` exits on that same case. A RED-by-design
   draft (OP-93 / [ADR-0306](ADR-0306-op101-stale-branch-deletion.md)) is never
   squash-merged; the GREEN lands the one-word fix and both jobs go green with the
