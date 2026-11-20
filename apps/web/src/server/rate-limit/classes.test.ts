@@ -52,6 +52,7 @@ const CONTRACT_CLASSES: readonly string[] = [
   "admin",
   "webhook",
   "internal",
+  "compliance.dsr",
 ];
 
 /**
@@ -103,9 +104,17 @@ const CONTRACT_RULES: ReadonlyArray<readonly [RateLimitClass, readonly RateLimit
  * production union: a renamed or removed member fails `tsc` instead of silently
  * missing the table. It carries the same exact `toEqual` assertion
  * `CONTRACT_RULES` does, so neither the limit nor the window can drift.
+ *
+ * `compliance.dsr` is the OP-138 row (ADR-0898 §4): contract §8.1's
+ * "5 / day / principal" for `POST /me/data-requests`. Contract §0.11 has no DSR
+ * class yet, so `CONTRACT_RULES` — the trunk-owned copy of §0.11 — cannot carry
+ * it; the row lives here for the same reason `attendee.session` does, and
+ * `CONTRACT_CLASSES` below names it so the exhaustiveness case fails until the
+ * production table grows it.
  */
 const LANE_RULES: ReadonlyArray<readonly [RateLimitClass, readonly RateLimitRule[]]> = [
   ["attendee.session", [{ scope: "ip", limit: 60, windowSeconds: 3600 }]],
+  ["compliance.dsr", [{ scope: "user", limit: 5, windowSeconds: 86400 }]],
 ];
 
 /**
@@ -207,6 +216,15 @@ describe("failure policy", () => {
     "admin",
     "internal",
     "webhook",
+    // `compliance.dsr` fails **open** (ADR-0898 §4): the caller is authenticated
+    // (a user, or an attendee session already capped by `attendee.session` at
+    // 60 / hour / IP) and a DSR writes one self-scoped, `Idempotency-Key`-guarded
+    // row that no external party ever receives, so an unavailable limiter must
+    // not answer `503` and refuse a statutory right for the duration of the
+    // outage. `FAIL_CLOSED` is argued from the opposite facts — unauthenticated,
+    // and every allowed call mints a durable credential or sends to a third
+    // party (ADR-0787 §2) — and neither holds here.
+    "compliance.dsr",
   ];
 
   it("U4: assigns a policy to every contract class (none can be added unpoliced)", () => {

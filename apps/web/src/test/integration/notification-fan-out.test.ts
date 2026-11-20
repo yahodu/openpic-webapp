@@ -7,6 +7,7 @@ import { novuTransport } from "@/server/adapters/novu/novu-transport";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
 import { closeMongoClient } from "@/server/db/mongo";
+import { contactHashOf } from "@/server/notifications/contact-hash";
 import { runNotificationFanOut, type RecipientRepository } from "@/server/notifications/fan-out";
 import type { MessageTransport } from "@/server/notifications/message-transport";
 import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
@@ -881,6 +882,147 @@ describe("runNotificationFanOut — the subject re-add is scoped to dedupe-free 
       );
       expect(rows.some((row) => String(row.userId) === accountHolder)).toBe(false);
       expect(rows.filter((row) => String(row.userId) === peer)).toHaveLength(1);
+    });
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * OP-137 follow-up (review finding F1; ADR-0888, ADR-0897) — the ledger
+ * writers the I9 pin cannot see.
+ *
+ * `notificationDispatches.contactHash` is derived at three sites in
+ * `@/server/notifications/fan-out`: the quiet-hours `deferred` row below, the
+ * `queued` row an outbound `send` inserts (email or phone), and the synchronous
+ * single-dispatch builder. `notification-contact-digest.test.ts` pins only the
+ * email half of the second one (I9), so a regression that re-derives the raw
+ * `sha256(destination)` at either of the other two is invisible to the suite —
+ * the same defect, at a writer no pin can see.
+ *
+ * I14 pins the `deferred` writer with an email destination; I15 pins the
+ * `queued` writer with a phone destination. Both seed the contact in the only
+ * shape in which a second digest is observable — padded (and, for the address,
+ * mixed-case) as stored — because a canonical value makes the raw and the
+ * shared digest identical (ADR-0888). Neither case re-implements `sha256`: the
+ * expectation is the shared `contactHashOf` itself, so a change to the canonical
+ * form moves the writer and the expectation together.
+ */
+
+/** A stored address that is neither trimmed nor lower-cased. */
+const STORED_DIGEST_EMAIL = "  Probe.Recipient@Example.COM ";
+
+/** The canonical form {@link STORED_DIGEST_EMAIL} normalises to. */
+const CANONICAL_DIGEST_EMAIL = "probe.recipient@example.com";
+
+/** A stored number with surrounding whitespace — the only non-canonical shape a phone carries. */
+const STORED_DIGEST_PHONE = "  +919876543210  ";
+
+/** The window an event falls inside at `T0` (05:30 `Asia/Kolkata`). */
+const DIGEST_QUIET_HOURS = {
+  enabled: true,
+  start: "22:00",
+  end: "07:00",
+  timeZone: "Asia/Kolkata",
+} as const;
+
+/** Fields of a stored dispatch row these cases read (schema §19.5). */
+interface DigestDispatch {
+  readonly typeKey?: unknown;
+  readonly channel?: unknown;
+  readonly channelGroup?: unknown;
+  readonly status?: unknown;
+  readonly contactHash?: unknown;
+}
+
+/** Read every stored dispatch row of a throwaway database. */
+async function digestDispatches(test: TestDb): Promise<readonly DigestDispatch[]> {
+  return test.db.collection<DigestDispatch>(COLLECTIONS.dispatches).find({}).toArray();
+}
+
+describe("runNotificationFanOut — the deferred ledger row carries the shared digest (I14)", () => {
+  it("I14: a quiet-hours deferred email records the shared digest of a padded, mixed-case stored address", async () => {
+    await withTestDb(async (test) => {
+      // Arrange — the stored bytes are not their own canonical form, so a raw
+      // `sha256(destination)` and the shared digest must differ.
+      expect(STORED_DIGEST_EMAIL).not.toBe(CANONICAL_DIGEST_EMAIL);
+      expect(contactHashOf(STORED_DIGEST_EMAIL)).toBe(contactHashOf(CANONICAL_DIGEST_EMAIL));
+
+      const tenantId = new ObjectId().toHexString();
+      const accountHolder = newUserId();
+      await seedRecipient(test.db, {
+        userId: accountHolder,
+        email: STORED_DIGEST_EMAIL,
+        quietHours: DIGEST_QUIET_HOURS,
+      });
+
+      const transport = memoryMessageTransport();
+      await insertEvent(test.db, {
+        eventKey: "account.welcome",
+        tenantId,
+        actorRef: { kind: "user", id: accountHolder },
+        subjectRef: { kind: "user", id: accountHolder },
+        payload: { actionUrl: "https://app.openpic.in/welcome" },
+      });
+
+      // Act — `T0` is inside the 22:00→07:00 window, so the email is parked as
+      // `deferred` for the release cron (PRE-1 above pins the in-app half).
+      await runNotificationFanOut(runOptions(test.db, transport, fixedRecipients()));
+
+      // Assert — nothing left the building, exactly one `deferred` row, and its
+      // `contactHash` is the digest a suppression lookup on this address is
+      // keyed by (`loadSuppressions` builds `"sha256:"` + the same value).
+      expect(transport.outbox).toHaveLength(0);
+      const deferred = (await digestDispatches(test)).filter((row) => row.channel === "email");
+      expect(deferred).toHaveLength(1);
+      expect(deferred.at(0)).toMatchObject({
+        typeKey: "account.welcome",
+        status: "deferred",
+      });
+      expect(deferred.at(0)?.contactHash).toBe(contactHashOf(STORED_DIGEST_EMAIL));
+    });
+  });
+});
+
+describe("runNotificationFanOut — the queued ledger row carries the shared digest on the phone channel (I15)", () => {
+  it("I15: the queued sms row records the shared digest of a padded stored phone number", async () => {
+    await withTestDb(async (test) => {
+      // Arrange — padding is the only non-canonical shape a stored number can
+      // carry, and it is enough to separate the raw hash from the shared one.
+      expect(STORED_DIGEST_PHONE).not.toBe(STORED_DIGEST_PHONE.trim());
+      expect(contactHashOf(STORED_DIGEST_PHONE)).toBe(contactHashOf(STORED_DIGEST_PHONE.trim()));
+
+      const tenantId = new ObjectId().toHexString();
+      const invitee = newUserId();
+      const organizer = newUserId();
+      const invitationId = new ObjectId().toHexString();
+      await seedRecipient(test.db, { userId: invitee, phone: STORED_DIGEST_PHONE });
+
+      const transport = memoryMessageTransport();
+      const recipients = fixedRecipients({ listEventRoleMembers: promised([invitee]) });
+      await insertEvent(test.db, {
+        eventKey: "collab.invite.sent",
+        tenantId,
+        actorRef: { kind: "user", id: organizer },
+        subjectRef: { kind: "invitation", id: invitationId },
+        payload: {
+          inviteId: invitationId,
+          eventId: new ObjectId().toHexString(),
+          eventName: "Rahul & Priya's Wedding",
+          actionUrl: "https://app.openpic.in/invitations/abc",
+        },
+      });
+
+      // Act — quiet hours are disabled in the seed, so the mobile group resolves
+      // `whatsapp`→`sms` and the row is inserted `queued` before the send.
+      await runNotificationFanOut(runOptions(test.db, transport, recipients));
+
+      // Assert — the row the `queued` writer inserted carries the shared digest
+      // of the stored number; `sent` proves it is that row, not a skip, and the
+      // outbox proves the number was actually dispatched.
+      const sms = (await digestDispatches(test)).filter((row) => row.channel === "sms");
+      expect(sms).toHaveLength(1);
+      expect(sms.at(0)).toMatchObject({ channelGroup: "mobile", status: "sent" });
+      expect(sms.at(0)?.contactHash).toBe(contactHashOf(STORED_DIGEST_PHONE));
+      expect(transport.outbox.map((message) => message.channel)).toContain("sms");
     });
   });
 });

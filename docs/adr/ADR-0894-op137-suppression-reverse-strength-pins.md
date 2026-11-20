@@ -141,3 +141,84 @@ guards green.
 - **Pin the DND arm as `complaint`** — a complaint is a different provider signal with different semantics
   on the dispatch ledger; `dnd_rejected` is the arm the card asks for and the one that exercises the third
   all-scope reason.
+
+## Review — round 1
+
+Sign-off card `t_f02b587c` records the round-1 review of the pin card `t_1e7cb2a3` (PR
+[#762](https://github.com/yahodu/openpic-webapp/pull/762)). The delivery merged by its own card's
+mandate before the review ran, so this is a **post-merge verification** of the bytes the trunk
+carries. Every figure below is this sign-off's own measurement at the squash `fc79fc20`; none is
+transcribed from the delivery handoff.
+
+- **Verdict:** accepted, `APPROVED WITH FINDINGS` — posted as the PR comment
+  [`issuecomment-7039970506`](https://github.com/yahodu/openpic-webapp/pull/762#issuecomment-7039970506).
+  The two findings are **Low** and additive: **F1** is a coverage gap and **F2** is dead test
+  scaffolding. No production change was requested, and no re-review is needed.
+- **Merge proof.** Head `2112dd7e`, squash `fc79fc20`, merged `2026-11-20T12:35:25Z`.
+  `git diff 2112dd7e fc79fc20` is empty, so the squash kept the branch tree, and
+  `git merge-base --is-ancestor fc79fc20 origin/main` passes. This record's blob is `cccebd78` at the
+  head, at the squash and at `origin/main`: the reviewed bytes are the trunk bytes. I did not merge
+  again, and I did not edit a delivered file.
+- **Re-run at the merged squash `fc79fc20`** (detached scratch worktree, `node_modules` linked from
+  the lane, worktree removed afterwards): the four integration files → **4 files, `42 passed (42)`** —
+  the new spec `2 passed (2)` (`P5`, `P6`), the pins `4 passed (4)`, the shipped
+  `webhook-novu-receipts.test.ts` `20 passed (20)` and `notification-unsubscribe.test.ts`
+  `16 passed (16)`; the reducer `9 passed (9)`; the six `adr-*` guards → **6 files,
+  `236 passed (236)`**; `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` exit `0` on the
+  new spec; `prettier --check "docs/adr/**/*.md"` clean.
+- **Probe 1 — the projection path only.** The naive write the card describes (`$set` the mutable
+  fields + `$setOnInsert: { createdAt }`) replaced the `upsertSuppression` call in
+  `apps/web/src/server/notifications/receipt-projection.ts` → **`1 failed | 5 passed (6)`**: `P5`
+  alone, with `P6` and the four pins green:
+
+  ```
+  -   "reason": "hard_bounce",
+  -   "scope": "all",
+  +   "reason": "unsubscribe",
+  +   "scope": "marketing",
+  ```
+
+  The pin is **forced**, which is this record's whole claim. `P6` passing here repeats what
+  §Consequences states: a `marketing → all` write is an upgrade under both implementations.
+
+- **Probe 2 — the shared helper.** The same naive write inside
+  `apps/web/src/server/notifications/suppression-strength.ts` → **`2 failed | 4 passed (6)`**:
+  `P5` and the pins' `P3`. Both writers share the ladder, so one wrong helper reds both directions.
+- **Probe 3 — the DND arm.** `dnd_rejection` mapped to `marketing` in `receipt-projection.ts` →
+  **`1 failed | 21 passed (22)`**: `P6` alone, with the shipped `20 passed (20)` green. `P6` has
+  teeth and is not a second guard on `P5`'s defect.
+- **Probe 4 — the expiry arm.** `expiresAt: ladder("expiresAt", null)` → `expiresAt: null` in the
+  shared helper → **`6 passed (6)`**: every case green. This is **F1**. Each probe was reverted with
+  `git checkout -- <path>`; `git status --porcelain` was empty after every revert and the worktree
+  stayed at `fc79fc20`.
+- **F1 — the `expiresAt` arm is invisible to every case (Low, coverage gap).** §2 claims a weaker
+  write does not re-date the row, but `P5` seeds `expiresAt: null`, so an unconditional
+  `expiresAt: null` passes every case (probe 4). A case that seeds `expiresAt = T0 + 1h` over a
+  weaker receipt and expects the instant intact reds under the mutation
+  (`expected null to deeply equal 2026-11-20T01:00:00.000Z`) and passes on the shipped code. The
+  failure direction is fail-safe — over-suppression, never resumed mail — so the severity is **Low**.
+  Routed to `t_59d05489`.
+- **F2 — dead logger scaffolding (Low, test hygiene).** `getLogger`/`setLogger`, `ambientLogger` and
+  the restoring `afterEach` are present, and no case swaps the logger. Routed to `t_59d05489`.
+- **F3–F6 (Info, no card).** At `fc79fc20` the new spec has **448** non-blank lines and **329** of
+  them repeat a line of the sibling pins spec (a `Counter` multiset over non-blank lines; a plain
+  membership count reads `346`). The card instructed a new sibling and the pins file is frozen, so the
+  duplication is the instructed shape. `P5` asserts the inbox `processResult` only as not `"error"`,
+  which §4 records as deliberate. The commissioning card's "shipped `14 passed`" figure is stale: the
+  shipped file reads `20 passed (20)` here. `{ reason: "unsubscribe", scope: "all" }` and the
+  equal-strength `complaint`-after-`hard_bounce` refresh stay unpinned, as §4 records.
+- **No production change, no re-review.** The findings add one coverage case and remove dead code.
+  Neither changes a delivered case, and the PR is already on the trunk.
+- **After the review — both findings closed.** Card `t_59d05489` landed them as PR
+  [#765](https://github.com/yahodu/openpic-webapp/pull/765) (squash `f27eb8db`, an ancestor of
+  `origin/main`), which mints [ADR-0896](ADR-0896-op137-suppression-expiry-pin.md): `P7` pins F1's
+  arm with an exact seeded instant, and F2's scaffolding is gone. Measured on this section's base
+  `c0bc6f1e`, the reverse-strength spec reads `3 passed (3)` and the guard family seven files,
+  `248 passed (248)`. The figures in the bullets above stay the review's own, at `fc79fc20`.
+- **Ledger.** Both `Next free` cells read `0897` on this section's base `c0bc6f1e`. This section mints
+  no number, adds no index row and moves no cell: `docs/adr/README.md` is byte-identical to the base
+  (`sha256 9fac9d248bec11b37dcddddbafb66a465e5fbd0fe062c979504279c5aaad3052` before and after the
+  append), so no reader finds a renumbered record beside this section.
+- **No retraction.** Nothing in the header block, §Context, §Decision (all four subsections),
+  §Consequences, §Evidence, §Alternatives or §Number allocation is retracted, reworded or re-badged.
+  The measurements those sections state stand, and probes 1–4 reproduce them at the squash.

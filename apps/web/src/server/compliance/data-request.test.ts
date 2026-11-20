@@ -12,7 +12,7 @@ import {
 
 /**
  * Unit — the data-subject-request rules (OP-138 U1–U3, contract §8.1/§8.2,
- * schema §20.3; ADR-0897).
+ * schema §20.3; ADR-0898).
  *
  * `POST /api/v1/me/data-requests` has to answer three questions before it may
  * write a row, and none of them needs a database, a clock or a request:
@@ -56,7 +56,7 @@ import {
  * ): readonly string[];
  * ```
  *
- * ## Assumptions (ADR-0897 §Assumptions)
+ * ## Assumptions (ADR-0898 §Assumptions)
  *
  * - **Precedence is body → tenant → geo → platform default.** An explicit
  *   `regulation` always wins; then the tenant's `dataRegion` (`eu` → `gdpr`,

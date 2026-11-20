@@ -33,7 +33,7 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
 /**
  * Integration / contract — data-subject requests, consent history and policy
  * acknowledgement (OP-138 I1–I15, contract §8.1/§8.2, schema §20.3/§20.4;
- * ADR-0897).
+ * ADR-0898).
  *
  * **Why this exists.** A DSR is the one request a user cannot be refused, and
  * the one they must be able to prove was honoured:
@@ -76,7 +76,7 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  * - `GET /api/v1/me/consents?purpose=` → the caller's rows, each carrying
  *   `policyDocumentHash`.
  *
- * ## Assumptions (ADR-0897 §Assumptions)
+ * ## Assumptions (ADR-0898 §Assumptions)
  *
  * - **Every case files through a tenant.** `emitDomainEvent` requires a
  *   `tenantId`, so a request that resolves no tenant at all is deliberately not
