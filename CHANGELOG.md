@@ -1,3 +1,9 @@
+## [1.67.0](https://github.com/yahodu/openpic-webapp/compare/v1.66.8...v1.67.0) (2026-11-20)
+
+### Features
+
+- **jobs:** OP-136 contain a failing indexed-check row so the page advances ([#741](https://github.com/yahodu/openpic-webapp/issues/741)) ([b3f6330](https://github.com/yahodu/openpic-webapp/commit/b3f63308cde0d7eab0000f72e69d27c98f6ed6ae))
+
 ## [1.66.8](https://github.com/yahodu/openpic-webapp/compare/v1.66.7...v1.66.8) (2026-11-19)
 
 ### Bug Fixes
