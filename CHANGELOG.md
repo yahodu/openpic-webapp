@@ -1,3 +1,9 @@
+## [1.70.0](https://github.com/yahodu/openpic-webapp/compare/v1.69.1...v1.70.0) (2026-11-20)
+
+### Features
+
+- **compliance:** OP-138 data subject requests, consent history and policy acknowledgement ([#776](https://github.com/yahodu/openpic-webapp/issues/776)) ([9164460](https://github.com/yahodu/openpic-webapp/commit/91644603715517f340c8b4c0c43082503366f355))
+
 ## [1.69.1](https://github.com/yahodu/openpic-webapp/compare/v1.69.0...v1.69.1) (2026-11-20)
 
 ### Bug Fixes
