@@ -1,3 +1,9 @@
+## [1.68.3](https://github.com/yahodu/openpic-webapp/compare/v1.68.2...v1.68.3) (2026-11-20)
+
+### Bug Fixes
+
+- **notifications:** OP-137 make the suppression row upgrade-only for both writers ([#759](https://github.com/yahodu/openpic-webapp/issues/759)) ([a69f034](https://github.com/yahodu/openpic-webapp/commit/a69f0340ad25465962ef54cb2796f5236ba826d6))
+
 ## [1.68.2](https://github.com/yahodu/openpic-webapp/compare/v1.68.1...v1.68.2) (2026-11-20)
 
 ### Bug Fixes
