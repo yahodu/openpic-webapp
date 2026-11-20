@@ -118,3 +118,111 @@ No test, fixture or helper was edited. Carried byte-identically from `40df0afd`:
 `receipt-projection.test.ts` `9 passed (9)`, `webhook-novu-receipts.test.ts`
 `14 passed (14)`. Full `unit` `188 files / 3170 passed | 3 skipped (3174)`; full
 `integration` green; the six ADR guards green.
+
+## Review — round 1 (post-merge verification at c92ca81f)
+
+**Verdict: approved with findings.** The delivery was reviewed at the head
+`9f4b156` merged with `acade549` (`22b34807`) and landed as squash `c92ca81f`.
+`git diff 22b34807 c92ca81f` is empty and both trees hash to `484c903a…`
+(`git rev-parse 22b34807^{tree} c92ca81f^{tree}`), so the trunk carries exactly
+the reviewed bytes. This section is the only text added to the record: no
+sentence of `## Context`, `## Decision` or `## Consequences` is retracted, and
+the two corrections the record itself needs are stated here by reference (`F6`,
+`F7`) instead of by rewriting the frozen sections.
+
+### Acceptance criteria and the check that proves each
+
+- **A soft bounce suppresses nothing.** Unit case `U1: a soft bounce fails the
+dispatch, increments attempts and suppresses nothing` (no suppression draft)
+  and integration case `I3` (`status: "failed"`, `attempts` incremented, zero
+  suppression rows).
+- **The unsubscribe scope is marketing only.** Unit case `U1: a provider-side
+unsubscribe drafts a marketing-scope suppression, never all-scope`, and
+  integration `I4`, where the marketing row blocks a marketing email and lets
+  the transactional OTP through.
+- **An unmatched receipt is `ignored`.** Unit case `U1: a receipt no dispatch
+matched is ignored, with no patch and no suppression` and integration `I8`
+  (`processResult: "ignored"`, answered `200`, nothing written but the inbox
+  row).
+- **A shape change is a `processResult: "error"`.** Integration `I6`: a payload
+  missing `transactionId` is still answered `200`, is recorded as an error
+  naming the offending field, and is logged at `error` with the provider.
+- **Only a hash is stored, and a bad signature warns.** Every `401` arm emits
+  `warn` `webhook.signature_rejected` with `provider`, `reason` and `ipHash`,
+  and the rows carry `contactHash` only. The second half was not pinned —
+  finding `F3`.
+
+Measured at the reviewed bytes in this lane's worktree: the pins `9 passed (9)`
+(`receipt-projection.test.ts`) and `14 passed (14)`
+(`webhook-novu-receipts.test.ts`); the full `unit` suite `189 files / 3171
+passed | 3 skipped (3174)`; the full `integration` suite `148 files / 1565
+passed (1565)`; coverage `92.25 / 81.22 / 96.53 / 92.37` (statements / branches
+/ functions / lines), every run exit `0`.
+
+### Findings — graded, and owned by a card
+
+None of these is an open defect of the merged delivery: each one is a gap the
+review measured and routed, and the routing is part of this record.
+
+- **F1, Medium, `receipt-projection.ts` (the `$setOnInsert` upsert).** A weaker
+  existing suppression row is never upgraded. Measured at `9f4b156` in a probe
+  worktree: a pre-seeded `{reason: "unsubscribe", scope: "marketing"}` row
+  survives a hard bounce, and the next `auth.otp.email.requested` fan-out writes
+  `status: "sent"` — the receipt is `200`, the row still reads
+  `{reason: "unsubscribe", scope: "marketing"}`, and the fan-out writes one
+  `sent` dispatch. Re-measured at the reviewed bytes with the pin case `P1` that
+  `t_df4e6eb3` delivered: `3 failed | 1 passed (4)`, and `P1` reddens on the row
+  assertion (`expected { …(8) } to match object { channel: 'email', …(4) }`,
+  rendering `reason: "unsubscribe"`, `scope: "marketing"`), with `P2` and `P3`
+  red beside it for `F4` and `F2`. Owner: the pins `t_df4e6eb3` and the GREEN
+  `t_b7bcc125`.
+- **F2, Medium, the unsubscribe route's `$set`.** The reverse direction, on the
+  same row: `$set` downgrades a hard-bounce row to `marketing`. Owner: `P3` in
+  `t_df4e6eb3`.
+- **F3, Medium, `webhook-novu-receipts.test.ts` `I2`/`I4`.** "Contacts are never
+  stored raw in suppressions" is unpinned: adding `contact: receipt.contact` to
+  the `$setOnInsert` leaves `14 passed (14)` — re-measured at the reviewed bytes
+  with that one line added and the file restored byte-identically (`sha256
+fe6cebe8…`) — because both cases assert with `objectContaining`. Owner: item 4
+  of `t_a587c8bd`.
+- **F4, Low, `receipt-projection.ts` (the expired row).** An expired suppression
+  row is never re-armed (`expected 2026-11-20T00:00:00.000Z to be null`). Owner:
+  `P2` in `t_df4e6eb3`.
+
+### Documentation corrections, stated by reference
+
+- **F5, Low, the `0882` index row.** The row named `novuReceiptSchema`, which no
+  module in the tree exports; the export is `deliveryReceiptSchema`
+  (`receipt-projection.ts`). Corrected in the ledger row by the card that
+  appended this section, which is its single permitted edit to
+  `docs/adr/README.md`.
+- **F6, Low, the Context bullet at `:34`–`:35`.** The bullet says the receipt
+  schema "joined" `@/server/adapters/novu/schemas`; Decision 5 at `:68`–`:79`
+  says the envelope lives with the projection. Decision 5 is the true one: no
+  receipt schema is exported from the adapter, and
+  `git diff bba5f943 origin/main -- apps/web/src/server/adapters/novu/schemas.ts`
+  is empty.
+- **F7, Low, `## Tests` at `:119`.** The record gives `188 files / 3170 passed`;
+  the same command measures `189 files / 3171 passed`. The `(3174)` total is
+  right.
+
+### Status of the follow-ups
+
+Each follow-up is named by card id, and by the record and the PR that landed it
+on the trunk at this append:
+
+- `t_df4e6eb3` — **landed**, `ADR-0889` (PR #759, squash `a69f0340`): the pins
+  `P1`–`P4`.
+- `t_b7bcc125` — **landed**, `ADR-0891` (the same PR #759, squash `a69f0340`):
+  the GREEN that turns those pins green.
+- `t_a587c8bd` — **landed**, `ADR-0884` (PR #754, squash `63dbe750`): its item 4
+  pins the raw contact (`I13`).
+- `t_8290f915` — **landed**, `ADR-0888` for the pins and `ADR-0892` for the GREEN
+  (PR #763, squash `b15e0268`): the ledger digest.
+- `t_1e7cb2a3` — **landed**, `ADR-0894` (PR #762, squash `fc79fc20`): the
+  reverse direction, raised by this review after the pins landed.
+
+The card that asked for this section reserved `0883`, `0884`, `0885` and `0886`
+for the first four. Measured at delivery, `0883`, `0885` and `0886` are OP-136
+records, so the four drew `0888`, `0884`, `0889` and `0891`. Every number above
+is read from the trunk, not from the reservation.
