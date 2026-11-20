@@ -170,7 +170,7 @@ RATE_LIMIT_CLASSES`).
 
 - **Delivered:** `apps/web/src/server/compliance/data-request.test.ts` (19
   cases: U1 8, U2 4, U3 6, plus the request-type enumeration),
-  `apps/web/src/test/integration/data-subject-requests.test.ts` (24 cases from
+  `apps/web/src/test/integration/data-subject-requests.test.ts` (25 cases from
   15 `it()` declarations, `I8` being a ten-row `it.each`),
   `apps/web/e2e/data-requests.spec.ts`
   (E1) and the lane's half of
@@ -188,7 +188,7 @@ RATE_LIMIT_CLASSES`).
   version 422, `I7` 2 (cache header + both purposes hashed), `I8` ten rows (one
   per type), `I9` anonymous session scoped to its own event, `I10` execution log
   and null export, `I11` list isolation, `I12` consent history,
-  `I13` 401, `I14` 400 idempotency, `I15` 422 validation = 24; e2e — `E1` files an
+  `I13` 401, `I14` 400 idempotency, `I15` 422 validation = 25; e2e — `E1` files an
   erasure request and polls it = 1. `rate-limit/classes.test.ts` adds the two
   lane rows to its existing 40.
 - **Honest RED:** the unit spec fails with `Cannot find module
