@@ -557,10 +557,10 @@ async function loadRecipientContext(db: Db, userId: string, now: Date): Promise<
 /**
  * The suppression rows that apply to a recipient's destinations (§19.6).
  *
- * The lookup key is the shared canonical digest — `"sha256:" + contactHashOf(
- * contact)` — which is the form the unsubscribe route and the receipt
- * projection write (ADR-0875 §1). A row whose `expiresAt` has passed no longer
- * applies; an absent `expiresAt` never expires.
+ * The lookup key is `"sha256:"` + `contactHashOf(contact)` — the shared canonical
+ * digest, which is the form the unsubscribe route and the receipt projection
+ * write (ADR-0875 §1). A row whose `expiresAt` has passed no longer applies; an
+ * absent `expiresAt` never expires.
  */
 async function loadSuppressions(
   db: Db,
