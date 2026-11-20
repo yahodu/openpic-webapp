@@ -65,6 +65,7 @@ import {
   type ChannelDecision,
   type ChannelGroupName,
   type GroupPreference,
+  type NotificationSuppression,
   type ResolveContacts,
   type ResolveGroupPreferences,
   type ResolvePreferences,
@@ -72,6 +73,7 @@ import {
   type ResolvedChannel,
   type SkipReason,
 } from "@/server/notifications/resolve-channel";
+import { contactHashOf as sharedContactHashOf } from "@/server/notifications/contact-hash";
 import { SEED_NOTIFICATION_TEMPLATES } from "@/server/notifications/notification-templates.values";
 import { SEED_NOTIFICATION_TYPES } from "@/server/notifications/notification-types.values";
 import { platformRepo } from "@/server/repos";
@@ -197,6 +199,8 @@ interface RecipientContext {
   readonly prefs: ResolvePreferences;
   readonly profile: ResolveProfile;
   readonly contacts: ResolveContacts;
+  /** The recipient's already-matched suppression rows (§19.6). */
+  readonly suppressions: readonly NotificationSuppression[];
 }
 
 /** Shared immutable facts for one claimed event. */
@@ -509,7 +513,7 @@ async function loadTemplates(
 }
 
 /** Load the contact, profile and preference facts for one recipient. */
-async function loadRecipientContext(db: Db, userId: string): Promise<RecipientContext> {
+async function loadRecipientContext(db: Db, userId: string, now: Date): Promise<RecipientContext> {
   const objectId = toObjectId(userId);
 
   // The three reads are independent; issue them together.
@@ -545,8 +549,42 @@ async function loadRecipientContext(db: Db, userId: string): Promise<RecipientCo
     userId,
     contacts,
     profile,
+    suppressions: await loadSuppressions(db, contacts, now),
     prefs: toPreferences(isRecord(prefsDoc) ? prefsDoc : null),
   };
+}
+
+/**
+ * The suppression rows that apply to a recipient's destinations (§19.6).
+ *
+ * The lookup key is the shared canonical digest — `"sha256:" + contactHashOf(
+ * contact)` — which is the form the unsubscribe route and the receipt
+ * projection write (ADR-0875 §1). A row whose `expiresAt` has passed no longer
+ * applies; an absent `expiresAt` never expires.
+ */
+async function loadSuppressions(
+  db: Db,
+  contacts: ResolveContacts,
+  now: Date
+): Promise<readonly NotificationSuppression[]> {
+  const keys = [contacts.email, contacts.phoneNumber]
+    .filter((contact): contact is string => contact !== null)
+    .map((contact) => `sha256:${sharedContactHashOf(contact)}`);
+  if (keys.length === 0) {
+    return [];
+  }
+
+  // The rows this platform writes are the §19.6 shape; the resolver only needs
+  // the three fields it branches on.
+  const rows = await platformRepo(db)
+    .collection(COLLECTIONS.notificationSuppressions)
+    .find({ contactHash: { $in: keys }, $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] })
+    .toArray();
+  return rows.map((row) => ({
+    channel: row.channel as ResolvedChannel,
+    scope: row.scope as NotificationSuppression["scope"],
+    reason: typeof row.reason === "string" ? row.reason : "",
+  }));
 }
 
 /** Persist a pre-rendered in-app feed row, aggregating when the type groups. */
@@ -1123,7 +1161,7 @@ async function fanOutToRecipient(
   userId: string
 ): Promise<{ readonly retryableFailure: boolean }> {
   const db = options.db ?? getDb();
-  const context = await loadRecipientContext(db, userId);
+  const context = await loadRecipientContext(db, userId, ctx.now);
   let retryableFailure = false;
 
   for (const group of ctx.typeRow.channelGroups) {
@@ -1135,7 +1173,7 @@ async function fanOutToRecipient(
       prefs: context.prefs,
       profile: context.profile,
       contacts: context.contacts,
-      suppressions: [],
+      suppressions: context.suppressions,
       now: ctx.now,
       eventId: ctx.eventId,
       throttleState: {},
