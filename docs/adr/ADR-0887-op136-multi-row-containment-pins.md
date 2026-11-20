@@ -1,4 +1,4 @@
-# ADR-0884 — OP-136 TEST: `errors` counts, and the `row_failed` warn names, **every** failing row
+# ADR-0887 — OP-136 TEST: `errors` counts, and the `row_failed` warn names, **every** failing row
 
 - **Status:** Accepted (TEST, characterization pin — green on arrival) · **Date:** 2026-11-20
 - **Card:** OP-136 TEST `t_3d67936e` (Low; finding **F1-Low** of the round-2 review of the OP-136 RED
@@ -15,19 +15,20 @@
   draws from the pool, advances both cells and keeps its range).
 - **Consumers:** `apps/web/src/test/integration/job-pipeline-indexed-check.test.ts` (the appended
   case's doc-comment cites this record).
-- **Number allocation:** `0884`, drawn from the pool. The `OP-136 jobs lane` block `0849`–`0868` is
-  exhausted (§11 item 18). The sweep immediately before minting, at the trunk `acade549`, found both
-  `Next free` cells at `0882`, `ADR-0882` (OP-137 delivery receipts GREEN, PR #743) and `ADR-0883`
-  (OP-136 discovery-abort pin, PR #746) in flight, `git rev-list --objects --all -- docs/adr`
-  stopping at `0883`, and no `ADR-0884` file, object or PR-head path on any surface. This record
-  therefore takes the highest in-flight number plus one and advances **both** the `OP-136 jobs lane`
-  cell and the `unallocated (future lanes)` cursor to `0885`, one above itself, so neither can
-  re-mint it; the block keeps its range (§11 items 19–21). **Reconciled twice against a moving trunk:**
-  the first merge of `origin/main` (`41aec3b0`, PR #743) found both cells at `0883` and kept this
-  record's `0885`; the second (`a5300714`, which landed `ADR-0885` from another lane through PR #748)
-  found both cells at `0886`, so the merged ledger keeps **`0886`** — higher than the value this record
-  wrote — and `0884` is not renumbered, because a number is consumed once and a cell is never lowered
-  (§11 item 20). The row sits between `0882` and `0885`, ascending.
+- **Number allocation:** `0887`, drawn from the pool. The `OP-136 jobs lane` block `0849`–`0868` is
+  exhausted (§11 item 18). The sweep in the delivery run, at the trunk `efa034ff` (the run-time
+  `origin/main`), found both `Next free` cells at `0886`, `ADR-0885` landed on the trunk through PR
+  #748, `ADR-0886` in flight on PR #751 (the sibling OP-136 card's warn-serialisation pin),
+  `git rev-list --objects --all -- docs/adr` — every fetched `refs/pull/*/head` included — stopping
+  at `0886`, and no `ADR-0887` file, object or PR-head path on any surface. This record therefore
+  takes the highest in-flight number plus one and advances **both** the `OP-136 jobs lane` cell and
+  the `unallocated (future lanes)` cursor to `0888`, one above itself, so neither can re-mint it; the
+  block keeps its range (§11 items 19–21). **The number moved during delivery, upward.** The record
+  was first written as `0884` on the `acade549` trunk (cells `0882`, highest in-flight `0883`); by the
+  delivery run `ADR-0885` had landed and the sibling card had taken `ADR-0886` in flight, so the
+  re-sweep raised the draw to `0887` and the cells to `0888`. No test, assertion, seed or measurement
+  changed with the number, and a cell is never lowered (§11 item 20). The row sits above `0885`,
+  ascending.
 
 ## Context
 
@@ -107,26 +108,27 @@ empty after each restore):
 
 | run                                                                   | shape                                                                       | result                                                                                                                                                                                                                     |
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| positive control                                                      | shipped per-row loop                                                        | `30 passed (30)` (the 29 delivered cases + `I31`)                                                                                                                                                                          |
-| **M1** chunk-level                                                    | count once per chunk, name `chunk[firstFailed]`, later chunks still run     | `1 failed \| 29 passed (30)` — `I31` alone, `AssertionError: three failing rows are three counted errors — the count is per row, not per chunk: expected 2 to be 3`                                                        |
-| **M2** count per row, name the chunk's first failure                  | `errors += 1` per rejection, then `continue` unless `index === firstFailed` | `1 failed \| 29 passed (30)` — `I31` alone, `AssertionError: each failing row is named exactly once, as a warning — two of them in the same chunk: expected [ 'warn', 'warn' ] to deeply equal [ 'warn', 'warn', 'warn' ]` |
-| **V1** card's literal shape (two poison rows, one per chunk) under M1 | chunk-level                                                                 | `30 passed (30)` — **vacuous**, the measurement that produced §3                                                                                                                                                           |
+| positive control                                                      | shipped per-row loop                                                        | `31 passed (31)` (the 29 delivered cases + `ADR-0883`'s `I30` + `I31`)                                                                                                                                                     |
+| **M1** chunk-level                                                    | count once per chunk, name `chunk[firstFailed]`, later chunks still run     | `1 failed \| 30 passed (31)` — `I31` alone, `AssertionError: three failing rows are three counted errors — the count is per row, not per chunk: expected 2 to be 3`                                                        |
+| **M2** count per row, name the chunk's first failure                  | `errors += 1` per rejection, then `continue` unless `index === firstFailed` | `1 failed \| 30 passed (31)` — `I31` alone, `AssertionError: each failing row is named exactly once, as a warning — two of them in the same chunk: expected [ 'warn', 'warn' ] to deeply equal [ 'warn', 'warn', 'warn' ]` |
+| **V1** card's literal shape (two poison rows, one per chunk) under M1 | chunk-level                                                                 | `30 passed (30)` — **vacuous**, the measurement that produced §3 (taken before `ADR-0883`'s `I30` landed)                                                                                                                  |
 
 So the count arm and the name arm are each independently load-bearing, and the card's literal page is
 not.
 
 ## Gates (run on the delivered head)
 
-- focused pin file: `30 passed (30)`
-- full `integration` project: see the PR handoff comment for the exact file/test counts on the head
-  that was pushed
+- focused pin file: `31 passed (31)` (the 29 delivered cases + ADR-0883's `I30` + `I31`) on the
+  delivered head, `efa034ff` merged in
+- full `integration` project: `149 files / 1571 passed (1571)`, exit `0`, on the same head
 - `tsc -p apps/web/tsconfig.json --noEmit`: exit `0`
-- `eslint` on the changed spec: `0` errors
-- `prettier --check` on the changed paths: clean
-- the six `adr-*` guards: `236 passed (236)`
-- re-verified after each merge of `origin/main` (`41aec3b0`, `a5300714`): the focused file, the full
-  `integration` project (`148 files / 1566 passed (1566)` on the merged tree; the count grows with the
-  trunk's own cases), `tsc`, `eslint`, `prettier` and the six guards again
+- `eslint` on the changed spec: exit `0`, no issues
+- `prettier --check` on the changed spec, this record and `docs/adr/README.md`: clean
+- the six `adr-*` guards (`adr-numbering`, `adr-lane-ranges`, `adr-record-links`, `adr-consumers`,
+  `adr-source-references`, `adr-inline-code-spans`): `6 files / 236 passed (236)`
+- re-verified after each merge of `origin/main` (`41aec3b0`, `a5300714`, `efa034ff`): the focused
+  file, the full `integration` project (the count grows with the trunk's own cases), `tsc`, `eslint`,
+  `prettier` and the six guards again
 
 ## Consequences
 
