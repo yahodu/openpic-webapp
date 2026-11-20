@@ -1,3 +1,15 @@
+## [1.68.3](https://github.com/yahodu/openpic-webapp/compare/v1.68.2...v1.68.3) (2026-11-20)
+
+### Bug Fixes
+
+- **notifications:** OP-137 make the suppression row upgrade-only for both writers ([#759](https://github.com/yahodu/openpic-webapp/issues/759)) ([a69f034](https://github.com/yahodu/openpic-webapp/commit/a69f0340ad25465962ef54cb2796f5236ba826d6))
+
+## [1.68.2](https://github.com/yahodu/openpic-webapp/compare/v1.68.1...v1.68.2) (2026-11-20)
+
+### Bug Fixes
+
+- **jobs:** OP-136 carry the row-failed warn's reason on the wire under err ([#753](https://github.com/yahodu/openpic-webapp/issues/753)) ([02c3ab0](https://github.com/yahodu/openpic-webapp/commit/02c3ab0d41fedaec73e430d41bd7f43470c6cb03)), closes [#741](https://github.com/yahodu/openpic-webapp/issues/741)
+
 ## [1.68.1](https://github.com/yahodu/openpic-webapp/compare/v1.68.0...v1.68.1) (2026-11-20)
 
 ### Bug Fixes

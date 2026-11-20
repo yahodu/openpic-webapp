@@ -5,6 +5,7 @@ import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { getLogger } from "@/server/logging";
 import { contactHashOf } from "@/server/notifications/contact-hash";
+import { upsertSuppression } from "@/server/notifications/suppression-strength";
 import { platformRepo } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
 
@@ -326,26 +327,19 @@ export async function projectDeliveryReceipt(
   }
 
   if (projection.suppression !== null) {
-    const draft = projection.suppression;
-    // One row per `{channel, contactHash}` (the unique index), so a second hard
-    // bounce for a contact that already has a row is not a duplicate-key error.
-    await platformRepo(db)
-      .collection(COLLECTIONS.notificationSuppressions)
-      .updateOne(
-        { channel: draft.channel, contactHash: draft.contactHash },
-        {
-          $setOnInsert: {
-            channel: draft.channel,
-            contactHash: draft.contactHash,
-            reason: draft.reason,
-            scope: draft.scope,
-            source: { provider: receipt.provider, providerEventId: receipt.providerEventId },
-            createdAt: now,
-            expiresAt: null,
-          },
-        },
-        { upsert: true }
-      );
+    // Upgrade-only: a stronger receipt replaces a weaker row, and an equal or
+    // weaker one must not weaken it (the row is shared with the unsubscribe route).
+    await upsertSuppression(
+      platformRepo(db).collection(COLLECTIONS.notificationSuppressions),
+      {
+        channel: projection.suppression.channel,
+        contactHash: projection.suppression.contactHash,
+        reason: projection.suppression.reason,
+        scope: projection.suppression.scope,
+        source: { provider: receipt.provider, providerEventId: receipt.providerEventId },
+      },
+      now
+    );
   }
 
   await inbox.updateOne(

@@ -153,3 +153,74 @@ same id in a _different_ block of the same spec. That card landed first, so its 
 case takes the next free id, `I31`: the id is a label, the assertions are unchanged, and the merged
 file reads `31 passed (31)` (29 delivered + ADR-0883's case + this one). The mutation evidence in
 §Evidence was measured under the earlier label and reds the same case, now `I31`.
+
+## Review sign-off (round 1) — card t_3d67936e
+
+Sign-off card `t_5caf2feb` records the round-1 review of the pin card `t_3d67936e`. The delivery was
+merged by its own card's mandate before the review ran, so the review was a **post-merge
+verification** of the bytes the trunk carries. Every figure below was measured by the reviewer at
+the squash `c96c2d18` unless the sentence names another commit; the trunk figures were re-measured
+at `f370cf5b`, the trunk this section lands on.
+
+- **Verdict:** accepted, `APPROVED WITH FINDINGS` — posted as PR comment
+  `issuecomment-7037390755`. The contract holds: one appended case, red alone under the chunk-level
+  shape and under a per-row count that names only each chunk's first failure, additions only, and a
+  record truthful apart from the ledger's numstat digit this sign-off corrects.
+- **Post-merge identity.** `gh pr view 749` answers `MERGED`, `mergeCommit c96c2d18`, base `main`,
+  head `7c8c1f43`; `git merge-base --is-ancestor c96c2d18 origin/main` prints true;
+  `7c8c1f43^{tree}` and `c96c2d18^{tree}` both read
+  `d3a2fb2c02f9286482debab97ce70d37d226759b`; `git diff 7c8c1f43 c96c2d18` is empty, because a
+  squash keeps the branch tree. This record's own blob reads `16be20a5` at the squash and at
+  `f370cf5b`. The whole-tree hash of the trunk has since moved (`69b3a9f4` at `f370cf5b`) with other
+  lanes' landings, so tree identity is proved against the squash, not against today's head.
+- **Gates at the review head `c96c2d18`.** Focused spec **`31 passed (31)`**; full `integration`
+  **`149 files / 1571 passed (1571)`**, exit 0; the six `adr-*` guards
+  **`6 files / 236 passed (236)`**; `tsc -p apps/web/tsconfig.json --noEmit` exit 0; `eslint` on
+  the spec exit 0; `prettier --check` clean on the three touched paths; `docs/adr` basenames
+  **411** with **0** duplicate `ADR-NNNN`. Re-measured at `f370cf5b`: the focused spec
+  **`32 passed (32)`** (the spec has since gained PR #751's wire case as `I32` and other lanes'
+  cases), the six guards **`6 files / 236 passed (236)`**, the basenames **413** with **0**
+  duplicates.
+- **Independent mutation replay**, in a throwaway worktree detached at `c96c2d18`, the production
+  file restored byte-identically after each mutation
+  (`sha256 fa4f0b917976721090e799b582fc52b754a028e7f90d5afcdceb7cdac39a72b4`, `git status --short`
+  clean): **M1**, count once per chunk and name `chunk[firstFailed]` → `1 failed | 30 passed (31)`,
+  `I31` alone, `expected 2 to be 3`; **M2**, count per row and name only each chunk's first
+  failure → `1 failed | 30 passed (31)`, `I31` alone,
+  `expected [ 'warn', 'warn' ] to deeply equal [ 'warn', 'warn', 'warn' ]`; **V1**, the card's
+  literal page — two poison rows, one per chunk, `errors: 2` — under M1 → the case **passes**,
+  probe printed `{"scanned":9,"errors":2,"warns":2,"levels":["warn","warn"]}`. Both mutations were
+  replayed again at `f370cf5b`, where the row loop writes the reason under `err:` (PR #753 landed
+  that rename) and the production file's sha256 is
+  `81905bbee5a9cff2b4327ebdb0ab9bca118e6a0a11841597473e8c0e741e5f65`: M1
+  `1 failed | 31 passed (32)` and M2 `1 failed | 31 passed (32)`, `I31` alone in both, with the same
+  two assertion messages.
+- **The deviation is measured, not preferred.** The card's literal page — two poison rows, one per
+  chunk, `errors: 2` — is vacuous under M1, and §3's page adds a second failure inside chunk 1:
+  the smallest page that separates a per-row containment from a per-chunk one. Accepted on that
+  measurement.
+- **Honesty audit of the delivery.** Additions only on the spec (`140 0`); no `.only`, no skip, no
+  `@ts-ignore`, no lint suppression, no `TODO`, no `process.env`/`NODE_ENV`, no literal 24-hex id —
+  every id derives from the seeds — and no production file touched by the PR.
+- **Test-quality note (Info, no change requested).** `I31` opens with
+  `expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed")`, which asserts a pure helper against
+  a constant and so says nothing about the run; it mirrors the block's existing style. The
+  load-bearing arms are the `errors` count and the `warn` level plus the `fields.eventId` set, each
+  proven above.
+- **Case-id resolution.** At `f370cf5b` the spec carries 32 `it("I…` cases and no duplicate id: the
+  multi-row case of this record is `I31` ("every failing row is counted and named") and PR #751's
+  wire case is `I32` ("the warn the transport receives"), one line each — so GREEN card
+  `t_6a41b383` did renumber its own case to `I32` before merging PR #751, as its pre-merge
+  re-sweep required.
+- **No retraction.** Nothing in §Context, §Decision, §Evidence, §Gates, §Consequences or §Id
+  reconciliation is retracted, and every measurement they state stands, including the §Id
+  reconciliation of `I30` to `I31`. Later cards' own records document what followed: the `err:`
+  rename the mutation replay above meets is ADR-0886's fix through PR #753, and this record is not
+  rewritten for it.
+- **The ledger's numstat digit.** The `docs/adr/README.md` note for this record said the pin spec's
+  `git diff --numstat` is `140 1`; measured on the squash it is `140 0`
+  (`git diff --numstat c96c2d18^..c96c2d18` → `140 0` on the spec, `155 0` on this record, `5 2` on
+  the ledger). This sign-off corrects that one character and changes no row, no cell and no other
+  byte of the ledger. Both `Next free` cells read `0891` at `f370cf5b`, not the `0888` the card
+  predicted — later lanes consumed the numbers above `0887`, and `ADR-0890` is the highest record on
+  the trunk at that commit — so this card mints no number and moves no cell.
