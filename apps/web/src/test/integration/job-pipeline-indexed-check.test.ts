@@ -2197,4 +2197,144 @@ describe("pipeline-indexed-check: a persistently failing row is contained, count
       "every row's settled batch is summarised once"
     ).toEqual(page.map((row) => row.batchId).sort());
   });
+
+  /**
+   * Seed the page `I30` reads: **two** failing rows inside the run's first
+   * chunk and a third alone in its second chunk.
+   *
+   * Two failing rows in **one** chunk is the load-bearing part. A page with one
+   * failing row per chunk does **not** discriminate the granularity of the
+   * count or of the name: counting once per chunk lands on the same total, and
+   * naming the chunk's first failing row names the same rows. Only a chunk that
+   * holds two failures separates a per-row containment from a per-chunk one.
+   *
+   * @returns The first chunk's two poison rows, the healthy rows between them
+   *   (in page order), and the second chunk's poison row.
+   */
+  async function seedMultiPoisonPage(): Promise<{
+    readonly firstChunkPoison: readonly PageRow[];
+    readonly secondChunkPoison: PageRow;
+    readonly healthy: readonly PageRow[];
+  }> {
+    const firstChunkPoison: PageRow[] = [
+      await seedCandidate("op136-multi-row-poison-first"),
+      await seedCandidate("op136-multi-row-poison-second"),
+    ];
+    const healthy: PageRow[] = [];
+    for (let index = firstChunkPoison.length; index < PAGE_SIZE - 1; index += 1) {
+      healthy.push(await seedCandidate(`op136-multi-row-poison-healthy-${String(index)}`));
+    }
+    const secondChunkPoison = await seedCandidate("op136-multi-row-poison-ninth");
+    return { firstChunkPoison, secondChunkPoison, healthy };
+  }
+
+  /**
+   * Arm the poison shape on **several** events at once: every `event_images`
+   * read of any of them throws, for the whole case.
+   *
+   * One injection, not one per event: `failFindWhen` installs a spy on the
+   * driver's `find`, so a second armed injection would stand in front of the
+   * first and only the later event would fail.
+   *
+   * @param eventIds - The events whose batch reads fail.
+   * @returns The injection, whose `fired` count proves every call reached it.
+   */
+  function poisonBatchReadsFor(eventIds: readonly ObjectId[]): InjectedReadFailure {
+    return failFindWhen(
+      COLLECTIONS.eventImages,
+      (filter) =>
+        filter.eventId instanceof ObjectId &&
+        eventIds.some((poisoned) => (filter.eventId as ObjectId).equals(poisoned))
+    );
+  }
+
+  /**
+   * `I30` — the granularity of both the count and the name.
+   *
+   * The decided contract (ADR-0871 §1) counts the failure **per row**
+   * (`errors += 1`) and names **each** failing row once. The one-poison-row page
+   * of `I26`/`I27` cannot pin that: the chunk-level near-fix answers
+   * `29 passed (29)` against it, and a page with **one failing row per chunk**
+   * answers `30 passed (30)` too, because a per-chunk count lands on the same
+   * total and names the same rows. Only a chunk that holds **two** failing rows
+   * separates the two shapes, so this page carries two in the first chunk and a
+   * third alone in the second.
+   */
+  it("I30: every failing row is counted and named, including two in one chunk", async () => {
+    // Arrange — nine `_id`-ascending candidates: two poison rows lead the page
+    // (chunk 1), the ninth is the third poison row and chunk 2's only candidate.
+    const { firstChunkPoison, secondChunkPoison, healthy } = await seedMultiPoisonPage();
+    const poisoned = [...firstChunkPoison, secondChunkPoison];
+    expect(derivePipelineStatus(ALL_PROCESSED)).toBe("indexed");
+    const pageOrder = [...firstChunkPoison, ...healthy, secondChunkPoison].map((row) =>
+      row.event.eventId.toHexString()
+    );
+    expect(
+      pageOrder,
+      "the page must be `_id`-ascending, or the poison rows are not the rows the run reaches first and ninth"
+    ).toEqual([...pageOrder].sort());
+    expect(firstChunkPoison, "two of the first chunk's eight slots must fail").toHaveLength(2);
+    expect(
+      healthy,
+      "the rest of chunk 1 is healthy, so the second chunk holds the ninth row alone"
+    ).toHaveLength(PAGE_SIZE - poisoned.length);
+
+    // Act — one run, with every poison row's own batch read failing on every call.
+    const injection = poisonBatchReadsFor(poisoned.map((row) => row.event.eventId));
+    try {
+      const run = await runPage(NOW);
+
+      // Sanity — every armed row was reached, or the case proves nothing.
+      expect(
+        injection.fired(),
+        "every poison row's arm read must have failed, or the seed is not poison"
+      ).toBeGreaterThanOrEqual(poisoned.length);
+
+      // Assert — the failure is counted per row: two in one chunk count twice.
+      expect(run.result.scanned, "a contained failure does not shorten the page").toBe(PAGE_SIZE);
+      expect(
+        run.result.errors,
+        "three failing rows are three counted errors — the count is per row, not per chunk"
+      ).toBe(poisoned.length);
+
+      // …and each failing row is named once, at warn, under its own event id.
+      const named = run.log.entriesForEvent(ROW_FAILED_EVENT);
+      expect(
+        named.map((entry) => entry.level),
+        "each failing row is named exactly once, as a warning — two of them in the same chunk"
+      ).toEqual(poisoned.map(() => "warn"));
+      expect(
+        named.map((entry) => String(entry.fields.eventId)).sort(),
+        "the warns name exactly the failing rows — every row that failed, and no other"
+      ).toEqual(poisoned.map((row) => row.event.eventId.toHexString()).sort());
+
+      // …the healthy rows of both chunks are announced once each…
+      const announced = await Promise.all(healthy.map((row) => indexedRowsFor(row.event.eventId)));
+      expect(
+        announced.map((rows) => rows.length),
+        "every healthy row of the page is announced once, in the run the poison rows failed in"
+      ).toEqual(healthy.map(() => 1));
+
+      // …and every failing row keeps its checked triple unstamped, in either
+      // chunk, so all of them stay candidates for a later tick.
+      const stamped = await Promise.all(
+        poisoned.map(
+          async (row) =>
+            (
+              (await app.db
+                .collection(COLLECTIONS.events)
+                .findOne({ _id: row.event.eventId })) as unknown as {
+                readonly pipeline?: { readonly indexedCheckedCounters?: unknown };
+              } | null
+            )?.pipeline?.indexedCheckedCounters
+        )
+      );
+      expect(
+        stamped,
+        "a row whose arm work failed keeps its checked triple unstamped, in either chunk"
+      ).toEqual(poisoned.map(() => undefined));
+    } finally {
+      injection.restore();
+    }
+  });
 });
