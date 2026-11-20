@@ -301,3 +301,15 @@ have disturbed the sibling worktree).
 Numbers in §Evidence that name the base (`acade549`) are the base this delivery
 was cut from and measured on; they are not restated, because the merge changes
 neither the spec nor the production module.
+
+A **second** merge followed, for the same reason: §9.1's G4/G5 tripped on
+`a5300714` (`chore(release): 1.68.1`, a `package.json` version bump dated
+`2026-11-20T09:12:40Z`, later than this head's `audit` check at
+`2026-11-20T09:04:21Z`), which had landed behind `8b2a7f2c` (PR #748, ADRs
+`0868` and `0885`). The `docs/adr/README.md` union now also carries those two
+records: their rows sit below this record's `0883` row in the file's append
+order (`0882`, `0883`, `0885`), their two notes follow ADR-0881's, and both
+`Next free` cells keep the merged trunk's `0886` — again the higher of the two,
+per §11 item 20. The guards were re-run after this second resolution
+(`6 files / 236 passed (236)`) and the spec's diff against the new trunk is still
+`227 0`.
