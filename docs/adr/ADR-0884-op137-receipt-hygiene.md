@@ -80,8 +80,8 @@ only by measurement out of band:
 
 ### 1. One appended block set in the existing spec; nothing existing is edited
 
-`apps/web/src/test/integration/webhook-novu-receipts.test.ts` gains three new
-`describe` blocks, six cases (five `it` plus `it.each` with two arms) and two
+`apps/web/src/test/integration/webhook-novu-receipts.test.ts` gains four new
+`describe` blocks, six cases (four `it` plus one `it.each` with two arms) and two
 block-scoped helpers. `git diff --numstat` against the base is `329 0` in that
 one file: the fourteen delivered cases, every module-level helper, every
 fixture, every constant and every import is byte-identical, and nothing is
@@ -211,7 +211,7 @@ A removed field reds as loudly as an added one, and the diff names the offender
 
 All six cases are green on arrival: ADR-0882 shipped every behaviour they
 assert, so the PR is non-draft. The pin's value is that each one is
-**load-bearing** — five mutations of the two production files each red the
+**load-bearing** — six mutations of the two production files each red the
 intended case and nothing else, §Evidence. There is no defect to drive here, so
 no GREEN sibling is created.
 
@@ -283,7 +283,7 @@ base spec (14 cases, written out of origin/main):  Test Files  1 passed (1)   Te
 delivered (20 cases):                              Test Files  1 passed (1)   Tests  20 passed (20)
 ```
 
-Green on arrival, so five mutations of the two production files were used to show
+Green on arrival, so six mutations of the two production files were used to show
 each case bites. Each was applied alone, the whole file was run, and the file was
 then restored with `git checkout --`; both hashes returned to the baseline every
 time and `git status --porcelain` was empty:
@@ -320,3 +320,30 @@ Delivered-spec gates, all on the lane worktree at the delivered head:
   trunk count in the GREEN's handoff, so no other unit spec moved.
 - full `integration` → `149 files`, `1577 passed (1577)`; the OP-137 spec alone
   is `20 passed (20)` (14 delivered + 6 appended). No case is skipped.
+
+## Review — round 1
+
+**Changes requested, record only.** The reviewer independently reproduced the
+delivery at `2a688e25`: the focused spec `20 passed (20)`, full `integration`
+`1577 passed (1577)`, the six `adr-*` guards `236 passed (236)`, `tsc` `0`,
+`eslint` `0`, `prettier --check` clean, the fourteen delivered cases
+byte-identical and no production file in the diff; four of the six mutations
+(M1, M3, M4, M5) were re-run and each landed alone, exactly as §Evidence says.
+The six pins are **accepted as delivered** — no case, helper, fixture or
+constant changed in this round.
+
+Three defects in **this record** were measured and corrected:
+
+| Defect | Was                                                                                                                   | Now                                                                                                                                                   |
+| ------ | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1     | the ledger note linked a filename that never existed (the `-pins` suffix on this record's name)                       | it points at `ADR-0884-op137-receipt-hygiene.md`                                                                                                      |
+| D2     | "five mutations" in §6, in the §Evidence intro and in the ledger index row, where §Evidence tabulates **six** (M1–M6) | "six" in all three places                                                                                                                             |
+| D3     | §1 read "three new `describe` blocks, six cases (five `it` plus `it.each` with two arms)"                             | **four** `describe` blocks, six cases (**four** `it` — `I9`, `I10`, `I11`, `I13` — plus one `it.each` with two arms), which is what the spec measures |
+
+D1 is why the review opened a follow-up: `checkAdrRecordLinks` scopes
+`docs/adr/README.md` out by design — the exclusion exists for legitimate
+pre-rename targets — so a never-existed filename in the ledger stayed invisible
+to all six guards, which read `236 passed (236)` with the break present. Card
+`t_0fb7e9b0` pins that discriminator in both directions. D2 and D3 are
+prose-only miscounts: the mutations and cases they describe were correct, and
+the counts now match the table.
