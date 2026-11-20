@@ -1,3 +1,9 @@
+## [1.68.1](https://github.com/yahodu/openpic-webapp/compare/v1.68.0...v1.68.1) (2026-11-20)
+
+### Bug Fixes
+
+- **images:** OP-136 pass the request logger into the reprocess enqueue warn ([#748](https://github.com/yahodu/openpic-webapp/issues/748)) ([8b2a7f2](https://github.com/yahodu/openpic-webapp/commit/8b2a7f2c26881414fb3db1dbd3a50a245ed3d729)), closes [#747](https://github.com/yahodu/openpic-webapp/issues/747)
+
 ## [1.68.0](https://github.com/yahodu/openpic-webapp/compare/v1.67.0...v1.68.0) (2026-11-20)
 
 ### Features

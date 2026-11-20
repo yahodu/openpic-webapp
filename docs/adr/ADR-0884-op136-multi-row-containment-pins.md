@@ -22,7 +22,12 @@
   stopping at `0883`, and no `ADR-0884` file, object or PR-head path on any surface. This record
   therefore takes the highest in-flight number plus one and advances **both** the `OP-136 jobs lane`
   cell and the `unallocated (future lanes)` cursor to `0885`, one above itself, so neither can
-  re-mint it; the block keeps its range (§11 items 19–21).
+  re-mint it; the block keeps its range (§11 items 19–21). **Reconciled twice against a moving trunk:**
+  the first merge of `origin/main` (`41aec3b0`, PR #743) found both cells at `0883` and kept this
+  record's `0885`; the second (`a5300714`, which landed `ADR-0885` from another lane through PR #748)
+  found both cells at `0886`, so the merged ledger keeps **`0886`** — higher than the value this record
+  wrote — and `0884` is not renumbered, because a number is consumed once and a cell is never lowered
+  (§11 item 20). The row sits between `0882` and `0885`, ascending.
 
 ## Context
 
@@ -119,6 +124,9 @@ not.
 - `eslint` on the changed spec: `0` errors
 - `prettier --check` on the changed paths: clean
 - the six `adr-*` guards: `236 passed (236)`
+- re-verified after each merge of `origin/main` (`41aec3b0`, `a5300714`): the focused file, the full
+  `integration` project (`148 files / 1566 passed (1566)` on the merged tree; the count grows with the
+  trunk's own cases), `tsc`, `eslint`, `prettier` and the six guards again
 
 ## Consequences
 

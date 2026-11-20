@@ -12,7 +12,7 @@ import {
   type EventImageListRow,
 } from "@/server/images/dto";
 import { requeueImages } from "@/server/images/requeue";
-import { getLogger } from "@/server/logging";
+import { requestLogger } from "@/server/logging";
 import { createMediaSigner } from "@/server/media/signer";
 import { tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
@@ -77,7 +77,7 @@ export const POST = defineRoute({
       now: systemClock.now(),
       spaceKey: settings.face.activeSpaceKey,
       requestId,
-      logger: getLogger(),
+      logger: requestLogger(ctx.request, { route: ctx.route }),
     });
 
     const updated = (await images.findOne({ _id: imageId })) as ImageRow | null;
