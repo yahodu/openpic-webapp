@@ -766,3 +766,332 @@ describe("delivery receipts — the inbox (I5, I6, I7, I8)", () => {
     expect(await suppressions()).toEqual([]);
   });
 });
+
+/**
+ * The failure and hygiene arms (OP-137 TEST `t_a587c8bd`, ADR-0884).
+ *
+ * **Which cases are RED: none.** Every case below is a **characterization pin**:
+ * the behaviour ships with the OP-137 GREEN (ADR-0882), so the file is green on
+ * arrival and the PR is non-draft. Each case exists to make a regression
+ * *visible* — ADR-0884 records, per case, the mutation that reds it.
+ *
+ * The four arms:
+ *
+ *  - `I9` — a second hard bounce for a contact that already has a suppression row
+ *    is `applied`, not `error`. `notificationSuppressions` is unique on
+ *    `{channel, contactHash}` (`server/db/indexes.ts`), so a plain `insertOne`
+ *    records a duplicate-key failure for a receipt that must apply; the applier
+ *    upserts instead.
+ *  - `I10`/`I11` — log hygiene (§5.3): the receipt carries a raw address and the
+ *    headers carry the signature, and neither reaches a log entry. The warn a
+ *    rejected signature emits is pinned by its **exact field set**, not by a
+ *    subset matcher: a field added to that call is the leak this arm exists to
+ *    catch.
+ *  - `I12` — an absent or blank `NOVU_WEBHOOK_SECRET` refuses every receipt,
+ *    including one signed with the *empty* key (an unconfigured deployment is a
+ *    refusal, never a wildcard). `NOVU_WEBHOOK_SECRET` stays **optional** in
+ *    `server/config/env.ts`: a required key would break every suite that boots
+ *    through `startTestApp`.
+ *  - `I13` — the stored suppression row holds the digest and nothing raw: pinned
+ *    by the row's exact key set, because `I2`/`I4` assert with
+ *    `expect.objectContaining(...)` and a `contact: receipt.contact` field
+ *    therefore leaves them green.
+ */
+
+/** The two writes `I9` needs: two dispatches for one address, before any receipt. */
+async function fanOutTwoEmails(userId: string): Promise<readonly StoredDispatch[]> {
+  // One transport across both fan-outs: the in-memory adapter mints `memory-<n>`
+  // per instance, so two fresh transports would give both dispatches the same
+  // provider message id and the receipt lookup could not tell them apart.
+  const transport = memoryMessageTransport();
+  await insertEvent({ eventKey: OTP_EVENT_KEY, subjectUserId: userId });
+  await runFanOut(transport);
+  await insertEvent({ eventKey: OTP_EVENT_KEY, subjectUserId: userId });
+  await runFanOut(transport);
+  return (await dispatchesFor(userId)).filter((row) => row.channel === "email");
+}
+
+/** A hard-bounce receipt body for one dispatch, under its own provider event id. */
+function hardBounceBody(input: {
+  readonly eventId: string;
+  readonly dispatch: StoredDispatch;
+}): string {
+  return JSON.stringify(
+    makeNovuReceiptBody({
+      eventId: input.eventId,
+      transactionId: messageIdOf(input.dispatch),
+      status: "bounced",
+      bounceType: "hard",
+      to: RECIPIENT_EMAIL,
+    })
+  );
+}
+
+describe("delivery receipts — suppression idempotency (I9)", () => {
+  it("I9: a second hard bounce for the same contact applies, and the one suppression row keeps its reason and scope", async () => {
+    // Arrange — two real dispatches to the same address, both fanned out before
+    // the first receipt lands: a hard bounce suppresses the contact, so a later
+    // fan-out would never produce the second dispatch this case needs.
+    const userId = newId();
+    await seedRecipient({ userId, email: RECIPIENT_EMAIL });
+    const sent = await fanOutTwoEmails(userId);
+    expect(sent).toHaveLength(2);
+    const first = sent[0];
+    const second = sent[1];
+    if (first === undefined || second === undefined) {
+      throw new Error("expected two email dispatches for the same contact");
+    }
+    expect(messageIdOf(first)).not.toBe(messageIdOf(second));
+
+    const firstBody = hardBounceBody({ eventId: "evt_op137_bounce_0001", dispatch: first });
+    const secondBody = hardBounceBody({ eventId: "evt_op137_bounce_0002", dispatch: second });
+
+    // Act — the provider reports the same contact hard-bounced twice, for two
+    // different deliveries: two inbox rows, so two `after()` projections.
+    const firstResponse = await receiveNovuReceipt(
+      receiptRequest({
+        rawBody: firstBody,
+        headers: signedHeaders(firstBody, { id: "msg_op137_receipt_bounce_0001" }),
+      })
+    );
+    await drainDeferredProjections();
+    const secondResponse = await receiveNovuReceipt(
+      receiptRequest({
+        rawBody: secondBody,
+        headers: signedHeaders(secondBody, { id: "msg_op137_receipt_bounce_0002" }),
+      })
+    );
+    await drainDeferredProjections();
+
+    // Assert — both deliveries are acknowledged and both are `applied`: the
+    // second one must not be an error for colliding with the first.
+    expect(await body(firstResponse)).toEqual({ status: "received" });
+    expect(await body(secondResponse)).toEqual({ status: "received" });
+    const recorded = (await inboxRows())
+      .slice()
+      .sort((left, right) =>
+        String(left.providerEventId).localeCompare(String(right.providerEventId))
+      );
+    expect(
+      recorded.map((row) => [row.providerEventId, row.processResult, row.processError])
+    ).toEqual([
+      ["msg_op137_receipt_bounce_0001", "applied", null],
+      ["msg_op137_receipt_bounce_0002", "applied", null],
+    ]);
+
+    // Assert — one row for the contact, and the second receipt changed neither
+    // the reason nor the scope it was filed under.
+    const stored = await suppressions();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({
+      channel: "email",
+      contactHash: `sha256:${String(first.contactHash)}`,
+      reason: "hard_bounce",
+      scope: "all",
+    });
+
+    // Assert — the second receipt applied its own patch, so `applied` is not a
+    // vacuous acknowledgement of a no-op.
+    const applied = (await dispatchesFor(userId))
+      .filter((row) => row.channel === "email")
+      .map((row) => row.status);
+    expect(applied).toEqual(["bounced", "bounced"]);
+  });
+});
+
+describe("delivery receipts — log hygiene (I10, I11)", () => {
+  it("I10: no line this path writes carries the receipt's address, the signature value or the signing secret", async () => {
+    // Arrange — the fixture is built first, so the sink holds only the lines the
+    // receipt path itself writes.
+    const userId = newId();
+    await seedRecipient({ userId, email: RECIPIENT_EMAIL });
+    const dispatch = await fanOutOtp(userId);
+    const sink = memoryTransport();
+    setLogger(createLogger({ level: "trace", transports: [sink] }));
+
+    // A deliverable receipt, whose payload names the raw address.
+    const acceptedBody = hardBounceBody({ eventId: "evt_op137_hygiene_0001", dispatch });
+    // And a delivery signed with a key this deployment does not hold: the arm
+    // that logs.
+    const rejectedBody = JSON.stringify(
+      makeNovuReceiptBody({
+        eventId: "evt_op137_hygiene_0002",
+        transactionId: "msg_op137_hygiene_0002",
+        status: "delivered",
+        to: RECIPIENT_EMAIL,
+      })
+    );
+    const rejectedHeaders = makeNovuWebhookHeaders({
+      secret: TEST_NOVU_WEBHOOK_SECRET_PREVIOUS,
+      id: "msg_op137_receipt_hygiene_0002",
+      timestamp: nowSeconds(),
+      rawBody: rejectedBody,
+    });
+
+    // Act
+    const accepted = await receiveNovuReceipt(
+      receiptRequest({ rawBody: acceptedBody, headers: signedHeaders(acceptedBody) })
+    );
+    await drainDeferredProjections();
+    const rejected = await receiveNovuReceipt(
+      receiptRequest({ rawBody: rejectedBody, headers: rejectedHeaders })
+    );
+
+    // Assert — the path did log (so the negatives below are not vacuous), and
+    // nothing it logged carries the address, the signature or the secret.
+    expect(accepted.status).toBe(200);
+    expect(rejected.status).toBe(401);
+    expect(sink.entries.length).toBeGreaterThan(0);
+    const stream = JSON.stringify(sink.entries);
+    expect(stream.toLowerCase()).not.toContain(RECIPIENT_EMAIL);
+    expect(stream).not.toContain(rejectedHeaders["webhook-signature"] ?? "");
+    expect(stream).not.toContain(TEST_NOVU_WEBHOOK_SECRET);
+  });
+
+  it("I11: a rejected signature logs one warn carrying the provider, a reason and a hashed ip — and nothing from the request", async () => {
+    // Arrange
+    const sink = memoryTransport();
+    setLogger(createLogger({ level: "trace", transports: [sink] }));
+    const rawBody = JSON.stringify(
+      makeNovuReceiptBody({
+        eventId: "evt_op137_rejected_0001",
+        transactionId: "msg_op137_rejected_0001",
+        status: "delivered",
+        to: RECIPIENT_EMAIL,
+      })
+    );
+    const callerIp = "203.0.113.77";
+    const headers: Record<string, string> = {
+      ...makeNovuWebhookHeaders({
+        secret: TEST_NOVU_WEBHOOK_SECRET_PREVIOUS,
+        id: "msg_op137_receipt_rejected_0001",
+        timestamp: nowSeconds(),
+        rawBody,
+      }),
+      "x-forwarded-for": callerIp,
+    };
+
+    // Act
+    const response = await receiveNovuReceipt(receiptRequest({ rawBody, headers }));
+
+    // Assert — a refusal, not a crash, and exactly one warn.
+    expect(response.status).toBe(401);
+    expect(await body(response)).toMatchObject({ error: { code: "invalid_signature" } });
+    const warns = sink.entries.filter((entry) => entry.level === "warn");
+    expect(warns).toHaveLength(1);
+    const warn = warns[0];
+    if (warn === undefined) {
+      throw new Error("expected the rejected signature to write a warn");
+    }
+
+    // Assert — the operator-facing context is the provider, why, and a
+    // correlation hash: an exact field set, so an added key is a visible change.
+    expect(Object.keys(warn).sort()).toEqual([
+      "event",
+      "ipHash",
+      "level",
+      "msg",
+      "provider",
+      "reason",
+      "ts",
+    ]);
+    expect(warn).toMatchObject({
+      event: "webhook.signature_rejected",
+      provider: "novu",
+      reason: "signature_mismatch",
+    });
+    expect(String(warn.ipHash)).toMatch(/^[0-9a-f]{16}$/);
+
+    // Assert — and the request itself stays out of it.
+    const record = JSON.stringify(warn);
+    expect(record.toLowerCase()).not.toContain(RECIPIENT_EMAIL);
+    expect(record).not.toContain(headers["webhook-signature"] ?? "");
+    expect(record).not.toContain(callerIp);
+    expect(warn).not.toHaveProperty("to");
+    expect(warn).not.toHaveProperty("headers");
+    expect(warn).not.toHaveProperty("signature");
+  });
+});
+
+describe("delivery receipts — the blank signing secret (I12)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each<[string, string | undefined]>([
+    ["absent", undefined],
+    ["blank", ""],
+  ])(
+    "I12: with NOVU_WEBHOOK_SECRET %s the route refuses a receipt signed with the empty key and writes nothing",
+    async (_label, secret) => {
+      // Arrange — the key is unset or empty, and the caller signs with the empty
+      // key: the signature an unconfigured deployment would accept if a blank
+      // secret were read as a wildcard instead of as a refusal.
+      vi.stubEnv("NOVU_WEBHOOK_SECRET", secret);
+      const rawBody = JSON.stringify(
+        makeNovuReceiptBody({
+          eventId: "evt_op137_blank_secret",
+          transactionId: "msg_op137_blank_secret",
+          status: "delivered",
+          to: RECIPIENT_EMAIL,
+        })
+      );
+      const headers = makeNovuWebhookHeaders({
+        secret: "",
+        id: "msg_op137_receipt_blank_secret",
+        timestamp: nowSeconds(),
+        rawBody,
+      });
+
+      // Act
+      const response = await receiveNovuReceipt(receiptRequest({ rawBody, headers }));
+
+      // Assert — fail closed: a named refusal, no inbox row, no projection.
+      expect(response.status).toBe(401);
+      expect(await body(response)).toMatchObject({ error: { code: "invalid_signature" } });
+      expect(await inboxRows()).toEqual([]);
+      expect(afterMock).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe("delivery receipts — what a suppression stores (I13)", () => {
+  it("I13: the stored suppression row holds the digest and no raw contact — pinned by its exact field set", async () => {
+    // Arrange
+    const userId = newId();
+    await seedRecipient({ userId, email: RECIPIENT_EMAIL });
+    const dispatch = await fanOutOtp(userId);
+    const rawBody = hardBounceBody({ eventId: "evt_op137_store_0001", dispatch });
+
+    // Act
+    await receiveNovuReceipt(receiptRequest({ rawBody, headers: signedHeaders(rawBody) }));
+    await drainDeferredProjections();
+
+    // Assert — one row, and its field set is the §19.6 row: adding `contact`
+    // (or any other field) is the leak this case exists to catch.
+    const stored = await suppressions();
+    expect(stored).toHaveLength(1);
+    const row = stored[0];
+    if (row === undefined) {
+      throw new Error("expected the hard bounce to write a suppression row");
+    }
+    expect(Object.keys(row).sort()).toEqual([
+      "_id",
+      "channel",
+      "contactHash",
+      "createdAt",
+      "expiresAt",
+      "reason",
+      "scope",
+      "source",
+    ]);
+    expect(row).not.toHaveProperty("contact");
+    expect(JSON.stringify(row).toLowerCase()).not.toContain(RECIPIENT_EMAIL);
+    expect(row).toMatchObject({
+      channel: "email",
+      contactHash: `sha256:${String(dispatch.contactHash)}`,
+      reason: "hard_bounce",
+      scope: "all",
+    });
+  });
+});
