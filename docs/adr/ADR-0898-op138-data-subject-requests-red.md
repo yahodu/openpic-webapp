@@ -199,6 +199,18 @@ skipped (3190)` cases — the two failures are exactly this RED's
   integration file is in the diff, so nothing else in that project is touched by
   construction. The seven `adr-*` guard files are **green** on this head
   (`248 passed (248)`) now that this record and its ledger row exist.
+- **M1 satisfiability probe (throwaway worktree at `de7751ee`, deleted):** the
+  round-1 review's M1 objection was that the GREEN could not go green without
+  editing a test, so the rate-limit half was measured rather than argued. Adding
+  only the union member and the table row to
+  `apps/web/src/server/rate-limit/classes.ts` — no test touched — answers
+  **`42 passed (42)`**. Two single-anchor mutations of the same probe then
+  reddened exactly one case each: moving the class into `FAIL_CLOSED_CLASSES`
+  answers `1 failed | 41 passed (42)` at "U4: compliance.dsr fails open"
+  (`expected 'fail-closed' to be 'fail-open'`), and narrowing the window to
+  `3600` answers `1 failed | 41 passed (42)` at "configures compliance.dsr with
+  exactly its §0.11 rules" alone. The worktree was removed and the mutation was
+  never committed.
 - **Probe (deleted, three passes):** with signature stubs (functions that
   `throw`, routes answering `500`) the unit spec reddens 17 of 19 at the throw
   (the two enumeration guards are satisfied by construction) and every
