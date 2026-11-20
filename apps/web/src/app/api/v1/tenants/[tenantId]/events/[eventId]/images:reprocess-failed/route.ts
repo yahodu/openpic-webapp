@@ -8,7 +8,7 @@ import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import type { EventImageListRow } from "@/server/images/dto";
 import { requeueImages } from "@/server/images/requeue";
-import { getLogger } from "@/server/logging";
+import { requestLogger } from "@/server/logging";
 import { tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
@@ -57,7 +57,7 @@ export const POST = defineRoute({
       now: systemClock.now(),
       spaceKey: settings.face.activeSpaceKey,
       requestId,
-      logger: getLogger(),
+      logger: requestLogger(ctx.request, { route: ctx.route }),
     });
 
     return { status: 202, body: { requeuedCount: rows.length } };
