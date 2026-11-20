@@ -28,8 +28,6 @@
  * routed to OP-95, so it lives here alongside the async run (ADR-0096).
  */
 
-import { createHash } from "node:crypto";
-
 import type { Db, Document, ObjectId as ObjectIdValue } from "mongodb";
 import { ObjectId } from "mongodb";
 
@@ -245,9 +243,13 @@ function asObjectId(value: unknown): ObjectIdValue | null {
   return new ObjectId(value);
 }
 
-/** A SHA-256 hex digest of a destination (the dispatch `contactHash`). */
+/**
+ * The dispatch ledger's `contactHash` — the shared canonical digest, so a
+ * suppression key built from the same contact always matches this row
+ * (contract §10.1.3; design §19.6; ADR-0892 §1).
+ */
 function contactHashOf(destination: string): string {
-  return createHash("sha256").update(destination).digest("hex");
+  return sharedContactHashOf(destination);
 }
 
 /** Narrow an unknown value to a stored group-preference scope. */

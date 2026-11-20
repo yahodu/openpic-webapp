@@ -1,3 +1,9 @@
+## [1.69.1](https://github.com/yahodu/openpic-webapp/compare/v1.69.0...v1.69.1) (2026-11-20)
+
+### Bug Fixes
+
+- **notifications:** OP-137 use the shared contact digest for every dispatch-ledger write ([#763](https://github.com/yahodu/openpic-webapp/issues/763)) ([b15e026](https://github.com/yahodu/openpic-webapp/commit/b15e0268f499638faec11d0c4010d50675e0e0be)), closes [#752](https://github.com/yahodu/openpic-webapp/issues/752) [#752](https://github.com/yahodu/openpic-webapp/issues/752)
+
 ## [1.69.0](https://github.com/yahodu/openpic-webapp/compare/v1.68.3...v1.69.0) (2026-11-20)
 
 ### Features
