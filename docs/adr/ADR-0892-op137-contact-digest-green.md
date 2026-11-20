@@ -138,3 +138,44 @@ apps/web/src/test/integration/notification-contact-digest.test.ts` → `5 passed
   body line.
 - **Backfill `notificationDispatches.contactHash`.** Impossible without the plaintext the row does not
   store; accepted as a documented residual instead (above).
+
+## Review — round 1
+
+Reviewed at the GREEN head `853bd492` (branch `OP-137-task-contact-digest-green`, PR
+[#763](https://github.com/yahodu/openpic-webapp/pull/763)) in a detached worktree of that commit, with the
+root, `apps/web` and `packages/contracts` `node_modules` symlinked from a healthy lane. Every figure below
+is this review's own run, not a transcription of the handoff.
+
+**Verdict: approved with findings — three Low documentation findings, all of them inside this record, and
+one Info item recorded without a card.** No decision in §Context, §Decision, §Consequences or
+§Alternatives is retracted, and the review changed no production byte. The three corrections below are to
+this record's own citations and figures, not to its conclusions: the frozen sentences stay as written and
+each correction states the measured value beside them.
+
+### Merge proof
+
+- **Reviewed head `853bd492`, merged tree `d53b500b`, squash `b15e0268`** — the squash is an ancestor of `origin/main` (`git merge-base --is-ancestor b15e0268 origin/main` is clean).
+- **The trunk moved while the checks ran.** `origin/main` advanced to `208a3db0` (`3f5d0225`, the ledger link guard of ADR-0893/ADR-0895, then the `1.69.0` release commit), so `docs/adr/README.md` conflicted on one block. Merge `d53b500b` is an **index-only ledger union**: every row from both sides kept in ascending order (`0888` and `0892` from this lane, `0893` and `0895` from the trunk), both `Next free` cells left at the higher `0896` — a cell is never lowered — and nothing renumbered, because `ADR-0892` is held by no other ref.
+- **What the union touched.** Measured `git diff --numstat d53b500b^1 d53b500b -- docs/adr/README.md` reads `8` insertions / `2` deletions: the trunk's two index rows and their two paragraphs, plus the two cell lines rewritten in place (`0895` → `0896`). No production file changes in the merge; the trunk's `ADR-0893`, `ADR-0895`, its `adr-ledger-links` helper and spec, `CHANGELOG.md` and `package.json` are carried byte-identically.
+- **Tree identity.** `git rev-parse b15e0268^{tree} d53b500b^{tree}` prints `dfa9a47224151140ffa9f8b4a8268987382810c4` twice, so the squash tree equals the merged tree and the suites below apply to the trunk verbatim.
+- **Draft PR [#752](https://github.com/yahodu/openpic-webapp/pull/752) is closed as superseded by #763**, with that comment on it. Its pin files, `ADR-0888` and the ADR-0875 `Consumers:` line are carried byte-identically — one blob OID each at `ce6e32a4`, `853bd492`, `d53b500b` and `b15e0268` (`be20c5c5…` the integration pin, `eccff73a…` the unit pin, `7abf3921…` `ADR-0888`, `8c7cb5ed…` `ADR-0875`).
+
+### The reviewer's measurements
+
+- `receipt-projection.test.ts` `11 passed (11)`; `notification-contact-digest.test.ts` `5 passed (5)` at the merged tree.
+- Full `unit`: `189 files / 3173 passed | 3 skipped` at `853bd492`, and `190 files / 3185 passed | 3 skipped` at the merged tree — the trunk's own new `adr-ledger-links` spec is the extra file.
+- Full `integration`: `152 files / 1590 passed (1590)` at `853bd492`.
+- `tsc -p apps/web/tsconfig.json --noEmit` exit `0`; `eslint` 0 errors, the eight `security/detect-object-injection` warnings on `fan-out.ts` also sitting on `origin/main`'s blob of that file, so this change adds none; `prettier --check` clean on both production files, this record and the ledger.
+- `adr-numbering` + `adr-record-links` + the trunk's `adr-ledger-links`: `3 files / 69 passed (69)`; 421 records in `docs/adr/`, no duplicate number.
+- **`F1` completeness re-verified on the trunk:** `git show origin/main:apps/web/src/server/notifications/fan-out.ts` carries no `createHash`, and `contactHashOf` at `:251` returns `sharedContactHashOf(destination)`, so every ledger write goes through the one function.
+
+### Corrections to this record's own text
+
+- **C1 — line citations (§Evidence).** The completeness paragraph cites the ledger writes at `:913` (`deferred`), `:1017` (`queued`) and `:1651` (the direct builder). The real lines at the delivered head `853bd492` are `:911`, `:1015` and `:1649`, measured with `grep -n` on that blob; the two-line shift is this change's own `+6/−4` in `fan-out.ts`. `:251` and the absence of `createHash` reproduce exactly, so the completeness claim itself stands.
+- **C2 — full-suite figures (§Evidence).** The frozen text gives full `integration` as `150 files / 1576 passed (1576)`, and PR #763's own body gives `151 files / 1588`. The measured value at this record's own head `853bd492` is **`152 files / 1590 passed (1590)`**: the file count is the trunk's `151` plus this lane's new `notification-contact-digest.test.ts`, and the test count includes `I9`–`I13`. The `unit` pair quoted in the record (`189 files / 3173 passed | 3 skipped`) reproduces exactly.
+- **C3 — the cell sentence (§Consequences).** The paragraph says "the two cells (`0889` → `0893`)", which contradicts §Number allocation, where the second index-only union keeps `0895`. After the reviewer's union with `origin/main` `208a3db0`, both cells read **`0896`** — measured on `208a3db0`, on `d53b500b` and on `b15e0268`. `0893` is the first union's advance alone; the second union is the one that landed. On the trunk this section lands on, both cells read `0898` (sibling records `0896` and `0897` landed after this one), and no cell was lowered at any step.
+
+### Routed follow-ups and recorded items
+
+- **Card `t_57c291d0`** owns the behavioural pins for what this record covers structurally only — the `deferred` writer, the direct builder and the phone channel, §Consequences' own "not in this change" limit. The review routed them there and pinned nothing itself.
+- **Info, recorded without a card.** `DispatchRecordInput.contactHash` (`fan-out.ts:1404`) is an optional pre-hashed input. Its only caller (`:1649`) fills it canonically, so the field is dead today, but a future caller could pass a raw digest and bypass the one-function guarantee `F1` asked for. It is the one place where the structural guarantee depends on caller discipline, and it is recorded here rather than fixed.
