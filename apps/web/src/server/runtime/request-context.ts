@@ -32,6 +32,11 @@ export interface RequestContext {
   readonly principal?: string;
   /** The `session` id (hex) backing the request, when known. */
   readonly sessionId?: string;
+  /**
+   * The `attendeeSessions` row id (hex), when the credential is an anonymous
+   * attendee session rather than a signed-in user (contract §0.2 `attendee`).
+   */
+  readonly attendeeSessionId?: string;
   /** The tenant scope, when known. */
   readonly tenantId?: string;
   /** The caller's role in the resolved tenant scope, when known. */
