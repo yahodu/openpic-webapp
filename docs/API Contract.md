@@ -624,6 +624,7 @@ Set-Cookie: op_att=opat_9f2c...; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age
 - Web clients ignore `sessionToken` and rely on the cookie. Mobile/native clients store it in the OS keychain and send `X-Attendee-Session`.
 - `deviceFingerprint` is derived server-side from hashed UA/IP/Accept-Language for abuse detection only.
 - **Anonymous attendees are deliberately unreachable by notifications** (notification §2). Their UI state comes from polling §6.4 with this token. This is a privacy feature.
+- A DSR filed from this session answers a `pollUrl` carrying a receipt token that outlives the session (contract §8.1); the receipt is the only way back to that request, so losing it loses the channel.
 
 ### `GET /api/v1/p/attendee-sessions/current`
 
@@ -2873,6 +2874,17 @@ Omitting `scope` means "all of my data, everywhere".
 Emits `privacy.dsr.received` — the statutory acknowledgement, carrying the SLA date. `admin.dsr.sla_risk` fires when within 48 h of the deadline.
 
 ### `GET /api/v1/me/data-requests` · `GET /api/v1/me/data-requests/{id}`
+
+Auth `user` **or** `attendee` · the list and the detail read are symmetric: a signed-in user reads the rows it filed; an anonymous attendee session reads the rows that session filed (`subject.kind: "anonymous"`, `subject.attendeeSessionId`). The list answers `{data, page}` scoped to that owner and never admits a receipt token.
+
+The `202` receipt hands an anonymous filer a **receipt token**, and `{id}` accepts it as `?receipt=<token>`:
+
+- An attendee filing answers `pollUrl: "/api/v1/me/data-requests/<id>?receipt=<token>"`; a user filing answers the bare path, because the account is the durable credential. The receipt keeps its six keys — the token rides inside `pollUrl`.
+- Format: `base64url(payload) + "." + lowercase-hex HMAC-SHA256(base64url(payload))`, `payload = {"v":1,"kind":"dsr_receipt","requestId":"<24-hex>"}`, keyed with a domain-separated subkey (`"dsr-receipt:v1"`) of `INTERNAL_API_SECRET`. The token is stateless — no column stores it — and carries no `exp`: its lifetime is the lifetime of the request row, and `dataSubjectRequests` has no TTL.
+- There is no re-issue path: an anonymous attendee has no verified email or phone on file, so the receipt is the only channel by which they can learn the outcome; a lost receipt cannot be replaced.
+- The receipt is the credential for its own request id only: a valid token for another id is `404 not_found`; a bad signature or malformed payload is `401 unauthenticated`; never `403`.
+- A receipt is resolved **before** the attendee session, so a stale `op_att` cookie cannot shadow it. A live session's own read and every other credential's `404` are unchanged.
+- It grants read of that one request (metadata + counted `executionLog`); it is not a session, it cannot list, and it cannot file.
 
 ```json
 {

@@ -1447,3 +1447,300 @@ describe("I27 — the verifiedEmail comparison is verbatim, case included (§8.1
     expect(await dsrEvents()).toHaveLength(0);
   });
 });
+
+/* ──────── the anonymous attendee's durable receipt, and the list (I28–I31) ──────── */
+
+/** The §8.1 list row's exact key set, in the order `keysOf` sorts it. */
+const LIST_ROW_KEYS = ["id", "receivedAt", "regulation", "requestType", "slaDueAt", "status"];
+
+/** A receipt token split into its payload segment and its signature segment. */
+interface ReceiptSegments {
+  readonly payload: string;
+  readonly signature: string;
+}
+
+/** The §8.1 receipt payload: no `exp`, because the request row has no TTL. */
+interface ReceiptPayload {
+  readonly v: number;
+  readonly kind: string;
+  readonly requestId: string;
+}
+
+/**
+ * The `?receipt=` token a receipt's `pollUrl` carries.
+ *
+ * @param pollUrl - A `202` receipt's `pollUrl`.
+ * @returns The token, decoded from the query.
+ */
+function receiptOf(pollUrl: string): string {
+  const token = new URL(pollUrl, APP_ORIGIN).searchParams.get("receipt") ?? "";
+  if (token.length === 0) {
+    throw new Error(`expected ${pollUrl} to carry a receipt token`);
+  }
+  return token;
+}
+
+/**
+ * The path of a receipt's `pollUrl`, with the query dropped.
+ *
+ * @param pollUrl - A `202` receipt's `pollUrl`.
+ * @returns The request path the token is bound to.
+ */
+function pathOf(pollUrl: string): string {
+  return new URL(pollUrl, APP_ORIGIN).pathname;
+}
+
+/**
+ * Split a receipt token into its two wire segments.
+ *
+ * @param token - A receipt token.
+ * @returns Its payload and its signature.
+ */
+function segmentsOf(token: string): ReceiptSegments {
+  const [payload, signature] = token.split(".");
+  if (payload === undefined || signature === undefined) {
+    throw new Error(`expected a two-segment receipt token, received ${token}`);
+  }
+  return { payload, signature };
+}
+
+/**
+ * Decode a receipt token's payload segment.
+ *
+ * @param token - A receipt token.
+ * @returns The payload the token names.
+ */
+function receiptPayloadOf(token: string): ReceiptPayload {
+  const decoded = Buffer.from(segmentsOf(token).payload, "base64url").toString("utf8");
+  return JSON.parse(decoded) as ReceiptPayload;
+}
+
+/**
+ * Change one hex character of a receipt's signature, keeping the wire shape.
+ *
+ * @param token - A valid receipt token.
+ * @returns The same token with a signature that cannot verify.
+ */
+function tamperedReceiptOf(token: string): string {
+  const { payload, signature } = segmentsOf(token);
+  const first = signature.startsWith("0") ? "1" : "0";
+  return `${payload}.${first}${signature.slice(1)}`;
+}
+
+/**
+ * The rows of a `{data, page}` list body, failing loudly on another envelope.
+ *
+ * @param body - A parsed list body.
+ * @returns Its `data` rows.
+ */
+function listRowsOf(body: Record<string, unknown>): Record<string, unknown>[] {
+  const data = body.data;
+  if (!Array.isArray(data)) {
+    throw new Error("expected the list body to carry a `data` array");
+  }
+  return data as Record<string, unknown>[];
+}
+
+/**
+ * The ids a `{data, page}` list body carries, as a sorted set.
+ *
+ * @param body - A parsed list body.
+ * @returns Its ids, ascending, so a case compares sets and not order.
+ */
+function listIdsOf(body: Record<string, unknown>): string[] {
+  return listRowsOf(body)
+    .map((row) => String(row.id))
+    .sort();
+}
+
+describe("I28 — the receipt rides in `pollUrl` and keeps its six keys (§8.1)", () => {
+  it("I28: an attendee's 202 carries `?receipt=` with a payload naming the request", async () => {
+    const { user, event } = await seedOwnerEvent("i28");
+    const session = await createAttendeeSession(event.slug, nextIp());
+
+    const filed = await fileRequest({
+      cookie: session.cookie,
+      body: { requestType: "erasure" },
+    });
+
+    // Six keys, exactly: the token rides inside `pollUrl`, never beside it.
+    expect(keysOf(filed)).toEqual([
+      "acknowledgement",
+      "id",
+      "pollUrl",
+      "requestType",
+      "slaDueAt",
+      "status",
+    ]);
+
+    const pollUrl = String(filed.pollUrl);
+    const pollBase = `/api/v1/me/data-requests/${String(filed.id)}`;
+    // Path, then `?receipt=` and the two-segment wire format: a bare `pollUrl`
+    // reds here with the exact tail it answered instead.
+    expect(pollUrl.slice(pollBase.length)).toMatch(/^\?receipt=[A-Za-z0-9_-]+\.[0-9a-f]{64}$/);
+    const token = receiptOf(pollUrl);
+    expect(pathOf(pollUrl)).toBe(pollBase);
+    expect(pollUrl).toBe(`${pollBase}?receipt=${token}`);
+
+    // Two segments: a base64url payload and its lowercase-hex HMAC-SHA256.
+    expect(segmentsOf(token).signature).toMatch(/^[0-9a-f]{64}$/);
+    const payload = receiptPayloadOf(token);
+    expect(payload).toEqual({ v: 1, kind: "dsr_receipt", requestId: String(filed.id) });
+    // The signature signs the payload segment as sent, not a re-encoding of it.
+    expect(segmentsOf(token).payload).toBe(
+      Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")
+    );
+
+    // The account is the durable credential, so a user's receipt stays bare.
+    const userFiled = await fileRequest({ cookie: user.cookie, body: { requestType: "access" } });
+    expect(userFiled.pollUrl).toBe(`/api/v1/me/data-requests/${String(userFiled.id)}`);
+    expect(String(userFiled.pollUrl)).not.toContain("?");
+  });
+});
+
+describe("I29 — the receipt alone reads the row after the session is gone (§8.1)", () => {
+  it("I29: a deleted session row leaves the receipt readable, and a stale cookie cannot shadow it", async () => {
+    const { event } = await seedOwnerEvent("i29");
+
+    // (a) The TTL end-state: the session row is gone, the receipt is not.
+    const gone = await createAttendeeSession(event.slug, nextIp());
+    const goneFiled = await fileRequest({
+      cookie: gone.cookie,
+      body: { requestType: "erasure" },
+    });
+    await app.db
+      .collection(COLLECTIONS.attendeeSessions)
+      .deleteOne({ _id: new ObjectId(gone.sessionId) });
+
+    const anonymous = await getDataRequestHandler(getRequest(String(goneFiled.pollUrl)));
+    expect(anonymous.status).toBe(200);
+    const readBody = await bodyOf(anonymous, 200, "GET /me/data-requests/:id (receipt alone)");
+    expect(readBody.id).toBe(goneFiled.id);
+    expect(Array.isArray(readBody.executionLog)).toBe(true);
+
+    // The same dangling cookie, without the receipt, is not a credential.
+    const bare = await getDataRequestHandler(
+      getRequest(pathOf(String(goneFiled.pollUrl)), { cookie: gone.cookie })
+    );
+    expect(bare.status).toBe(401);
+    expect((await errorBody(bare)).code).toBe("unauthenticated");
+
+    // (b) Precedence: a lapsed session must not shadow the receipt it filed.
+    const lapsed = await createAttendeeSession(event.slug, nextIp());
+    const lapsedFiled = await fileRequest({
+      cookie: lapsed.cookie,
+      body: { requestType: "access" },
+    });
+    await app.db
+      .collection(COLLECTIONS.attendeeSessions)
+      .updateOne(
+        { _id: new ObjectId(lapsed.sessionId) },
+        { $set: { expireAt: new Date("2026-01-01T00:00:00.000Z") } }
+      );
+
+    const withStaleCookie = await getDataRequestHandler(
+      getRequest(String(lapsedFiled.pollUrl), { cookie: lapsed.cookie })
+    );
+    expect(withStaleCookie.status).toBe(200);
+    const staleBody = await bodyOf(
+      withStaleCookie,
+      200,
+      "GET /me/data-requests/:id (receipt with a lapsed cookie)"
+    );
+    expect(staleBody.id).toBe(lapsedFiled.id);
+
+    // The lapsed credential on its own still answers the re-create refusal,
+    // which is the shipped half of §1.5 the receipt must not change.
+    const lapsedBare = await getDataRequestHandler(
+      getRequest(pathOf(String(lapsedFiled.pollUrl)), { cookie: lapsed.cookie })
+    );
+    expect(lapsedBare.status).toBe(401);
+    expect((await errorBody(lapsedBare)).code).toBe("attendee_session_expired");
+  });
+});
+
+describe("I30 — the receipt is bound to its own request and is no oracle (§8.1)", () => {
+  it("I30: another id answers 404, a tampered or malformed token answers 401, never 403", async () => {
+    const { event } = await seedOwnerEvent("i30");
+    const session = await createAttendeeSession(event.slug, nextIp());
+
+    const first = await fileRequest({ cookie: session.cookie, body: { requestType: "erasure" } });
+    const second = await fileRequest({ cookie: session.cookie, body: { requestType: "access" } });
+    const firstPath = pathOf(String(first.pollUrl));
+    expect(String(first.pollUrl).slice(firstPath.length)).toMatch(
+      /^\?receipt=[A-Za-z0-9_-]+\.[0-9a-f]{64}$/
+    );
+    const firstToken = receiptOf(String(first.pollUrl));
+    const otherToken = receiptOf(String(second.pollUrl));
+    expect(otherToken).not.toBe(firstToken);
+
+    // A valid token for another id is the ordinary not-found path, never 403:
+    // the endpoint must not confirm that the id exists.
+    const foreign = await getDataRequestHandler(getRequest(`${firstPath}?receipt=${otherToken}`));
+    expect(foreign.status).toBe(404);
+    expect((await errorBody(foreign)).code).toBe("not_found");
+
+    // One flipped hex character of the signature is not a credential at all.
+    const tampered = await getDataRequestHandler(
+      getRequest(`${firstPath}?receipt=${tamperedReceiptOf(firstToken)}`)
+    );
+    expect(tampered.status).toBe(401);
+    expect((await errorBody(tampered)).code).toBe("unauthenticated");
+
+    const garbage = await getDataRequestHandler(getRequest(`${firstPath}?receipt=garbage`));
+    expect(garbage.status).toBe(401);
+    expect((await errorBody(garbage)).code).toBe("unauthenticated");
+
+    // Without any credential the id is not even confirmed to exist.
+    const bare = await getDataRequestHandler(getRequest(firstPath));
+    expect(bare.status).toBe(401);
+    expect((await errorBody(bare)).code).toBe("unauthenticated");
+  });
+});
+
+describe("I31 — the list admits the attendee session and stays scoped to it (§8.1)", () => {
+  it("I31: each session lists only its own rows, and a receipt is never a list credential", async () => {
+    const { event } = await seedOwnerEvent("i31");
+    const first = await createAttendeeSession(event.slug, nextIp());
+    const second = await createAttendeeSession(event.slug, nextIp());
+
+    const firstA = await fileRequest({ cookie: first.cookie, body: { requestType: "erasure" } });
+    const firstB = await fileRequest({ cookie: first.cookie, body: { requestType: "access" } });
+    const secondOnly = await fileRequest({
+      cookie: second.cookie,
+      body: { requestType: "portability" },
+    });
+
+    // The same owner rule the detail read applies, and the same §0.8 envelope.
+    const own = await listDataRequestsHandler(
+      getRequest("/api/v1/me/data-requests", { cookie: first.cookie })
+    );
+    expect(own.status).toBe(200);
+    const ownBody = await bodyOf(own, 200, "GET /me/data-requests (first session)");
+    expect(keysOf(ownBody)).toEqual(["data", "page"]);
+    expect(listIdsOf(ownBody)).toEqual([String(firstA.id), String(firstB.id)].sort());
+    expect(listIdsOf(ownBody)).not.toContain(String(secondOnly.id));
+    expect(listRowsOf(ownBody).map(keysOf)).toEqual([LIST_ROW_KEYS, LIST_ROW_KEYS]);
+
+    // A second session sees its own row and neither of the first session's.
+    const other = await listDataRequestsHandler(
+      getRequest("/api/v1/me/data-requests", { cookie: second.cookie })
+    );
+    expect(other.status).toBe(200);
+    const otherBody = await bodyOf(other, 200, "GET /me/data-requests (second session)");
+    expect(listIdsOf(otherBody)).toEqual([String(secondOnly.id)]);
+    expect(listRowsOf(otherBody).map(keysOf)).toEqual([LIST_ROW_KEYS]);
+
+    // No credential is a refusal, not an empty page.
+    const anonymous = await listDataRequestsHandler(getRequest("/api/v1/me/data-requests"));
+    expect(anonymous.status).toBe(401);
+    expect((await errorBody(anonymous)).code).toBe("unauthenticated");
+
+    // One token, one row: the receipt cannot enumerate the owner's requests.
+    const onTheList = await listDataRequestsHandler(
+      getRequest(`/api/v1/me/data-requests?receipt=${receiptOf(String(firstA.pollUrl))}`)
+    );
+    expect(onTheList.status).toBe(401);
+    expect((await errorBody(onTheList)).code).toBe("unauthenticated");
+  });
+});
