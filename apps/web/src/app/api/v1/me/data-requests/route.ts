@@ -2,8 +2,6 @@ import { ObjectId, type Db } from "mongodb";
 import { z } from "zod";
 
 import { findRequestAttendeeSession } from "@/server/attendee/session-resolver";
-import { getAuth } from "@/server/auth";
-import { requireAuth } from "@/server/auth/guards";
 import {
   DSR_REGULATIONS,
   DSR_REQUEST_TYPES,
@@ -12,8 +10,9 @@ import {
   resolveRegulation,
   type TenantDataRegion,
 } from "@/server/compliance/data-request";
+import { signDsrReceipt } from "@/server/compliance/receipt";
 import { isoOf } from "@/server/compliance/serialize";
-import { getRateLimitConfig } from "@/server/config/env";
+import { getConfig, getRateLimitConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { emitDomainEvent } from "@/server/domain/domain-events";
@@ -309,15 +308,28 @@ export const POST = defineRoute({
       regulation,
     });
 
+    // An account is its own durable credential, so its `pollUrl` stays bare; an
+    // anonymous attendee gets a signed receipt inside it, because the session
+    // row that filed the request will one day be gone (contract §8.1).
+    const requestIdHex = requestId.toHexString();
+    const pollBase = `/api/v1/me/data-requests/${requestIdHex}`;
+    const pollUrl =
+      userId === undefined
+        ? `${pollBase}?receipt=${signDsrReceipt({
+            requestId: requestIdHex,
+            secret: getConfig().internal.apiSecret,
+          })}`
+        : pollBase;
+
     return {
       status: 202,
       body: {
-        id: requestId.toHexString(),
+        id: requestIdHex,
         requestType: ctx.body.requestType,
         status: "received",
         slaDueAt: slaDueAtIso,
         acknowledgement: acknowledgementFor(slaDueAt),
-        pollUrl: `/api/v1/me/data-requests/${requestId.toHexString()}`,
+        pollUrl,
       },
     };
   },
@@ -326,18 +338,28 @@ export const POST = defineRoute({
 export const GET = defineRoute({
   route: "/api/v1/me/data-requests",
   response: listResponseSchema,
-  auth: (ctx, request) => requireAuth("user", { auth: getAuth(), database: getDb() })(ctx, request),
+  // `user` or `attendee`: the list is symmetric with the detail read (§8.1).
+  auth: dsrAuth,
   handler: async (ctx) => {
-    const principal = ctx.principal;
-    if (principal === undefined) {
-      throw appError("authentication_required");
-    }
-
     const query = parsePageQuery(new URL(ctx.request.url).searchParams);
-    const filter: Record<string, unknown> = {
-      "subject.kind": "user",
-      "subject.userId": new ObjectId(principal),
-    };
+    const principal = ctx.principal;
+
+    // A signed-in user reads the rows it filed; an anonymous session reads the
+    // rows that session filed. There is no other owner, and a receipt is not a
+    // list credential, so no credential at all is the `401` `dsrAuth` threw.
+    let filter: Record<string, unknown>;
+    if (principal === undefined) {
+      const session = await findRequestAttendeeSession({ database: getDb() }, ctx.request);
+      if (session === null) {
+        throw appError("unauthenticated");
+      }
+      filter = {
+        "subject.kind": "anonymous",
+        "subject.attendeeSessionId": session._id.toHexString(),
+      };
+    } else {
+      filter = { "subject.kind": "user", "subject.userId": new ObjectId(principal) };
+    }
     if (query.cursor !== null) {
       if (!ObjectId.isValid(query.cursor.i)) {
         throw appError("invalid_cursor");
