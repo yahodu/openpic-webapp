@@ -634,6 +634,19 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       ["status", 1],
     ],
   },
+  // The anonymous attendee's own list: `GET /me/data-requests` filters on
+  // `subject.kind` + `subject.attendeeSessionId` and sorts `{receivedAt:-1,
+  // _id:-1}` (§20.3, ADR-0907). Partial so the `subject.kind:"user"` rows,
+  // which carry no session key, stay out of the index.
+  {
+    collection: COLLECTIONS.dataSubjectRequests,
+    name: "dataSubjectRequests_attendee_received",
+    keys: [
+      ["subject.attendeeSessionId", 1],
+      ["receivedAt", -1],
+    ],
+    partialFilterExpression: { "subject.kind": "anonymous" },
+  },
 
   // plans — one document per plan key (§14.1). This is the database backstop
   // that makes the seed's upsert safe under concurrent deploy instances: even a

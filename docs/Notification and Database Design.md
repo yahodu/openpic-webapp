@@ -2050,7 +2050,7 @@ Scope is deliberately narrow: **admin actions, billing state changes, membership
   receivedAt }
 ```
 
-**Indexes:** `{"subject.userId":1, receivedAt:-1}` · `{status:1, slaDueAt:1}` partial on open statuses · `{regulation:1, status:1}`
+**Indexes:** `{"subject.userId":1, receivedAt:-1}` · `{status:1, slaDueAt:1}` partial on open statuses · `{regulation:1, status:1}` · `{"subject.attendeeSessionId":1, receivedAt:-1}` partial on `subject.kind:"anonymous"`
 
 `executionLog` is what turns "we deleted your data" into evidence. Because vectors live only on `imageFaces` and `selfies`, and both carry `tenantId` + `eventId` + subject refs (P8), erasure is a bounded, countable sequence of `deleteMany` calls whose counts are recorded — not a scavenger hunt.
 
