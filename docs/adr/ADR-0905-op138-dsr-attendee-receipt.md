@@ -1,7 +1,8 @@
 # ADR-0905 — OP-138 TEST: the anonymous attendee's durable DSR receipt, and the attendee list read
 
-- **Status:** Accepted (RED by design — four cases must fail on the base and the
-  PR must stay a draft until the gated GREEN `t_84c1b83e` lands)
+- **Status:** Accepted — pinned RED-first by `t_b8e9aa3d` and implemented by the
+  gated GREEN `t_84c1b83e` on this branch (§11); the PR is ready for review and
+  un-merged, the landing belongs to `t_47a8e5e0`
 - **Date:** 2026-11-22
 - **Card:** `t_b8e9aa3d` (OP-138 TEST, Medium; finding **F2** of the round-1
   review of the GREEN `t_0eab7a02` /
@@ -233,3 +234,20 @@ does, on this same branch and worktree, and the REVIEW card `t_47a8e5e0` owns th
 merge. PR **#783** (`OP-138-task-reuse-attendee-session`, head `d48199f3`, open)
 edits the same `[id]/route.ts` + `_lib/principal.ts` pair; the GREEN merges the
 then-current `origin/main` (**merge, never rebase**) rather than depending on it.
+
+## 11. GREEN — how the shipped code satisfies the pins
+
+`t_84c1b83e` landed `00e31253` on this branch with **no test, fixture or helper
+edit** (`git diff --numstat 34d40d32..HEAD -- apps/web/src/test` is empty): the
+new `apps/web/src/server/compliance/receipt.ts` mints and verifies the token
+exactly as §2 specifies, keyed per call with
+`hmacSha256Hex(INTERNAL_API_SECRET, "dsr-receipt:v1")`.
+
+**Precedence is "missing or lapsed, never live".** `I29(b)` requires the receipt
+to outrank a lapsed session; the shipped `I24` requires another **live** session
+to keep answering `404`. `dsrReadAuth` therefore tolerates only
+`unauthenticated` / `attendee_session_expired` when `?receipt=` is present, and
+`liveAttendeeSession` turns a lapsed row into `null`; the handler applies the
+live session's owner filter when one resolves and the receipt's `_id` +
+`subject.kind: "anonymous"` binding only when none does. A valid token for
+another id still answers `404`, a bad signature or payload `401`.
