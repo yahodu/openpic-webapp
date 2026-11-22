@@ -155,6 +155,25 @@ Checks on this head: `tsc` **0** on `apps/web` and `packages/contracts`,
 `eslint` **0** on the spec, `prettier --check` clean, full `pnpm test:unit`
 green apart from this single intentional red, the seven `adr-*` guards green.
 
+### 4.1 CI on this head, and why the pin lands ahead of the GREEN
+
+The PR is **RED by design**, so three gating jobs report the intentional red and
+nothing else: `unit_test` (`Test Files 1 failed | 190 passed (191)`,
+`Tests 1 failed | 3209 passed | 3 skipped (3213)`), `ci` (`Unit tests` step,
+`1 failed | 3209 passed`) and `test_coverage` (`Test Files 1 failed | 343 passed
+(344)`), each failing on this case's `AssertionError` at
+`indexes.test.ts:349`. Every other gating job — `lint`, `audit`, `audit-dev`,
+`secret-scan`, `env-changes`, `validate-branch-name`, `validate-pr-title`, the
+CI-Evidence guard — is `SUCCESS`.
+
+The card's landing mandate is explicit: the pin lands first and the GREEN
+`t_146bfc4e` is chained behind it, so the §9.1 merge is an admin squash with
+that G2 exception recorded in the PR (the one non-success entry is the pin this
+record exists for, not an unexplained failure). A future reader who finds a red
+`unit_test` on this PR's head should read it as the RED half of the lane, not as
+a regression: `git show <this squash> -- apps/web/src/server/db/indexes.ts` is
+empty.
+
 ## 5. Alternatives rejected
 
 - **No index (the shipped state).** A collection scan plus a blocking sort on
