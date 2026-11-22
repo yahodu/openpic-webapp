@@ -10,6 +10,7 @@ import { fixedClock } from "@/server/runtime/clock";
 import { getObjectStorage } from "@/server/storage/get-object-storage";
 
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 import { startTestApp, type TestApp } from "../helpers/authed-app";
 import { recordingLogger, type RecordingLogger } from "../helpers/recording-logger";
 
@@ -47,8 +48,27 @@ import { recordingLogger, type RecordingLogger } from "../helpers/recording-logg
 
 const DAY_MS = 86_400_000;
 
-/** The instant every run in this file is timed at. */
-const NOW = new Date("2026-11-17T09:00:00.000Z");
+/**
+ * The instant every run in this file is timed at.
+ *
+ * Anchored **two UTC days past the real day**, not written as a calendar date
+ * (ADR-0146, ADR-0148; ADR-0938 for this file). The two legs this suite pins
+ * must seed a row that is *expired for the job's clock* — `I11`'s unconfirmed
+ * selfie carries `expireAt = NOW - 1d`, `I13`'s anonymous session the same —
+ * while `selfies_expire_at_ttl` and `attendee_sessions_expire_at_ttl`
+ * (`{ expireAt: 1 }`, `expireAfterSeconds: 0`, `@/server/db/indexes`) offer
+ * those same rows to mongod's TTL monitor, which evaluates them against the
+ * **real** clock. Under a literal past anchor every such fixture is already
+ * TTL-expired at seed time: a monitor pass landing between the seed and the
+ * job's `find` — or between that `find` and its `deleteOne` — leaves the purge
+ * with nothing due, so it logs no `retention.purge.step` line and `I11` reds on
+ * `expected undefined to be defined` while the row, its vector, its matches and
+ * its bytes are gone (the TTL deleted the row, the job's loop deleted the rest).
+ * Two days ahead keeps the anchor a pure function of one real-clock read and
+ * puts every `NOW - n days` fixture at least ~9 h ahead of the real clock, so no
+ * monitor pass at any cadence can delete one mid-test.
+ */
+const NOW = new Date(fixtureInstant("09:00:00.000Z", 2));
 
 let app: TestApp;
 
