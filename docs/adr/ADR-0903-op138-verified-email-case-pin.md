@@ -186,3 +186,53 @@ under it.
   Rejected: with a verbatim comparison the request is refused, so there is no
   row to read; the reading is unobservable (§4), and asserting it would require
   the behaviour change this card declines.
+
+## Review — round 1
+
+Sign-off card `t_0a2afec0` records the round-1 (artifact lens) review of the pin card `t_4b37e5de`
+(PR [#784](https://github.com/yahodu/openpic-webapp/pull/784)). The delivery merged by its own
+card's mandate before the review ran, so this is a **post-merge verification** of the bytes the
+trunk carries; every figure below is this sign-off's own measurement at the squash `2c278191`.
+
+- **Verdict:** `APPROVED` — no changes requested, no follow-up card, the reviewer edited nothing and
+  the lane worktree was clean at the end. Posted as the PR comment
+  [issuecomment-7076809297](https://github.com/yahodu/openpic-webapp/pull/784#issuecomment-7076809297).
+- **Merge proof.** #784 reads `state: MERGED`, head `093a7f75`, squash `2c278191`, base `main`,
+  merged `2026-11-20T19:14:03Z`, with **12/12** checks passing at its head.
+  `git merge-base --is-ancestor 2c278191 origin/main` is OK and `origin/main^{tree}` ==
+  `2c278191^{tree}` == `83478c5c71cfa3c0a611bb8c93742b458bc15060`. A per-PR-path
+  `git diff --stat 093a7f75 2c278191` over the spec, this record and `docs/adr/README.md` is
+  **empty**, so the reviewed bytes are the trunk bytes; the whole-tree diff carries only
+  `ADR-0901`'s `4 of 9 keys` → `6 of 9 keys`, which is main's own `3779a806` (#782) landed between
+  the branch cut and the merge.
+- **Suites at `2c278191`.** Focused `data-subject-requests.test.ts` **39 passed (39)**; `unit` **191
+  files, 3209 passed | 3 skipped (3212)**; `integration` **1632 passed (1632)**; `tsc` exit `0` on
+  `packages/contracts` and `apps/web`; `eslint` **0** on the spec; `prettier --check` clean on the
+  three paths; `adr-numbering.test.ts` **29 passed (29)** with **429** records on the trunk, no
+  duplicate number, and the OP-138 lane cell at `0904`.
+- **Discrimination probe** (throwaway worktree detached at `2c278191`, each mutation restored, the
+  anchor `if (claimedEmail !== callerEmail) {` asserted unique first): baseline **39 passed (39)**;
+  both operands lowercased → **1 failed | 38 passed**, `I27` alone, `expected 202 to be 422`; one
+  operand lowercased → **1 failed | 38 passed**, `I27` alone. The pin is load-bearing for the full
+  rule and for a single-operand normalisation, and `I27` is the only case that judges it.
+- **Scope and honesty.** `git diff --numstat 3779a806 2c278191` reads `+58/−0` (spec), `+188/−0`
+  (this record), `+2/−1` (ledger); no production file, `I1`–`I26`, `I7b`/`I7c`, every helper and the
+  harness byte-identical, no `skip`/`only`, no environment conditional, no lint suppression.
+
+### Finding F3-A (Info)
+
+The fixture varies case in **both** parts of the address, so a rule that normalises one _segment_
+(local part only, or domain only) is not measured: local part only, both operands → **39 passed
+(39)**; domain only, both operands → **39 passed (39)**. Such a rule does not accept `I27`'s input
+(the other segment still differs), so the pinned answer is unaffected, and §6 claims only
+single-operand normalisation, which the probe's second row measures. **No card was created**: the
+item is Info, the behaviour is specified either way, and a fixture separating the segments would buy
+no answer this record does not hold.
+
+### Nothing retracted, no number consumed
+
+No decision of §1–§6 or `Alternatives` is retracted or amended; this section only appends, and the
+reviewed blobs stand. The sign-off mints no ADR number: `docs/adr/` holds **429** records at
+`2c278191` with no duplicate number, and `docs/adr/README.md` is byte-identical to `origin/main`
+(blob `6d688a21`), so the lane's `Next free` cell stays `0904`. The adjacent F2 question stays with
+card `t_4fdff479`.
