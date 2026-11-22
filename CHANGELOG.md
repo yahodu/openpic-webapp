@@ -1,3 +1,9 @@
+## [1.72.0](https://github.com/yahodu/openpic-webapp/compare/v1.71.0...v1.72.0) (2026-11-22)
+
+### Features
+
+- **compliance:** OP-138 give an anonymous attendee a durable DSR receipt ([#786](https://github.com/yahodu/openpic-webapp/issues/786)) ([8f45462](https://github.com/yahodu/openpic-webapp/commit/8f45462b864352a5cd4c0152cf2b4bf161c9e20c))
+
 ## [1.71.0](https://github.com/yahodu/openpic-webapp/compare/v1.70.0...v1.71.0) (2026-11-20)
 
 ### Features
