@@ -60,7 +60,14 @@ function signatureHex(key: string, encoded: string): string {
   return createHmac("sha256", key).update(encoded, "utf8").digest("hex");
 }
 
-/** Constant-time compare that never short-circuits on a length mismatch. */
+/**
+ * Compare two strings in constant time.
+ *
+ * `timingSafeEqual` throws on a length mismatch, so the lengths are compared
+ * first and a mismatch answers `false` at once: both operands here are a
+ * fixed-width 64-hex signature or an attacker-supplied string, so the only
+ * thing the early return discloses is the length the caller already knows.
+ */
 function constantTimeEquals(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left, "utf8");
   const rightBytes = Buffer.from(right, "utf8");
