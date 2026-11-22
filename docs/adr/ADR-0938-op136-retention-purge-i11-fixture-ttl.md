@@ -204,6 +204,12 @@ instants at least ~9 h in the real future for every run of the day.
 
 ## Assumptions & open questions
 
+- **The card carried no `Consumes:` reservation.** `docs/CONVENTIONS.md` §11 has the orchestrator reserve each
+  ADR number in the card body, but `t_be5ae9d1` names none (it fixes only the branch, the PR title and the
+  worktree). The number was therefore drawn from the lane's own ledger state after the in-flight sweep
+  (§ADR number above, and the ledger note in `docs/adr/README.md`), and it is flagged here for the reviewer:
+  if the allocator reserved a different number for this card, this record renumbers before merge and no other
+  cell moves. No same-lane ADR-minting sibling card is in flight (the OP-139 cut is another lane).
 - **The TTL monitor is the only deleter considered**, as in ADR-0146/ADR-0148. The evidence (the exact
   index shape, a row deleted 55.9 s after insert with no test action, a same-shape anchored row surviving
   a pass, and the deterministic mid-flight mirror reproducing the CI text) is sufficient; no other
