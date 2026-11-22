@@ -1,8 +1,9 @@
 # ADR-0905 — OP-138 TEST: the anonymous attendee's durable DSR receipt, and the attendee list read
 
-- **Status:** Accepted — pinned RED-first by `t_b8e9aa3d` and implemented by the
-  gated GREEN `t_84c1b83e` on this branch (§11); the PR is ready for review and
-  un-merged, the landing belongs to `t_47a8e5e0`
+- **Status:** Accepted — pinned RED-first by `t_b8e9aa3d`, implemented by the
+  gated GREEN `t_84c1b83e` (§11), and landed as PR
+  [#786](https://github.com/yahodu/openpic-webapp/pull/786) squash `8f45462b`;
+  the round-1 review is appended in `## Review — round 1`.
 - **Date:** 2026-11-22
 - **Card:** `t_b8e9aa3d` (OP-138 TEST, Medium; finding **F2** of the round-1
   review of the GREEN `t_0eab7a02` /
