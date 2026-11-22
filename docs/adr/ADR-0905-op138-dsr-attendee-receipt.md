@@ -251,3 +251,57 @@ to keep answering `404`. `dsrReadAuth` therefore tolerates only
 live session's owner filter when one resolves and the receipt's `_id` +
 `subject.kind: "anonymous"` binding only when none does. A valid token for
 another id still answers `404`, a bad signature or payload `401`.
+
+## Review — round 1
+
+Sign-off card `t_31bf521f` records the round-1 (artifact-lens) review of this lane by
+`t_47a8e5e0` (PR [#786](https://github.com/yahodu/openpic-webapp/pull/786)). The suite and
+probe figures are the review card's own runs at head `e6044d2c`; the landing and
+reconciliation facts are re-read by this sign-off. This section only appends — no decision of
+§1–§11 is retracted or amended.
+
+- **Verdict: `APPROVED WITH FINDINGS`, landed.** Posted as the review comment
+  [issuecomment-7077723508](https://github.com/yahodu/openpic-webapp/pull/786#issuecomment-7077723508)
+  and the landing comment
+  [issuecomment-7077732719](https://github.com/yahodu/openpic-webapp/pull/786#issuecomment-7077732719).
+- **Suites at `e6044d2c`.** Focused `data-subject-requests.test.ts` **43 passed (43)**; `unit`
+  **191 files, 3209 passed | 3 skipped (3212)**; `integration` **153 files, 1636 passed
+  (1636)**; `adr-numbering.test.ts` on the `origin/main`-merged tree **29 passed (29)** with the
+  unique-prefix `uniq -d` empty; `tsc` exit `0` on `apps/web` and `packages/contracts`; `eslint`
+  **0**; `prettier --check` clean; `git diff --numstat 34d40d32..c666778d -- apps/web/src/test`
+  empty, so no shipped case, helper or harness moved.
+- **Discrimination probes** (throwaway worktree, each mutation reverted):
+  - `dsrReadAuth`'s tolerance of a missing or lapsed credential dropped → **2 failed | 41 passed
+    (43)**: `I29` `expected 401 to be 200` and `I30` `expected 401 to be 404`.
+  - the `requestId === verdict.requestId` binding dropped → **1 failed | 42 passed (43)**:
+    `I30` `expected 200 to be 404`.
+  - the `subject.kind: "anonymous"` predicate dropped from the receipt owner filter →
+    **43 passed (43)**: nothing reds. That is finding **F-R1** and the reason `t_c093c433`
+    exists — the property holds by construction, not by a pin.
+- **Gate on the exact head `e6044d2c`: `GATE: PASS`** — G1 `MERGEABLE` / `BLOCKED` (the
+  1-review rule), G2/G3 **14/14** `COMPLETED`/`SUCCESS` with every gating name present, G4 pass
+  (`2dfd2cf4..origin/main` empty of audit inputs), G5 pass.
+- **Landing.** `git merge-base --is-ancestor 8f45462b origin/main` is OK;
+  `e6044d2c^{tree}` == `8f45462b^{tree}` ==
+  `3865a5d181712842f6d350514fd97ff1b71d5cd4` at the squash, when `8f45462b` was the trunk. The
+  later release chore `354e4c41` (`1.72.0`) changes only `CHANGELOG.md` and `package.json`, and
+  `git diff e6044d2c origin/main` over all eight PR paths is empty, so every reviewed byte is
+  still the byte the trunk carries.
+- **Reconciliation, inherited.** `origin/main` had advanced to `2dfd2cf4` (#787) after the
+  branch cut, so it was merged in as `0ccc2497` (**merge, never rebase**) and
+  `docs/adr/README.md` was resolved as a **union**: main's `OP-136 jobs lane` cell `0939` and
+  its `unallocated` cursor `0939`, this lane's `0905` row and `0906` cell. A later lane reusing
+  the file keeps both halves and the higher cell — never re-cut a range, never lower a cell.
+- **Findings, routed and not fixed here.**
+  - **F-R1** (Medium) — the user-row refusal and the counted `executionLog` are unpinned →
+    `t_c093c433` (Test Author).
+  - **F-R2** (Low) — `constantTimeEquals`'s TSDoc claimed the opposite of the code; **fixed in
+    this PR**, comment only, commit `e6044d2c`.
+  - **F-R3** (Low) — the attendee list read has no supporting index (schema §20.3) →
+    `t_8680d063` (orchestrator).
+  - **F-R4** (Info) — a valid receipt presented by a signed-in **user** answers `404` because
+    the user branch owns the read; contract §8.1's "every other credential's `404` are
+    unchanged" sanctions it. Recorded, no change.
+- **Nothing retracted, no number consumed.** No section of this record is amended and
+  `docs/adr/README.md` stays byte-identical to `origin/main` (blob `dedc7f4b`), so the lane's
+  `Next free` cell remains `0906`; this sign-off mints no ADR number and touches no ledger cell.
