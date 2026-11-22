@@ -161,3 +161,53 @@ cell and no range is touched.
   one schema-document clause, this record and the ledger bookkeeping.
 - No new plan test (the Low card forbids one); §3.1 is a one-off probe.
 - `dataSubjectRequests` stays platform-scoped.
+
+## Review — round 1 (merge authority)
+
+Sign-off card `t_8a87bf4a` records the round-1 (merge-authority) review of this
+delivery by `t_fd6acf7d` (PR [#790](https://github.com/yahodu/openpic-webapp/pull/790),
+head `f66733e6`). The suite and probe figures are the review card's own runs at
+that head; the landing and byte-identity facts are re-read by this sign-off.
+This section only appends — no decision of §1–§7 is retracted or amended.
+
+- **Verdict: `APPROVED WITH FINDINGS`, landed.** No blocker, no changes
+  requested; every finding is Low and explicitly needs no code change. The
+  decided fourth spec is exactly as specified and the three shipped specs are
+  byte-identical.
+- **Suites at `f66733e6`.** Focused `indexes.test.ts` **19 passed (19)**; `unit`
+  **191 files, 3210 passed | 3 skipped (3213)**; `integration` **153 files, 1636
+  passed (1636)**; `tsc` exit `0` on the root, `apps/web` and
+  `packages/contracts`; `eslint .` **0 errors** with **188** pre-existing
+  warnings; `prettier --check` clean; the `adr-*` guards on the
+  `origin/main`-merged tree **7 files, 248 passed (248)** with the `ADR-NNNN`
+  `uniq -d` empty.
+- **Discrimination probe** (spec removed, then restored): **1 failed | 18 passed
+  (19)**, the RED case alone at `indexes.test.ts:349`, `git diff --stat` showing
+  only `indexes.ts`, production restored to `sha256 4f75ab57…578c`. The pin is
+  load-bearing, so the pass is earned and not vacuous.
+- **Gate on the exact head `f66733e6`: `GATE: PASS @ f66733e6`** — pasted on the
+  PR (comment `7078508718`). G1 `MERGEABLE`/`BLOCKED` by the 1-review rule
+  (taken with `--admin`), G2/G3 **11/11** gating names
+  `COMPLETED`/`SUCCESS`, G4 no audit-surface commit above the base, G5 pass.
+- **Landing.** Squash **`d2e4c4c3`**
+  (`feat(db): OP-138 index the attendee DSR list read (§20.3) (#790)`), ancestor
+  of `origin/main`. `f66733e6^{tree}` == `d2e4c4c3^{tree}` ==
+  `c060b0bd2550fb60dab08d289af4d6806105a820`, and the trunk blobs are the
+  reviewed ones byte for byte: `indexes.ts` `c822158a`, the schema doc
+  `340495d2`, this record `3b11a29e`, `docs/adr/README.md` `d12eb504`. The later
+  release chore `6d95ddad` (`1.73.0`) touches none of those paths.
+- **Findings, recorded and explicitly needing no change.**
+  - **Low — the `SORT` stage remains**, because the route's
+    `{receivedAt:-1,_id:-1}` tie-break is not in the key. The sort is bounded to
+    the session's own rows rather than eliminated, the same shape the shipped
+    user-branch index has (§3.1). No change without a trailing-`_id` key
+    decision.
+  - **Low — the cursor-page `$or` is unmeasured** (§3.1); the no-cursor arm is
+    the one this index is shaped for. Measurement only.
+  - **Low — the implementer's PR body miscounted** the `adr-*` guard run,
+    claiming `8 files / 267 tests` where `7 / 248` was measured. A reporting
+    slip, corrected in the review comment, not in the tree.
+- **Nothing retracted, no number consumed.** `docs/adr/README.md` stays
+  byte-identical to `origin/main` (blob `d12eb504`), so the lane's `Next free`
+  cell remains **`0908`**; this sign-off mints no ADR number and touches no
+  ledger cell.
