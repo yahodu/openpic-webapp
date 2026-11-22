@@ -1,3 +1,9 @@
+## [1.73.0](https://github.com/yahodu/openpic-webapp/compare/v1.72.0...v1.73.0) (2026-11-22)
+
+### Features
+
+- **db:** OP-138 index the attendee DSR list read (§20.3) ([#790](https://github.com/yahodu/openpic-webapp/issues/790)) ([d2e4c4c](https://github.com/yahodu/openpic-webapp/commit/d2e4c4c305ca4eb4069ee46d45d94fa43a508c5c))
+
 ## [1.72.0](https://github.com/yahodu/openpic-webapp/compare/v1.71.0...v1.72.0) (2026-11-22)
 
 ### Features
