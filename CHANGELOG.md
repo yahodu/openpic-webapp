@@ -1,3 +1,9 @@
+## [1.83.1](https://github.com/yahodu/openpic-webapp/compare/v1.83.0...v1.83.1) (2026-11-23)
+
+### Bug Fixes
+
+- **adr:** OP-140 read a record's Status from its bulleted field, pin it ([#844](https://github.com/yahodu/openpic-webapp/issues/844)) ([1e37d06](https://github.com/yahodu/openpic-webapp/commit/1e37d06e5bb8825d0d66c60b5da89639463a68b0))
+
 ## [1.83.0](https://github.com/yahodu/openpic-webapp/compare/v1.82.0...v1.83.0) (2026-11-23)
 
 ### Features
