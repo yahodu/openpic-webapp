@@ -24,6 +24,20 @@
  *   rows is **not** a pass: `ok` is `rows > 0 && issues.length === 0`, so an
  *   empty or mis-rooted tree cannot report a vacuous green.
  *
+ *   **S1 is shape-only**, and that boundary is deliberate. One variant of its
+ *   own defect class stays invisible: a row with one unescaped title pipe
+ *   **and** a dropped status cell splits into 5 parts, so S1 reads a title
+ *   fragment as the status and passes —
+ *   `{ ok: true, columns: 3, rows: 1, issues: [] }` for
+ *   `| [0105](ADR-0105-x.md) | the change is |accepted |`. **S2 is the semantic
+ *   backstop** for that class. A status **vocabulary** was considered and
+ *   **rejected**: it is subsumed by S2 (every real row has a record, and the
+ *   real first words are `accepted` ×454 / `proposed` ×2 in the records and
+ *   `accepted` ×452 / `superseded` ×1 / `proposed` ×2 in the cells, so a
+ *   vocabulary admits exactly what S2 already admits), and the case that
+ *   survives both rules needs an exact-cell match, which would red the real
+ *   rows whose status legitimately reads `Accepted (GREEN landed: …)`.
+ *
  * - **S2, status agreement.** For every ledger row whose link names a record
  *   present in `records`, the record's `**Status:**` value and the row's status
  *   cell must agree on their **first word** after normalisation, or the cell's
@@ -42,6 +56,14 @@
  *   pre-repair malformed row still **counted** as a row (the defect was its
  *   shape, not its absence), and that reading is preserved by keying on the
  *   `[NNNN](…)` prefix rather than on a well-formed table split.
+ *
+ * **Fenced blocks are scanned on purpose.** A row-shaped line inside a fenced
+ * block is read as a ledger row: the census when this rule was pinned was 455
+ * row-shaped lines outside fences and **0** inside — 455 row-shaped lines, 455
+ * rows — and fence tracking was rejected because its failure mode is a
+ * mis-tracked fence hiding a **real** row, a false green, which is the one
+ * failure this guard exists to prevent; a stray example row instead fails
+ * loudly and is fixed by moving the example out of the table.
  *
  * **Normalisation** ({@link adrStatusWord}) strips `**`, a leading `-`/`*`
  * bullet, then cuts at the first `(`, `:`, `—`, `,`, `;` or `·` and lowercases
@@ -350,7 +372,14 @@ export function adrStatusWord(value: string): string {
 
 /**
  * The value of a record's `Status:` line, as written, or `null` when the record
- * carries none. The first matching line wins.
+ * carries none.
+ *
+ * The first **bulleted** `Status:` line (`- **Status:** Accepted`) wins: that
+ * is the record's canonical field. A bare `Status:` line is prose, never the
+ * field — a record that mentions the word before its field, e.g.
+ * `Status: Draft as first written` above `- **Status:** Accepted`, is read from
+ * the bulleted line. Only a record that carries **no** bulleted line falls back
+ * to its first match anywhere.
  *
  * @param recordText - The record's whole markdown.
  */
