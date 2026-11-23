@@ -1232,8 +1232,10 @@ describe("POST /api/v1/me/notifications/{id}/actions/pay_now", () => {
     }[];
     const payNow = actions.find((action) => action.key === "pay_now");
     expect(payNow).toBeDefined();
-    expect(payNow?.state).not.toBe("available");
-    const servedState = String(payNow?.state);
+    // The closed affordance has one literal, not "anything but available":
+    // design §7 pins `state:"available"|"unavailable"` and the contract §7.3
+    // renders `"unavailable"` as the disabled button. A wrong string is a bug.
+    expect(payNow?.state).toBe("unavailable");
 
     // Assert: the stored row is closed too, at this endpoint's instant and
     // without a channel it was never told.
@@ -1249,12 +1251,13 @@ describe("POST /api/v1/me/notifications/{id}/actions/pay_now", () => {
     expect(stored?.actionResolvedAt).toBeInstanceOf(Date);
     expect(Object.prototype.hasOwnProperty.call(stored ?? {}, "actionResolvedVia")).toBe(false);
 
-    // Assert: feed parity — the same decision is closed on every device.
+    // Assert: feed parity — the same decision is closed on every device, on
+    // the same literal the response served.
     const feed = await readFeed(feedRequest(billing.owner.cookie));
     expect(feed.status).toBe(200);
     const feedRows = ((await body(feed)).data ?? []) as Record<string, unknown>[];
     const served = feedRows.find((row) => row.id === notificationId);
-    expect(actionPairs(served)).toEqual([["pay_now", servedState]]);
+    expect(actionPairs(served)).toEqual([["pay_now", "unavailable"]]);
   });
 
   it("A4: keeps the pay_now affordance closed on a replay and writes no second charge", async () => {
@@ -1287,7 +1290,8 @@ describe("POST /api/v1/me/notifications/{id}/actions/pay_now", () => {
     }[];
     const payNow = actions.find((action) => action.key === "pay_now");
     expect(payNow).toBeDefined();
-    expect(payNow?.state).not.toBe("available");
+    // The replay serves the same closed literal the first click wrote.
+    expect(payNow?.state).toBe("unavailable");
 
     // Assert: exactly one charge intent for the workspace across both clicks.
     expect(await chargeRows(billing.tenantId)).toHaveLength(1);
