@@ -1,7 +1,3 @@
-import {
-  findRequestAttendeeSession,
-  type AttendeeSessionRow,
-} from "@/server/attendee/session-resolver";
 import { getAuth } from "@/server/auth";
 import { enforceAuth, resolvePrincipal } from "@/server/auth/guards";
 import { verifyDsrReceipt } from "@/server/compliance/receipt";
@@ -59,27 +55,6 @@ function isMissingCredential(error: unknown): boolean {
     error instanceof AppError &&
     (error.code === "unauthenticated" || error.code === "attendee_session_expired")
   );
-}
-
-/**
- * The live attendee session a request names, or `null`.
- *
- * A lapsed session is `null` here rather than the shipped
- * `attendee_session_expired`, because the receipt read must not be denied by the
- * row that has already expired (contract §8.1).
- *
- * @param request - The inbound request.
- * @returns The live stored row, or `null` when neither credential names one.
- */
-export async function liveAttendeeSession(request: Request): Promise<AttendeeSessionRow | null> {
-  try {
-    return await findRequestAttendeeSession({ database: getDb() }, request);
-  } catch (error: unknown) {
-    if (isMissingCredential(error)) {
-      return null;
-    }
-    throw error;
-  }
 }
 
 /**

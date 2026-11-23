@@ -11,7 +11,7 @@ import { appError } from "@/server/http/errors";
 import { platformRepo } from "@/server/repos";
 
 import { acknowledgementFor } from "../_lib/acknowledgement";
-import { dsrReadAuth, liveAttendeeSession } from "../_lib/principal";
+import { dsrReadAuth } from "../_lib/principal";
 
 /**
  * `GET /api/v1/me/data-requests/{id}` — the data subject reads their own request
@@ -85,14 +85,14 @@ export const GET = defineRoute({
     if (principal !== undefined) {
       owner = { "subject.kind": "user", "subject.userId": new ObjectId(principal) };
     } else if (receipt !== null) {
-      const session = await liveAttendeeSession(ctx.request);
+      // `dsrReadAuth` already resolved the credential this request carries, so
+      // the session id it published is the live row — no second lookup. Unset
+      // means it carried none (or a lapsed one), which the receipt forgives.
+      const sessionId = ctx.attendeeSessionId;
       owner =
-        session === null
+        sessionId === undefined
           ? { "subject.kind": "anonymous" }
-          : {
-              "subject.kind": "anonymous",
-              "subject.attendeeSessionId": session._id.toHexString(),
-            };
+          : { "subject.kind": "anonymous", "subject.attendeeSessionId": sessionId };
     } else {
       // The session that filed it is the credential `dsrAuth` already resolved,
       // so the detail read does not pay for the same `attendeeSessions` lookup
