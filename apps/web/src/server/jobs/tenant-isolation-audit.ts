@@ -31,6 +31,18 @@ const UNRESOLVED_TENANT = "unresolved_tenant";
 /** The finding raised for a `tenantId` that disagrees with its parent event's. */
 const TENANT_MISMATCH = "tenant_mismatch";
 
+/**
+ * The finding raised for a tenant-scoped row that carries no usable `tenantId`.
+ * Exclusive of the two above: such a row has no tenant of its own to resolve.
+ */
+const MISSING_TENANT = "missing_tenant";
+
+/**
+ * The platform-scope alerting address, as `webhook-projection-sweep.ts:46`
+ * already uses it: a `missing_tenant` row has no tenant to address its event to.
+ */
+const PLATFORM_TENANT_ID = "platform";
+
 /** One stored tenant-scoped row, as far as the audit reads it. */
 interface ScopedRow {
   readonly tenantId?: unknown;
@@ -89,6 +101,7 @@ export async function tenantIsolationAudit(options: AuditRunOptions): Promise<Cr
   const scannedByCollection = new Map<string, number>();
   const unresolved = new Map<string, Finding>();
   const mismatched = new Map<string, Finding>();
+  const missing = new Map<string, Finding>();
 
   for (const collection of TENANT_SCOPED_COLLECTIONS) {
     const rows = (await platformRepo(db)
@@ -103,6 +116,9 @@ export async function tenantIsolationAudit(options: AuditRunOptions): Promise<Cr
     for (const row of rows) {
       const tenantId = hexOf(row.tenantId);
       if (tenantId === null) {
+        const finding = missing.get(collection) ?? { tenantId: PLATFORM_TENANT_ID, count: 0 };
+        finding.count += 1;
+        missing.set(collection, finding);
         continue;
       }
       if (!liveTenants.has(tenantId)) {
@@ -143,7 +159,7 @@ export async function tenantIsolationAudit(options: AuditRunOptions): Promise<Cr
         continue;
       }
       const owner = parentTenant.get(eventId);
-      // A11: the two reasons are exclusive — a row whose own tenant resolves is
+      // A11: the reasons are exclusive — a row whose own tenant resolves is
       // reported once, under `tenant_mismatch`, never again as unresolved.
       if (owner === undefined || owner === tenantId) {
         continue;
@@ -155,6 +171,11 @@ export async function tenantIsolationAudit(options: AuditRunOptions): Promise<Cr
   }
 
   const findings = [
+    ...[...missing].map(([collection, finding]) => ({
+      reason: MISSING_TENANT,
+      collection,
+      ...finding,
+    })),
     ...[...unresolved].map(([collection, finding]) => ({
       reason: UNRESOLVED_TENANT,
       collection,
