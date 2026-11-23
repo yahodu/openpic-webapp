@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { Collection, ObjectId } from "mongodb";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST as actOnNotification } from "@/app/api/v1/me/notifications/[id]/actions/[actionKey]/route";
 import { POST as acceptByToken } from "@/app/api/v1/invitations/[token]/accept/route";
@@ -16,6 +16,7 @@ import {
   seedNotificationTemplates,
   seedNotificationTypes,
 } from "@/server/notifications/seed-notification-types";
+import type { ChargeOnceInput, ChargeOnceResult } from "@/server/payments/payment-provider";
 import { mongoRecipientRepository } from "@/server/repos/notification-recipients";
 import { sha256Hex } from "@/server/runtime/crypto";
 import { getNotificationTransport } from "@/server/services/notification-transport";
@@ -550,6 +551,63 @@ function paymentRefIds(rows: readonly Record<string, unknown>[]): string[] {
 }
 
 /**
+ * The driver's own `findOne`, captured before this file spies on it.
+ *
+ * Resolving `Collection.prototype.findOne` at call time would find the spy and
+ * recurse, so the original is read once from the property descriptor (the
+ * `billing-checkout.test.ts` `driverInsertOne` precedent).
+ */
+const driverFindOne = ((): typeof Collection.prototype.findOne => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "findOne");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("the driver's Collection#findOne is missing from the prototype");
+  }
+  return descriptor.value as typeof Collection.prototype.findOne;
+})();
+
+/** A live count of the payment provider's `chargeOnce` calls. */
+interface ChargeCallCounter {
+  /** How many times the endpoint asked the provider to charge. */
+  readonly count: () => number;
+  /** Put the config-driven provider selector back. */
+  readonly restore: () => void;
+}
+
+/**
+ * Count the vendor charges the endpoint issues, through the module it reaches
+ * the provider by.
+ *
+ * The **only** observable that separates one charge from two: `recordChargeRefs`
+ * `$set`s the intent's `externalRefs` and the memory provider mints the payment
+ * id from the idempotency key, so a replayed `chargeOnce` overwrites one ref
+ * with the same id — the ledger row count and the distinct-ref count stay `1`
+ * either way.
+ *
+ * @returns The live counter and its restore hook (always call it).
+ */
+async function countChargeOnce(): Promise<ChargeCallCounter> {
+  const payments = await import("@/server/payments/get-payment-provider");
+  const realGetPaymentProvider = payments.getPaymentProvider;
+  const calls = { total: 0 };
+  const spy = vi.spyOn(payments, "getPaymentProvider").mockImplementation(() => {
+    const provider = realGetPaymentProvider();
+    return {
+      ...provider,
+      chargeOnce: (input: ChargeOnceInput): Promise<ChargeOnceResult> => {
+        calls.total += 1;
+        return provider.chargeOnce(input);
+      },
+    };
+  });
+  return {
+    count: () => calls.total,
+    restore: () => {
+      spy.mockRestore();
+    },
+  };
+}
+
+/**
  * The timestamps a directly seeded feed row must carry.
  *
  * The feed's default `active` band reads `createdAt >= now − 30 d`, and
@@ -740,6 +798,34 @@ describe("POST /api/v1/me/notifications/{id}/actions/{actionKey} — invitation 
     ).toHaveLength(1);
     expect(afterSecond.filter((member) => member.role === "organizer")).toHaveLength(1);
     expect(await outboxRows("collab.invite.accepted")).toHaveLength(1);
+  });
+
+  it("I1: projects every action element to exactly {key, label, state}", async () => {
+    const fixture = await seedEvent("op140-i1-projection");
+    const invitee = await signInVerified(makeIdentity("op140-i1-projection-invitee"));
+    await invite(fixture, userInvite(invitee.userId.toHexString()));
+    await settleInviteDelivery();
+    const notificationId = String((await feedInviteRow(invitee.cookie))?.id);
+
+    // Act: the same click I1 makes — the response carries the re-read row's
+    // affordance.
+    const first = await actOnNotification(actionRequest(invitee.cookie, notificationId, "accept"));
+
+    // Assert: the stored row also carries `style`, and the response is a
+    // projection, so each element is exactly the three §7.3 facts — the label
+    // survives and nothing else leaks.
+    expect(first.status).toBe(200);
+    const firstBody = await body(first);
+    const actions = firstBody.actions as {
+      readonly key: string;
+      readonly label: string;
+      readonly state: string;
+    }[];
+    expect(actions.map((action) => Object.keys(action).sort())).toEqual([
+      ["key", "label", "state"],
+      ["key", "label", "state"],
+    ]);
+    expect(actions.map((action) => action.label)).toEqual(["Accept", "Reject"]);
   });
 });
 
@@ -993,6 +1079,122 @@ describe("POST /api/v1/me/notifications/{id}/actions/pay_now", () => {
     const row = rows.find((item) => item.id === notificationId);
     expect(actionPairs(row)).toEqual([["pay_now", "available"]]);
   });
+
+  it("I4: answers two concurrent pay_now clicks with one charge and no 5xx", async () => {
+    const billing = await seedBillingWorkspace("op140-i4-concurrent");
+    const notificationId = await payNowNotification(billing);
+
+    // Act: both clicks race on the unique `idempotencyKey` index, so the loser
+    // takes the duplicate-key exit instead of a ledger read.
+    const [first, second] = await Promise.all([
+      actOnNotification(actionRequest(billing.owner.cookie, notificationId, "pay_now")),
+      actOnNotification(actionRequest(billing.owner.cookie, notificationId, "pay_now")),
+    ]);
+
+    // Assert: the loser answers the winner's intent, never a 500.
+    expect([first.status, second.status]).toEqual([200, 200]);
+    const outcomes = [await body(first), await body(second)]
+      .map((payload) => String(payload.outcome))
+      .sort();
+    expect(outcomes).toEqual(["already_resolved", "applied"]);
+
+    // ...and the ledger holds one intent carrying one vendor payment ref.
+    const charges = await chargeRows(billing.tenantId);
+    expect(charges).toHaveLength(1);
+    expect(paymentRefIds(charges)).toHaveLength(1);
+  });
+
+  it("I4: answers the duplicate-key race from the ledger instead of a 500", async () => {
+    const billing = await seedBillingWorkspace("op140-i4-dup-key");
+    const notificationId = await payNowNotification(billing);
+
+    // Arrange: force the cross-process shape. Both requests' idempotency probe
+    // reads miss — as a second process's read does when its row lands after our
+    // read — so both attempt the insert and the unique
+    // `billing_transactions_idempotency_key_unique` index decides. An in-process
+    // `Promise.all` alone never gets here: the loser's read follows the winner's
+    // insert (the sibling case measures that shape).
+    let probeReads = 0;
+    const missingProbe = vi.spyOn(Collection.prototype, "findOne").mockImplementation(function (
+      this: Collection,
+      ...args: Parameters<typeof driverFindOne>
+    ) {
+      const filter: unknown = args[0];
+      const keyedProbe =
+        this.collectionName === COLLECTIONS.billingTransactions &&
+        typeof filter === "object" &&
+        filter !== null &&
+        "idempotencyKey" in filter;
+      if (keyedProbe && probeReads < 2) {
+        probeReads += 1;
+        return Promise.resolve(null);
+      }
+      return driverFindOne.call(this, ...args);
+    } as never);
+
+    let responses: Response[];
+    try {
+      responses = await Promise.all([
+        actOnNotification(actionRequest(billing.owner.cookie, notificationId, "pay_now")),
+        actOnNotification(actionRequest(billing.owner.cookie, notificationId, "pay_now")),
+      ]);
+    } finally {
+      missingProbe.mockRestore();
+    }
+
+    // Assert: the loser answered the winner's intent, not the driver's error.
+    expect(probeReads).toBe(2);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const charges = await chargeRows(billing.tenantId);
+    expect(charges).toHaveLength(1);
+    expect(paymentRefIds(charges)).toHaveLength(1);
+  });
+
+  it("I4: asks the payment provider exactly once across a double click", async () => {
+    const billing = await seedBillingWorkspace("op140-i4-provider-once");
+    const notificationId = await payNowNotification(billing);
+    const provider = await countChargeOnce();
+    try {
+      // Act: the same affordance twice, as I4 clicks it.
+      const first = await actOnNotification(
+        actionRequest(billing.owner.cookie, notificationId, "pay_now")
+      );
+      const second = await actOnNotification(
+        actionRequest(billing.owner.cookie, notificationId, "pay_now")
+      );
+
+      // Assert: the replay is answered from the ledger, so the vendor is asked
+      // once. A second `chargeOnce` would mint the same memory payment id, so
+      // neither the row count nor the distinct-ref count can see it.
+      expect([first.status, second.status]).toEqual([200, 200]);
+      expect(provider.count()).toBe(1);
+    } finally {
+      provider.restore();
+    }
+  });
+
+  it("I4: asks the payment provider once per notification for two distinct notifications", async () => {
+    const billing = await seedBillingWorkspace("op140-i4-provider-twice");
+    const firstNotificationId = await payNowNotification(billing);
+    const secondNotificationId = await payNowNotification(billing);
+    const provider = await countChargeOnce();
+    try {
+      // Act: two different notifications, so two different intents.
+      const first = await actOnNotification(
+        actionRequest(billing.owner.cookie, firstNotificationId, "pay_now")
+      );
+      const second = await actOnNotification(
+        actionRequest(billing.owner.cookie, secondNotificationId, "pay_now")
+      );
+
+      // Assert: the count above is not satisfied by an endpoint that never
+      // charges — a distinct key legitimately reaches the vendor again.
+      expect([first.status, second.status]).toEqual([200, 200]);
+      expect(provider.count()).toBe(2);
+    } finally {
+      provider.restore();
+    }
+  });
 });
 
 /* -------------------------------------------------------------------------- */
@@ -1031,6 +1233,19 @@ describe("POST /api/v1/me/notifications/{id}/actions/{actionKey} — refusals", 
 
     const response = await actOnNotification(
       actionRequest(caller.cookie, new ObjectId().toHexString(), "accept")
+    );
+
+    expect(response.status).toBe(404);
+    expect((await errorOf(response)).code).toBe("not_found");
+  });
+
+  it("I5: answers 404 for a malformed notification id, never a 500", async () => {
+    const caller = await signInVerified(makeIdentity("op140-i5-malformed"));
+
+    // A non-hex segment is not an id: the route reads it as `not_found` rather
+    // than handing it to the driver, whose BSON error would answer 500.
+    const response = await actOnNotification(
+      actionRequest(caller.cookie, "not-an-object-id", "accept")
     );
 
     expect(response.status).toBe(404);
