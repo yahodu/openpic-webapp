@@ -191,6 +191,15 @@ The sweep (ADR-0300 §12 item 23) read four surfaces immediately before minting:
   `0938`–`0942`), #755, #743, #272: no `ADR-0921`;
 - `git rev-list --objects --all -- docs/adr`: `ADR-0921` resolves in **no** object.
 
+**Trunk move between the sweep and the push.** `origin/main` advanced from `ff23c0ab` to
+`34b0e9c4` while this card ran — PR [#807](https://github.com/yahodu/openpic-webapp/pull/807),
+the OP-139 DOCS card that corrects [ADR-0920](ADR-0920-op139-u1-ist-day-window-correction.md)'s
+guard count and records its landing. That record mints **no** number and does not touch
+`docs/adr/README.md`, so the cell stays `0921` and nothing is re-cut; the current `origin/main`
+was merged into this branch (never rebased) before the PR head was pushed, so the PR carries the
+spec, this record and the ledger rows and does **not** revert #807. The merge is clean
+(`git merge-tree --write-tree HEAD origin/main` reports no conflict).
+
 ## 7. Alternatives rejected
 
 1. **Fold the rows into `unresolved_tenant`.** Rejected in §3.1: the reason's event is addressed
