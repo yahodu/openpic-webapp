@@ -9,7 +9,7 @@ import { platformRepo } from "@/server/repos";
 import type { Clock } from "@/server/runtime/clock";
 import type { Logger } from "@/server/logging";
 
-import { dateKeyInTimeZone, ROLLUP_TIME_ZONE } from "./analytics-rollup";
+import { dateKeyInTimeZone, dayWindowUtc, ROLLUP_TIME_ZONE } from "./analytics-rollup";
 
 /**
  * `dsr-sla-check` — the statutory-deadline warning (OP-139, contract §10.2,
@@ -64,6 +64,10 @@ function hexOf(value: unknown): string | null {
 /**
  * Warn once per open request inside the 48-hour window.
  *
+ * The candidate page slides past what the current IST day already warned
+ * (ADR-0926), so a backlog larger than `limit` still drains over runs, and the
+ * next day's empty exclusion lets a still-at-risk request speak again.
+ *
  * @param options - The database, clock, logger and per-run budget.
  * @returns The §10.2 run outcome.
  */
@@ -73,12 +77,32 @@ export async function dsrSlaCheck(options: SlaCheckRunOptions): Promise<CronRunO
   const cutoff = new Date(now.getTime() + WARNING_WINDOW_MS);
   const dateKey = dateKeyInTimeZone(now, ROLLUP_TIME_ZONE);
 
-  const rows = (await platformRepo(db)
-    .collection(COLLECTIONS.dataSubjectRequests)
+  const requests = platformRepo(db).collection(COLLECTIONS.dataSubjectRequests);
+
+  // The warnings already emitted for this IST day — read from the outbox that
+  // the `dedupeKey` would otherwise collide with, because that read is too late
+  // to keep the budget from being spent on requests with nothing left to say.
+  const { start, end } = dayWindowUtc(dateKey, ROLLUP_TIME_ZONE);
+  const todaysWarnings = await platformRepo(db)
+    .collection(COLLECTIONS.domainEvents)
     .find(
-      { status: { $nin: [...CLOSED_STATUSES] }, slaDueAt: { $lte: cutoff } },
-      { sort: { slaDueAt: 1 }, limit }
+      { eventKey: "admin.dsr.sla_risk", occurredAt: { $gte: start, $lt: end } },
+      { projection: { subjectRef: 1 } }
     )
+    .toArray();
+  const warnedIds = todaysWarnings
+    .map((row) => hexOf((row as { subjectRef?: { id?: unknown } }).subjectRef?.id))
+    .filter((id): id is string => id !== null && ObjectId.isValid(id))
+    .map((id) => new ObjectId(id));
+
+  const filter = {
+    status: { $nin: [...CLOSED_STATUSES] },
+    slaDueAt: { $lte: cutoff },
+    ...(warnedIds.length > 0 ? { _id: { $nin: warnedIds } } : {}),
+  };
+
+  const rows = (await requests
+    .find(filter, { sort: { slaDueAt: 1 }, limit })
     .toArray()) as unknown as DsrRow[];
 
   let affected = 0;
@@ -126,7 +150,11 @@ export async function dsrSlaCheck(options: SlaCheckRunOptions): Promise<CronRunO
     dateKey,
   });
 
-  return { scanned: rows.length, affected, skipped, errors, hasMore: rows.length >= limit };
+  // A full page is only "more" when an un-warned at-risk row sits beyond it.
+  const hasMore =
+    rows.length >= limit && (await requests.countDocuments(filter, { skip: limit, limit: 1 })) > 0;
+
+  return { scanned: rows.length, affected, skipped, errors, hasMore };
 }
 
 /** `dsr-sla-check` — daily, 500 requests per run (contract §10.2; ADR-0918). */

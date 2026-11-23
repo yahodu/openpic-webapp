@@ -257,3 +257,145 @@ describe("dsr-sla-check I5: the 48-hour warning", () => {
     ).toEqual([inProgress.toHexString(), verifying.toHexString()].sort());
   });
 });
+
+/**
+ * `dsr-sla-check` F3 — the per-run budget must page through the queue
+ * (OP-139 F3 of the GREEN review; ADR-0925).
+ *
+ * The run reads its candidates with `{ sort: { slaDueAt: 1 }, limit }` and no
+ * cursor, so when the at-risk population is larger than the budget every run
+ * re-reads the same earliest-deadline prefix, the outbox `dedupeKey` swallows
+ * the repeats (`affected: 0`) and the tail is never warned — while `hasMore`
+ * stays `true`. A statutory-deadline warning that silently never fires is the
+ * failure this job exists to prevent, so these cases pin that the queue
+ * advances: a request already warned for the current IST day must not consume
+ * the next run's budget, and an un-warned request must take its place.
+ *
+ * The contract these cases expect of the implementation: the day's exclusion
+ * window moves at IST midnight, so the next day's run sees an empty exclusion
+ * and an already-warned, still-at-risk request speaks again (the shipped
+ * daily-repeat property).
+ */
+
+/** The instant the earliest of the three paging fixtures falls due, 40 hours out. */
+const DUE_IN_40_HOURS = new Date(ACTIVITY_AT.getTime() + 40 * 3_600_000);
+
+/** The instant the middle of the three paging fixtures falls due, 44 hours out. */
+const DUE_IN_44_HOURS = new Date(ACTIVITY_AT.getTime() + 44 * 3_600_000);
+
+/** Run the SLA check at one fixed instant with an explicit per-run budget. */
+function runCheckWithLimit(
+  at: Date,
+  requestedLimit: string
+): ReturnType<typeof dsrSlaCheckJob.run> {
+  return dsrSlaCheckJob.run({
+    requestedLimit,
+    clock: fixedClock(at),
+    logger: recordingLogger(),
+  });
+}
+
+/** The `payload.requestId` of every `admin.dsr.sla_risk` row, oldest first. */
+async function warnedRequestIds(): Promise<string[]> {
+  const events = await riskEvents();
+  return events.map((event) => (event.payload as Record<string, unknown>).requestId as string);
+}
+
+/** Seed three open requests inside the 48-hour window, earliest deadline first. */
+async function seedThreeAtRiskRequests(tenantId: string): Promise<{
+  readonly dueFirst: ObjectId;
+  readonly dueSecond: ObjectId;
+  readonly dueThird: ObjectId;
+}> {
+  const dueFirst = new ObjectId();
+  const dueSecond = new ObjectId();
+  const dueThird = new ObjectId();
+  await app.db.collection(COLLECTIONS.dataSubjectRequests).insertMany([
+    makeDsrRow({
+      _id: dueFirst,
+      tenantId,
+      status: "received",
+      slaDueAt: DUE_IN_40_HOURS,
+      requestType: "access",
+    }),
+    makeDsrRow({
+      _id: dueSecond,
+      tenantId,
+      status: "in_progress",
+      slaDueAt: DUE_IN_44_HOURS,
+      requestType: "erasure",
+    }),
+    makeDsrRow({
+      _id: dueThird,
+      tenantId,
+      status: "verifying",
+      slaDueAt: DUE_IN_47_HOURS,
+      requestType: "portability",
+    }),
+  ]);
+  return { dueFirst, dueSecond, dueThird };
+}
+
+describe("dsr-sla-check F3: the run budget pages past the requests already warned today", () => {
+  it("F3: with a budget of one, three same-day runs warn each of three at-risk requests exactly once, then the next day warns the earliest again", async () => {
+    // ── Arrange: three open requests inside the window, distinct deadlines ──
+    const live = await seedLiveTenant("op139-dsr-paging-one");
+    const { dueFirst, dueSecond, dueThird } = await seedThreeAtRiskRequests(live.tenantId);
+
+    // ── Act: the first run, allowed to announce one request ──
+    await runCheckWithLimit(ACTIVITY_AT, "1");
+
+    // ── Assert: the budget is spent on the earliest deadline ──
+    expect(await warnedRequestIds()).toEqual([dueFirst.toHexString()]);
+
+    // ── Act: the second run of the same day, same budget ──
+    await runCheckWithLimit(ACTIVITY_AT, "1");
+
+    // ── Assert: the budget slid past the request already warned today ──
+    expect((await warnedRequestIds()).sort()).toEqual(
+      [dueFirst.toHexString(), dueSecond.toHexString()].sort()
+    );
+
+    // ── Act: the third run of the same day ──
+    await runCheckWithLimit(ACTIVITY_AT, "1");
+
+    // ── Assert: the set of warned requests, not a count of three with one id
+    // repeated — every request spoke exactly once ──
+    expect((await warnedRequestIds()).sort()).toEqual(
+      [dueFirst.toHexString(), dueSecond.toHexString(), dueThird.toHexString()].sort()
+    );
+
+    // ── Act: the next day's run, same budget ──
+    await runCheckWithLimit(NEXT_DAY, "1");
+
+    // ── Assert: the day boundary emptied the exclusion, so an already-warned
+    // and still-at-risk request speaks again ──
+    const nextDay = await warnedRequestIds();
+    expect(nextDay).toHaveLength(4);
+    expect(nextDay.slice(3)).toEqual([dueFirst.toHexString()]);
+  });
+
+  it("F3: with a budget of two, the first run warns exactly two and the second run warns the third, with no same-day repeat", async () => {
+    // ── Arrange: three open requests inside the window, distinct deadlines ──
+    const live = await seedLiveTenant("op139-dsr-paging-two");
+    const { dueFirst, dueSecond, dueThird } = await seedThreeAtRiskRequests(live.tenantId);
+
+    // ── Act: the first run, allowed two warnings ──
+    await runCheckWithLimit(ACTIVITY_AT, "2");
+
+    // ── Assert: the whole budget is spent on the two earliest deadlines ──
+    const firstRun = await warnedRequestIds();
+    expect(firstRun.sort()).toEqual([dueFirst.toHexString(), dueSecond.toHexString()].sort());
+
+    // ── Act: the second run of the same day, same budget ──
+    await runCheckWithLimit(ACTIVITY_AT, "2");
+
+    // ── Assert: the queue advanced — the third request is the only new
+    // warning, so no request of the first run was warned twice ──
+    const secondRun = await warnedRequestIds();
+    expect(secondRun).toHaveLength(3);
+    expect(secondRun.filter((requestId) => !firstRun.includes(requestId))).toEqual([
+      dueThird.toHexString(),
+    ]);
+  });
+});

@@ -1,3 +1,9 @@
+## [1.78.0](https://github.com/yahodu/openpic-webapp/compare/v1.77.0...v1.78.0) (2026-11-23)
+
+### Features
+
+- **dsr-sla-check:** OP-139 page the SLA risk budget past the day's warned requests ([#817](https://github.com/yahodu/openpic-webapp/issues/817)) ([a371ac6](https://github.com/yahodu/openpic-webapp/commit/a371ac65a74b17cd34035c67c9d62f9376153954))
+
 ## [1.77.0](https://github.com/yahodu/openpic-webapp/compare/v1.76.0...v1.77.0) (2026-11-23)
 
 ### Features
