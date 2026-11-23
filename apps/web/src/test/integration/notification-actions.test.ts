@@ -1674,3 +1674,163 @@ describe("billing.payment.failed — the producer of the pay_now affordance", ()
     expect(servedActionKeys(rows[0])).toEqual(["pay_now"]);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* The producer's delegate parity                                             */
+/* -------------------------------------------------------------------------- */
+
+describe("billing.payment.failed — the pay_now producer's delegate parity", () => {
+  /** The type key whose produced row carries the affordance. */
+  const PAYMENT_FAILED_TYPE_KEY = "billing.payment.failed";
+
+  /**
+   * Emit one `billing.payment.failed` for an arbitrary tenant/subscription pair
+   * — the projection's own shape (`webhook-projection.ts:968`) — and drain it
+   * through the real fan-out.
+   *
+   * @param tenantId - The tenant the event is emitted **in** (the row's audience).
+   * @param subscriptionId - The subscription the event points at.
+   * @param claimerId - The fan-out claim owner (unique per case).
+   */
+  async function emitPaymentFailed(
+    tenantId: ObjectId,
+    subscriptionId: ObjectId,
+    claimerId: string
+  ): Promise<void> {
+    await emitDomainEvent(
+      {
+        eventKey: PAYMENT_FAILED_TYPE_KEY,
+        tenantId: tenantId.toHexString(),
+        actorRef: { kind: "system", id: "billing" },
+        subjectRef: { kind: "subscription", id: subscriptionId.toHexString() },
+        payload: { subscriptionId: subscriptionId.toHexString() },
+      },
+      { db: app.db }
+    );
+    await runNotificationFanOut({
+      db: app.db,
+      transport: getNotificationTransport(),
+      recipients: mongoRecipientRepository(app.db),
+      claimerId,
+    });
+  }
+
+  /**
+   * The `billing.payment.failed` rows a caller's feed serves.
+   *
+   * @param cookie - The caller's session.
+   * @returns Every served row of that type (the `GET` projection, §7.1).
+   */
+  async function producedRows(cookie: string): Promise<Record<string, unknown>[]> {
+    const response = await readFeed(feedRequest(cookie));
+    expect(response.status).toBe(200);
+    const rows = ((await body(response)).data ?? []) as Record<string, unknown>[];
+    return rows.filter((row) => row.typeKey === PAYMENT_FAILED_TYPE_KEY);
+  }
+
+  /**
+   * The action keys of one served row, in stored order.
+   *
+   * @param row - The served feed row.
+   * @returns One key per served action.
+   */
+  function producedKeys(row: Record<string, unknown> | undefined): string[] {
+    return ((row?.actions ?? []) as { readonly key: string }[]).map((action) => action.key);
+  }
+
+  it("P1: emits no action on a tenant's row whose subject names another tenant's subscription", async () => {
+    // Arrange: two workspaces, each with its own live subscription.
+    const emitter = await seedBillingWorkspace("op140-p1-emitter");
+    const foreign = await seedBillingWorkspace("op140-p1-foreign");
+
+    // Act: the event lands in the first tenant but points at the second's row.
+    await emitPaymentFailed(emitter.tenantId, foreign.subscriptionId, "spec.op140-parity-p1");
+
+    // Assert: the first tenant's owner is the row's audience...
+    const rows = await producedRows(emitter.owner.cookie);
+    expect(rows).toHaveLength(1);
+    // ...and carries no control, because `startOutstandingCharge` re-checks the
+    // owner against the *subscription's* tenant and answers `403` here.
+    expect(rows[0]?.actionTarget).toBeNull();
+    expect(rows[0]?.actions).toEqual([]);
+    // The foreign tenant's owner is not the event's audience and gets no row.
+    expect(await producedRows(foreign.owner.cookie)).toHaveLength(0);
+  });
+
+  it("P2: still emits exactly one pay_now when the event names its own tenant's subscription", async () => {
+    // Arrange: the P1 pair, so the control cannot pass by never emitting.
+    const emitter = await seedBillingWorkspace("op140-p2-emitter");
+    const other = await seedBillingWorkspace("op140-p2-own");
+
+    // Act: the same emit inside the subscription's own tenant.
+    await emitPaymentFailed(other.tenantId, other.subscriptionId, "spec.op140-parity-p2");
+
+    // Assert: the owning tenant's owner gets the one live affordance...
+    const rows = await producedRows(other.owner.cookie);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.actionTarget).toEqual({
+      kind: "subscription",
+      id: other.subscriptionId.toHexString(),
+      state: "open",
+    });
+    expect(producedKeys(rows[0])).toEqual(["pay_now"]);
+    // ...and the other tenant's owner gets nothing.
+    expect(await producedRows(emitter.owner.cookie)).toHaveLength(0);
+  });
+
+  it("P3: emits no action when the subscription row carries no mandateStatus", async () => {
+    const billing = await seedBillingWorkspace("op140-p3-no-mandate");
+    // Arrange: a row the charge delegate cannot parse — the delegate's own
+    // `chargeableSubscriptionSchema` requires `mandateStatus`
+    // (`charge-outstanding.ts:46-54`), so a click on this row answers `500`.
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne({ _id: billing.subscriptionId }, { $unset: { mandateStatus: "" } });
+
+    // Act: the real failed-charge event for that row.
+    await emitPaymentFailed(billing.tenantId, billing.subscriptionId, "spec.op140-parity-p3");
+
+    // Assert: the row is delivered, with no affordance the delegate refuses.
+    const rows = await producedRows(billing.owner.cookie);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.actions).toEqual([]);
+    expect(rows[0]?.actionTarget).toBeNull();
+  });
+
+  it("P4: still emits exactly one pay_now for the unmodified seeded subscription", async () => {
+    // Arrange: the control for P3 — the same helper's own stored row.
+    const billing = await seedBillingWorkspace("op140-p4-control");
+
+    // Act: the same emit, unchanged row.
+    await emitPaymentFailed(billing.tenantId, billing.subscriptionId, "spec.op140-parity-p4");
+
+    // Assert: exactly one live affordance, on the subscription target.
+    const rows = await producedRows(billing.owner.cookie);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.actionTarget).toEqual({
+      kind: "subscription",
+      id: billing.subscriptionId.toHexString(),
+      state: "open",
+    });
+    expect(producedKeys(rows[0])).toEqual(["pay_now"]);
+  });
+
+  it("P5: emits no action when the subscription row stores tenantId as an ObjectId", async () => {
+    const billing = await seedBillingWorkspace("op140-p5-objectid-tenant");
+    // Arrange: the second stored shape §14.3's applier documents
+    // (`webhook-projection.ts:359-367`); the delegate requires a string
+    // (`charge-outstanding.ts:48`), so a click on this row answers `500`.
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne({ _id: billing.subscriptionId }, { $set: { tenantId: billing.tenantId } });
+
+    // Act: the real failed-charge event for that row.
+    await emitPaymentFailed(billing.tenantId, billing.subscriptionId, "spec.op140-parity-p5");
+
+    // Assert: the row is delivered, with no affordance the delegate refuses.
+    const rows = await producedRows(billing.owner.cookie);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.actions).toEqual([]);
+    expect(rows[0]?.actionTarget).toBeNull();
+  });
+});
