@@ -1,3 +1,9 @@
+## [1.75.0](https://github.com/yahodu/openpic-webapp/compare/v1.74.0...v1.75.0) (2026-11-23)
+
+### Features
+
+- **jobs:** OP-139 report a tenantId-less row as missing_tenant ([#811](https://github.com/yahodu/openpic-webapp/issues/811)) ([6613c5d](https://github.com/yahodu/openpic-webapp/commit/6613c5d0e107916616c1f289d03c9c727294c93d))
+
 ## [1.74.0](https://github.com/yahodu/openpic-webapp/compare/v1.73.0...v1.74.0) (2026-11-23)
 
 ### Features
