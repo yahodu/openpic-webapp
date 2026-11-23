@@ -100,9 +100,10 @@ Focused spec on this head: `9 passed (9)`.
 - `tsc` 0; `eslint` 0 errors on the touched file; `prettier --check` clean.
 - CI: PR checks on the head, recorded in the card handoff.
 
-**Landing:** PR MERGE_RESULT. The squash SHA and the post-merge `git rev-list` check are recorded
-in card `t_b0c51c6e`'s handoff — the record cannot carry a SHA that does not exist until the merge
-button is pressed.
+**Landing:** PR [#811](https://github.com/yahodu/openpic-webapp/pull/811) on branch
+`OP-139-task-audit-missing-tenant-green`, squash-merged into `main`. The squash SHA and the
+post-merge `git rev-list` check are recorded in card `t_b0c51c6e`'s handoff — this record cannot
+carry a SHA that does not exist until the merge button is pressed.
 
 ## 4. Consequences and known limits
 

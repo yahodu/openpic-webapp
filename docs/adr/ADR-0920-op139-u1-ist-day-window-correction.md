@@ -184,17 +184,18 @@ section, no ADR number is consumed and `docs/adr/README.md` is untouched._
   gate output is pasted on the PR as
   [issuecomment-7098738297](https://github.com/yahodu/openpic-webapp/pull/780#issuecomment-7098738297).
 
-- **Squash ↔ branch parity.** This diff is empty, so every reviewed byte is the byte the trunk
-  carries:
+- **Squash ↔ branch parity.** This diff is empty against the squash it certifies, so every reviewed
+  byte is the byte the trunk carries:
 
   ```
-  git diff b2f715798a3a42cd4c256b0fe76801d847ef0719 origin/main --
+  git diff b2f715798a3a42cd4c256b0fe76801d847ef0719 b1cec73e163e6e5c97a2876d03f150741ba3c696 --
     apps/web/src/test/unit/analytics-rollup-buckets.test.ts
     docs/adr/ADR-0920-op139-u1-ist-day-window-correction.md docs/adr/README.md
   ```
 
-  The branch tip is **not** an ancestor of `main`: a squash merge rewrites the commits, so the
-  failed ancestor check is the expected result and not a regression.
+  A later amendment to this file — for example the append that added this §9 — is the expected
+  non-empty result. The branch tip is **not** an ancestor of `main`: a squash merge rewrites the
+  commits, so the failed ancestor check is the expected result and not a regression.
 
 - **Post-merge verification on `origin/main` `b1cec73e`.** The focused spec
   `apps/web/src/test/unit/analytics-rollup-buckets.test.ts` reads `11 passed (11)`; the whole `unit`
