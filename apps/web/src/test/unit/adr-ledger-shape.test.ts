@@ -68,14 +68,17 @@
  * `findAdrRecordsWithoutLedgerRow` is a separate function with its own `it()`,
  * and why S2's report stays green while S3 hard-fails on the same tree.
  *
- * **The census at this branch head** (`origin/main` `9f51c3bb`: the repair card
- * `t_e3f7eabb` / PR #837's squash, plus PR #839's S1–S3 pins — both test-only):
- * **456** records, **455** ledger rows, **0** shape issues, **0** agreement
- * issues, and exactly one rowless record — `0963`. So S3's real-tree case is
- * **RED by design** at this head: the record is `Accepted` and carries no row,
- * and that red is the pin working, not a missing repair. The repair is the
- * gated docs card that writes the row and merges this flip, so no trunk commit
- * is red in between. S1 and S2 are not vacuous either — replayed against the
+ * **The census at this branch head** (`origin/main` `66fa387c`, the release
+ * squash on top of PR #844): **460** records under `docs/adr/`, **460** ledger
+ * rows, **0** shape issues, **0** agreement issues, **0** rowless records —
+ * measured in this checkout with {@link checkRepositoryAdrLedgerShape} plus the
+ * two raw counts (`ls docs/adr | grep -c '^ADR-'` and the number of
+ * `| [NNNN](…) |` rows in `docs/adr/README.md`), both 460. So S3's real-tree
+ * case is **green** at this head — `expect(missingRows).toEqual([])` — and that
+ * is the **decided** state, not a coincidence: ADR-0319 (`1260f008`, PR #842)
+ * makes every record carry its ledger row, added by the same pull request, so
+ * no trunk commit is red in between and no repair is owed. S1 and S2 are not
+ * vacuous either — replayed against the
  * pre-repair bytes
  * (`d507965f^`) the same rules report **20** shape-defective rows (the 19 stray
  * pipes plus `0892`'s three-cell row) and **21** agreement failures (those 20,
@@ -85,7 +88,8 @@
  * three-row case below is the in-suite proof that the parser is not vacuous.
  *
  * **Out of scope, stated so it is not mistaken for a gap.** No `docs/adr/`
- * byte is edited here (the gated docs card owns the row); the ledger's *prose*
+ * byte is edited here (the gated docs card owned the row and landed it as
+ * ADR-0319); the ledger's *prose*
  * blocks are not read as tables; and a row-shaped line **inside a fenced block
  * is read on purpose** — kept by decision (`t_942aa8e6`, F2) because fence
  * tracking's failure mode is a mis-tracked fence hiding a **real** row, the one
@@ -94,9 +98,12 @@
  * when the rule was pinned (`9f51c3bb`) was 455 row-shaped lines outside fences
  * and **0** inside — 455 row-shaped lines, 455 ledger rows — so no real row is
  * hidden by the scan. A record's multi-`Status:` value is read from its
- * canonical **bulleted** `- **Status:**` line: the first bulleted line wins and
- * a bare `Status:` line is prose, never the field (F3 of `t_942aa8e6`). And the
- * missing-row policy is **decided** — this pin is the RED half of it.
+ * canonical **bulleted** `- **Status:**` line: the first bulleted line wins, a
+ * bare `Status:` line after it is prose and never overrides it, and only a
+ * record that carries **no** bulleted line falls back to its first match
+ * anywhere — all three clauses are pinned below (F3 of `t_942aa8e6`). And the
+ * missing-row policy is **decided** (ADR-0319): every record carries its row,
+ * so this spec, not the helper, fails on a rowless one.
  *
  * **The one residual of S1, stated so the shape-only contract is not
  * over-read.** S1 is **shape-only**: a row with one unescaped title pipe **and**
@@ -454,6 +461,71 @@ describe("checkAdrLedgerStatusAgreement — a record's Status first word and its
     // Assert — the canonical field wins, so the cell agrees. Today the first
     // `Status:` match anywhere yields `recordStatus: "draft as first written"`
     // and a `status-mismatch` against the `accepted` cell.
+    expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+  });
+
+  it("prefers the first bulleted Status line when a record carries two", () => {
+    // Arrange — a record that was accepted and later rewritten to propose a
+    // change. The canonical field is the **first** bulleted line, so a reader
+    // that keeps the last match reads `Proposed` and disagrees with the cell.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0106](ADR-0106-first-bulleted.md) | the record | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+    const records = [
+      {
+        fileName: "ADR-0106-first-bulleted.md", // adr-fixture: fixture record name
+        text: "# rec\n\n- **Status:** Accepted\n\nRevision note\n\n- **Status:** Proposed\n",
+      },
+    ];
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledger, records);
+
+    // Assert — the first bulleted line decides, so the cell agrees.
+    expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+  });
+
+  it("falls back to a bare Status line when the record carries no bulleted one", () => {
+    // Arrange — a record written without the bullet: no `- **Status:**` line
+    // exists, so the fallback is the only reading and it must still be read.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0107](ADR-0107-bare-only.md) | the record | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+    const records = [
+      {
+        fileName: "ADR-0107-bare-only.md", // adr-fixture: fixture record name
+        text: "# rec\n\nStatus: Accepted\n",
+      },
+    ];
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledger, records);
+
+    // Assert — a bulleted-only reader with no fallback reports the field as
+    // missing and fails here.
+    expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+  });
+
+  it("a bare Status line after the bulleted field does not override it", () => {
+    // Arrange — the mirror of the prose-before-field case: a bare line *after*
+    // the canonical field is prose too, and a last-match reader would take it.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0108](ADR-0108-bare-after.md) | the record | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+    const records = [
+      {
+        fileName: "ADR-0108-bare-after.md", // adr-fixture: fixture record name
+        text: "# rec\n\n- **Status:** Accepted\n\nStatus: Draft as first written\n",
+      },
+    ];
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledger, records);
+
+    // Assert — the bulleted field wins, so the cell agrees.
     expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
   });
 
