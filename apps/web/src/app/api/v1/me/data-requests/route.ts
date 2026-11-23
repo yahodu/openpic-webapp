@@ -347,15 +347,17 @@ export const GET = defineRoute({
     // A signed-in user reads the rows it filed; an anonymous session reads the
     // rows that session filed. There is no other owner, and a receipt is not a
     // list credential, so no credential at all is the `401` `dsrAuth` threw.
+    // The session `dsrAuth` resolved is the credential, so the list read does
+    // not pay for the same `attendeeSessions` lookup twice (OP-138).
     let filter: Record<string, unknown>;
     if (principal === undefined) {
-      const session = await findRequestAttendeeSession({ database: getDb() }, ctx.request);
-      if (session === null) {
+      const sessionId = ctx.attendeeSessionId;
+      if (sessionId === undefined) {
         throw appError("unauthenticated");
       }
       filter = {
         "subject.kind": "anonymous",
-        "subject.attendeeSessionId": session._id.toHexString(),
+        "subject.attendeeSessionId": sessionId,
       };
     } else {
       filter = { "subject.kind": "user", "subject.userId": new ObjectId(principal) };
