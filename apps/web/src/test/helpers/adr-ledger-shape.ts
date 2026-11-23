@@ -109,6 +109,12 @@ const LEDGER_ROW_PATTERN = /^\s*\|\s*\[(\d{4})\]\((ADR-[^)\s]*\.md)\)/u;
 const STATUS_LINE_PATTERN = /^\s*(?:[-*]\s*)?(?:\*\*)?Status:(?:\*\*)?\s*(.*)$/u;
 
 /**
+ * A record's canonical status field: {@link STATUS_LINE_PATTERN} with the
+ * bullet mandatory. A bare `Status:` line is prose, never the field.
+ */
+const BULLETED_STATUS_LINE_PATTERN = /^\s*[-*]\s*(?:\*\*)?Status:(?:\*\*)?\s*(.*)$/u;
+
+/**
  * Where a status value stops being a status word. `Accepted (GREEN …)` is
  * `accepted`; `Accepted · **Date:** …` is `accepted`; an em dash separates a
  * qualifier from the word.
@@ -384,14 +390,21 @@ export function adrStatusWord(value: string): string {
  * @param recordText - The record's whole markdown.
  */
 function recordStatusValueOf(recordText: string): string | null {
+  let firstAnyForm: string | null = null;
+
   for (const line of recordText.split("\n")) {
+    const bulleted = BULLETED_STATUS_LINE_PATTERN.exec(line);
+    if (bulleted !== null) {
+      return bulleted[1] ?? "";
+    }
+
     const match = STATUS_LINE_PATTERN.exec(line);
     if (match !== null) {
-      return match[1] ?? "";
+      firstAnyForm ??= match[1] ?? "";
     }
   }
 
-  return null;
+  return firstAnyForm;
 }
 
 /** Order S1 issues by ledger line. */
