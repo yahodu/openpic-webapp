@@ -389,9 +389,10 @@ head `b9dce20b`, 14/14 checks on that head):
 | `apps/web/src/server/collaboration/invitation-transition.ts`                 | `closeInvitationAffordance` is a thin wrapper around the helper (`:104`) and stays inside the decision transaction                                                                  |
 | `apps/web/src/app/api/v1/me/notifications/[id]/actions/[actionKey]/route.ts` | the `retry_charge` arm closes after the delegate answers `applied` or `already_resolved`, keyed on the row's own `actionTarget.kind` (`:150`)                                       |
 
-Measured on the GREEN: focused `20 passed (20)`; `unit` `194` files `3261 passed | 3 skipped`;
-`integration` `159` files `1692 passed`; `tsc` 0; `eslint` 0; `prettier --check` clean; the
-seven `adr-*` guards `248 passed`. The record is **ADR-0944**, not the reserved `0943`: the
+Reported by the GREEN (`t_8d9e090c`, head `b9dce20b`, 14/14 PR checks): focused
+`20 passed (20)`; `unit` `194` files `3261 passed | 3 skipped`; `integration` `159` files
+`1692 passed`; `tsc` 0; `eslint` 0; `prettier --check` clean. Re-measured for this append: the
+seven `adr-*` guards `248 passed (248)`. The record is **ADR-0944**, not the reserved `0943`: the
 trunk consumed `0943` in flight ([ADR-0943](ADR-0943-op140-notification-action-residual-pins.md),
 card `t_b4c8f1d9`), so the GREEN took the higher lane cell `0944` and advanced the cell to
 `0945`. Both records stand; neither number is reused.
@@ -481,14 +482,14 @@ table in `fan-out.ts` — a second copy would drift from the contract. The table
 a kind has; the target's own stored state says which of them is live **now**, because §19.4
 renders at write time.
 
-| `actionTarget.kind` | Key set                                         | Live when (read at write time)                                                                                                    |
-| ------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `invitation`        | `accept`, `reject`                              | unchanged: the invitation is `pending`                                                                                            |
-| `subscription`      | `pay_now` **or** `complete_mandate`, never both | `pay_now`: the row is `past_due`; `complete_mandate`: the row is `incomplete` with a stored `checkout.url` inside its `expiresAt` |
-| `upload_batch`      | `retry_failed`                                  | the batch has at least one `failed` image                                                                                         |
-| `policy`            | `acknowledge`                                   | the recipient has no `consents` row for the live terms version                                                                    |
-| `event`             | `extend_upload_window`                          | the upload window is open                                                                                                         |
-| `selfie`            | `retry`                                         | the row is `rejected`                                                                                                             |
+| `actionTarget.kind` | Key set                                         | Live when (read at write time)                                                                                                                                                                                      |
+| ------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invitation`        | `accept`, `reject`                              | unchanged: the invitation is `pending`                                                                                                                                                                              |
+| `subscription`      | `pay_now` **or** `complete_mandate`, never both | `pay_now`: `pendingDueMinor > 0` with a chargeable mandate (`server/services/subscriptions/retry-charge.ts:61-73`); `complete_mandate`: the row is `incomplete` with a stored `checkout.url` inside its `expiresAt` |
+| `upload_batch`      | `retry_failed`                                  | the batch has at least one `failed` image                                                                                                                                                                           |
+| `policy`            | `acknowledge`                                   | the recipient has no `consents` row for the live terms version                                                                                                                                                      |
+| `event`             | `extend_upload_window`                          | the upload window is open                                                                                                                                                                                           |
+| `selfie`            | `retry`                                         | the row is `rejected`                                                                                                                                                                                               |
 
 **4.4 The recipient rule.** An action goes only to a recipient the delegate will accept. For
 `subscription` × `pay_now` that is the workspace **owner**; a `billing_contact` member who is
@@ -545,7 +546,7 @@ git ls-tree -r --name-only HEAD -- docs/adr | grep -oE 'ADR-[0-9]{4}' | sort | u
   → empty
 
 git diff --stat origin/main...HEAD
-  → 1 file changed, +202/−0 (this record)
+  → 1 file changed, +203/−0 (this record)
 ```
 
 The route, the helper, the catalogue and the fan-out are **not** in this diff. This card
