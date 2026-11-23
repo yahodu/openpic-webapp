@@ -114,6 +114,7 @@ interface OutboxRow {
   readonly eventKey: string;
   readonly tenantId: string;
   readonly subjectRef: { readonly kind: string; readonly id: string };
+  readonly actorRef: { readonly kind: string; readonly id: string };
   readonly payload: OutboxPayload;
   readonly dedupeKey?: string;
 }
@@ -527,7 +528,8 @@ describe("pipeline-indexed-check: the OP-126 batch arm", () => {
     expect(summaries).toHaveLength(1);
     const summary = summaries[0];
     expect(summary?.tenantId).toBe(event.tenantKey);
-    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.subjectRef).toEqual({ kind: "upload_batch", id: event.eventId.toHexString() });
+    expect(summary?.actorRef).toEqual({ kind: "user", id: uploader.toHexString() });
     expect(summary?.payload.batchId).toBe(batchId);
     expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
     expect(summary?.payload.fileCount).toBe(2);
@@ -648,7 +650,8 @@ describe("pipeline-indexed-check: the batch arm for the non-indexed terminal eve
     expect(summaries).toHaveLength(1);
     const summary = summaries[0];
     expect(summary?.tenantId).toBe(event.tenantKey);
-    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.subjectRef).toEqual({ kind: "upload_batch", id: event.eventId.toHexString() });
+    expect(summary?.actorRef).toEqual({ kind: "user", id: uploader.toHexString() });
     expect(summary?.payload.batchId).toBe(batchId);
     expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
     expect(summary?.payload.fileCount).toBe(3);
@@ -679,7 +682,8 @@ describe("pipeline-indexed-check: the batch arm for the non-indexed terminal eve
     expect(summaries).toHaveLength(1);
     const summary = summaries[0];
     expect(summary?.tenantId).toBe(event.tenantKey);
-    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.subjectRef).toEqual({ kind: "upload_batch", id: event.eventId.toHexString() });
+    expect(summary?.actorRef).toEqual({ kind: "user", id: uploader.toHexString() });
     expect(summary?.payload.batchId).toBe(batchId);
     expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
     expect(summary?.payload.fileCount).toBe(2);
@@ -867,7 +871,11 @@ describe("pipeline-indexed-check: the scan window advances past the first page",
     expect(summaries).toHaveLength(1);
     const summary = summaries[0];
     expect(summary?.tenantId).toBe(batched.tenantKey);
-    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.subjectRef).toEqual({
+      kind: "upload_batch",
+      id: batched.eventId.toHexString(),
+    });
+    expect(summary?.actorRef).toEqual({ kind: "user", id: uploader.toHexString() });
     expect(summary?.payload.batchId).toBe(batchId);
     expect(summary?.payload.eventId).toBe(batched.eventId.toHexString());
     expect(summary?.payload.fileCount).toBe(2);
@@ -1146,7 +1154,8 @@ describe("pipeline-indexed-check: the batch arm's work survives an aborted run",
     ).toHaveLength(1);
     const summary = summaries[0];
     expect(summary?.tenantId).toBe(event.tenantKey);
-    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.subjectRef).toEqual({ kind: "upload_batch", id: event.eventId.toHexString() });
+    expect(summary?.actorRef).toEqual({ kind: "user", id: uploader.toHexString() });
     expect(summary?.payload.batchId).toBe(batchId);
     expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
     expect(summary?.payload.fileCount).toBe(2);
@@ -1226,7 +1235,8 @@ describe("pipeline-indexed-check: the batch arm's work survives an aborted run",
     ).toHaveLength(1);
     const summary = summaries[0];
     expect(summary?.tenantId).toBe(event.tenantKey);
-    expect(summary?.subjectRef).toEqual({ kind: "user", id: uploader.toHexString() });
+    expect(summary?.subjectRef).toEqual({ kind: "upload_batch", id: event.eventId.toHexString() });
+    expect(summary?.actorRef).toEqual({ kind: "user", id: uploader.toHexString() });
     expect(summary?.payload.batchId).toBe(batchId);
     expect(summary?.payload.eventId).toBe(event.eventId.toHexString());
     expect(summary?.payload.fileCount).toBe(2);
@@ -1439,15 +1449,20 @@ describe("pipeline-indexed-check: the grouped batch discovery and its limit budg
     const firstSummary = byBatch.get(firstBatch.batchId);
     expect(firstSummary?.tenantId).toBe(tenantKey);
     expect(firstSummary?.subjectRef).toEqual({
-      kind: "user",
-      id: firstBatch.uploader.toHexString(),
+      kind: "upload_batch",
+      id: first.eventId.toHexString(),
     });
+    expect(firstSummary?.actorRef).toEqual({ kind: "user", id: firstBatch.uploader.toHexString() });
     expect(firstSummary?.payload.eventId).toBe(first.eventId.toHexString());
     expect(firstSummary?.payload.fileCount).toBe(1);
 
     const secondSummary = byBatch.get(secondBatch.batchId);
     expect(secondSummary?.tenantId).toBe(tenantKey);
     expect(secondSummary?.subjectRef).toEqual({
+      kind: "upload_batch",
+      id: second.eventId.toHexString(),
+    });
+    expect(secondSummary?.actorRef).toEqual({
       kind: "user",
       id: secondBatch.uploader.toHexString(),
     });
@@ -2166,7 +2181,11 @@ describe("pipeline-indexed-check: a persistently failing row is contained, count
       "the retried row's own batch must be summarised exactly once, by the tick that can read it"
     ).toHaveLength(1);
     expect(summaries[0]?.payload.eventId).toBe(poison.event.eventId.toHexString());
-    expect(summaries[0]?.subjectRef).toEqual({ kind: "user", id: poison.uploader.toHexString() });
+    expect(summaries[0]?.subjectRef).toEqual({
+      kind: "upload_batch",
+      id: poison.event.eventId.toHexString(),
+    });
+    expect(summaries[0]?.actorRef).toEqual({ kind: "user", id: poison.uploader.toHexString() });
     expect(summaries[0]?.payload.fileCount).toBe(2);
   });
 

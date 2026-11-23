@@ -866,7 +866,16 @@ describe("GET …/uploads/batches/{batchId} — batch status and the one summary
     expect(summaries).toHaveLength(1);
     const summary = firstOf(summaries, "the batch's completed summary");
     expect(summary.tenantId).toBe(workspace.tenantKey);
+    // §7.3's kind, not the uploader's: `actionTarget.kind` is the emit's
+    // `subjectRef.kind` (ADR-0942 §4.5), and the §7.3 delegate is the event's
+    // `images:reprocess-failed` route, so the subject id is the **event**
+    // (ADR-0777). The uploader stays the actor, and the batch id stays in the
+    // payload for display and for the delegate arm to resolve the batch.
     expect(summary.subjectRef).toEqual({
+      kind: "upload_batch",
+      id: workspace.eventId.toHexString(),
+    });
+    expect(summary.actorRef).toEqual({
       kind: "user",
       id: workspace.organizer.userId.toHexString(),
     });
@@ -1047,8 +1056,8 @@ describe("the terminal transition — failures (I2)", () => {
     expect(failures).toHaveLength(1);
     const failure = firstOf(failures, "the batch's failure summary");
     expect(failure.subjectRef).toEqual({
-      kind: "user",
-      id: workspace.organizer.userId.toHexString(),
+      kind: "upload_batch",
+      id: workspace.eventId.toHexString(),
     });
     expect(failure.payload.batchId).toBe(batchId);
     expect(failure.payload.files).toMatchObject({ total: 3, uploaded: 3, failedUpload: 0 });
@@ -1189,10 +1198,17 @@ describe("one summary per uploader (I4)", () => {
     expect(transition.phase).toBe("complete");
     const summaries = await outboxFor("upload.batch.completed");
     expect(summaries).toHaveLength(2);
-    expect(new Set(summaries.map((summary) => summary.subjectRef.id))).toEqual(
+    // The pair (batch, uploader) is still what the summary set is keyed on —
+    // the uploader moved to `actorRef` when the subject became the §7.3
+    // `upload_batch` kind (ADR-0777), so this reads the actor, not the subject.
+    expect(new Set(summaries.map((summary) => summary.actorRef.id))).toEqual(
       new Set([workspace.organizer.userId.toHexString(), coOrganizer.userId.toHexString()])
     );
     for (const summary of summaries) {
+      expect(summary.subjectRef).toEqual({
+        kind: "upload_batch",
+        id: workspace.eventId.toHexString(),
+      });
       expect(summary.payload.batchId).toBe(batchId);
       expect(summary.payload.fileCount).toBe(3);
     }
@@ -1317,5 +1333,151 @@ describe("the transition never invents work (X4, X5)", () => {
     expect(firstRefusal.status).toBe(403);
     expect(secondRefusal.status).toBe(403);
     expect(await outboxFor("upload.blocked.quota")).toHaveLength(1);
+  });
+});
+
+/**
+ * Seed one settled batch of one image without driving an upload.
+ *
+ * The check reads only `upload_sessions` and `event_images` (§5.5), so the
+ * terminal phase can be seeded directly: one `completed` session plus one image
+ * in `imageStatus`. No object store and no completion route are involved, which
+ * keeps the two pins below about the **emit** alone.
+ *
+ * @param fields - The workspace, the batch id, the content hash and the state
+ *   the image settled in.
+ * @returns The seeded image id.
+ */
+async function seedSettledBatch(fields: {
+  readonly workspace: Workspace;
+  readonly batchId: string;
+  readonly hash: string;
+  readonly imageStatus: "done" | "failed";
+}): Promise<ObjectId> {
+  const at = new Date(Date.now() - BATCH_AGE_MS);
+  const sessionId = await seedSession({
+    tenantKey: fields.workspace.tenantKey,
+    eventId: fields.workspace.eventId,
+    contentHash: fields.hash,
+    createdByUserId: fields.workspace.organizer.userId,
+    batchId: fields.batchId,
+    fileName: "DSC_0701.JPG",
+    createdAt: at,
+  });
+  await app.db
+    .collection(UPLOAD_SESSIONS)
+    .updateOne({ _id: sessionId }, { $set: { status: "completed" } });
+
+  const assetId = new ObjectId();
+  await app.db.collection(COLLECTIONS.mediaAssets).insertOne({
+    _id: assetId,
+    tenantId: fields.workspace.tenantKey,
+    contentHash: fields.hash,
+    kind: "event_image",
+    storage: {
+      locationKey: "originals",
+      objectKey: `images/${fields.hash}.jpg`,
+      bytes: FILE_BYTES,
+      contentType: "image/jpeg",
+      checksum: fields.hash,
+      storedAt: at,
+    },
+    derivatives: {},
+    status: "derivatives_ready",
+    refCount: 1,
+    createdAt: at,
+  });
+
+  const imageId = new ObjectId();
+  await app.db.collection(COLLECTIONS.eventImages).insertOne({
+    _id: imageId,
+    tenantId: fields.workspace.tenantKey,
+    eventId: fields.workspace.eventId,
+    assetId,
+    uploadedByUserId: null,
+    uploadBatchId: fields.batchId,
+    sequence: 1,
+    processing:
+      fields.imageStatus === "failed"
+        ? {
+            status: "failed",
+            attempts: 1,
+            lastError: {
+              code: "no_face_detected",
+              message: "No face found in the image.",
+              at,
+              retryable: true,
+            },
+          }
+        : { status: "done", attempts: 1 },
+    faceCount: 0,
+    visibility: "visible",
+    deletedAt: null,
+    createdAt: at,
+  });
+  return imageId;
+}
+
+/**
+ * The batch summary's **outbox** subject is §7.3's `upload_batch` kind (OP-140
+ * precondition, ADR-0777).
+ *
+ * These two cases read the emitted `domain_events` row, never the feed row: the
+ * type is not `actionable` yet, so `fan-out.ts` builds no `actionTarget` and a
+ * feed-level assertion would pass on Today's tree. §4.5 of ADR-0942 is why the
+ * kind has to come from the emit at all — there is no type→kind table in the
+ * fan-out — and the id is the **event's** ObjectId, because the endpoint
+ * refuses a non-24-hex `actionTarget.id`, a batch has no document of its own,
+ * and the §7.3 delegate (`…/images:reprocess-failed`) is event-scoped.
+ */
+describe("the batch summary names the §7.3 `upload_batch` subject (OP-140 precondition)", () => {
+  it("P1: an `upload.batch.completed` row carries the `upload_batch` kind keyed by the event", async () => {
+    // Arrange — one settled batch with one image that finished cleanly.
+    const workspace = await seedWorkspace("op140-emit-complete");
+    const batchId = newBatchId();
+    await seedSettledBatch({ workspace, batchId, hash: HASH_ONE, imageStatus: "done" });
+
+    // Act — the transition check the indexed cron runs.
+    const transition = await checkTransition(workspace, batchId);
+
+    // Assert — the emitted row, not the feed it may later become.
+    expect(transition.phase).toBe("complete");
+    const summaries = await outboxFor("upload.batch.completed");
+    expect(summaries).toHaveLength(1);
+    const summary = firstOf(summaries, "the batch's completed summary");
+    expect(summary.subjectRef).toEqual({
+      kind: "upload_batch",
+      id: workspace.eventId.toHexString(),
+    });
+    // The endpoint's `actionTarget.id` shape — never the client's `batchId`.
+    expect(summary.subjectRef.id).toMatch(/^[0-9a-f]{24}$/);
+    expect(summary.subjectRef.id).not.toBe(batchId);
+    // The payload keeps both ids for display and for the delegate's resolution.
+    expect(summary.payload.batchId).toBe(batchId);
+    expect(summary.payload.eventId).toBe(workspace.eventId.toHexString());
+  });
+
+  it("P2: an `upload.batch.completed_with_errors` row carries the same subject", async () => {
+    // Arrange — one settled batch whose only image failed the pipeline.
+    const workspace = await seedWorkspace("op140-emit-errors");
+    const batchId = newBatchId();
+    await seedSettledBatch({ workspace, batchId, hash: HASH_TWO, imageStatus: "failed" });
+
+    // Act
+    const transition = await checkTransition(workspace, batchId);
+
+    // Assert
+    expect(transition.phase).toBe("complete_with_errors");
+    expect(await outboxFor("upload.batch.completed")).toHaveLength(0);
+    const failures = await outboxFor("upload.batch.completed_with_errors");
+    expect(failures).toHaveLength(1);
+    const failure = firstOf(failures, "the batch's failure summary");
+    expect(failure.subjectRef).toEqual({
+      kind: "upload_batch",
+      id: workspace.eventId.toHexString(),
+    });
+    expect(failure.subjectRef.id).toMatch(/^[0-9a-f]{24}$/);
+    expect(failure.subjectRef.id).not.toBe(batchId);
+    expect(failure.payload.batchId).toBe(batchId);
   });
 });
