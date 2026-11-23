@@ -1,5 +1,5 @@
 import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
@@ -397,5 +397,64 @@ describe("dsr-sla-check F3: the run budget pages past the requests already warne
     expect(secondRun.filter((requestId) => !firstRun.includes(requestId))).toEqual([
       dueThird.toHexString(),
     ]);
+  });
+});
+
+/**
+ * Run the SLA check with an explicit per-run budget on a freshly evaluated
+ * module — the way a serverless invocation sees the job: a cold module registry
+ * and nothing carried over from the previous run.
+ *
+ * `vi.resetModules()` drops the registry, so the `import` below re-executes the
+ * job's module graph. Only the database client survives it (it lives on a
+ * `globalThis` slot), which is what keeps the run pointed at the test database.
+ *
+ * @param at - The fixed instant the run's clock reports.
+ * @param requestedLimit - The per-run budget, as the cron route passes it.
+ */
+async function runCheckOnAColdModule(at: Date, requestedLimit: string): Promise<void> {
+  vi.resetModules();
+  const coldModule = await import("@/server/jobs/dsr-sla-check");
+  await coldModule.dsrSlaCheckJob.run({
+    requestedLimit,
+    clock: fixedClock(at),
+    logger: recordingLogger(),
+  });
+}
+
+/**
+ * `dsr-sla-check` F1 of the F3 pin review — the paging exclusion must survive a
+ * cold start (OP-139; ADR-0927).
+ *
+ * Each cron invocation is a fresh serverless function (`apps/web/vercel.json` →
+ * `/api/v1/internal/cron/dsr-sla-check`, `45 2 * * *`), so a run cannot remember
+ * what the previous run warned: the day's exclusion has to be read back from the
+ * stored `admin.dsr.sla_risk` rows. The F3 cases above drive one module instance
+ * for a whole case (`dsrSlaCheckJob` is imported once at the top of this file),
+ * so an implementation that keeps the warned ids in module scope passes them
+ * while paging nothing at all in production — the defect F3 exists to prevent.
+ *
+ * This case drops the module registry before every run and imports the job
+ * again, so only a persisted exclusion lets the budget advance onto the tail.
+ * The Mongo client is a `globalThis` slot (`@/server/db/mongo`), not module
+ * state, so the re-imported module still reads the one test database.
+ */
+describe("dsr-sla-check cold start: the paging exclusion is persisted, not in-process", () => {
+  it("F1: three cold-start runs with a budget of one still warn each of the three at-risk requests exactly once", async () => {
+    // ── Arrange: three open requests inside the window, distinct deadlines ──
+    const live = await seedLiveTenant("op139-dsr-cold-start");
+    const { dueFirst, dueSecond, dueThird } = await seedThreeAtRiskRequests(live.tenantId);
+
+    // ── Act: three runs of the same IST day, each on a freshly evaluated
+    // module — nothing may be carried over from the previous invocation ──
+    await runCheckOnAColdModule(ACTIVITY_AT, "1");
+    await runCheckOnAColdModule(ACTIVITY_AT, "1");
+    await runCheckOnAColdModule(ACTIVITY_AT, "1");
+
+    // ── Assert: the budget paged onto all three, so the exclusion was read
+    // back from the day's stored events, not from process memory ──
+    expect((await warnedRequestIds()).sort()).toEqual(
+      [dueFirst.toHexString(), dueSecond.toHexString(), dueThird.toHexString()].sort()
+    );
   });
 });
