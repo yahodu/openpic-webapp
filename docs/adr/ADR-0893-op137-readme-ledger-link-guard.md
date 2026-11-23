@@ -1,9 +1,9 @@
 # ADR-0893 — OP-137 TEST: a ledger link resolves, or names a record the repository renamed
 
-- **Status:** Proposed (RED pins — the guard module does not exist yet, so the
-  spec fails at import; a GREEN is owed and this PR is a **draft** that must not
-  be squash-merged, per OP-93 /
-  [ADR-0306](ADR-0306-op101-stale-branch-deletion.md))
+- **Status:** Accepted (RED by design; the pins were red on the branch point because the
+  guard module did not exist, and the GREEN sibling — PR
+  [#761](https://github.com/yahodu/openpic-webapp/pull/761), squash `3f5d0225` — carries
+  them unchanged).
 - **Date:** 2026-11-20
 - **Card:** OP-137 TEST `t_0fb7e9b0` (Low; child of the review card
   `t_a587c8bd` of PR [#754](https://github.com/yahodu/openpic-webapp/pull/754),
