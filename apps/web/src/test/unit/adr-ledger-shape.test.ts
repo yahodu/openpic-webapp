@@ -85,13 +85,12 @@
  * three-row case below is the in-suite proof that the parser is not vacuous.
  *
  * **Out of scope, stated so it is not mistaken for a gap.** No `docs/adr/`
- * byte is edited here (the gated docs card owns the row and the ADR that
- * records the rule); the ledger's *prose* blocks are not read as tables; a row
- * inside a fenced block would be read, but the real ledger carries none at this
- * head (455 row-shaped lines, 455 ledger rows); a record's multi-line `Status:`
- * value is cut at its first line, which is the only line that carries the word;
- * and the missing-row policy is **decided** — this pin is the RED half of it,
- * not a place to re-open it.
+ * byte is edited here (the gated docs card owns the row); the ledger's *prose*
+ * blocks are not read as tables; a row inside a fenced block would be read,
+ * but the real ledger carries none at this head (455 row-shaped lines, 455
+ * ledger rows); a record's multi-line `Status:` value is cut at its first
+ * line, which is the only line that carries the word; and the missing-row
+ * policy is **decided** — this pin is the RED half of it.
  */
 import { rmSync } from "node:fs";
 import { join } from "node:path";
