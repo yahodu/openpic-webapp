@@ -70,7 +70,8 @@ So the recipient the design names — _the attendee whose selfie was refused_ �
 
 ### 4. Number allocation and ledger bookkeeping
 
-- The record takes **`0962`** (sweep above). The GREEN sibling takes **`0963`** and writes no row of its own.
+- The record takes **`0962`** (sweep above). The GREEN sibling takes **`0963`** and carries its own row — amended
+  by [ADR-0319](ADR-0319-every-adr-record-carries-a-ledger-row.md), which makes the row mandatory in the same change.
 - `OP-129 attendee identity lane` `Next free`: `0869` → **`0964`**. The block is exhausted and this record plus its GREEN come out of the pool, so the lane's next free number sits above them.
 - `unallocated (future lanes)` cursor: `0962` → **`0964`**.
 - `OP-136 jobs lane` `Next free`: `0962` → **`0964`**. That cell mirrors the pool cursor by convention — [ADR-0942](ADR-0942-op140-notification-action-endpoint-red.md) advanced both cells that read its start value — so it moves with the pool and not on its own account.
