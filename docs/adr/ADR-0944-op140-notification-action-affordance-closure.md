@@ -120,7 +120,9 @@ Measured on the pins head `a18502b9` and on this head, same commands:
 - focused (`notification-action-affordance.test.ts` + `notification-actions.test.ts`): `2 failed | 16
 passed (18)` before, **`20 passed (20)`** after.
 - whole `unit` project: **`194` files `3261 passed | 3 skipped (3264)`**.
-- whole `integration` project: **`159` files `1691 passed (1691)`**.
+- whole `integration` project: **`159` files `1692 passed (1692)`** (measured after the pre-push
+  merge of `origin/main` `fcba6748`, whose DSR pin adds one case to the `1691` this lane measured on
+  its own head).
 - `tsc -p tsconfig.json --noEmit` exit `0`; `eslint` 0 errors on the three touched files;
   `prettier --check` clean.
 - The seven `adr-*` guards and the duplicate-number scan
