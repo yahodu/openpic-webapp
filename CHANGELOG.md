@@ -1,3 +1,9 @@
+## [1.79.1](https://github.com/yahodu/openpic-webapp/compare/v1.79.0...v1.79.1) (2026-11-23)
+
+### Performance Improvements
+
+- **jobs:** OP-139 batch the rollup writes and bound the audit reads ([#822](https://github.com/yahodu/openpic-webapp/issues/822)) ([f416657](https://github.com/yahodu/openpic-webapp/commit/f416657cd2ce76310f819f8ac6bf6c3cbd7ab528))
+
 ## [1.79.0](https://github.com/yahodu/openpic-webapp/compare/v1.78.0...v1.79.0) (2026-11-23)
 
 ### Features

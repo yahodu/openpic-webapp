@@ -1,4 +1,4 @@
-import type { Collection, Db, Document } from "mongodb";
+import type { AnyBulkWriteOperation, Collection, Db, Document } from "mongodb";
 
 import { getLogger } from "../logging";
 import { getRequestContext } from "../runtime/request-context";
@@ -66,6 +66,10 @@ export interface RepositoryCollection {
   deleteMany(filter?: Document, options?: Document): ReturnType<Collection["deleteMany"]>;
   insertOne(doc: Document, options?: Document): ReturnType<Collection["insertOne"]>;
   insertMany(docs: Document[], options?: Document): ReturnType<Collection["insertMany"]>;
+  bulkWrite(
+    operations: AnyBulkWriteOperation[],
+    options?: Document
+  ): ReturnType<Collection["bulkWrite"]>;
   countDocuments(filter?: Document, options?: Document): ReturnType<Collection["countDocuments"]>;
   aggregate(pipeline: Document[], options?: Document): ReturnType<Collection["aggregate"]>;
 }
@@ -364,6 +368,14 @@ export function collectionHandle(db: Db, name: string, scope?: TenantScope): Rep
         list.map((doc) => stampInsert(scope, name, doc)),
         options
       );
+    },
+    async bulkWrite(operations, options) {
+      // A bulk command cannot be stamped per document, so a tenant-scoped handle
+      // refuses it rather than writing rows it cannot scope.
+      if (scope !== undefined) {
+        refuseScope(name);
+      }
+      return collection.bulkWrite(operations, options);
     },
     async countDocuments(filter, options) {
       return collection.countDocuments(scopeFilter(scope, name, filter), options);
