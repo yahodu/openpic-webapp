@@ -1,3 +1,9 @@
+## [1.81.0](https://github.com/yahodu/openpic-webapp/compare/v1.80.0...v1.81.0) (2026-11-23)
+
+### Features
+
+- **attendee:** OP-140 emit attendee.selfie.rejected and resolve an event's active slug ([#835](https://github.com/yahodu/openpic-webapp/issues/835)) ([b6cad7e](https://github.com/yahodu/openpic-webapp/commit/b6cad7ea44630f03d017cee06d5f0f7cbcd6d834))
+
 ## [1.80.0](https://github.com/yahodu/openpic-webapp/compare/v1.79.1...v1.80.0) (2026-11-23)
 
 ### Features
