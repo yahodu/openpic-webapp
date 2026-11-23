@@ -195,6 +195,7 @@ function fixedRecipients(attendee: string): RecipientRepository {
   return {
     listEventRoleMembers: () => Promise.resolve([]),
     listIdentifiedAttendeeUserIds: () => Promise.resolve([attendee]),
+    getAttendeeProfileUserId: () => Promise.resolve(null),
     getBillingContactUserId: () => Promise.resolve(null),
     listPlatformAdminUserIds: () => Promise.resolve([]),
   };

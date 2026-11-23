@@ -217,6 +217,7 @@ function eventRoleRecipient(recipient: string): RecipientRepository {
   return {
     listEventRoleMembers: () => Promise.resolve([recipient]),
     listIdentifiedAttendeeUserIds: () => Promise.resolve([]),
+    getAttendeeProfileUserId: () => Promise.resolve(null),
     getBillingContactUserId: () => Promise.resolve(null),
     listPlatformAdminUserIds: () => Promise.resolve([]),
   };
@@ -227,6 +228,7 @@ function attendeeRecipient(attendee: string): RecipientRepository {
   return {
     listEventRoleMembers: () => Promise.resolve([]),
     listIdentifiedAttendeeUserIds: () => Promise.resolve([attendee]),
+    getAttendeeProfileUserId: () => Promise.resolve(null),
     getBillingContactUserId: () => Promise.resolve(null),
     listPlatformAdminUserIds: () => Promise.resolve([]),
   };

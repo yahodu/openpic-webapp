@@ -136,6 +136,22 @@ export function mongoRecipientRepository(db?: Db): RecipientRepository {
       return ids;
     },
 
+    async getAttendeeProfileUserId({ tenantId, eventId, profileId }) {
+      const objectId = asObjectId(profileId);
+      if (objectId === null) return null;
+      const profile: unknown = await store()
+        .collection(COLLECTIONS.attendeeEventProfiles)
+        .findOne({
+          _id: objectId,
+          tenantId: idMatch(tenantId),
+          eventId: idMatch(eventId),
+        });
+      if (!isRecord(profile)) return null;
+      const subject: unknown = profile.subject;
+      if (!isRecord(subject) || subject.kind !== "user") return null;
+      return idHex(subject.userId);
+    },
+
     async getBillingContactUserId({ tenantId }) {
       const tenant: unknown = await store()
         .collection(TENANTS_COLLECTION)

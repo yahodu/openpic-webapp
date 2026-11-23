@@ -199,6 +199,7 @@ function recipientSource(): RecipientRepository {
   return {
     listEventRoleMembers: () => Promise.resolve([]),
     listIdentifiedAttendeeUserIds: () => Promise.resolve([]),
+    getAttendeeProfileUserId: () => Promise.resolve(null),
     getBillingContactUserId: () => Promise.resolve(null),
     listPlatformAdminUserIds: () => Promise.resolve([]),
   };

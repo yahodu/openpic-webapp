@@ -118,6 +118,11 @@ export interface RecipientRepository {
     readonly tenantId: string;
     readonly eventId: string;
   }): Promise<readonly string[]>;
+  getAttendeeProfileUserId(input: {
+    readonly tenantId: string;
+    readonly eventId: string;
+    readonly profileId: string;
+  }): Promise<string | null>;
   getBillingContactUserId(input: { readonly tenantId: string }): Promise<string | null>;
   listPlatformAdminUserIds(): Promise<readonly string[]>;
 }
@@ -129,6 +134,7 @@ export interface ResolveRecipientsInput {
   readonly eventId: string | null;
   readonly actorUserId: string | null;
   readonly subjectUserId: string | null;
+  readonly attendeeProfileId: string | null;
   readonly repository: RecipientRepository;
 }
 
@@ -302,16 +308,18 @@ function toPreferences(doc: Record<string, unknown> | null): ResolvePreferences 
  *
  * Audiences are derived at send time: `organizer`/`co_organizer` share one
  * `listEventRoleMembers` call, `attendee_identified` reads identified attendees,
+ * `attendee_subject` reads the one profile the row's `payload.profileId` names,
  * `billing_contact` reads the tenant billing contact and `platform_admin` the
  * platform admins. `attendee_anonymous` is deliberately unreachable. A
  * `subjectUserId` is always included, the `actorUserId` is always removed, and
  * the result is deduped preserving first-seen order.
  *
- * @param input - The type row, scope, actor/subject ids and the recipient port.
+ * @param input - The type row, scope, actor/subject/attendee ids and the recipient port.
  * @returns The recipient user ids, in first-seen order.
  */
 export async function resolveRecipients(input: ResolveRecipientsInput): Promise<readonly string[]> {
-  const { typeRow, tenantId, eventId, actorUserId, subjectUserId, repository } = input;
+  const { typeRow, tenantId, eventId, actorUserId, subjectUserId, attendeeProfileId, repository } =
+    input;
 
   const ordered: string[] = [];
   const seen = new Set<string>();
@@ -342,6 +350,19 @@ export async function resolveRecipients(input: ResolveRecipientsInput): Promise<
         for (const id of await repository.listIdentifiedAttendeeUserIds({ tenantId, eventId })) {
           add(id);
         }
+        break;
+      }
+      case "attendee_subject": {
+        // The one attendee the row is about (ADR-0947 D2). A row without a
+        // profile id resolves to nobody — never to the event-wide broadcast.
+        if (eventId === null || attendeeProfileId === null) break;
+        add(
+          await repository.getAttendeeProfileUserId({
+            tenantId,
+            eventId,
+            profileId: attendeeProfileId,
+          })
+        );
         break;
       }
       case "billing_contact": {
@@ -1237,6 +1258,8 @@ async function processEvent(
   const eventId = typeof event.payload.eventId === "string" ? event.payload.eventId : null;
   const actorUserId = event.actorRef.kind === "user" ? event.actorRef.id : null;
   const subjectUserId = event.subjectRef.kind === "user" ? event.subjectRef.id : null;
+  const attendeeProfileId =
+    typeof event.payload.profileId === "string" ? event.payload.profileId : null;
 
   // Settings and templates depend only on the type/event, not on recipients, so
   // fetch them together rather than serially.
@@ -1251,6 +1274,7 @@ async function processEvent(
     eventId,
     actorUserId,
     subjectUserId,
+    attendeeProfileId,
     repository: options.recipients,
   });
 
