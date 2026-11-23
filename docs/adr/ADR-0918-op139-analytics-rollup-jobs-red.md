@@ -289,3 +289,29 @@ never committed.
    measures at the boundary the notification fan-out reads; an invented
    `tenant.isolation.finding` event name would be a contract the docs do not
    carry.
+
+## 9. Post-merge trunk re-sweep
+
+`origin/main` `fa621c4c` was merged into the pins branch before handoff (the
+branch was cut at `ecf4eb71`). It is a merge commit, not a rebase, so the pushed
+and CI-measured RED head `4662ca93` stays an ancestor and §6's measurements are
+unchanged.
+
+- **The number is still free.** `git rev-list --objects --all -- docs/adr`
+  resolves `ADR-0918` to this record only, and no `ADR-0919`–`ADR-0937` object or
+  path exists on `origin/main`, in any `.worktrees/*/docs/adr` tree, or on the
+  open PR heads #780 (this branch), #755, #743 and #272.
+- **The block is untouched by the trunk.** The three OP-136 fixture-TTL cards
+  drew `0938`–`0940` from the pool after this record was written (ADR-0938's own
+  ledger note cites this lane's cut as the in-flight high-water), so both the
+  `OP-136 jobs lane` cell and the `unallocated (future lanes)` cursor read `0941`
+  on the merged tree. The lane row keeps `0918`–`0937` with `Next free` `0919`;
+  **no cell is lowered** — main's `0941` stands and no range is re-cut.
+- **The `docs/adr/README.md` merge is a three-way union**: the allocation table
+  takes main's `0941` cells plus this lane's row; the index table interleaves
+  main's `0901`–`0908` rows, this record, then main's `0938`–`0940`, ascending
+  and with no row dropped; the prose notes keep this lane's note ahead of main's
+  five later notes.
+- Re-measured on the merged tree: the six specs still fail only at the seven
+  missing-module imports (`tsc` reports exactly those seven `TS2307`s), the seven
+  `adr-*` guards stay green, `eslint` 0 and `prettier --check` clean.
