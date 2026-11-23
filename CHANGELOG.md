@@ -1,3 +1,9 @@
+## [1.79.0](https://github.com/yahodu/openpic-webapp/compare/v1.78.0...v1.79.0) (2026-11-23)
+
+### Features
+
+- **notifications:** OP-140 close the feed affordance after a non-invitation action ([#818](https://github.com/yahodu/openpic-webapp/issues/818)) ([6a438ff](https://github.com/yahodu/openpic-webapp/commit/6a438ffac9d34a8e477a9addf71cef1f36381725))
+
 ## [1.78.0](https://github.com/yahodu/openpic-webapp/compare/v1.77.0...v1.78.0) (2026-11-23)
 
 ### Features
