@@ -132,6 +132,15 @@ The OP-138 lane holds `0898`–`0917` and its `Next free` cell
 No surface holds `0909`, so this record consumes it and advances the cell to
 **`0910`**. No cell is lowered and no range is re-cut.
 
+`origin/main` then advanced to `1a1800e3` (PR [#800](https://github.com/yahodu/openpic-webapp/pull/800),
+[ADR-0941](ADR-0941-op138-dsr-lapsed-session-fixture-clock.md)) while this card
+ran, and that head was merged into this branch before the delivery head was
+measured. ADR-0941 is an OP-138 card minted **outside** the lane's reserved
+`0898`–`0917` block (its card assigned the number and it left the lane cell
+alone), so it does not change this card's allocation: the OP-138 cell stays at
+`0910`, the next free number inside the block, and the OP-136 / pool cells keep
+the higher `0942` their own records set.
+
 ## 6. Consequences
 
 - A future refactor that joins the digest at read time reds exactly two cases,
