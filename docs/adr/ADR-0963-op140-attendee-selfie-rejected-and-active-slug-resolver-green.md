@@ -47,7 +47,8 @@ The emit sits after `kept === true` and inside `decision.status === "failed"` on
 ### 4. The ledger
 
 - `docs/adr/README.md` row `0962`'s hotspot sentence named a non-existent `OP-141` lane; it now reads "the sibling OP-140 precondition cards also append to". One token, nothing else in the row.
-- **No row is added for `0963`** and **no cell moves**: ADR-0962 §4 already advanced the `OP-129 attendee identity lane` cell, the `unallocated (future lanes)` cursor and the `OP-136 jobs lane` mirror cell to `0964` for the pair `0962`+`0963`.
+- **Row `0963` is added** (this repair, under
+  [ADR-0319](ADR-0319-every-adr-record-carries-a-ledger-row.md)); **no cell moves**: ADR-0962 §4 already advanced the `OP-129 attendee identity lane` cell, the `unallocated (future lanes)` cursor and the `OP-136 jobs lane` mirror cell to `0964` for the pair `0962`+`0963`.
 
 ## Evidence
 

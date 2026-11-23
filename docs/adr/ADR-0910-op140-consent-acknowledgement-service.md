@@ -242,8 +242,9 @@ The OP-138 lane holds `0898`–`0917` and its `Next free` cell
   card doing the reserving.
 
 `0910` is this record; the lane cell advances to **`0912`**, because the GREEN
-sibling holds `0911` and writes no ledger row. No cell is lowered and no range is
-re-cut.
+sibling holds `0911` and carries its own row
+([ADR-0319](ADR-0319-every-adr-record-carries-a-ledger-row.md)), which makes that
+row mandatory in the same change. No cell is lowered and no range is re-cut.
 
 ## 8. Consequences
 
