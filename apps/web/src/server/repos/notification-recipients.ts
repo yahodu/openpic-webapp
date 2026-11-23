@@ -20,6 +20,8 @@ import { platformRepo } from "@/server/repos";
  *     audience reaches the invitee (`collab.invite.sent`).
  *   - `attendee_identified` → `attendeeEventProfiles` whose `subject.kind` is
  *     `user` (an anonymous, cookie-bound uploader has no reachable account).
+ *   - `attendee_subject` → the single `attendeeEventProfiles` row whose `_id` the
+ *     row's `payload.profileId` names, inside the row's tenant + event (ADR-0947).
  *   - `billing_contact` → the tenant's `billingContactUserId`.
  *   - `platform_admin` → active `userProfiles` with `platformRole: "admin"`.
  *
