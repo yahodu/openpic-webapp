@@ -1195,6 +1195,103 @@ describe("POST /api/v1/me/notifications/{id}/actions/pay_now", () => {
       provider.restore();
     }
   });
+
+  it("A3: closes the caller's pay_now affordance after a successful charge", async () => {
+    const billing = await seedBillingWorkspace("op140-a3-applied");
+    const notificationId = await payNowNotification(billing);
+    // Read the live status the fixture seeds instead of hard-coding it: the
+    // charge is confirmed by a webhook, never by this response, so the owning
+    // subscription does not change and `targetState` must report its own status.
+    const seededSubscription = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ _id: billing.subscriptionId });
+    expect(typeof seededSubscription?.status).toBe("string");
+    const liveStatus = String(seededSubscription?.status);
+
+    // Act: the owner clicks "Pay now".
+    const response = await actOnNotification(
+      actionRequest(billing.owner.cookie, notificationId, "pay_now")
+    );
+
+    // Assert: the switch applied, and the response already serves the closed
+    // affordance (the endpoint re-reads the row after the delegation).
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(payload).toMatchObject({
+      notificationId,
+      actionKey: "pay_now",
+      outcome: "applied",
+      targetState: liveStatus,
+      // U2: this endpoint knows the instant, not a decision channel.
+      resolvedVia: null,
+    });
+    const actions = payload.actions as {
+      readonly key: string;
+      readonly label: string;
+      readonly state: string;
+    }[];
+    const payNow = actions.find((action) => action.key === "pay_now");
+    expect(payNow).toBeDefined();
+    expect(payNow?.state).not.toBe("available");
+    const servedState = String(payNow?.state);
+
+    // Assert: the stored row is closed too, at this endpoint's instant and
+    // without a channel it was never told.
+    const stored = await app.db
+      .collection(COLLECTIONS.notifications)
+      .findOne({ _id: new ObjectId(notificationId) });
+    expect(stored).not.toBeNull();
+    expect(stored?.actionTarget).toEqual({
+      kind: "subscription",
+      id: billing.subscriptionId.toHexString(),
+      state: "resolved",
+    });
+    expect(stored?.actionResolvedAt).toBeInstanceOf(Date);
+    expect(Object.prototype.hasOwnProperty.call(stored ?? {}, "actionResolvedVia")).toBe(false);
+
+    // Assert: feed parity — the same decision is closed on every device.
+    const feed = await readFeed(feedRequest(billing.owner.cookie));
+    expect(feed.status).toBe(200);
+    const feedRows = ((await body(feed)).data ?? []) as Record<string, unknown>[];
+    const served = feedRows.find((row) => row.id === notificationId);
+    expect(actionPairs(served)).toEqual([["pay_now", servedState]]);
+  });
+
+  it("A4: keeps the pay_now affordance closed on a replay and writes no second charge", async () => {
+    const billing = await seedBillingWorkspace("op140-a4-replay");
+    const notificationId = await payNowNotification(billing);
+    const first = await actOnNotification(
+      actionRequest(billing.owner.cookie, notificationId, "pay_now")
+    );
+    expect(first.status).toBe(200);
+
+    // Act: the same affordance again, as a user double-tapping would.
+    const second = await actOnNotification(
+      actionRequest(billing.owner.cookie, notificationId, "pay_now")
+    );
+
+    // Assert: still a replay, and the replay never reopens what the first
+    // click closed.
+    expect(second.status).toBe(200);
+    const secondBody = await body(second);
+    expect(secondBody).toMatchObject({
+      notificationId,
+      actionKey: "pay_now",
+      outcome: "already_resolved",
+      alreadyResolved: true,
+    });
+    const actions = secondBody.actions as {
+      readonly key: string;
+      readonly label: string;
+      readonly state: string;
+    }[];
+    const payNow = actions.find((action) => action.key === "pay_now");
+    expect(payNow).toBeDefined();
+    expect(payNow?.state).not.toBe("available");
+
+    // Assert: exactly one charge intent for the workspace across both clicks.
+    expect(await chargeRows(billing.tenantId)).toHaveLength(1);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
