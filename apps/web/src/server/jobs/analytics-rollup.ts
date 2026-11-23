@@ -208,6 +208,12 @@ interface DomainEventRow {
   readonly subjectRef?: { readonly kind?: unknown; readonly id?: unknown };
 }
 
+/** One stored `billing_transactions` row, as far as the rollup reads it. */
+interface BillingTransactionRow {
+  readonly tenantId?: unknown;
+  readonly amountMinor?: unknown;
+}
+
 /** The metric counters rolled up so far, keyed by scope. */
 interface RollupTotals {
   readonly tenants: Map<string, AnalyticsMetrics>;
@@ -395,6 +401,25 @@ export async function analyticsRollup(options: RollupRunOptions): Promise<CronRu
   for (const row of dispatches) {
     countRow(totals, hexOf(row.tenantId), hexOf(row.eventId), (metrics) => {
       metrics.notificationsSent += 1;
+    });
+  }
+
+  // The day's settled revenue. A ledger row names no event, so revenue lands on
+  // its tenant and the platform only (ADR-0924 §1).
+  const settled = (await platform
+    .collection(COLLECTIONS.billingTransactions)
+    .find(
+      { status: "succeeded", currency: "INR", occurredAt: inWindow },
+      { projection: { tenantId: 1, amountMinor: 1 } }
+    )
+    .toArray()) as unknown as BillingTransactionRow[];
+  for (const row of settled) {
+    const amountMinor = row.amountMinor;
+    if (typeof amountMinor !== "number" || !Number.isFinite(amountMinor)) {
+      continue;
+    }
+    countRow(totals, hexOf(row.tenantId), null, (metrics) => {
+      metrics.revenueMinor += amountMinor;
     });
   }
 

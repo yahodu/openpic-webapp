@@ -1,3 +1,9 @@
+## [1.77.0](https://github.com/yahodu/openpic-webapp/compare/v1.76.0...v1.77.0) (2026-11-23)
+
+### Features
+
+- **analytics:** OP-139 roll the day's settled INR billing into revenueMinor ([#814](https://github.com/yahodu/openpic-webapp/issues/814)) ([eeb49f2](https://github.com/yahodu/openpic-webapp/commit/eeb49f2a347ed98eaf6c61ac0e5f30b54edd0169))
+
 ## [1.76.0](https://github.com/yahodu/openpic-webapp/compare/v1.75.0...v1.76.0) (2026-11-23)
 
 ### Features
