@@ -1,3 +1,9 @@
+## [1.83.0](https://github.com/yahodu/openpic-webapp/compare/v1.82.0...v1.83.0) (2026-11-23)
+
+### Features
+
+- **notifications:** OP-140 make the pay_now producer reachable for the owner ([#845](https://github.com/yahodu/openpic-webapp/issues/845)) ([2fa60b9](https://github.com/yahodu/openpic-webapp/commit/2fa60b9c9c4a2e628b172965979a276677080b91))
+
 ## [1.82.0](https://github.com/yahodu/openpic-webapp/compare/v1.81.0...v1.82.0) (2026-11-23)
 
 ### Features
