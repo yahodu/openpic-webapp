@@ -112,14 +112,15 @@ Measured in the PR's worktree on the branch head, `pnpm`/`vitest` 5.0.3:
 | Whole project | `vitest run --project unit`                                                         | `193` files, `3233 passed \| 3 skipped (3236)`                   |
 
 `tsc` is not separately required by this diff (no type surface moved), and the change is
-`prettier`-formatted in the file's own shape. The six `adr-*` guards run on this head with the new
-record and its ledger rows: `adr-numbering`, `adr-lane-ranges`, `adr-record-links`,
-`adr-ledger-links`, `adr-inline-code-spans`, `adr-source-references`, `adr-consumers`.
+`prettier`-formatted in the file's own shape. The seven `adr-*` guards run on this head with the new
+record and its ledger rows — `7` files, `248 passed (248)` — `adr-numbering`, `adr-lane-ranges`,
+`adr-record-links`, `adr-ledger-links`, `adr-inline-code-spans`, `adr-source-references`,
+`adr-consumers`.
 
 The PR carries the ADR-0318 merge gate (`G1`–`G6`) evaluated on the pushed head and pasted as a
 comment; this record is committed **inside** the head it certifies, so it cannot quote that head's
-own SHA or its check rollup. The gate's verdict and the squash SHA are recorded in the card's
-handoff.
+own SHA or its check rollup. The gate's verdict and the squash SHA were unknown at this point; the
+PR has since merged, and §9 records both.
 
 ## 6. Number allocation and sweep
 
@@ -164,3 +165,37 @@ independently of this branch:
 - **Residual:** the two comment lines are the only prose this card adds to the spec, and they
   carry no assertion. If the review rejects them, deleting them is a no-op for every measurement
   in §5.
+
+## 9. Landing
+
+_Appended by card `t_264d5a4c` once PR [#780](https://github.com/yahodu/openpic-webapp/pull/780)
+merged. §1–§4 and §6–§8 are unchanged, §5 gains the measured guard count and the pointer to this
+section, no ADR number is consumed and `docs/adr/README.md` is untouched._
+
+- **Squash.** PR [#780](https://github.com/yahodu/openpic-webapp/pull/780) squash-merged as
+  **`b1cec73e163e6e5c97a2876d03f150741ba3c696`** at 2026-11-23T10:56:06Z, review head
+  `b2f715798a3a42cd4c256b0fe76801d847ef0719`.
+- **Gate on that head: `GATE: PASS`.** All 14 gating checks are `COMPLETED`/`SUCCESS`:
+  - `ci`, `unit_test`, `test_coverage`, `lint`, `audit`, `audit-dev`, `secret-scan`, `env-changes`
+  - `validate-branch-name`, `validate-pr-title`, both `Analyze (*)`, `CodeQL`, and
+    `Assert CI evidence for the pushed head`
+
+  `gh pr checks 780` reads 15 entries: those 14 plus the `notify-discord` close side effect. The
+  gate output is pasted on the PR as
+  [issuecomment-7098738297](https://github.com/yahodu/openpic-webapp/pull/780#issuecomment-7098738297).
+
+- **Squash ↔ branch parity.** This diff is empty, so every reviewed byte is the byte the trunk
+  carries:
+
+  ```
+  git diff b2f715798a3a42cd4c256b0fe76801d847ef0719 origin/main --
+    apps/web/src/test/unit/analytics-rollup-buckets.test.ts
+    docs/adr/ADR-0920-op139-u1-ist-day-window-correction.md docs/adr/README.md
+  ```
+
+  The branch tip is **not** an ancestor of `main`: a squash merge rewrites the commits, so the
+  failed ancestor check is the expected result and not a regression.
+
+- **Post-merge verification on `origin/main` `b1cec73e`.** The focused spec
+  `apps/web/src/test/unit/analytics-rollup-buckets.test.ts` reads `11 passed (11)`; the whole `unit`
+  project reads `193` files, `3233 passed | 3 skipped (3236)`.
