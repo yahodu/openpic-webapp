@@ -1,3 +1,9 @@
+## [1.83.2](https://github.com/yahodu/openpic-webapp/compare/v1.83.1...v1.83.2) (2026-11-23)
+
+### Bug Fixes
+
+- **notifications:** OP-140 scope the pay_now producer to the delegate's acceptance ([#850](https://github.com/yahodu/openpic-webapp/issues/850)) ([70fe8a4](https://github.com/yahodu/openpic-webapp/commit/70fe8a423bd77bab9735db7ee8104a0023d2b094))
+
 ## [1.83.1](https://github.com/yahodu/openpic-webapp/compare/v1.83.0...v1.83.1) (2026-11-23)
 
 ### Bug Fixes
