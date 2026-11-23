@@ -1,7 +1,9 @@
 # ADR-0910 — OP-140 precondition: `acknowledgeConsent` becomes a service, and `legal.terms.updated` still has no producer
 
-- **Status:** Draft (TEST, RED) — the pins are red on the branch point because the
-  module does not exist; the GREEN sibling carries them unchanged.
+- **Status:** Accepted (RED by design; the pins were red on the branch point because the
+  module did not exist, and the GREEN sibling — PR
+  [#830](https://github.com/yahodu/openpic-webapp/pull/830), squash `620e4bb9` — carries
+  them unchanged).
 - **Date:** 2026-11-23
 - **Card:** OP-140 precondition (Low) `t_7ec513e9`, routed by `t_37ecac39` (the
   routing card of `t_b1bebbc8` / PR [#821](https://github.com/yahodu/openpic-webapp/pull/821)).
