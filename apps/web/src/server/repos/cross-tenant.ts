@@ -500,6 +500,10 @@ export interface OwnedWorkItemRow {
   /** The event an `event_images` row belongs to; the report's recount key (ADR-0314 §1). */
   readonly eventId?: ObjectId;
   readonly profileId?: ObjectId;
+  /** The row's own rejection reason, the §4.8 announcement's `reason` (§16.4). */
+  readonly quality?: {
+    readonly rejectionReason?: string | null;
+  } | null;
   readonly processing?: {
     readonly status?: string;
     readonly workerId?: string | null;
@@ -539,7 +543,7 @@ async function findWorkItemById(
     .collection(collection)
     .findOne(
       { _id: new ObjectId(id) },
-      { projection: { tenantId: 1, eventId: 1, profileId: 1, processing: 1 } }
+      { projection: { tenantId: 1, eventId: 1, profileId: 1, processing: 1, quality: 1 } }
     )) as OwnedWorkItemRow | null;
 }
 
