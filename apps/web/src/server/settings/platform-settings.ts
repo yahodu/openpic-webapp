@@ -328,6 +328,25 @@ const COMPLIANCE_SETTINGS_DEFAULTS: z.input<typeof complianceSchema> = {
   slaDays: { gdpr: 30, dpdpa: 30 },
 };
 
+/**
+ * `jobs` — the nightly jobs' thresholds (schema §20.4 extension; contract
+ * §10.2; ADR-0919 §6).
+ *
+ * `counter-reconcile` alerts only above its drift threshold, so the knob lives
+ * here and an operator can quiet or tighten it without a deploy. Defaulted so a
+ * singleton seeded before this section existed still parses.
+ */
+const jobsSchema = z.object({
+  counterReconcile: z.object({
+    driftThresholdPercent: z.number().min(0).max(100),
+  }),
+});
+
+/** The documented `jobs` defaults — the §10.2 "above a settings threshold" 5 %. */
+const JOBS_SETTINGS_DEFAULTS: z.input<typeof jobsSchema> = {
+  counterReconcile: { driftThresholdPercent: 5 },
+};
+
 /** The current biometric policy the attendee surface names (contract §6.1). */
 const LEGAL_SETTINGS_DEFAULTS: z.output<typeof legalSchema> = {
   biometricPolicyVersion: "biometric-2026-03",
@@ -352,6 +371,7 @@ export const platformSettingsSchema = z.object({
   legal: legalSchema.default(LEGAL_SETTINGS_DEFAULTS),
   attendee: attendeeSchema.default(ATTENDEE_SETTINGS_DEFAULTS),
   compliance: complianceSchema.default(COMPLIANCE_SETTINGS_DEFAULTS),
+  jobs: jobsSchema.default(JOBS_SETTINGS_DEFAULTS),
   updatedAt: z.string(),
   updatedByUserId: z.string().nullable(),
 });
@@ -428,6 +448,7 @@ export const PLATFORM_SETTINGS_DEFAULTS: PlatformSettingsValues = {
   legal: { ...LEGAL_SETTINGS_DEFAULTS },
   attendee: { ...ATTENDEE_SETTINGS_DEFAULTS },
   compliance: { slaDays: { ...COMPLIANCE_SETTINGS_DEFAULTS.slaDays } },
+  jobs: { counterReconcile: { ...JOBS_SETTINGS_DEFAULTS.counterReconcile } },
 };
 
 /** A cached document and the instant its TTL elapses. */

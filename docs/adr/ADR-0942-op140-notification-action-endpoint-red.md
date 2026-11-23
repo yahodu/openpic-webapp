@@ -269,3 +269,37 @@ The e2e journey cannot run on the RED tree by design (ADR-0306): `next build`
 type-checks the whole project, so a missing module leaves no standalone server to
 test against. The probe run above is the evidence that the spec drives the real
 path — it reached the journey's own assertions and passed them.
+
+## GREEN — implementation (card `t_39c2bf80`)
+
+The GREEN adds three production files and edits no test, factory, helper or
+fixture. The pins were made green as written.
+
+| File                                                                         | What it owns                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/server/notifications/notification-actions.ts`                  | The two pure rules: `NOTIFICATION_ACTION_SERVICES`, `resolveActionDelegation` (the §7.3 `Map` table — a `Map`, so a hostile `kind` such as `toString` resolves to nothing) and `mapActionOutcome` (the six-key projection).                                                                                            |
+| `apps/web/src/server/billing/charge-outstanding.ts`                          | `startOutstandingCharge`: the shared charge path — owner gate, `decideRetryEligibility`, the `pending` intent written before the provider call, the E11000 replay answer and the refs. The retry-charge route now calls it too, so both "Pay now" surfaces charge through one code path (the Consequences item above). |
+| `apps/web/src/app/api/v1/me/notifications/[id]/actions/[actionKey]/route.ts` | The endpoint: own-row load (`404`), row-action and §7.3 checks (`422`), delegation to `decideInvitation` / `startOutstandingCharge`, the nine-key strict `200` body with the re-read affordance, and the `info notification.action` line.                                                                              |
+
+Decisions the GREEN settled where the RED left room:
+
+- The `pay_now` idempotency key is `notification-action:<notificationId>:<actionKey>`.
+  The ledger replay check runs **before** eligibility, so a repeat stays
+  `already_resolved` even after the due is settled; the unique index still guards
+  the concurrent case (E11000 → the same answer, no `5xx`).
+- The five §7.3 rows with no extracted domain service answer `unavailable` (a
+  documented `shortcut:` comment in the route); U1 pins their mapping and their
+  integrations are the ADR's out-of-scope list.
+- Client-IP-keyed rate limiting fails open (test harness) for `write.normal`,
+  the same behaviour every class-keyed route shows under the vitest harness.
+
+Measured on the GREEN head: unit `192` files `3238 passed | 3 skipped`;
+integration `154` files `1650 passed`; E1 `1 passed` over a real `next start`
+server; `tsc --noEmit` clean; eslint/prettier clean on the four touched
+production files; the `billing-self-serve` suite `37/37` after the shared-service
+refactor.
+
+**Ledger merge.** The RED branch was behind `origin/main` (OP-139, squash
+`b1cec73e`); the merge kept both lane rows ascending, set the `OP-136 jobs lane`
+and `unallocated (future lanes)` cells to `0962`, kept both ledger paragraphs and
+is prettier-clean with the `adr-*` guards green.

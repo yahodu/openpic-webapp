@@ -1,3 +1,9 @@
+## [1.74.0](https://github.com/yahodu/openpic-webapp/compare/v1.73.0...v1.74.0) (2026-11-23)
+
+### Features
+
+- **jobs:** OP-139 nightly analytics rollup, counter reconcile, isolation audit and DSR SLA check ([#780](https://github.com/yahodu/openpic-webapp/issues/780)) ([b1cec73](https://github.com/yahodu/openpic-webapp/commit/b1cec73e163e6e5c97a2876d03f150741ba3c696))
+
 ## [1.73.0](https://github.com/yahodu/openpic-webapp/compare/v1.72.0...v1.73.0) (2026-11-22)
 
 ### Features
