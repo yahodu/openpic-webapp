@@ -86,11 +86,30 @@
  *
  * **Out of scope, stated so it is not mistaken for a gap.** No `docs/adr/`
  * byte is edited here (the gated docs card owns the row); the ledger's *prose*
- * blocks are not read as tables; a row inside a fenced block would be read,
- * but the real ledger carries none at this head (455 row-shaped lines, 455
- * ledger rows); a record's multi-line `Status:` value is cut at its first
- * line, which is the only line that carries the word; and the missing-row
- * policy is **decided** — this pin is the RED half of it.
+ * blocks are not read as tables; and a row-shaped line **inside a fenced block
+ * is read on purpose** — kept by decision (`t_942aa8e6`, F2) because fence
+ * tracking's failure mode is a mis-tracked fence hiding a **real** row, the one
+ * false green this guard exists to prevent, while a stray example row instead
+ * fails loudly and is fixed by moving the example out of the table. The census
+ * when the rule was pinned (`9f51c3bb`) was 455 row-shaped lines outside fences
+ * and **0** inside — 455 row-shaped lines, 455 ledger rows — so no real row is
+ * hidden by the scan. A record's multi-`Status:` value is read from its
+ * canonical **bulleted** `- **Status:**` line: the first bulleted line wins and
+ * a bare `Status:` line is prose, never the field (F3 of `t_942aa8e6`). And the
+ * missing-row policy is **decided** — this pin is the RED half of it.
+ *
+ * **The one residual of S1, stated so the shape-only contract is not
+ * over-read.** S1 is **shape-only**: a row with one unescaped title pipe **and**
+ * a dropped status cell splits into 5 parts, so S1 reads a title fragment as
+ * the status and passes — `{ ok: true, columns: 3, rows: 1, issues: [] }` for
+ * `| [0105](ADR-0105-x.md) | the change is |accepted |`. **S2 is the semantic
+ * backstop** for that class, and a status vocabulary was considered and
+ * **rejected**: it is subsumed by S2 — every real row has a record, and the
+ * real first words are `accepted` ×454 / `proposed` ×2 in the records and
+ * `accepted` ×452 / `superseded` ×1 / `proposed` ×2 in the cells, so any
+ * vocabulary admits exactly what S2 already admits — while the case that
+ * survives both rules needs an exact-cell match, which would red the real rows
+ * whose status legitimately reads `Accepted (GREEN landed: …)`.
  */
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -411,6 +430,30 @@ describe("checkAdrLedgerStatusAgreement — a record's Status first word and its
     const result = checkAdrLedgerStatusAgreement(ledger, records);
 
     // Assert
+    expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+  });
+
+  it("reads a record's canonical bulleted Status line, not a prose mention of the word above it", () => {
+    // Arrange — F3 of `t_942aa8e6`: the record's prose mentions `Status:` before
+    // its canonical field. Only a **bulleted** `- **Status:**` line is the field;
+    // the bare line is prose and must not decide the agreement.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0105](ADR-0105-x.md) | the change | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+    const records = [
+      {
+        fileName: "ADR-0105-x.md", // adr-fixture: fixture record name
+        text: "# rec\n\nStatus: Draft as first written\n\n- **Status:** Accepted\n",
+      },
+    ];
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledger, records);
+
+    // Assert — the canonical field wins, so the cell agrees. Today the first
+    // `Status:` match anywhere yields `recordStatus: "draft as first written"`
+    // and a `status-mismatch` against the `accepted` cell.
     expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
   });
 
