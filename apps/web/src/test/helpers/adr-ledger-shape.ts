@@ -47,12 +47,15 @@
  *   file is missing, and a record with no `Status:` line at all, are issues too:
  *   both mean the agreement cannot be checked.
  *
- * - **S3, a missing row is a warning, not a failure.** A record with no ledger
- *   row is **not** reported as an issue here, because the convention is
- *   undecided: `0911` has a row and its GREEN sibling `0963` does not, and
- *   ADR-0910's own prose says a GREEN may write none.
- *   {@link findAdrRecordsWithoutLedgerRow} returns that list so a spec can pin
- *   the current state explicitly and a future change is visible. `0892`'s
+ * - **S3, a missing row is a failure.** Every record carries its own ledger
+ *   row, written by the same pull request, so the record set equals the row set
+ *   at every merged head. That convention is **decided** (ADR-0319): the case
+ *   ADR-0910's prose left open — `0911` had a row and its GREEN sibling `0963`
+ *   did not — is closed by the rule that a GREEN landing a record lands its row
+ *   in the same commit, and the spec hard-pins the real tree
+ *   (`expect(missingRows).toEqual([])`).
+ *   {@link findAdrRecordsWithoutLedgerRow} keeps returning the list, unchanged:
+ *   it reports, the spec fails. `0892`'s
  *   pre-repair malformed row still **counted** as a row (the defect was its
  *   shape, not its absence), and that reading is preserved by keying on the
  *   `[NNNN](…)` prefix rather than on a well-formed table split.
@@ -238,7 +241,7 @@ export interface AdrRepositoryLedgerShapeResult {
   /** S2 over the real ledger and the real records. */
   status: AdrLedgerStatusResult;
 
-  /** S3's warning list over the real tree. */
+  /** S3's missing-row list over the real tree. */
   missingRows: AdrMissingLedgerRow[];
 }
 
@@ -540,11 +543,12 @@ export function checkAdrLedgerStatusAgreement(
 }
 
 /**
- * S3 — the records that carry no ledger row, as a warning list. Pure.
+ * S3 — the records that carry no ledger row, as a list. Pure.
  *
  * A row is counted as present by its `[NNNN](…)` prefix, not by its shape, so
- * `0892`'s pre-repair three-cell row is **not** missing. This list is not a
- * failure: the missing-row convention is undecided (see the module docblock).
+ * `0892`'s pre-repair three-cell row is **not** missing. The list is not itself
+ * a failure — the spec fails on it, because every record carries its row
+ * (ADR-0319; see the module docblock).
  *
  * @param ledger - The ledger's repo-relative path and whole text.
  * @param records - Every record the tree carries, bare file name and markdown.
