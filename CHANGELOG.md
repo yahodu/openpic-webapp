@@ -1,3 +1,9 @@
+## [1.80.0](https://github.com/yahodu/openpic-webapp/compare/v1.79.1...v1.80.0) (2026-11-23)
+
+### Features
+
+- **consent:** OP-140 add the acknowledgeConsent service and a thin acknowledge route ([#830](https://github.com/yahodu/openpic-webapp/issues/830)) ([620e4bb](https://github.com/yahodu/openpic-webapp/commit/620e4bb9f64b2afb4093bc50e441f1420cf629a9))
+
 ## [1.79.1](https://github.com/yahodu/openpic-webapp/compare/v1.79.0...v1.79.1) (2026-11-23)
 
 ### Performance Improvements
