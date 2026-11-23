@@ -1,0 +1,596 @@
+/**
+ * OP-140 TEST — pin the ADR ledger's **row shape** (S1), the record-`Status:` ↔
+ * ledger-cell **agreement** (S2), and the **rowless-record** hard failure (S3).
+ *
+ * **Why this exists.** The seven landed `adr-*` guards check number uniqueness,
+ * file-name shape, lane ranges, links, citations, consumers and code-span
+ * hygiene. Not one reads a ledger row as a table row, and not one reads a
+ * record's `Status:` line, so the same defect shipped four times:
+ *
+ * - `0892` (`README.md:550` before the repair) had **no status cell and no
+ *   trailing pipe** → GitHub renders the Status column empty;
+ * - **19** rows carried an unescaped `|` in the title (`0664`, `0665`, `0686`,
+ *   `0763`, `0812`, `0814`, `0824`, `0834`, `0845`, `0855`, `0857`, `0858`,
+ *   `0860`, `0866`, `0875`, `0882`, `0897`, `0899`, `0941`) → the row splits
+ *   into more cells than the header has, and GFM **drops every cell past the
+ *   header's column count**, rendering a title fragment in the Status column;
+ * - `0893`'s cell said `Draft (RED pins; a GREEN is owed)` while its record said
+ *   `Accepted`.
+ *
+ * The render proof is GitHub's own renderer, which is what makes this a defect
+ * rather than a style preference:
+ *
+ * ```
+ * gh api -X POST markdown -F text=@probe.md -f mode=gfm
+ * ```
+ *
+ * **The rule.** Pure, over the ledger text and the records' text:
+ *
+ * ```
+ * module  apps/web/src/test/helpers/adr-ledger-shape.ts
+ *
+ * checkAdrLedgerRowShape(ledger: { path, text }): AdrLedgerRowShapeResult
+ * checkAdrLedgerStatusAgreement(ledger, records: { fileName, text }[]): AdrLedgerStatusResult
+ * findAdrRecordsWithoutLedgerRow(ledger, records): { number, file }[]
+ * checkRepositoryAdrLedgerShape(root: string): { shape, status, missingRows }
+ * adrStatusWord(value: string): string
+ * ```
+ *
+ * **S1 — every row renders a status.** The header is `| ADR | Title | Status |`
+ * (`docs/adr/README.md:130` at this head), so a correct row splits on
+ * **unescaped** `|` into `columns + 2` parts: the two boundary empties plus one
+ * per header cell. Every `| [NNNN](ADR-*.md) |` row must split into exactly that
+ * count and carry a non-empty status cell (part `columns`). A ledger whose
+ * header carries **no rows** is `ok: false`, not a vacuous green, and a document
+ * with no header throws rather than reporting zero rows.
+ *
+ * **S2 — the record and the cell agree on their first word.** Both sides are
+ * normalised by {@link adrStatusWord} (strip `**`, strip a leading `-`/`*`,
+ * cut at `(`/`:`/`—`/`,`/`;`/`·`, lowercase) and the cell's first word must
+ * equal the record's **or** be `superseded` — the `0092` exception, where the
+ * record says `Accepted` and the cell says `Superseded (part) by 0127` because
+ * the supersession happened after the acceptance. That exception is pinned here
+ * as load-bearing: the two words really differ, and only the cell's
+ * `superseded` makes it green.
+ *
+ * **S3 — a missing row is a failure.** Every record under `docs/adr/` carries
+ * its own ledger row, added by the same pull request, so the record set equals
+ * the row set at every merged head and the rowless-record list over the real
+ * tree must be **empty** — `expect(missingRows).toEqual([])`. The list keeps
+ * its `{ number, file }` shape (the docs card's own verification reads it), and
+ * the synthetic cases below prove the rule is not vacuous in either direction:
+ * a record with no row is reported once, a record with its row is not reported.
+ *
+ * **S2 still reads only rows that exist.** The earlier card body asked S2 to
+ * treat a missing ledger row as an S2 issue; the reviewer's comment
+ * (`2026-11-23`) narrowed that, and the narrowing stands: S2 is hard over rows
+ * that **exist**, and a rowless record is S3's business. That is why
+ * `findAdrRecordsWithoutLedgerRow` is a separate function with its own `it()`,
+ * and why S2's report stays green while S3 hard-fails on the same tree.
+ *
+ * **The census at this branch head** (`origin/main` `9f51c3bb`: the repair card
+ * `t_e3f7eabb` / PR #837's squash, plus PR #839's S1–S3 pins — both test-only):
+ * **456** records, **455** ledger rows, **0** shape issues, **0** agreement
+ * issues, and exactly one rowless record — `0963`. So S3's real-tree case is
+ * **RED by design** at this head: the record is `Accepted` and carries no row,
+ * and that red is the pin working, not a missing repair. The repair is the
+ * gated docs card that writes the row and merges this flip, so no trunk commit
+ * is red in between. S1 and S2 are not vacuous either — replayed against the
+ * pre-repair bytes
+ * (`d507965f^`) the same rules report **20** shape-defective rows (the 19 stray
+ * pipes plus `0892`'s three-cell row) and **21** agreement failures (those 20,
+ * whose status cell is unreadable, plus `0893`'s `Accepted`/`Draft`). That
+ * replay is not a committed case: `HEAD^` does not exist in the `ci` job's
+ * `fetch-depth: 1` checkout, so it would be a false pass there. The synthetic
+ * three-row case below is the in-suite proof that the parser is not vacuous.
+ *
+ * **Out of scope, stated so it is not mistaken for a gap.** No `docs/adr/`
+ * byte is edited here (the gated docs card owns the row); the ledger's *prose*
+ * blocks are not read as tables; a row inside a fenced block would be read,
+ * but the real ledger carries none at this head (455 row-shaped lines, 455
+ * ledger rows); a record's multi-line `Status:` value is cut at its first
+ * line, which is the only line that carries the word; and the missing-row
+ * policy is **decided** — this pin is the RED half of it.
+ */
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { makeTempRepoRoot, realAdrDir, repoRoot, tempDirs } from "../helpers/adr-guard-fixtures.js";
+import {
+  ADR_LEDGER_PATH,
+  adrStatusWord,
+  checkAdrLedgerRowShape,
+  checkAdrLedgerStatusAgreement,
+  checkRepositoryAdrLedgerShape,
+  findAdrRecordsWithoutLedgerRow,
+} from "../helpers/adr-ledger-shape.js";
+import { readTextFile } from "../helpers/adr-source-references.js";
+
+/** The ledger header a synthetic fixture carries, exactly as the real one reads. */
+const HEADER_LINES = ["| ADR | Title | Status |", "| --- | ----- | ------ |"];
+
+/** A synthetic ledger document built from its lines, kept out of `docs/adr/`. */
+function syntheticLedger(lines: string[]): { path: string; text: string } {
+  return { path: ADR_LEDGER_PATH, text: lines.join("\n") };
+}
+
+/** The real ledger's whole text, read from this checkout. */
+function realLedger(): { path: string; text: string } {
+  return { path: ADR_LEDGER_PATH, text: readTextFile(join(realAdrDir, "README.md")) };
+}
+
+/** One real record, as S2 reads it. */
+function realRecord(fileName: string): { fileName: string; text: string } {
+  return { fileName, text: readTextFile(join(realAdrDir, fileName)) };
+}
+
+/**
+ * One row of the **real** ledger, with the status cell a renderer would show
+ * (the line's last cell — a well-formed row's status cell) and the record file
+ * its link names. Throws when the number has no row, so a characterisation case
+ * can never pass because the row moved away.
+ */
+function realLedgerRow(number: string): { line: string; cell: string; record: string } {
+  const line = realLedger()
+    .text.split("\n")
+    .find((candidate) => candidate.trimStart().startsWith(`| [${number}](`));
+
+  if (line === undefined) {
+    throw new Error(`the real ledger carries no row for ${number}`);
+  }
+
+  const cell = /\|\s*([^|\n]+?)\s*\|\s*$/u.exec(line.trim())?.[1] ?? "";
+  const record = /\]\(([^)]*\.md)\)/u.exec(line)?.[1] ?? "";
+
+  return { line, cell, record };
+}
+
+/** A record's `Status:` value as written, first match only. */
+function recordStatusValue(recordText: string): string {
+  return /\*\*Status:\*\*\s*(.*)/u.exec(recordText)?.[1] ?? "";
+}
+
+/**
+ * One ledger carrying the real row under test, so a characterisation case reads
+ * the **real** cell against the **real** record and nothing else.
+ */
+function ledgerWithRow(rowLine: string): { path: string; text: string } {
+  return syntheticLedger([...HEADER_LINES, rowLine]);
+}
+
+/* ------------------------------------------------------------------------- *
+ * S1 — the row shape, at the pure seam
+ * ------------------------------------------------------------------------- */
+
+describe("checkAdrLedgerRowShape — a ledger row renders its status", () => {
+  it("reports a short row and a row with an unescaped `|` in its title, and leaves the correct row out", () => {
+    // Arrange — three rows: one short (no status cell, no trailing pipe), one
+    // whose title carries an unescaped pipe, one correct. This is the defect
+    // class in miniature; the correct row must not be reported.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0101](ADR-0101-short.md) | a row with no status cell |", // adr-fixture: synthetic row, no such record
+      "| [0102](ADR-0102-stray-pipe.md) | POST /me/invitations/{id}/accept|reject | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0103](ADR-0103-correct.md) | a correct row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — exactly the two defective rows, on their own lines, and the
+    // correct row absent. `status: ""` on both: neither has a cell a renderer
+    // would show.
+    expect(result).toEqual({
+      ok: false,
+      columns: 3,
+      rows: 3,
+      issues: [
+        { number: "0101", line: 3, cells: 4, status: "", issues: ["cell-count"] },
+        { number: "0102", line: 4, cells: 6, status: "", issues: ["cell-count"] },
+      ],
+    });
+  });
+
+  it("reports a row whose status cell is empty even though its cell count is right", () => {
+    // Arrange — the other half of the defect: the pipes are all there, the cell
+    // is not. GFM renders an empty Status cell, which is the `0892` symptom
+    // without the missing pipe.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0104](ADR-0104-empty.md) | a title with a status cell |  |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      columns: 3,
+      rows: 1,
+      issues: [{ number: "0104", line: 3, cells: 5, status: "", issues: ["empty-status"] }],
+    });
+  });
+
+  it("does not pass a ledger that carries the header but no rows", () => {
+    // Arrange — the vacuous-green shape: a header and nothing to check.
+    const ledger = syntheticLedger([...HEADER_LINES, ""]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — zero rows is a failure, never `ok: true`.
+    expect(result).toEqual({ ok: false, columns: 3, rows: 0, issues: [] });
+  });
+
+  it("throws when the document carries no ledger header", () => {
+    // Arrange — a wrong document must fail loudly, not report zero rows.
+    const ledger = syntheticLedger(["# notes", "", "- [0101](ADR-0101-short.md) — prose"]); // adr-fixture: synthetic row, no such record
+
+    // Act + Assert
+    expect(() => checkAdrLedgerRowShape(ledger)).toThrow(/no ledger table header/u);
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * S1 — the real ledger
+ * ------------------------------------------------------------------------- */
+
+describe("checkAdrLedgerRowShape — the real ledger", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("splits every row of the real ledger into the header's cells with a non-empty status", () => {
+    // Arrange + Act — the whole tree.
+    const { shape } = checkRepositoryAdrLedgerShape(repoRoot);
+
+    // Assert — the defect class is empty after the repair card, and the census
+    // proves the rule read the ledger: 455 rows measured at `d507965f`. The
+    // floor carries headroom for a record that is added later, never for a row
+    // that stops being read.
+    expect(shape.issues).toEqual([]);
+    expect(shape.ok).toBe(true);
+    expect(shape.columns).toBe(3);
+    expect(shape.rows).toBeGreaterThanOrEqual(455);
+  });
+
+  it("throws an ENOENT error when the tree carries no ledger", () => {
+    // Arrange — a repository with records but no `docs/adr/README.md`.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0300-alpha.md": "# alpha", // adr-fixture: fixture record name
+    });
+
+    // Act + Assert — a tree with no ledger is a failure, not a zero-row pass.
+    expect(() => checkRepositoryAdrLedgerShape(root)).toThrow(
+      expect.objectContaining({ code: "ENOENT" })
+    );
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * S2 — the agreement, at the pure seam
+ * ------------------------------------------------------------------------- */
+
+describe("checkAdrLedgerStatusAgreement — a record's Status first word and its cell", () => {
+  it("reports a record whose status disagrees with its ledger cell", () => {
+    // Arrange — `0893`'s shape: the record was accepted, the cell still says
+    // draft.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0200](ADR-0200-alpha.md) | the record | Draft (RED pins; a GREEN is owed) |", // adr-fixture: synthetic row, no such record
+    ]);
+    const records = [
+      {
+        fileName: "ADR-0200-alpha.md", // adr-fixture: fixture record name
+        text: "- **Status:** Accepted (RED by design)\n",
+      },
+    ];
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledger, records);
+
+    // Assert — both normalised words are quoted so the message explains itself.
+    expect(result).toEqual({
+      ok: false,
+      checkedRows: 1,
+      issues: [
+        {
+          number: "0200",
+          line: 3,
+          record: "ADR-0200-alpha.md", // adr-fixture: synthetic record name
+          recordStatus: "accepted",
+          cellStatus: "draft",
+          issues: ["status-mismatch"],
+        },
+      ],
+    });
+  });
+
+  it("accepts a cell that starts with Superseded, the 0092 lifecycle exception", () => {
+    // Arrange — the record was accepted, the cell records the later
+    // supersession. Legitimate annotation, not a defect.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0092](ADR-0092-op94-notification-fan-out-green.md) | the fan-out | Superseded (part) by 0127 |",
+    ]);
+    const records = [
+      {
+        fileName: "ADR-0092-op94-notification-fan-out-green.md",
+        text: "- **Status:** Accepted · **Date:** 2026-10-05\n",
+      },
+    ];
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledger, records);
+
+    // Assert — green, and the row was really read.
+    expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+  });
+
+  it("reports a row whose record file is missing", () => {
+    // Arrange — the row exists, the record does not: the agreement cannot be
+    // checked at all.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0201](ADR-0201-missing.md) | a row with no record | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledger, []);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      checkedRows: 1,
+      issues: [
+        {
+          number: "0201",
+          line: 3,
+          record: "ADR-0201-missing.md", // adr-fixture: synthetic record name
+          recordStatus: "",
+          cellStatus: "accepted",
+          issues: ["missing-record"],
+        },
+      ],
+    });
+  });
+
+  it("reports a record that carries no Status line", () => {
+    // Arrange — a record without the field is unreadable, not accepted.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0202](ADR-0202-no-status.md) | the record | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+    const records = [
+      {
+        fileName: "ADR-0202-no-status.md", // adr-fixture: fixture record name
+        text: "# 0202\n\nNo status field here.\n",
+      },
+    ];
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledger, records);
+
+    // Assert
+    expect(result).toEqual({
+      ok: false,
+      checkedRows: 1,
+      issues: [
+        {
+          number: "0202",
+          line: 3,
+          record: "ADR-0202-no-status.md", // adr-fixture: synthetic record name
+          recordStatus: "",
+          cellStatus: "accepted",
+          issues: ["missing-status-line"],
+        },
+      ],
+    });
+  });
+
+  it("cuts a parenthesised qualifier and a `·`-separated field on both sides", () => {
+    // Arrange — the shipped shapes: a record's `Accepted · **Date:** …` and a
+    // cell's `Accepted (pins)` are the same word.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0203](ADR-0203-alpha.md) | the record | Accepted (pins) |", // adr-fixture: synthetic row, no such record
+    ]);
+    const records = [
+      {
+        fileName: "ADR-0203-alpha.md", // adr-fixture: fixture record name
+        text: "- **Status:** Accepted · **Date:** 2026-10-05\n",
+      },
+    ];
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledger, records);
+
+    // Assert
+    expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+  });
+
+  it.each([
+    ["Accepted (GREEN landed: PR #830 620e4bb9; RED #828 draft)", "accepted"],
+    ["Superseded (part) by 0127", "superseded"],
+    ["Proposed — one row is RED until the GREEN lands", "proposed"],
+    ["Accepted · **Date:** 2026-10-05", "accepted"],
+    ["**Accepted**", "accepted"],
+    ["rejected, and the reason follows", "rejected"],
+    ["", ""],
+  ])("normalises %j to %j", (value: string, expected: string) => {
+    // Arrange + Act + Assert — one table, no hidden branches.
+    expect(adrStatusWord(value)).toBe(expected);
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * S2 — the shapes that must stay green, on the real bytes
+ * ------------------------------------------------------------------------- */
+
+describe("checkAdrLedgerStatusAgreement — the real shapes that must stay green", () => {
+  it("keeps 0092 green although its cell says Superseded and its record says Accepted", () => {
+    // Arrange — the real row and the real record.
+    const row = realLedgerRow("0092");
+    const record = realRecord(row.record);
+    const recordWord = adrStatusWord(recordStatusValue(record.text));
+    const cellWord = adrStatusWord(row.cell);
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledgerWithRow(row.line), [record]);
+
+    // Assert — the two words really differ: the exception is load-bearing, not
+    // a case that would pass anyway.
+    expect(cellWord).toBe("superseded");
+    expect(recordWord).toBe("accepted");
+    expect(cellWord).not.toBe(recordWord);
+    expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+  });
+
+  it.each(["0771", "0772"])(
+    "keeps %s green, where the record and the cell both say Proposed",
+    (number: string) => {
+      // Arrange — the real row and the real record.
+      const row = realLedgerRow(number);
+      const record = realRecord(row.record);
+
+      // Act
+      const result = checkAdrLedgerStatusAgreement(ledgerWithRow(row.line), [record]);
+
+      // Assert — both words equal and the report clean; the cell is the only
+      // status source here, so a cell edit moves this case.
+      expect(adrStatusWord(recordStatusValue(record.text))).toBe("proposed");
+      expect(adrStatusWord(row.cell)).toBe("proposed");
+      expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+    }
+  );
+
+  it("keeps 0910 green, where the record and the cell both say Accepted with a parenthesised qualifier", () => {
+    // Arrange — the GREEN landed shape.
+    const row = realLedgerRow("0910");
+    const record = realRecord(row.record);
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledgerWithRow(row.line), [record]);
+
+    // Assert
+    expect(adrStatusWord(recordStatusValue(record.text))).toBe("accepted");
+    expect(adrStatusWord(row.cell)).toBe("accepted");
+    expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+  });
+
+  it("keeps 0893 green, whose stale Draft cell the repair card rewrote", () => {
+    // Arrange — the row the repair card fixed; the pin must watch it stay fixed.
+    const row = realLedgerRow("0893");
+    const record = realRecord(row.record);
+
+    // Act
+    const result = checkAdrLedgerStatusAgreement(ledgerWithRow(row.line), [record]);
+
+    // Assert — the cell no longer reads `draft`.
+    expect(adrStatusWord(row.cell)).toBe("accepted");
+    expect(adrStatusWord(row.cell)).not.toBe("draft");
+    expect(adrStatusWord(recordStatusValue(record.text))).toBe("accepted");
+    expect(result).toEqual({ ok: true, checkedRows: 1, issues: [] });
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * S2 — the real ledger
+ * ------------------------------------------------------------------------- */
+
+describe("checkAdrLedgerStatusAgreement — the real ledger", () => {
+  it("agrees for every row whose record exists", () => {
+    // Arrange + Act — the whole tree.
+    const { shape, status } = checkRepositoryAdrLedgerShape(repoRoot);
+
+    // Assert — no mismatch, no missing record, no missing status field, and the
+    // row counts reconcile so a narrowed sweep cannot report a clean ledger.
+    expect(status.issues).toEqual([]);
+    expect(status.ok).toBe(true);
+    expect(status.checkedRows).toBe(shape.rows);
+    expect(shape.rows).toBeGreaterThanOrEqual(455);
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * S3 — a rowless record is a failure: the record set equals the row set
+ * ------------------------------------------------------------------------- */
+
+describe("findAdrRecordsWithoutLedgerRow — a rowless record is a failure", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts a malformed row as present and lists only the record with no row", () => {
+    // Arrange — `0892`'s pre-repair shape: a row that is present but wrong. It
+    // must not be reported as missing; `0900` really has no row.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0892](ADR-0892-a.md) | a title, no status cell and no trailing pipe |", // adr-fixture: synthetic row, no such record
+    ]);
+    const records = [
+      { fileName: "ADR-0892-a.md", text: "- **Status:** Accepted\n" }, // adr-fixture: fixture record name
+      { fileName: "ADR-0900-b.md", text: "- **Status:** Accepted\n" }, // adr-fixture: fixture record name
+    ];
+
+    // Act
+    const missing = findAdrRecordsWithoutLedgerRow(ledger, records);
+
+    // Assert — the rowless record is reported with its `{ number, file }` pair.
+    expect(missing).toEqual([{ number: "0900", file: "ADR-0900-b.md" }]); // adr-fixture: synthetic record name
+  });
+
+  it("reports exactly the one record of a fixture tree that carries no row", () => {
+    // Arrange — a throwaway tree with one record and a ledger that carries the
+    // header but no row for it.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0302-beta.md": "- **Status:** Accepted\n", // adr-fixture: fixture record name
+      "docs/adr/README.md": [...HEADER_LINES, ""].join("\n"),
+    });
+
+    // Act
+    const { shape, missingRows } = checkRepositoryAdrLedgerShape(root);
+
+    // Assert — exactly one entry, and the sweep really read the ledger.
+    expect(shape.rows).toBe(0);
+    expect(missingRows).toEqual([{ number: "0302", file: "ADR-0302-beta.md" }]); // adr-fixture: synthetic record name
+  });
+
+  it("reports no record when the fixture tree's only record carries its row", () => {
+    // Arrange — the same tree with the row written, so the empty list below
+    // cannot be a sweep that read nothing.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0301-alpha.md": "- **Status:** Accepted\n", // adr-fixture: fixture record name
+      "docs/adr/README.md": [
+        ...HEADER_LINES,
+        "| [0301](ADR-0301-alpha.md) | the record | Accepted |", // adr-fixture: synthetic row, no such record
+        "",
+      ].join("\n"),
+    });
+
+    // Act
+    const { shape, missingRows } = checkRepositoryAdrLedgerShape(root);
+
+    // Assert — the row was counted and nothing is missing.
+    expect(shape.rows).toBe(1);
+    expect(missingRows).toEqual([]);
+  });
+
+  it("reports no record of the real tree as rowless", () => {
+    // Arrange + Act — the whole tree.
+    const { shape, missingRows } = checkRepositoryAdrLedgerShape(repoRoot);
+
+    // Assert — every record that lands carries its own ledger row, so this list
+    // is empty. A record without its row fails here; the gated docs card writes
+    // the row that repairs the one record this pin currently reports.
+    expect(shape.rows).toBeGreaterThanOrEqual(455);
+    expect(missingRows).toEqual([]);
+  });
+});

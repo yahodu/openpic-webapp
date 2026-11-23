@@ -1,3 +1,21 @@
+## [1.82.0](https://github.com/yahodu/openpic-webapp/compare/v1.81.0...v1.82.0) (2026-11-23)
+
+### Features
+
+- **notifications:** OP-140 route attendee.selfie.rejected to its own subject ([#838](https://github.com/yahodu/openpic-webapp/issues/838)) ([2ea6e1c](https://github.com/yahodu/openpic-webapp/commit/2ea6e1cd1e1512198aca8a9ac11092faf4edcd18))
+
+## [1.81.0](https://github.com/yahodu/openpic-webapp/compare/v1.80.0...v1.81.0) (2026-11-23)
+
+### Features
+
+- **attendee:** OP-140 emit attendee.selfie.rejected and resolve an event's active slug ([#835](https://github.com/yahodu/openpic-webapp/issues/835)) ([b6cad7e](https://github.com/yahodu/openpic-webapp/commit/b6cad7ea44630f03d017cee06d5f0f7cbcd6d834))
+
+## [1.80.0](https://github.com/yahodu/openpic-webapp/compare/v1.79.1...v1.80.0) (2026-11-23)
+
+### Features
+
+- **consent:** OP-140 add the acknowledgeConsent service and a thin acknowledge route ([#830](https://github.com/yahodu/openpic-webapp/issues/830)) ([620e4bb](https://github.com/yahodu/openpic-webapp/commit/620e4bb9f64b2afb4093bc50e441f1420cf629a9))
+
 ## [1.79.1](https://github.com/yahodu/openpic-webapp/compare/v1.79.0...v1.79.1) (2026-11-23)
 
 ### Performance Improvements

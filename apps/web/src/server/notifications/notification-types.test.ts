@@ -310,3 +310,20 @@ describe("notificationTypeSchema", () => {
     expect(notificationTypeSchema.safeParse(type).success).toBe(false);
   });
 });
+
+/**
+ * OP-140 F1 — the rejected-selfie row addresses **its** attendee (ADR-0947 D1–D3).
+ *
+ * `attendee.selfie.rejected` is about one attendee's own photo, so it is routed
+ * to that attendee (`attendee_subject`) and never to the event's attendee
+ * audience: the broadcast delivered one person's refusal to every identified
+ * attendee of the event (ADR-0962 §3 measured `["<owner>", "<other>"]`). The
+ * sibling rows stay as they are — `attendee.selfie.accepted` and
+ * `attendee.matches.ready` are catalogue-only today, and their producers are
+ * pinned to carry `payload.profileId` when they ship (ADR-0947 §Decision D3).
+ */
+describe("attendee subject routing (OP-140 F1, ADR-0947 D3)", () => {
+  it("routes attendee.selfie.rejected to attendee_subject and to no other audience", () => {
+    expect(requireType("attendee.selfie.rejected").audiences).toEqual(["attendee_subject"]);
+  });
+});

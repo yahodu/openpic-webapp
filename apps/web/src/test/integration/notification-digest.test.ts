@@ -168,6 +168,7 @@ function fixedRecipients(attendee: string): RecipientRepository {
   return {
     listEventRoleMembers: promised<readonly string[]>([]),
     listIdentifiedAttendeeUserIds: promised<readonly string[]>([attendee]),
+    getAttendeeProfileUserId: promised<string | null>(null),
     getBillingContactUserId: promised<string | null>(null),
     listPlatformAdminUserIds: promised<readonly string[]>([]),
   };

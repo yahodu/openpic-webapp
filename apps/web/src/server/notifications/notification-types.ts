@@ -37,6 +37,7 @@ export const notificationAudienceSchema = z.enum([
   "organizer",
   "co_organizer",
   "attendee_identified",
+  "attendee_subject",
   "attendee_anonymous",
   "platform_admin",
   "billing_contact",
