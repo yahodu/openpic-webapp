@@ -702,9 +702,9 @@ describe("findAdrRecordsWithoutLedgerRow — a rowless record is a failure", () 
     // Arrange + Act — the whole tree.
     const { shape, missingRows } = checkRepositoryAdrLedgerShape(repoRoot);
 
-    // Assert — every record that lands carries its own ledger row, so this list
-    // is empty. A record without its row fails here; the gated docs card writes
-    // the row that repairs the one record this pin currently reports.
+    // Assert — every record under `docs/adr/` carries its own ledger row, added
+    // by the same pull request (ADR-0319, `1260f008`), so this list must be
+    // empty and nothing is owed: a record without its row fails here.
     expect(shape.rows).toBeGreaterThanOrEqual(455);
     expect(missingRows).toEqual([]);
   });
