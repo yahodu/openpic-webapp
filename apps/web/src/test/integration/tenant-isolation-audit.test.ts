@@ -248,3 +248,161 @@ describe("tenant-isolation-audit I4: a document whose tenant disagrees with its 
     });
   });
 });
+
+/**
+ * F1 of the OP-139 GREEN review (card `t_f12d7d0f`, ADR-0921).
+ *
+ * The shipped sweep reads a row's `tenantId` through `hexOf` and `continue`s
+ * when that answers `null`, so a tenant-scoped document carrying **no**
+ * `tenantId` at all was counted in `scanned` and then silently dropped: never
+ * `unresolved_tenant`, never `tenant_mismatch`. That is the strongest form of
+ * tenancy escape, and it is the one shape the audit could not report. A row
+ * with no `tenantId` does not resolve to a live tenant, which is exactly the
+ * sentence contract §10.2 gives the audit.
+ *
+ * ## Contract pinned here (ADR-0921, extending ADR-0918 A10)
+ *
+ * - A third **exclusive** reason, `missing_tenant`: these rows are not folded
+ *   into `unresolved_tenant`, because that reason addresses its event to the
+ *   offending row's own tenant and these rows have none — folding would also
+ *   break A11's "the reasons are exclusive" property.
+ * - The event is addressed to the platform-scope address `tenantId:
+ *   "platform"` (the codebase's existing platform address, ADR-0921 §3);
+ *   `emitDomainEvent` only needs a string, and the row itself has no tenant to
+ *   address the alert to.
+ * - One event per `(reason, collection)` per IST day, so the same day's rerun
+ *   is silent, exactly as for the two shipped reasons.
+ * - Counts only (§0.15): the payload's key set stays exactly `collection`,
+ *   `count` and `reason` — the new reason must not smuggle an id or a field
+ *   value in.
+ * - The healthy arm stays quiet: a row that carries a **live** `tenantId` is
+ *   not `missing_tenant`, so a sweep that flagged every row would not satisfy
+ *   the count of 2 below.
+ */
+describe("tenant-isolation-audit F1: a tenant-scoped row with no tenantId", () => {
+  /**
+   * Seed one live tenant, the two no-tenant rows under test and one control row
+   * that carries a live tenant, all in `usageCounters`.
+   *
+   * `usage_counters_tenant_key_period_unique` is `{tenantId, entitlementKey,
+   * periodKey}` and a missing key indexes as `null`, so the two no-tenant rows
+   * must differ in `entitlementKey` or the second insert answers `E11000`.
+   */
+  async function seedMissingTenantRows(): Promise<void> {
+    const live = await seedLiveTenant("op139-missing-live");
+    await app.db.collection(COLLECTIONS.usageCounters).insertMany([
+      // The `tenantId` key is absent — not null.
+      {
+        entitlementKey: "storage.bytes",
+        periodKey: "lifetime",
+        value: 10,
+        updatedAt: ACTIVITY_AT,
+      },
+      // The `tenantId` key is present and explicitly null.
+      {
+        tenantId: null,
+        entitlementKey: "events.created",
+        periodKey: "lifetime",
+        value: 2,
+        updatedAt: ACTIVITY_AT,
+      },
+      // Control: a row that does carry a live tenant is examined, not counted.
+      {
+        tenantId: live.tenantId,
+        entitlementKey: "attendees.count",
+        periodKey: "lifetime",
+        value: 1,
+        updatedAt: ACTIVITY_AT,
+      },
+    ]);
+  }
+
+  it("F1: a row whose tenantId is absent or null is one missing_tenant finding, counts only", async () => {
+    // ── Arrange: one live tenant, two no-tenant rows, one healthy control ──
+    await seedMissingTenantRows();
+
+    // ── Act: the nightly audit ──
+    const result = await runAudit();
+
+    // ── Assert: one finding for the collection, counting only the two rows
+    // that carry no tenant; the healthy control is examined and not counted ──
+    expect(result.scanned).toBeGreaterThanOrEqual(3);
+    const events = await auditEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toEqual({
+      reason: "missing_tenant",
+      collection: "usageCounters",
+      count: 2,
+    });
+    const payload = events[0]?.payload as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(["collection", "count", "reason"]);
+  });
+
+  it("F1: the missing_tenant event is addressed to the platform tenant", async () => {
+    // ── Arrange ──
+    await seedMissingTenantRows();
+
+    // ── Act ──
+    await runAudit();
+
+    // ── Assert: the row has no tenant of its own, so the alert carries the
+    // platform-scope address rather than a tenant that does not exist ──
+    const events = await auditEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.tenantId).toBe("platform");
+  });
+
+  it("F1: the same day's rerun emits no second missing_tenant event", async () => {
+    // ── Arrange: the finding is already announced once ──
+    await seedMissingTenantRows();
+    await runAudit();
+    expect(await auditEvents()).toHaveLength(1);
+
+    // ── Act: the same day's second run ──
+    await runAudit();
+
+    // ── Assert: one per (reason, collection) per IST day ──
+    expect(await auditEvents()).toHaveLength(1);
+  });
+
+  it("F1: the next IST day's run announces the finding again", async () => {
+    // ── Arrange: the finding is announced on the fixture day ──
+    await seedMissingTenantRows();
+    await runAudit();
+    expect(await auditEvents()).toHaveLength(1);
+
+    // ── Act: the next IST day's run, 11:30 IST on 2026-11-18 ──
+    await runAudit(new Date("2026-11-18T06:00:00.000Z"));
+
+    // ── Assert: the day is part of the latch, so a still-broken collection
+    // speaks again on the next calendar day rather than staying silent forever ──
+    const events = await auditEvents();
+    expect(events).toHaveLength(2);
+    expect(events[1]?.payload).toMatchObject({
+      reason: "missing_tenant",
+      collection: "usageCounters",
+      count: 2,
+    });
+  });
+
+  it("F1: a row that carries a live tenantId is not reported as missing_tenant", async () => {
+    // ── Arrange: a healthy tenant and one row that carries its id ──
+    const live = await seedLiveTenant("op139-missing-healthy");
+    await app.db.collection(COLLECTIONS.usageCounters).insertOne({
+      tenantId: live.tenantId,
+      entitlementKey: "storage.bytes",
+      periodKey: "lifetime",
+      value: 10,
+      updatedAt: ACTIVITY_AT,
+    });
+
+    // ── Act ──
+    const result = await runAudit();
+
+    // ── Assert: the row was examined and is not a missing-tenant finding.
+    // The scan count is the control: a job that examines nothing must not
+    // satisfy "found nothing". ──
+    expect(result.scanned).toBeGreaterThanOrEqual(1);
+    expect(await auditEvents()).toEqual([]);
+  });
+});
