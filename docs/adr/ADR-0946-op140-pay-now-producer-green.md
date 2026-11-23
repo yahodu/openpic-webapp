@@ -125,6 +125,17 @@ $ pnpm exec vitest run --project unit <the seven adr-* guards>
       7 files | 248 passed (248)
 ```
 
+> **Correction — re-measured at `077967b4` (the squash `2fa60b9c`).** The three counts in the block
+> above were taken **before** this branch's final `origin/main` merge, so they trail the head the
+> heading names. `1dc86d01` **is** that merge (`73887a08` + `origin/main` `4ffcf173`), and its tree
+> differs from `077967b4` only by this record and the ledger row, so both heads carry the same code
+> and the same specs. At `077967b4` they measure `unit` **195 files | 3296 passed | 3 skipped
+> (3299)**, `integration` **163 files | 1732 passed (1732)** and the **eight** `adr-*` guards **276
+> passed (276)** — the eighth guard, `adr-ledger-shape`, was already on `origin/main` `4ffcf173` and
+> is green. The block above is left exactly as it was measured; nothing in it is rewritten. The
+> `0946` ledger row's "seven `adr-*` guards `248 passed (248)`" carries the same correction (eight /
+> 276). The two heads are compared with `git diff --name-only 1dc86d01 077967b4`, which lists exactly those two files.
+
 The eighteen shipped cases and every helper are untouched and green; the two green-on-arrival arms
 are green for their own reasons (see below), not because a pin was weakened.
 
@@ -171,3 +182,26 @@ are green for their own reasons (see below), not because a pin was weakened.
   merge gate on its own head.
 - Hotspot: `docs/adr/README.md` (row `0946`, cell `0948`), which the sibling OP-140 cards also append
   to — merge as a union keeping the higher cell.
+
+## Review round 1 — APPROVED WITH FINDINGS
+
+**Verdict: APPROVED WITH FINDINGS** on the merged GREEN (card `t_61798b06`, PR [#845](https://github.com/yahodu/openpic-webapp/pull/845), squash `2fa60b9c`, head `077967b4`). Nothing this record decides is retracted: the two code findings are routed to `t_9b3063ff` (pins) and `t_a587119c` (GREEN), and **F3** — the pre-merge figures under §2 — is closed by the docs card `t_db1bb4e2`.
+
+**Verified independently at `077967b4` / `2fa60b9c`:**
+
+- **Tree identity.** `git diff 077967b4 2fa60b9c` is empty, so the head and the squash carry one tree, and `git merge-base --is-ancestor 2fa60b9c origin/main` is true.
+- **Focused spec.** `apps/web/src/test/integration/notification-actions.test.ts` `23 passed (23)`.
+- **Whole `unit`** `195 files | 3296 passed | 3 skipped (3299)`, **whole `integration`** `163 files | 1732 passed (1732)`, and the **eight** `adr-*` guards `276 passed (276)` — re-measured for this record instead of transcribed.
+- **Static.** `tsc` exit `0` in all three projects; `eslint` on `fan-out.ts` reports 8 warnings and 0 errors — exactly the base blob's own eight `security/detect-object-injection` findings, measured on `2fa60b9c^` (8 as well), so this delivery adds none and only shifts their lines; `prettier --check` clean.
+- **CI.** 20/20 gates `SUCCESS` at `077967b4`; the commit's check-run list holds 21 entries, one of them the close-time `notify-discord` side effect, and five names appear twice because an edited PR body re-ran those workflows on the same head.
+- **The pins file is additive.** `+265/−0` against the squash's first parent, so the eighteen shipped cases are untouched; the `+9/−5` a three-dot diff also shows is `main`'s own, landed by `da4e24cc` and `40af157a` and folded in by the branch's `origin/main` merge.
+- **No honesty pattern** in the implementation commit: no fixture-shaped constant, no test-environment conditional, no suppressed diagnostic, no branch narrowed to look like a pin input.
+
+**Findings:**
+
+- **F1 (Low, measured) — no tenant predicate on the subscription read.** `resolveActionScope` fetched the stored row with `findOne({ _id: id })` and nothing else (`fan-out.ts:591` at `2fa60b9c`), so an event in tenant A naming tenant B's subscription emitted a `pay_now` whose click is `403` — ADR-0942 §4.1 violated. Probe at `2fa60b9c`: the row carried the foreign `actionTarget` and one action; `PROBE click: 403`. Routed to `t_9b3063ff` (pins) and `t_a587119c` (GREEN).
+- **F2 (Low, measured) — the producer parsed narrower than its delegate.** `actionableSubscriptionSchema` (`fan-out.ts:220-225`) made `mandateStatus` `nullable().default(null)`, while the delegate parses with `chargeableSubscriptionSchema` (`charge-outstanding.ts:46-54`, `mandateStatus` required), so a stored row without the field got a `pay_now` whose click is `500 internal_error`. Probe: `PROBE-B row: {"n":1,"actions":[…]}`; `PROBE-B click: 500`. Routed to the same two cards.
+- **F3 (Low, record accuracy) — the §2 counts were pre-merge.** Closed by the correction note under §2 and by the `0946` ledger row's guards phrase, in this card's PR.
+- **Info, no card.** An owner who points `billingContactUserId` at another member receives **no row** and that contact receives no action — the recorded consequence of ADR-0942 §4.4/§4.6, pinned by `A3`, and the owner's other path is the billing page. The invitation arm's cross-tenant `subjectRef` is pre-existing, unchanged by this delivery and identity-checked by `requireInvitee`.
+
+**Post-review status, bounded to the commits measured here.** `t_9b3063ff` landed the pins as [ADR-0948](ADR-0948-op140-pay-now-producer-delegate-parity-pins.md) and `t_a587119c` landed the fix as [ADR-0949](ADR-0949-op140-pay-now-producer-delegate-parity-green.md), both squashed on `origin/main` at `70fe8a42`: `resolveActionScope` now parses with the delegate's exported `chargeableSubscriptionSchema` and requires the stored row's `tenantId` to equal the event's tenant, so a foreign subscription emits no `pay_now` while both control arms still emit exactly one.
