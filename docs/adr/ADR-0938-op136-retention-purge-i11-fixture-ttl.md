@@ -50,10 +50,13 @@ must find with `isActive: false, expireAt: NOW − 1 day` (`:615`–`:618`). Tha
 
 mongod evaluates a TTL index against the **real** wall clock, not against the spec's injected
 `fixedClock(NOW)`. On 2026-11-22 the real clock is five days past the literal `NOW`, so `I11`'s
-`expireAt = 2026-11-16T09:00:00Z` is already nine days past: the fixture is **born expired**, and the
+`expireAt = 2026-11-16T09:00:00Z` is already six days past: the fixture is **born expired**, and the
 TTL monitor (one pass every `ttlMonitorSleepSecs`, default 60) may delete it at any moment after the
 insert. The same holds for `I13`'s anonymous session (`expireAt = NOW − 1 day` against
 `attendee_sessions_expire_at_ttl`).
+The second count first read **nine** days; the round-1 review measured `6.05` days (and `5.05` days for
+`NOW` itself) at `2026-11-22T10:10:29.109Z` and corrected it here — see §Review — round 1. No other
+line of this paragraph changes.
 
 The observed failure text pins _which_ interleaving happened. `I11` asserts the row, the matches, the
 asset and the stored object first (`:636`–`:647`) and the log line last (`:650`). All four passed, so the
@@ -248,3 +251,23 @@ See the card handoff for the command log. Summary at the change's head:
 - `vitest run --project unit` and `--project integration` on the branch: both green;
 - `tsc -p tsconfig.json --noEmit`, `tsc -p apps/web/tsconfig.json --noEmit`, `eslint` on the changed
   files, and `prettier --check` on the changed files: clean.
+
+## Review — round 1
+
+Sign-off card `t_01d70c10` records the round-1 (artifact lens) review of the TEST delivery `t_be5ae9d1` (PR [#787](https://github.com/yahodu/openpic-webapp/pull/787), squash `2dfd2cf4`). The review ran at the merged trunk, and every suite figure below is a re-measurement at that commit in a detached verification worktree (`git worktree add --detach`), not a transcription of the change's own handoff; every trunk fact names the commit it was read at.
+
+- **Verdict: `APPROVED WITH FINDINGS`**, landed. The delivery is one import (`../helpers/fixture-clock`) plus the `NOW` constant and its comment: `+22/−2` in the spec, `+277/−4` for the whole squash, and **no production file** — `git diff --name-status 2dfd2cf4^ 2dfd2cf4` lists exactly the spec, this record and `docs/adr/README.md`. No assertion, case name, seed, helper or timeout changed.
+- **Tree identity.** `git diff --stat 200900bc 2dfd2cf4` prints nothing, so the reviewed branch tree and the squash are the same bytes; the spec's blob is `c82e9d69` at the reviewed head `200900bc`, at `2dfd2cf4` and at `49a8226a`. PR #787 is `MERGED` at `2026-11-22T10:01:26Z`, and all `15` check-runs on that head are `success` — the `14` gates (`ci` included) plus the `notify-discord` close side effect a merged PR gains.
+- **Suites at the merged trunk.** Focused spec `10 passed (10)`; ten consecutive single-file runs of it `10 passed (10)` each; whole `unit` `191` files, `3209 passed | 3 skipped (3212)`; whole `integration` `153` files, `1632 passed (1632)`; `adr-numbering` `29 passed (29)`; `docs/adr` held `431` entries (`430` records plus `README.md`) with every `ADR-[0-9]{4}` number unique (`430` of `430`); `prettier --check` clean on all three changed paths; `eslint` exit `0` with no output on the spec.
+- **Mechanism, independently reproduced** (throwaway probe, no committed file). A `selfies` row carrying `expireAt = 2026-11-16T09:00:00Z` — the pre-fix `NOW − 1 day` — under the shipped `selfies_expire_at_ttl` shape (`{ expireAt: 1 }`, `expireAfterSeconds: 0`) was deleted by mongod's TTL monitor **t+59 793 ms after insert with no test action** (one pass, default `60` s cadence), while the row the fix anchors to (`fixtureInstant("09:00:00.000Z", 2)` = `2026-11-25T09:00:00Z`, 49.15 h ahead) and a `now + 23 h` control both survived that same pass. That is the ADR-0146/ADR-0148 class this record names, measured rather than inferred.
+- **The pin still bites at the new anchor** (discrimination probe: production mutated in the throwaway worktree, then restored byte-identically — `sha256 f44087f7…` before and after). Making `purgeExpiredSelfies` return `erased: 0` while it still deletes the row reds **`I11` alone** (`1 failed | 9 passed (10)`, `AssertionError: expected undefined to be defined` at the `expect(leg).toBeDefined()` line, `:671` in the merged tree's numbering); changing the scan predicate to `isActive: true` also reds **`I11` alone**, on the row assertion (`AssertionError: expected { …(14) } to be null`, `:658`). The log-line assertion was not weakened into a tautology.
+
+### Findings and routing
+
+- **F-R1 — Medium — two other specs of this class were live at review time, and the delivery did not route them.** `job-sweep-drain.test.ts:171` and `job-sweep-failure-windows.test.ts:144` both seeded `expireAt = NOW + 4d` off the literal `NOW = 2026-11-17T09:00:00.000Z`, i.e. `2026-11-21T09:00:00Z`, `1.05` days in the real past on 2026-11-22, against `upload_sessions_expire_at_ttl` and `invitations_expire_at_ttl`; `job-sweep-drain.test.ts:170`'s "the TTL monitor cannot race a case" comment was already false. Routed as card `t_27a1f957`, which landed as PR [#797](https://github.com/yahodu/openpic-webapp/pull/797) (squash `49a8226a`, record [ADR-0940](ADR-0940-op136-sweep-specs-fixture-ttl.md)): both files now derive their clock from `fixtureInstant("09:00:00.000Z", 2)` and the false comment is corrected, so neither exposure is live at the base this section is cut from (`ff10d324`).
+- **F-R2 — Low — one figure in §Diagnosis was wrong, and is corrected there.** That paragraph said `I11`'s `expireAt` was "nine days past"; the measured count is `6.05` days, with `NOW` itself `5.05` days past, at `2026-11-22T10:10:29.109Z`. Only that count changes; every other line of the paragraph is byte-identical.
+- **Info — `job-pipeline-sweep.test.ts:152` is not exposed.** Its `selfies.expireAt = NOW + 89d` off the same literal is `2027-02-14T09:00:00Z`, `84` days ahead of the review clock, so no monitor pass can reach it. Recorded, no action.
+
+### Nothing retracted, and what followed
+
+No `## Diagnosis`, `## Evidence`, `## Decision`, `## Consequences`, `## Assumptions & open questions`, `## Out of scope` or `## Findings (routed)` claim is withdrawn, and no decision is amended: this section appends, and the only in-place edit is the `nine`→`six` count that F-R2 names. The follow-ups' own records document what followed them: [ADR-0939](ADR-0939-op136-usage-invitations-fixture-ttl.md) closes the `job-usage-and-invitations` exposure routed as F1 (PR #793, squash `16fc92df`), and [ADR-0940](ADR-0940-op136-sweep-specs-fixture-ttl.md) closes F-R1's two specs (PR #797, squash `49a8226a`).
