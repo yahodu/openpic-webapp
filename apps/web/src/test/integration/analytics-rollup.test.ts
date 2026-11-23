@@ -13,6 +13,7 @@ import {
   ACTIVITY_AT,
   ACTIVITY_DATE_KEY,
   makeAttendeeProfileRow,
+  makeBillingTransactionRow,
   makeDispatchRow,
   makeEventCreatedRow,
   makeEventImageRow,
@@ -501,5 +502,135 @@ describe("analytics-rollup I8: the cron route", () => {
     expect(response.status).toBe(401);
     const payload = (await response.json()) as { error: { code: string } };
     expect(payload.error.code).toBe("internal_auth_failed");
+  });
+});
+
+/**
+ * Integration / contract — `analytics-rollup` F2: `revenueMinor` is the day's
+ * settled INR `billing_transactions` total (schema §14.4, §20.1; contract §10.2;
+ * ADR-0923, which supersedes ADR-0918 §A16 **for `revenueMinor` only**).
+ *
+ * The rollup rolls `domainEvents` plus counts from `eventImages`,
+ * `faceMatches`, `selfies`, `notificationDispatches` **and
+ * `billingTransactions`**, and the read model sums `revenueMinor` into the
+ * operator's totals (`@/server/analytics/totals`). The `billing_transactions`
+ * row already carries the lineage (`tenantId`, `amountMinor`, `currency`,
+ * `occurredAt`, `settledAt`, `status`), so a `revenueMinor` that stays `0` is a
+ * source the job never reads, not an unlineaged metric.
+ *
+ * ## The test data
+ *
+ * One tenant, one `event.created` row and five ledger rows. Only row A is
+ * revenue — `succeeded`, `INR`, `occurredAt` inside the rolled-up IST day — and
+ * each other row is a wrong reading it rules out:
+ *
+ * - A: `succeeded`, `INR`, inside the window, 4500 — the pin.
+ * - B: `pending`, `INR`, inside the window, 9900 — an intent the provider has
+ *   not settled; not revenue.
+ * - C: `failed`, `INR`, inside the window, 7700 — money never taken.
+ * - D: `succeeded`, `INR`, the **previous** IST day, 3300, with `settledAt`
+ *   inside the rolled-up day — a late settlement, which a `settledAt` bucket
+ *   would count (4500 + 3300 = 7800) and which would make a same-day rerun
+ *   depend on when the provider settles.
+ * - E: `succeeded`, `USD`, inside the window, 1200 — `revenueMinor` is one INR
+ *   minor-unit scalar, so a mixed-currency sum is nonsense.
+ *
+ * `billing_transactions` rows carry no `eventId`, so revenue has **no event
+ * scope**: the event's row keeps `revenueMinor: 0` while its tenant's row
+ * carries the day's money, and the platform row is the sum of the day's tenant
+ * rows. `eventsCreated` stays `1`, so no other counter starts counting ledger
+ * rows, and a second run of the same day rewrites the same documents.
+ */
+describe("analytics-rollup F2: revenueMinor from billingTransactions", () => {
+  it("F2: the day's revenue is the settled INR total of each scope, and a rerun is unchanged", async () => {
+    // ── Arrange: one tenant, one event, and five ledger rows that each pin one decision ──
+    const { tenantId, eventId } = await seedTenantWithEvent("op139-revenue");
+    const subscriptionId = new ObjectId();
+    await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .insertOne(makeEventCreatedRow({ tenantId, eventId }));
+    await app.db.collection(COLLECTIONS.billingTransactions).insertMany([
+      // A — the day's only revenue.
+      makeBillingTransactionRow({
+        tenantId,
+        subscriptionId,
+        status: "succeeded",
+        currency: "INR",
+        amountMinor: 4500,
+        occurredAt: ACTIVITY_AT,
+        settledAt: ACTIVITY_AT,
+      }),
+      // B — an intent the provider has not settled: not revenue.
+      makeBillingTransactionRow({
+        tenantId,
+        subscriptionId,
+        status: "pending",
+        currency: "INR",
+        amountMinor: 9900,
+        occurredAt: ACTIVITY_AT,
+      }),
+      // C — money never taken: not revenue.
+      makeBillingTransactionRow({
+        tenantId,
+        subscriptionId,
+        status: "failed",
+        currency: "INR",
+        amountMinor: 7700,
+        occurredAt: ACTIVITY_AT,
+      }),
+      // D — the previous IST day's charge, settled *inside* this day: the row
+      // buckets by `occurredAt`, so a settlement-instant reading adds 3300.
+      makeBillingTransactionRow({
+        tenantId,
+        subscriptionId,
+        status: "succeeded",
+        currency: "INR",
+        amountMinor: 3300,
+        occurredAt: new Date("2026-11-16T05:00:00.000Z"),
+        settledAt: new Date("2026-11-17T04:00:00.000Z"),
+      }),
+      // E — a foreign-currency charge: `revenueMinor` is one INR scalar.
+      makeBillingTransactionRow({
+        tenantId,
+        subscriptionId,
+        status: "succeeded",
+        currency: "USD",
+        amountMinor: 1200,
+        occurredAt: ACTIVITY_AT,
+        settledAt: ACTIVITY_AT,
+      }),
+    ]);
+
+    // ── Act: the nightly run for 2026-11-17 ──
+    await runJob(ACTIVITY_AT, ACTIVITY_DATE_KEY);
+    const first = await canonicalRows();
+
+    // ── Assert: the tenant's revenue is A's amount, and nothing else ──
+    const tenant = await rowFor(ACTIVITY_DATE_KEY, "tenant", new ObjectId(tenantId));
+    expect(tenant?.metrics.revenueMinor).toBe(4500);
+
+    // ── Assert: the platform row carries the day's tenant total ──
+    const tenantTotal = (await rowsFor(ACTIVITY_DATE_KEY))
+      .filter((row) => row.scope.kind === "tenant")
+      .reduce((total, row) => total + (row.metrics.revenueMinor ?? 0), 0);
+    const platform = await rowFor(ACTIVITY_DATE_KEY, "platform", null);
+    expect(platform?.metrics.revenueMinor).toBe(4500);
+    expect(platform?.metrics.revenueMinor).toBe(tenantTotal);
+
+    // ── Assert: revenue has no event scope (`billing_transactions` carry no `eventId`) ──
+    const eventRow = await rowFor(ACTIVITY_DATE_KEY, "event", eventId);
+    expect(eventRow).toBeDefined();
+    expect(eventRow?.metrics.revenueMinor).toBe(0);
+
+    // ── Assert: the ledger rows are not counted as any other metric ──
+    expect(tenant?.metrics.eventsCreated).toBe(1);
+    expect(tenant?.metrics.notificationsSent).toBe(0);
+
+    // ── Act: an operator re-runs the same day ──
+    await runJob(ACTIVITY_AT, ACTIVITY_DATE_KEY);
+    const second = await canonicalRows();
+
+    // ── Assert: the ledger rows did not make the rerun write anything new ──
+    expect(second).toEqual(first);
   });
 });

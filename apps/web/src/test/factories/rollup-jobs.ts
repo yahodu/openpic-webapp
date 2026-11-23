@@ -242,6 +242,60 @@ export function makeDispatchRow(input: {
 }
 
 /**
+ * Build a `billing_transactions` row (schema §14.4) as the shipped writers
+ * store it — `insertPendingCharge` (`status: "pending"`, `settledAt: null`),
+ * `failPendingCharge` (`status: "failed"`) and the projection's `settleIntent`
+ * (`status: "succeeded"` with a `settledAt`).
+ *
+ * `idempotencyKey` is the collection's unique key and a missing key indexes as
+ * `null`, so every row derives its own from its `_id`: a spec can seed several
+ * rows for one tenant (or two `pending` rows) without an `E11000`.
+ *
+ * The quiet default is a `pending` INR charge of `0` minor units on the fixture
+ * instant, so a spec overrides exactly the fact its pin is about. A `succeeded`
+ * row defaults `settledAt` to its `occurredAt` (the projection settles on the
+ * confirmation it just received) and a spec that needs a late settlement names
+ * one explicitly.
+ */
+export function makeBillingTransactionRow(input: {
+  readonly _id?: ObjectId;
+  readonly tenantId: string;
+  readonly subscriptionId?: ObjectId;
+  readonly kind?: "charge" | "refund";
+  readonly status?: "pending" | "succeeded" | "failed";
+  readonly amountMinor?: number;
+  readonly currency?: string;
+  readonly occurredAt?: Date;
+  readonly settledAt?: Date | null;
+  readonly createdAt?: Date;
+}): Record<string, unknown> {
+  const _id = input._id ?? new ObjectId();
+  const occurredAt = input.occurredAt ?? ACTIVITY_AT;
+  const createdAt = input.createdAt ?? occurredAt;
+  const status = input.status ?? "pending";
+  const settledAt = input.settledAt ?? (status === "succeeded" ? occurredAt : null);
+  return {
+    _id,
+    tenantId: input.tenantId,
+    subscriptionId: input.subscriptionId ?? new ObjectId(),
+    kind: input.kind ?? "charge",
+    status,
+    amountMinor: input.amountMinor ?? 0,
+    currency: input.currency ?? "INR",
+    failure: null,
+    idempotencyKey: `op139-fixture-${_id.toHexString()}`,
+    externalRefs: [],
+    occurredAt,
+    settledAt,
+    periodCovered: null,
+    invoiceNumber: null,
+    rawPayloadRef: null,
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+/**
  * Build a `domain_events` outbox row for `event.created` (schema §18.3).
  *
  * The rollup is documented as rolling `domainEvents` as well as the collection
