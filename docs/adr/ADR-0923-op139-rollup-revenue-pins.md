@@ -169,12 +169,13 @@ counter wrong, the case fails at `analytics-rollup.test.ts:628` on `eventsCreate
 
 ### 5.1 Whole-suite gates
 
-| Run                                                                | Result                                                                                                                   |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| whole `unit` project, head with the spec, factory, record and rows | `193` files, `3233 passed \| 3 skipped (3236)`                                                                           |
-| the seven `adr-*` guards (this record and its ledger rows in tree) | `7` files, `248 passed (248)`                                                                                            |
-| whole `integration` project                                        | `157` files, `1 failed \| 1668 passed (1669)` — the failure is **this** case alone, so no shipped integration spec moved |
-| focused `analytics-rollup` spec                                    | `1 failed \| 9 passed (10)`                                                                                              |
+| Run                                                                                              | Result                                                                                                                   |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| whole `unit` project, head with the spec, factory, record and rows                               | `193` files, `3233 passed \| 3 skipped (3236)`                                                                           |
+| whole `unit` project after merging `origin/main` `521e305b` (OP-140's notification-action tests) | `194` files, `3261 passed \| 3 skipped (3264)`                                                                           |
+| the seven `adr-*` guards (this record and its ledger rows in tree)                               | `7` files, `248 passed (248)`                                                                                            |
+| whole `integration` project                                                                      | `157` files, `1 failed \| 1668 passed (1669)` — the failure is **this** case alone, so no shipped integration spec moved |
+| focused `analytics-rollup` spec                                                                  | `1 failed \| 9 passed (10)`                                                                                              |
 
 The whole `integration` run is quoted as delivered rather than as green: this branch is a
 RED-by-design pin pack, so the suite's single red is the pin's own `expected +0 to be 4500`. The

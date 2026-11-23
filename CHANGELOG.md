@@ -1,3 +1,9 @@
+## [1.76.0](https://github.com/yahodu/openpic-webapp/compare/v1.75.0...v1.76.0) (2026-11-23)
+
+### Features
+
+- **notifications:** OP-140 implement the delegating, idempotent notification action endpoint ([#810](https://github.com/yahodu/openpic-webapp/issues/810)) ([5fc8c51](https://github.com/yahodu/openpic-webapp/commit/5fc8c517719962773922fc08fc75637628fbd321))
+
 ## [1.75.0](https://github.com/yahodu/openpic-webapp/compare/v1.74.0...v1.75.0) (2026-11-23)
 
 ### Features

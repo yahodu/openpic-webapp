@@ -1,0 +1,305 @@
+# ADR-0942 — OP-140: the delegating, idempotent notification action endpoint (RED contract)
+
+- **Status:** Accepted (RED pin) · **Date:** 2026-11-23
+- **Card:** `t_5d080821` (OP-140 RED, phase 6-M2M · epic Notifications) — the GREEN sibling is `t_39c2bf80`
+- **Branch:** `wt/t_5d080821` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_5d080821` (rebase base `origin/main` `cc2496c1`)
+- **ADR number:** `0942` — the OP-140 lane has **no** row in the reserved-range ledger, so this first card draws the next 20-number block from the `unallocated (future lanes)` pool: `0942`–`0961`, its own `Next free` cell set to `0943`, and **both** cells that read `0942` (`OP-136 jobs lane`, `unallocated (future lanes)`) advanced to `0962`. The delivery sweep found the highest record `ADR-0941`, no `ADR-09[4-7]` object in `git log --all -- docs/adr`, and nothing above `0941` in any `.worktrees/*/docs/adr` tree.
+- **Touches:** three **test-only** files — `apps/web/src/test/unit/notification-actions.test.ts` (28 cases), `apps/web/src/test/integration/notification-actions.test.ts` (10 cases), `apps/web/e2e/notification-actions.spec.ts` (1 journey) — plus this ADR, its index row, two ledger cells, one new lane row and one ledger paragraph. **No production code, schema, index, fixture factory, mock or config.** The `@/server/notifications/notification-actions` module and the route it pins do not exist on the trunk.
+
+## Context
+
+Contract §7.3 and the notification design §7 describe one endpoint —
+`POST /api/v1/me/notifications/{id}/actions/{actionKey}` — whose whole job is to
+**not own state**. A notification in any channel is a _pointer_; the owning
+document (`invitations`, `subscriptions`, `upload_batches`, `consents`, `events`,
+`selfies`) holds the terminal state, and the endpoint delegates to that
+document's idempotent transition. The feed row's `actions[].state` is a
+denormalised convenience that §7.1 explicitly allows to be **briefly stale**, so
+the write path has to re-validate and can never answer `409` for a repeated
+action.
+
+The trunk holds every dependency the card names, but not the endpoint:
+
+| Piece                                                                                                                            | Where it lives on `origin/main`                                                                                                                                                                                                     | State             |
+| -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| Invitation decision (OP-121)                                                                                                     | `@/server/collaboration/invitation-transition` — `decideInvitation` answers `200` with `alreadyResolved` + `resolvedVia`, `410` for `revoked`/`expired`, never `409`; `closeInvitationAffordance` runs the §2.3 rule-3 `updateMany` | landed (ADR-0664) |
+| Billing retry (OP-110)                                                                                                           | `POST /tenants/{t}/billing/retry-charge` — `ownerOnlyTenant()` gate, `decideRetryEligibility`, one `pending` `billing_transactions` intent written **before** the provider call                                                     | landed (ADR-0480) |
+| Feed actions                                                                                                                     | `@/server/notifications/fan-out` writes `actionTarget { kind, id, state }` and `actions [{ key, label, style, state }]` for the invitation rows only                                                                                | landed (OP-97)    |
+| Catalogue / types                                                                                                                | `collab.invite.sent` (`actionable`, in-app + email)                                                                                                                                                                                 | landed            |
+| `policy acknowledge`, `upload_batch retry_failed`, `event extend_upload_window`, `selfie retry`, `subscription complete_mandate` | the routes exist; no shared domain service is extracted for them                                                                                                                                                                    | landed            |
+
+So the RED has two distinct halves: two **pure rules** the endpoint cannot work
+without (U1/U2), and the endpoint's observable behaviour over the real delegation
+(I1–I7, E1).
+
+## Decision
+
+### 1. One module owns the two pure rules
+
+`@/server/notifications/notification-actions` (new; the GREEN adds it) exports:
+
+```ts
+export const NOTIFICATION_ACTION_SERVICES = [
+  "invitation_decision", // invitation × accept|reject  → decideInvitation (via in_app)
+  "retry_charge", //        subscription × pay_now     → the billing retry service
+  "checkout_url", //        subscription × complete_mandate
+  "reprocess_failed", //    upload_batch × retry_failed
+  "policy_acknowledge", //  policy × acknowledge
+  "extend_upload_window", // event × extend_upload_window
+  "selfie_redirect", //     selfie × retry
+] as const;
+
+export type NotificationActionService = (typeof NOTIFICATION_ACTION_SERVICES)[number];
+
+export interface NotificationActionDelegation {
+  readonly service: NotificationActionService;
+  readonly decision?: "accept" | "reject"; // invitation rows only
+}
+
+export function resolveActionDelegation(input: {
+  readonly kind: unknown;
+  readonly actionKey: unknown;
+}): NotificationActionDelegation | null;
+
+export interface DelegateResult {
+  readonly outcome: "applied" | "already_resolved" | "unavailable";
+  readonly targetState: string;
+  readonly resolvedVia?: string;
+  readonly redirectUrl?: string;
+}
+
+export interface ActionOutcomeView {
+  readonly outcome: "applied" | "already_resolved" | "unavailable";
+  readonly alreadyResolved: boolean;
+  readonly resolvedVia: string | null;
+  readonly targetState: string;
+  readonly redirectUrl: string | null;
+  readonly message: string;
+}
+
+export function mapActionOutcome(result: DelegateResult): ActionOutcomeView;
+```
+
+`resolveActionDelegation` covers the **seven** §7.3 rows and answers `null` for
+everything else — an unlisted pair, an unknown kind, an absent or non-string
+input. U1 pins each row separately (so a wrong mapping cannot hide inside an
+`it.each` of the happy set), the six cross-kind pairs §7.3 does not list, and the
+four malformed-input arms.
+
+`mapActionOutcome` projects a delegated result onto the endpoint's six outcome
+keys and **never invents a fact**: a result with no `resolvedVia` maps to
+`null` (not to a default channel), `alreadyResolved` is `true` only for
+`already_resolved`, and the view carries exactly six keys. U2 pins the three
+arms, the no-invention arms, the key set, and that the first click and a replay
+read differently to the user.
+
+### 2. The endpoint's contract
+
+`app/api/v1/me/notifications/[id]/actions/[actionKey]/route.ts`, `POST`,
+auth `user`, rate `write.normal` (the rate class is **not** pinned here).
+
+- The caller's own row is loaded first: `404 not_found` for an unknown,
+  malformed or **foreign** id — never `403`, so the endpoint is not an existence
+  oracle (the `me/sessions` precedent). I5 pins both the foreign id and the
+  unknown id.
+- `actionKey` must be one of the row's `actions[].key` **and** one of the seven
+  rows the dispatch table knows (`422 validation_failed` otherwise). I6 pins both
+  arms; the second is what makes `resolveActionDelegation`'s `null` reachable.
+- `200` always carries exactly the nine §7.3 keys
+  `{ notificationId, actionKey, outcome, alreadyResolved, resolvedVia,
+targetState, actions, redirectUrl, message }`. I1 and I4 assert the **exact**
+  sorted key set, so a delegated service's own fields (`id`, `status`,
+  `membership`, `billingTransactionId`, `pollUrl`) cannot leak through the
+  response.
+- `actions` is the row **re-read after** the delegation, projected as
+  `{ key, label, state }` — the same row the next `GET /me/notifications`
+  serves. I1 and E1 compare the response's pairs with the feed's.
+- `410` only for a `revoked`/`expired` invitation (propagated from the
+  delegated service). I3 deliberately clicks an affordance whose cached
+  `state` is already `"unavailable"`: the endpoint must **not** short-circuit on
+  the denormalised field, or the truthful `410` becomes a `422`.
+- The endpoint calls no other HTTP route. The invitation arm calls
+  `decideInvitation` with `via: "in_app"`; the billing arm calls the retry
+  service with an idempotency key derived from `notificationId + actionKey`.
+
+### 3. Idempotency, measured as state as well as status
+
+Every repeat-call pin asserts the persisted effect:
+
+| Case                     | Status arm                                     | State arm                                                                                                                                                                            |
+| ------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| I1 accept twice          | `200 applied` then `200 already_resolved`      | one `event_organizers` row, one `collab.invite.accepted`, feed + response `unavailable` after the first                                                                              |
+| I2 email token then feed | `200 already_resolved`, `resolvedVia: "email"` | one membership row, one accepted event, closure stamped with the email channel                                                                                                       |
+| I4 `pay_now` twice       | `applied` then `already_resolved`              | **one** `pending` charge for `pendingDueMinor`, one distinct payment provider ref (the memory provider mints its payment id from the idempotency key, so one id = one vendor charge) |
+| I4 demoted owner         | `403 forbidden`                                | zero charge rows, affordance still `available`                                                                                                                                       |
+
+### 4. Authorization is the delegated service's
+
+A notification is not a permission. I4 demotes the workspace owner to `member`
+**after** the notification was sent and pins the delegated owner gate's own
+`403 forbidden` with nothing charged. The endpoint may not answer a `200`
+`unavailable` for that case (a refusal is not an outcome), and it may not invent
+a status: A-5.
+
+## Alternatives considered
+
+- **Delegate by calling the sibling HTTP routes internally.** Rejected: §7.3
+  says the endpoint owns no state, and re-entering the routes would rebuild
+  authentication, tenancy and idempotency stages from a fabricated request while
+  losing the caller's already-admitted principal.
+- **Answer `422`/`409` when the cached `actions[].state` is `unavailable`.**
+  Rejected by §7.1's "may be briefly stale" rule and pinned against by I3: the
+  owning document must answer (`410 invitation_revoked`).
+- **Answer `applied` on a repeated `pay_now`** because the provider dedupes on
+  the idempotency key. Rejected: the response would report a fresh charge the
+  user must not expect twice, and the card's acceptance criterion is "never
+  `409` for repeated actions" with an explicit `already_resolved` outcome. A-3.
+- **Inline the billing charge in the endpoint.** Rejected: the ledger intent,
+  the eligibility decision and the owner gate belong with the retry service; the
+  GREEN extracts them so both the route and the endpoint share one path.
+- **Put the dispatch table in the route module.** Rejected: the table is the
+  §7.3 contract, and U1 must pin it without Mongo, a request or a principal.
+
+## Consequences
+
+- **The GREEN must extract the billing charge path into a service** that both
+  `POST /tenants/{t}/billing/retry-charge` and this endpoint call, with the
+  owner gate inside it (A-5's `403` has to come from there).
+- **The invitation arm reuses `decideInvitation`** unchanged; the endpoint's
+  only contribution is `via: "in_app"` and the projection.
+- **The response schema must be strict** (the pipeline serialises through it), so
+  a service field added later cannot silently widen the body; I1/I4's exact key
+  set is the pin that says so.
+- **A payout-class detail is frozen:** a repeated `pay_now` writes no second
+  charge intent. If a later card wants one ledger row per attempt, it must
+  supersede A-3 explicitly.
+- **The pool cell is contested.** The in-flight OP-139 branch (`t_7da4009d`, PR
+  #780) holds `0918`–`0937` and its ledger copy advances the same
+  `unallocated (future lanes)` cell from `0938`. When it merges after this
+  record, that hunk must **not** rewind the cell below `0962`, and the OP-139
+  lane row has to be added beside ours — the merge, not this card, owns that
+  reconciliation.
+- **No production file is in the diff**, so the PR is a draft by design; `unit`,
+  `test_coverage` and `ci` fail on the two missing modules (that is the RED).
+
+## Assumptions
+
+- **A-1** — the `200` body is exactly the nine keys §7.3's example documents; a
+  rich delegated answer is projected onto them.
+- **A-2** — a `subscription` notification's `actionTarget.id` names the
+  `subscriptions` row and the row's `tenantId` names the workspace whose owner may
+  act.
+- **A-3** — a repeated `pay_now` is `already_resolved` and writes no second
+  charge intent (the key is derived from `notificationId + actionKey`).
+- **A-4** — for `pay_now`, `targetState` reports the subscription's own status
+  (`past_due`): the charge is confirmed by a webhook, never by this response.
+- **A-5** — a delegated refusal is propagated with its own status and code; the
+  endpoint invents none.
+- **A-6** — I2 seeds the invitee's feed row directly. The trunk's fan-out writes
+  **no** in-app row for an **email** invitee: recipient resolution reads
+  `invitee.userId`, which nothing stamps at create time, and the OP-89 lazy
+  hook's re-emit reuses the create-time dedupe key. That gap is OP-89's lane; the
+  row seeded here is exactly the schema §19.4 shape the feed serves, and the
+  token decision plus its `updateMany` closure still run through the real
+  routes.
+- **A-7** — E1 invites the **`user`** channel (the id is read from the invitee's
+  own `GET /me`), because that is the only channel whose fan-out writes an in-app
+  row on the trunk. Measured, not assumed: the first draft of E1 invited by
+  e-mail and failed at `the invitation never reached the invitee's in-app feed`
+  after a 20 s poll.
+
+## Out of scope
+
+- `complete_mandate`, `upload_batch retry_failed`, `policy acknowledge`,
+  `event extend_upload_window` and `selfie retry` are pinned **only** by U1's
+  mapping. Their delegated integrations are not exercised: each needs its own
+  service extraction and fixture, and none is in the card's I/E list.
+- The `write.normal` rate class is not pinned (no rate harness in this file).
+- The `pay_now` affordance's _closure_ in the feed is not pinned: the card's
+  closure criterion is the invitation story (I1, I2, E1).
+- The OP-89 e-mail-invitee in-app row gap (A-6) is routed, not repaired.
+
+## Evidence
+
+All commands ran in `/root/openpic/openpic-webapp/.worktrees/t_5d080821` with
+`TMPDIR=/root/tmp-mongo`; the integration project boots its own
+`MongoMemoryReplSet`. A throwaway probe implemented the pinned module and route
+(both deleted before handoff) to prove the specs are **satisfiable and
+assertion-level**:
+
+```
+npx vitest run --project unit apps/web/src/test/unit/notification-actions.test.ts
+  → Test Files 1 passed (1) · Tests 28 passed (28)
+
+npx vitest run --project integration apps/web/src/test/integration/notification-actions.test.ts
+  → Test Files 1 passed (1) · Tests 10 passed (10)
+
+TMPDIR=/root/tmp-mongo pnpm build && npx playwright test -c apps/web/playwright.config.ts \
+  --project api -g "E1: an invitee accepts from the feed"
+  → 1 passed (1.1s)   # the whole journey over a real next start server
+```
+
+The probe's route (`apps/web/src/app/api/v1/me/notifications/[id]/actions/[actionKey]/route.ts`)
+carried `sha256 42a4b7af6c2cb1c25fa9b2a59474ff92d42117fbdcc66d44ff0fc794512ecd46`
+and was restored to that hash byte-identically after each mutation.
+`npx tsc -p apps/web/tsconfig.json --noEmit` and `npx eslint` on the three spec
+files were clean with the probe present.
+
+Two mutation probes prove the pins are load-bearing:
+
+1. **Drop the owner-role check** (`membership === null || role !== "owner"` →
+   `membership === null`): I4's demoted-owner case reds as
+   `AssertionError: expected 200 to be 403`.
+2. **Derive a per-click idempotency key** (`…:${actionKey}` →
+   `…:${actionKey}:${Date.now()}`): I4's happy case reds at the replay assertion
+   (`AssertionError: expected { …(9) } to match object { …(5) }` — the second
+   click answers `applied` instead of `already_resolved`), so "applied exactly
+   once" is measured, not assumed.
+
+With both probe files deleted the RED is honest and module-level:
+
+```
+Error: Cannot find package '@/server/notifications/notification-actions'
+  imported from …/unit/notification-actions.test.ts        → Tests no tests
+Error: Cannot find package '@/app/api/v1/me/notifications/[id]/actions/[actionKey]/route'
+  imported from …/integration/notification-actions.test.ts → Tests no tests
+```
+
+The e2e journey cannot run on the RED tree by design (ADR-0306): `next build`
+type-checks the whole project, so a missing module leaves no standalone server to
+test against. The probe run above is the evidence that the spec drives the real
+path — it reached the journey's own assertions and passed them.
+
+## GREEN — implementation (card `t_39c2bf80`)
+
+The GREEN adds three production files and edits no test, factory, helper or
+fixture. The pins were made green as written.
+
+| File                                                                         | What it owns                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/server/notifications/notification-actions.ts`                  | The two pure rules: `NOTIFICATION_ACTION_SERVICES`, `resolveActionDelegation` (the §7.3 `Map` table — a `Map`, so a hostile `kind` such as `toString` resolves to nothing) and `mapActionOutcome` (the six-key projection).                                                                                            |
+| `apps/web/src/server/billing/charge-outstanding.ts`                          | `startOutstandingCharge`: the shared charge path — owner gate, `decideRetryEligibility`, the `pending` intent written before the provider call, the E11000 replay answer and the refs. The retry-charge route now calls it too, so both "Pay now" surfaces charge through one code path (the Consequences item above). |
+| `apps/web/src/app/api/v1/me/notifications/[id]/actions/[actionKey]/route.ts` | The endpoint: own-row load (`404`), row-action and §7.3 checks (`422`), delegation to `decideInvitation` / `startOutstandingCharge`, the nine-key strict `200` body with the re-read affordance, and the `info notification.action` line.                                                                              |
+
+Decisions the GREEN settled where the RED left room:
+
+- The `pay_now` idempotency key is `notification-action:<notificationId>:<actionKey>`.
+  The ledger replay check runs **before** eligibility, so a repeat stays
+  `already_resolved` even after the due is settled; the unique index still guards
+  the concurrent case (E11000 → the same answer, no `5xx`).
+- The five §7.3 rows with no extracted domain service answer `unavailable` (a
+  documented `shortcut:` comment in the route); U1 pins their mapping and their
+  integrations are the ADR's out-of-scope list.
+- Client-IP-keyed rate limiting fails open (test harness) for `write.normal`,
+  the same behaviour every class-keyed route shows under the vitest harness.
+
+Measured on the GREEN head: unit `192` files `3238 passed | 3 skipped`;
+integration `154` files `1650 passed`; E1 `1 passed` over a real `next start`
+server; `tsc --noEmit` clean; eslint/prettier clean on the four touched
+production files; the `billing-self-serve` suite `37/37` after the shared-service
+refactor.
+
+**Ledger merge.** The RED branch was behind `origin/main` (OP-139, squash
+`b1cec73e`); the merge kept both lane rows ascending, set the `OP-136 jobs lane`
+and `unallocated (future lanes)` cells to `0962`, kept both ledger paragraphs and
+is prettier-clean with the `adr-*` guards green.
