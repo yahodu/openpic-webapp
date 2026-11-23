@@ -48,6 +48,9 @@ const ORGANIZER: readonly NotificationAudience[] = ["organizer"];
 /** Audience tag for an identified attendee linked to an event. */
 const ATTENDEE: readonly NotificationAudience[] = ["attendee_identified"];
 
+/** Audience tag for the one attendee an `attendee.*` row is about (ADR-0947 D1). */
+const ATTENDEE_SUBJECT: readonly NotificationAudience[] = ["attendee_subject"];
+
 /** Audience tag for a platform administrator. */
 const ADMIN: readonly NotificationAudience[] = ["platform_admin"];
 
@@ -801,7 +804,7 @@ const TYPE_SPECS: readonly TypeSpec[] = [
   {
     key: "attendee.selfie.rejected",
     category: "matching",
-    audiences: ATTENDEE,
+    audiences: ATTENDEE_SUBJECT,
     channels: [true, true, false],
     transactional: false,
     severity: "important",

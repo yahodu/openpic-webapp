@@ -8,6 +8,7 @@ import {
 } from "@/server/notifications/fan-out";
 import * as fanOutModule from "@/server/notifications/fan-out";
 import type { ChannelGroup, NotificationAudience } from "@/server/notifications/notification-types";
+import { notificationAudienceSchema } from "@/server/notifications/notification-types";
 import {
   DEFAULT_MOBILE_CANDIDATES,
   type ResolvedChannel,
@@ -48,6 +49,11 @@ import { makeNotificationType } from "../../test/factories/notification";
  *     tenantId: string;
  *     eventId: string;
  *   }): Promise<readonly string[]>;
+ *   getAttendeeProfileUserId(input: {
+ *     tenantId: string;
+ *     eventId: string;
+ *     profileId: string;
+ *   }): Promise<string | null>;
  *   getBillingContactUserId(input: { tenantId: string }): Promise<string | null>;
  *   listPlatformAdminUserIds(): Promise<readonly string[]>;
  * }
@@ -58,6 +64,7 @@ import { makeNotificationType } from "../../test/factories/notification";
  *   eventId: string | null;
  *   actorUserId: string | null;
  *   subjectUserId: string | null;
+ *   attendeeProfileId: string | null;
  *   repository: RecipientRepository;
  * }
  *
@@ -84,6 +91,7 @@ const BASE: Omit<ResolveRecipientsInput, "typeRow" | "repository"> = {
   eventId: "ev_1",
   actorUserId: null,
   subjectUserId: null,
+  attendeeProfileId: null,
 };
 
 /** Wrap a fixed value in a resolved promise (repo methods are async by contract). */
@@ -96,6 +104,7 @@ function makeRepository(overrides: Partial<RecipientRepository> = {}): Recipient
   return {
     listEventRoleMembers: vi.fn(promised<readonly string[]>([])),
     listIdentifiedAttendeeUserIds: vi.fn(promised<readonly string[]>([])),
+    getAttendeeProfileUserId: vi.fn(promised<string | null>(null)),
     getBillingContactUserId: vi.fn(promised<string | null>(null)),
     listPlatformAdminUserIds: vi.fn(promised<readonly string[]>([])),
     ...overrides,
@@ -281,6 +290,125 @@ describe("resolveRecipients — actor exclusion (U2)", () => {
     );
 
     expect(recipients).toEqual([]);
+  });
+});
+
+/**
+ * `attendee_subject` — an `attendee.*` row addresses its **subject** (OP-140 F1,
+ * ADR-0947 D1–D5).
+ *
+ * The trunk routed `attendee.selfie.rejected` to `attendee_identified`, so a
+ * refusal of one attendee's photo reached **every** identified attendee of the
+ * event (ADR-0962 §3 measured `["<owner>", "<other>"]`), and the ordinary
+ * anonymous uploader reached nobody. The fix adds an audience token that names
+ * the row's own subject: `attendee_subject` resolves `payload.profileId` (the
+ * `attendeeEventProfiles._id` the emit carries) to that profile's
+ * `subject.userId`, inside the row's own `tenantId` + `eventId`, and it never
+ * unions with — and never falls back to — the `attendee_identified` broadcast.
+ *
+ * The arms below are ADR-0947's `U1`–`U6`; they are numbered from the record,
+ * not from this file's earlier `U1`/`U2` sections.
+ */
+describe("resolveRecipients — attendee_subject addresses the row's own subject (ADR-0947 U1–U6)", () => {
+  it("U1: resolves attendee_subject to the profile's own user through the port", async () => {
+    const repository = makeRepository({
+      getAttendeeProfileUserId: vi.fn(promised<string | null>("u_owner")),
+    });
+
+    const recipients = await resolveRecipients(
+      makeInput({
+        typeRow: typeWith(["attendee_subject"]),
+        attendeeProfileId: "p_owner",
+        repository,
+      })
+    );
+
+    expect(recipients).toEqual(["u_owner"]);
+    expect(repository.getAttendeeProfileUserId).toHaveBeenCalledWith({
+      tenantId: "t_1",
+      eventId: "ev_1",
+      profileId: "p_owner",
+    });
+    expect(repository.getAttendeeProfileUserId).toHaveBeenCalledTimes(1);
+  });
+
+  it("U2: a row without an attendeeProfileId reaches nobody and never falls back to the broadcast", async () => {
+    const repository = makeRepository({
+      getAttendeeProfileUserId: vi.fn(promised<string | null>("u_owner")),
+      listIdentifiedAttendeeUserIds: vi.fn(promised(["u_broadcast"])),
+    });
+
+    const recipients = await resolveRecipients(
+      makeInput({
+        typeRow: typeWith(["attendee_subject"]),
+        attendeeProfileId: null,
+        repository,
+      })
+    );
+
+    // A missing profile id is not an error: the row resolves to nobody, and
+    // neither the port nor the broadcast arm may answer for it.
+    expect(recipients).toEqual([]);
+    expect(repository.getAttendeeProfileUserId).not.toHaveBeenCalled();
+    expect(repository.listIdentifiedAttendeeUserIds).not.toHaveBeenCalled();
+  });
+
+  it("U3: attendee_subject never reads the identified-attendee broadcast arm", async () => {
+    const repository = makeRepository({
+      getAttendeeProfileUserId: vi.fn(promised<string | null>("u_owner")),
+      listIdentifiedAttendeeUserIds: vi.fn(promised(["u_other"])),
+    });
+
+    const recipients = await resolveRecipients(
+      makeInput({
+        typeRow: typeWith(["attendee_subject"]),
+        attendeeProfileId: "p_owner",
+        repository,
+      })
+    );
+
+    // The broadcast arm would answer `u_other`; the subject's row must not.
+    expect(recipients).toEqual(["u_owner"]);
+    expect(repository.listIdentifiedAttendeeUserIds).not.toHaveBeenCalled();
+  });
+
+  it("U4: an anonymous, unknown or foreign subject resolves to nobody", async () => {
+    const repository = makeRepository({
+      getAttendeeProfileUserId: vi.fn(promised<string | null>(null)),
+    });
+
+    const recipients = await resolveRecipients(
+      makeInput({
+        typeRow: typeWith(["attendee_subject"]),
+        attendeeProfileId: "p_anonymous",
+        repository,
+      })
+    );
+
+    expect(recipients).toEqual([]);
+    expect(repository.getAttendeeProfileUserId).toHaveBeenCalledTimes(1);
+  });
+
+  it("U5: unions with another audience and keeps the shared user exactly once", async () => {
+    const repository = makeRepository({
+      getAttendeeProfileUserId: vi.fn(promised<string | null>("u_owner")),
+      listEventRoleMembers: vi.fn(promised(["u_owner", "u_org"])),
+    });
+
+    const recipients = await resolveRecipients(
+      makeInput({
+        typeRow: typeWith(["attendee_subject", "organizer"]),
+        attendeeProfileId: "p_owner",
+        repository,
+      })
+    );
+
+    expect(recipients).toEqual(["u_owner", "u_org"]);
+  });
+
+  it("U6: the audience schema accepts attendee_subject and still refuses an unknown token", () => {
+    expect(notificationAudienceSchema.parse("attendee_subject")).toBe("attendee_subject");
+    expect(() => notificationAudienceSchema.parse("attendee_everyone")).toThrow();
   });
 });
 

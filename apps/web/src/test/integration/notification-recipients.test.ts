@@ -352,3 +352,114 @@ describe("mongoRecipientRepository — resilience", () => {
     });
   });
 });
+
+/**
+ * `getAttendeeProfileUserId` — one attendee's own identity (OP-140 F1, ADR-0947
+ * D2/D5).
+ *
+ * `attendee_subject` names the single attendee a row is about, so the port reads
+ * exactly one `attendeeEventProfiles` row: the one whose `_id` is the row's
+ * `payload.profileId`, inside the row's own `tenantId` + `eventId`. It answers
+ * `subject.userId` only for an identified subject (`subject.kind === "user"`);
+ * an anonymous, cookie-bound uploader has no reachable account and answers
+ * `null`, which is the §6.4 poll's job (design §2), not this port's. A malformed,
+ * empty or unknown id answers `null` and never throws — the port is read on the
+ * fan-out path, where a throw would keep an event claimable for ever.
+ */
+describe("mongoRecipientRepository — the subject of one attendee row (attendee_subject)", () => {
+  it("R1: answers the identified profile's own user id", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = hex();
+      const eventId = hex();
+      const profileId = hex();
+      const userId = hex();
+
+      await insert(test.db, COLLECTIONS.attendeeEventProfiles, [
+        { _id: new ObjectId(profileId), tenantId, eventId, subject: { kind: "user", userId } },
+      ]);
+
+      const repository = mongoRecipientRepository(test.db);
+
+      await expect(
+        repository.getAttendeeProfileUserId({ tenantId, eventId, profileId })
+      ).resolves.toBe(userId);
+    });
+  });
+
+  it("R2: answers null for an anonymous profile — the poll carries that outcome, not a dispatch", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = hex();
+      const eventId = hex();
+      const profileId = hex();
+
+      await insert(test.db, COLLECTIONS.attendeeEventProfiles, [
+        {
+          _id: new ObjectId(profileId),
+          tenantId,
+          eventId,
+          subject: { kind: "anonymous", attendeeSessionId: hex() },
+        },
+      ]);
+
+      const repository = mongoRecipientRepository(test.db);
+
+      await expect(
+        repository.getAttendeeProfileUserId({ tenantId, eventId, profileId })
+      ).resolves.toBeNull();
+    });
+  });
+
+  it("R3: answers null for a profile of another event or another tenant", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = hex();
+      const eventId = hex();
+      const otherEventProfile = hex();
+      const otherTenantProfile = hex();
+
+      await insert(test.db, COLLECTIONS.attendeeEventProfiles, [
+        // The same tenant's next event.
+        {
+          _id: new ObjectId(otherEventProfile),
+          tenantId,
+          eventId: hex(),
+          subject: { kind: "user", userId: hex() },
+        },
+        // Another tenant's event.
+        {
+          _id: new ObjectId(otherTenantProfile),
+          tenantId: hex(),
+          eventId,
+          subject: { kind: "user", userId: hex() },
+        },
+      ]);
+
+      const repository = mongoRecipientRepository(test.db);
+
+      await expect(
+        repository.getAttendeeProfileUserId({ tenantId, eventId, profileId: otherEventProfile })
+      ).resolves.toBeNull();
+      await expect(
+        repository.getAttendeeProfileUserId({ tenantId, eventId, profileId: otherTenantProfile })
+      ).resolves.toBeNull();
+    });
+  });
+
+  it("R4: answers null for a malformed, empty or unknown profile id without throwing", async () => {
+    await withTestDb(async (test) => {
+      const tenantId = hex();
+      const eventId = hex();
+
+      const repository = mongoRecipientRepository(test.db);
+
+      await expect(
+        repository.getAttendeeProfileUserId({ tenantId, eventId, profileId: "not-an-object-id" })
+      ).resolves.toBeNull();
+      await expect(
+        repository.getAttendeeProfileUserId({ tenantId, eventId, profileId: "" })
+      ).resolves.toBeNull();
+      await expect(
+        repository.getAttendeeProfileUserId({ tenantId, eventId, profileId: hex() })
+      ).resolves.toBeNull();
+    });
+  });
+});

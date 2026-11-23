@@ -182,6 +182,7 @@ async function fanOutAt(
   const recipients: RecipientRepository = {
     listEventRoleMembers: () => Promise.resolve([recipient]),
     listIdentifiedAttendeeUserIds: () => Promise.resolve([]),
+    getAttendeeProfileUserId: () => Promise.resolve(null),
     getBillingContactUserId: () => Promise.resolve(null),
     listPlatformAdminUserIds: () => Promise.resolve([]),
   };
