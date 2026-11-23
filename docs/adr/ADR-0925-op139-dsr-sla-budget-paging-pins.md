@@ -65,11 +65,11 @@ On the delivery cut (`origin/main` `4f4c4926`), with the new block appended:
 ```
 × F3: with a budget of one, three same-day runs warn each of three at-risk requests exactly once, then the next day warns the earliest again
 AssertionError: expected [ '6b043b1f57af56119d485772' ] to deeply equal [ '6b043b1f57af56119d485772', …(1) ]
- ❯ apps/web/src/test/integration/dsr-sla-check.test.ts:352:47
+ ❯ apps/web/src/test/integration/dsr-sla-check.test.ts:355:47
 
 × F3: with a budget of two, the first run warns exactly two and the second run warns the third, with no same-day repeat
 AssertionError: expected [ '6b043b2057af56119d48577b', …(1) ] to have a length of 3 but got 2
- ❯ apps/web/src/test/integration/dsr-sla-check.test.ts:393:23
+ ❯ apps/web/src/test/integration/dsr-sla-check.test.ts:396:23
 
       Tests  2 failed | 4 passed (6)
 ```
@@ -236,8 +236,11 @@ their heads at that moment.
 - **Residual:** a request whose `slaDueAt` leaves the 48-hour window between two same-day runs is not
   exercised. `slaDueAt` is fixed per request (OP-138 stamps it once), so only a clock jump can move
   it and the window is computed from the injected clock.
-- **Residual:** the pins do not require the `limit` to remain bounded. A fix that drops the `limit`
-  would make both cases green (all three warned in run 1 — the control case then asks for exactly two
-  in run 1 and reds, so the control arm does catch it; the residual is that no arm pins the _query_
-  budget itself). The card forbids dropping the `limit`; §3 records it as rejected, and the control
-  case is the one arm that reds if it happens.
+- **Residual:** no arm asserts the query's own `limit` argument; the budget is enforced through the
+  run-1 exactness assertions of **both** cases. A fix that drops the `limit` warns all three at-risk
+  requests in its first run, so case 1 reds at `dsr-sla-check.test.ts:349`
+  (`expected [ id, …(2) ] to deeply equal [ id ]`) and case 2 reds at `:388`
+  (`expected [ id, …(2) ] to deeply equal [ id, …(1) ]`) — `2 failed | 4 passed (6)`, measured at
+  `a371ac65` with `limit` removed from the candidate `find` and no other change. The card still
+  forbids dropping the `limit`; §3 records it as **not acceptable**, and the pins reject it through
+  those two run-1 assertions, not through an assertion on the query object.
