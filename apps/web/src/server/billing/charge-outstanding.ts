@@ -42,8 +42,14 @@ const PROVIDER_FAILURE_CATEGORY = "technical" as const;
 /** MongoDB's duplicate-key refusal: the unique `idempotencyKey` index fired. */
 const DUPLICATE_KEY = 11000;
 
-/** The stored live `subscriptions` fields the charge reads (§14.3). */
-const chargeableSubscriptionSchema = z.object({
+/**
+ * The stored live `subscriptions` fields the charge reads (§14.3).
+ *
+ * Exported so the notification producer (`fan-out.ts` `resolveActionScope`)
+ * offers a `pay_now` only for a row this delegate accepts: one parser, not a
+ * narrower copy that could emit a control the click would refuse (§4.1).
+ */
+export const chargeableSubscriptionSchema = z.object({
   _id: z.instanceof(ObjectId),
   tenantId: z.string(),
   status: subscriptionStatusSchema,

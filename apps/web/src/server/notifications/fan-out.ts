@@ -30,10 +30,10 @@
 
 import type { Db, Document, ObjectId as ObjectIdValue } from "mongodb";
 import { ObjectId } from "mongodb";
-import { z } from "zod";
 
 import { TransportError } from "@/server/adapters/transport-error";
-import { providerRefOf, providerRefsSchema } from "@/server/billing/one-time-charge";
+import { chargeableSubscriptionSchema } from "@/server/billing/charge-outstanding";
+import { providerRefOf } from "@/server/billing/one-time-charge";
 import { getAppEnv } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
@@ -80,11 +80,7 @@ import { SEED_NOTIFICATION_TYPES } from "@/server/notifications/notification-typ
 import { platformRepo } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
 import { addDays } from "@/server/runtime/time";
-import {
-  decideRetryEligibility,
-  mandateStatusSchema,
-  subscriptionStatusSchema,
-} from "@/server/services/subscriptions";
+import { decideRetryEligibility } from "@/server/services/subscriptions";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
 
 /** The Better Auth user collection (schema §13.1) — a literal, not `COLLECTIONS.users`. */
@@ -215,14 +211,6 @@ interface ActionScope {
   readonly recipientUserId: string | null;
   readonly actions: readonly FeedAction[];
 }
-
-/** The stored live `subscriptions` fields the `pay_now` state rule reads (§14.3). */
-const actionableSubscriptionSchema = z.object({
-  status: subscriptionStatusSchema,
-  mandateStatus: mandateStatusSchema.nullable().default(null),
-  pendingDueMinor: z.number().default(0),
-  externalRefs: providerRefsSchema,
-});
 
 /** The invitation decision pair (design §7): the `invitations` document owns the outcome. */
 const INVITATION_ACTIONS: readonly FeedAction[] = [
@@ -589,8 +577,20 @@ async function resolveActionScope(
     id === null
       ? null
       : await platformRepo(db).collection(COLLECTIONS.subscriptions).findOne({ _id: id });
-  const parsed = stored === null ? null : actionableSubscriptionSchema.safeParse(stored);
-  if (!parsed?.success) return null;
+  if (stored === null) return null;
+
+  // The delegate's own parser, not a narrower copy: a row it cannot read is a
+  // `pay_now` whose click answers `500`, so it is not offerable (§4.1).
+  const parsed = chargeableSubscriptionSchema.safeParse(stored);
+  if (!parsed.success) return null;
+
+  // Only the event's own workspace is offerable: `startOutstandingCharge`
+  // re-checks the owner against the row's tenant and answers `403` to a
+  // foreign target (§4.1). Compared as hex so a stored `ObjectId` or string
+  // matches the same row; unreadable ids fail closed.
+  const eventTenant = asObjectId(tenantId)?.toHexString();
+  const rowTenant = asObjectId(parsed.data.tenantId)?.toHexString();
+  if (eventTenant === undefined || rowTenant !== eventTenant) return null;
 
   const chargeable =
     decideRetryEligibility(parsed.data).allowed &&
