@@ -11,6 +11,7 @@ import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
+import { closeActionAffordance } from "@/server/notifications/action-affordance";
 import {
   mapActionOutcome,
   resolveActionDelegation,
@@ -107,12 +108,13 @@ async function delegateAction(input: {
   readonly db: Db;
   readonly row: StoredNotificationRow;
   readonly delegation: NotificationActionDelegation;
+  readonly kind: string;
   readonly target: { readonly id: string; readonly state: string };
   readonly actionKey: string;
   readonly userId: string;
   readonly now: Date;
 }): Promise<DelegateResult> {
-  const { db, row, delegation, target, actionKey, userId, now } = input;
+  const { db, row, delegation, kind, target, actionKey, userId, now } = input;
 
   if (!ObjectId.isValid(target.id)) {
     throw appError("validation_failed", {
@@ -143,6 +145,9 @@ async function delegateAction(input: {
       idempotencyKey: `notification-action:${row._id.toHexString()}:${actionKey}`,
       now,
     });
+    // The charge service settles the ledger; the §7.3 fan-out is the endpoint's,
+    // keyed on the row's own kind so the next delegate arm inherits it.
+    await closeActionAffordance(db, { kind, id: target.id }, now);
     return {
       outcome: charge.kind === "charged" ? "applied" : "already_resolved",
       targetState: charge.subscriptionStatus,
@@ -216,6 +221,7 @@ export const POST = defineRoute({
       db,
       row,
       delegation,
+      kind,
       target: { id: targetId, state: targetState },
       actionKey,
       userId: principal,

@@ -6,6 +6,7 @@ import { isTransactionRetryLimitError, withTransaction } from "@/server/db/trans
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
+import { closeActionAffordance } from "@/server/notifications/action-affordance";
 import { platformRepo, type RepositoryCollection } from "@/server/repos";
 import { decideTerminalOutcome } from "./invitation-decision";
 import { hexId, type InvitationDecisionBody, type InvitationRow } from "./invitation-dto";
@@ -85,6 +86,8 @@ function terminalStatus(decision: InvitationDecision): "accepted" | "rejected" {
 /**
  * Close the in-app affordance for one invitation (§2.3 rule 3).
  *
+ * The invitation arm of {@link closeActionAffordance}, the shared §7.3 write.
+ *
  * @param db - The database handle.
  * @param invitationId - The invitation's hex id.
  * @param now - The instant of the decision.
@@ -98,20 +101,10 @@ export async function closeInvitationAffordance(
   via?: DecisionChannel,
   session?: ClientSession
 ): Promise<void> {
-  await platformRepo(db)
-    .collection(COLLECTIONS.notifications)
-    .updateMany(
-      { "actionTarget.kind": "invitation", "actionTarget.id": invitationId },
-      {
-        $set: {
-          "actions.$[].state": "unavailable",
-          "actionTarget.state": "resolved",
-          ...(via === undefined ? {} : { actionResolvedVia: via, actionResolvedAt: now }),
-          updatedAt: now,
-        },
-      },
-      session === undefined ? {} : { session }
-    );
+  await closeActionAffordance(db, { kind: "invitation", id: invitationId }, now, {
+    ...(via === undefined ? {} : { via }),
+    ...(session === undefined ? {} : { session }),
+  });
 }
 
 /**
