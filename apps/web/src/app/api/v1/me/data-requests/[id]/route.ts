@@ -1,9 +1,9 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 
-import { getAuth } from "@/server/auth";
-import { requireAuth } from "@/server/auth/guards";
+import { verifyDsrReceipt } from "@/server/compliance/receipt";
 import { isoOf } from "@/server/compliance/serialize";
+import { getConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
@@ -11,15 +11,18 @@ import { appError } from "@/server/http/errors";
 import { platformRepo } from "@/server/repos";
 
 import { acknowledgementFor } from "../_lib/acknowledgement";
+import { dsrReadAuth } from "../_lib/principal";
 
 /**
  * `GET /api/v1/me/data-requests/{id}` — the data subject reads their own request
- * back (OP-138, contract §8.1, schema §20.3; ADR-0898).
+ * back (OP-138, contract §8.1, schema §20.3; ADR-0898, ADR-0902 §5).
  *
- * The row belongs to its own data subject alone: another user's id is
- * `404 not_found`, never `403`, so the endpoint is not an existence oracle. The
- * owner gets the counted `executionLog` — "we deleted 412 embeddings" is the
- * whole point — and `export` stays `null` until an export exists.
+ * The row belongs to its own data subject alone — the signed-in user **or** the
+ * anonymous attendee session that filed it, so the `pollUrl` a receipt named
+ * answers its recipient. Any other credential is `404 not_found`, never `403`,
+ * so the endpoint is not an existence oracle. The owner gets the counted
+ * `executionLog` — "we deleted 412 embeddings" is the whole point — and `export`
+ * stays `null` until an export exists.
  */
 
 /** One counted execution step (schema §20.3). */
@@ -55,24 +58,58 @@ function requestIdFrom(request: Request): ObjectId | null {
 export const GET = defineRoute({
   route: "/api/v1/me/data-requests/:id",
   response: detailSchema,
-  auth: (ctx, request) => requireAuth("user", { auth: getAuth(), database: getDb() })(ctx, request),
+  auth: dsrReadAuth,
   handler: async (ctx) => {
+    const db = getDb();
     const principal = ctx.principal;
-    if (principal === undefined) {
-      throw appError("authentication_required");
+    const requestId = requestIdFrom(ctx.request);
+    const receipt = new URL(ctx.request.url).searchParams.get("receipt");
+
+    // A receipt is a credential in its own right: it must verify, and it is only
+    // good for the id it names. A valid token for another id is the ordinary
+    // not-found answer, never a confirmation that the id exists (§8.1).
+    if (receipt !== null) {
+      const verdict = verifyDsrReceipt(receipt, getConfig().internal.apiSecret);
+      if (!verdict.valid) {
+        throw appError("unauthenticated");
+      }
+      if (requestId?.toHexString() !== verdict.requestId) {
+        throw appError("not_found", { details: { resource: "data_request" } });
+      }
     }
 
-    const requestId = requestIdFrom(ctx.request);
+    // The owner is the signed-in user, the live attendee session, or — once that
+    // session has lapsed or gone — the receipt itself. The receipt only ever
+    // reads an anonymous row, so a user's row cannot be opened with one.
+    let owner: Record<string, unknown>;
+    if (principal !== undefined) {
+      owner = { "subject.kind": "user", "subject.userId": new ObjectId(principal) };
+    } else if (receipt !== null) {
+      // `dsrReadAuth` already resolved the credential this request carries, so
+      // the session id it published is the live row — no second lookup. Unset
+      // means it carried none (or a lapsed one), which the receipt forgives.
+      const sessionId = ctx.attendeeSessionId;
+      owner =
+        sessionId === undefined
+          ? { "subject.kind": "anonymous" }
+          : { "subject.kind": "anonymous", "subject.attendeeSessionId": sessionId };
+    } else {
+      // The session that filed it is the credential `dsrAuth` already resolved,
+      // so the detail read does not pay for the same `attendeeSessions` lookup
+      // twice (OP-138).
+      const sessionId = ctx.attendeeSessionId;
+      if (sessionId === undefined) {
+        throw appError("unauthenticated");
+      }
+      owner = { "subject.kind": "anonymous", "subject.attendeeSessionId": sessionId };
+    }
+
     const row =
       requestId === null
         ? null
-        : ((await platformRepo(getDb())
+        : ((await platformRepo(db)
             .collection(COLLECTIONS.dataSubjectRequests)
-            .findOne({
-              _id: requestId,
-              "subject.kind": "user",
-              "subject.userId": new ObjectId(principal),
-            })) as Record<string, unknown> | null);
+            .findOne({ _id: requestId, ...owner })) as Record<string, unknown> | null);
 
     if (row === null) {
       throw appError("not_found", { details: { resource: "data_request" } });

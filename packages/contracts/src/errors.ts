@@ -366,12 +366,19 @@ export type SelfieErrorCode = (typeof SELFIE_ERROR_CODES)[number];
  *
  * `invalid_scope` (`422`, `{ eventIds }`) refuses a request that names an
  * event the caller may not reference — an anonymous attendee's scope is the
- * session's own `eventIds`. It is not an {@link ERROR_CODES} member, which the
- * server catalogue pins to exactly the base Appendix A table, so it is
- * appended to the client-facing enum and transported from its own table
- * (OP-138, ADR-0898 §4). Append-only, like every other code.
+ * session's own `eventIds`.
+ *
+ * `invalid_verified_email` (`422`, `{ field: "verifiedEmail" }`) refuses a
+ * filing whose `verifiedEmail` does not match the caller's verified address
+ * (§8.1's request example, schema §20.3's subject). It is the second member the
+ * OP-138 pin pack adds; a request that omits the field is never refused.
+ *
+ * Neither is an {@link ERROR_CODES} member, which the
+ * server catalogue pins to exactly the base Appendix A table, so both are
+ * appended to the client-facing enum and transported from their own table
+ * (OP-138, ADR-0898 §4, ADR-0901 §2). Append-only, like every other code.
  */
-export const COMPLIANCE_ERROR_CODES = ["invalid_scope"] as const;
+export const COMPLIANCE_ERROR_CODES = ["invalid_scope", "invalid_verified_email"] as const;
 
 /** A member of the closed {@link COMPLIANCE_ERROR_CODES} set. */
 export type ComplianceErrorCode = (typeof COMPLIANCE_ERROR_CODES)[number];

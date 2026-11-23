@@ -115,3 +115,31 @@ keys, §8.1's list endpoint owes an envelope sentence, and §8.1 plus schema §2
 owe the wider request-type union. Execution, the `admin.dsr.sla_risk` cron,
 `privacy.export.ready` / `privacy.erasure.completed` delivery and page cursors
 beyond the first page remain out of scope (OP-150 and later).
+
+## Review — round 1
+
+Sign-off card `t_62d6ef86` records the round-1 (artifact lens) review of the GREEN `t_ab90931d` (PR [#776](https://github.com/yahodu/openpic-webapp/pull/776)). The reviewed head is `a6961a03` (the delivery head) plus the reviewer's refactor commit `bcaff2ed`, which is the PR head that merged; the squash is `91644603`. The suite figures are the review's own runs at `bcaff2ed`; the landing, blob and ledger facts are this sign-off's re-measurement at the base it lands on.
+
+- **Verdict: `APPROVED WITH FINDINGS`**, landed. No blocker and no changes requested: all seven findings are routed, and every one of them is covered by the follow-up pin pack [ADR-0901](ADR-0901-op138-dsr-contract-pins.md) — five as new behaviour and two (`F5`, `F6`) as characterization.
+- **Independent verification at `bcaff2ed`.** Focused `data-request` **19 passed**, `data-subject-requests` **25 passed**, `rate-limit/classes` **42 passed**; whole `unit` **191 files, 3206 passed | 3 skipped**; whole `integration` **153 files, 1618 passed**; `tsc -p` exit `0` on `apps/web` and `packages/contracts`; `eslint` **0 errors** on the changed paths (the one `security/detect-object-injection` warning in `catalog.ts` is pre-existing); `prettier --check` clean; CI at that head green, `ci` **pass** including E2E.
+- **No test, fixture or helper was edited by the delivery.** `git diff --name-only a7d848b6 bcaff2ed` lists no `*.test.ts`, `test/`, fixture or `e2e/` path.
+- **Number and ledger at review time.** `ADR-0899` was unique across `origin/main`, every `.worktrees/*/docs/adr` tree and every open PR head, and the OP-138 lane cell read **`0900`** at both `bcaff2ed` and the squash `91644603`. On the base this section lands on (`origin/main` `49a8226a`) the cell reads **`0908`**, advanced by the follow-up records below; no cell was lowered here and this sign-off mints no number.
+- **Refactor made by the review, carried in the squash (`bcaff2ed`).** The delivery added `policyDocumentHash` to `@/server/compliance/policies` but left a byte-identical private copy in `apps/web/src/app/api/v1/p/events/[slug]/consent/route.ts`; the route now imports the shared helper (`+1/−18`, no behaviour change — whole `unit` `3206 | 3` and whole `integration` `1618` re-run green before and after, `tsc`, `eslint` and `prettier` clean).
+
+### Findings and routing
+
+Seven findings beyond the pinned criteria, all routed on the review's completion to the TEST pin pack `t_df46c867` ([ADR-0901](ADR-0901-op138-dsr-contract-pins.md); PR #778, red by design and never merged) and its gated GREEN `t_0eab7a02` ([ADR-0902](ADR-0902-op138-dsr-consent-contract-green.md); carried in PR #781, squash `50a5e56f`).
+
+- **F1 — Medium — schema §20.3's three `dataSubjectRequests` indexes are undeclared.** The GREEN registered the collection and declared no index, so every read is a collection scan. Pinned by ADR-0901's three unit cases and declared in ADR-0902's `INDEX_SPECS`; the attendee's own list gained a fourth index in the later pair [ADR-0906](ADR-0906-op138-dsr-attendee-index-red.md) / [ADR-0907](ADR-0907-op138-dsr-attendee-index-green.md) (PR #789 / #790).
+- **F2 — Medium — `verifiedEmail` is silently stripped and never matched**, against contract §8.1, schema §20.3 and the card's must-match rule. Pinned by ADR-0901's `I19`–`I22` and implemented in ADR-0902 (`422 invalid_verified_email`, omitted rather than stored as `undefined`); the case-variant comparison is pinned by [ADR-0903](ADR-0903-op138-verified-email-case-pin.md) (PR #784).
+- **F3 — Medium — the acknowledgement records no §15.4 `evidence`, and `GET /me/consents` omits §8.2's `policyUrl`, `eventId` and `method`.** Pinned by ADR-0901's `I17`/`I18` and implemented in ADR-0902: salted `ipHash`/`uaHash`/`method`/`locale` evidence, plus `policyUrl` and `method` stored at write time so a policy rotation cannot strip them. The rotation itself stays with the blocked card `t_48e4b3a2` (number `0904` reserved, not minted).
+- **F4 — Medium — an anonymous attendee's `pollUrl` answered `401`/`404` to the very session that filed it.** Decided and routed by `t_4fdff479` and delivered by the receipt lane `t_b8e9aa3d` / `t_84c1b83e` ([ADR-0905](ADR-0905-op138-dsr-attendee-receipt.md), PR #786 squash `8f45462b`), with ADR-0901's `I23`/`I24` pinning the read-back and the foreign-session `404`.
+- **F5 — Low — a tenantless filing emits no `privacy.dsr.received`** (characterization of §3 item 3; it needs a pinned decision plus a contract qualification). Characterized by ADR-0901's `I26`; the route still skips the emission at `apps/web/src/app/api/v1/me/data-requests/route.ts:287`.
+- **F6 — Low — a repeat acknowledgement writes a second row** (unpinned semantics). Characterized by ADR-0901's `I25` and unchanged by ADR-0902.
+- **F7 — Low — `scope.tenantIds` is stored as hex strings beside `ObjectId` `eventIds`**, and `I9`'s `asId` hid it. Pinned by ADR-0901's `I16` and fixed by ADR-0902, which stores it as `ObjectId[]` through the same helper as `scope.eventIds`.
+
+### Nothing retracted, and what followed
+
+No decision of §1–§6 is retracted or amended. This section only appends and the reviewed bytes stand: this record's blob is `7f413943` at `bcaff2ed`, at the squash `91644603` and at the base it lands on (`origin/main` `49a8226a`), and `docs/adr/README.md` stays byte-identical to that base (blob `2d7d546`).
+
+The follow-ups' own records document what followed: the pin pack [ADR-0901](ADR-0901-op138-dsr-contract-pins.md), the GREEN [ADR-0902](ADR-0902-op138-dsr-consent-contract-green.md), the case-variant pin [ADR-0903](ADR-0903-op138-verified-email-case-pin.md), the attendee receipt [ADR-0905](ADR-0905-op138-dsr-attendee-receipt.md) and the attendee index pair [ADR-0906](ADR-0906-op138-dsr-attendee-index-red.md) / [ADR-0907](ADR-0907-op138-dsr-attendee-index-green.md). Number `0904` stays reserved to the blocked rotation-pin card `t_48e4b3a2`, and no cell of `docs/adr/README.md` is edited here.
