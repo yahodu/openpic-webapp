@@ -133,7 +133,7 @@ Three edits in one spec, no assertion touched:
    { $set: { expireAt: new Date(fixtureInstant("00:00:00.000Z", 1)) } }
    ```
 
-3. **Run the two lapsed reads under the anchored clock** — the seam the route already reads (`systemClock.now()` → `new Date()`), the same shape `attendee-sessions.test.ts` uses for "the clock decides expiry". The calls sit **around** the unchanged assertion lines rather than in a `try` block, so the diff carries no `expect(` line; the fake is undone twice so a failed assertion cannot leak it:
+3. **Run the two lapsed reads under the anchored clock** — the seam the route already reads (`systemClock.now()` → `new Date()`), the same shape `attendee-sessions.test.ts` uses for "the clock decides expiry". The calls sit **around** the unchanged assertion lines rather than in a `try` block, so the diff adds no assertion line; the fake is undone twice so a failed assertion cannot leak it:
 
    ```ts
    vi.useFakeTimers({ toFake: ["Date"] });
@@ -148,7 +148,7 @@ Three edits in one spec, no assertion touched:
 
 - The scenario is unchanged: the session is still filed against by a live credential, lapsed by exactly one day, then read twice with the same cookie; the receipt still wins (`200`) and the credential alone still answers the re-create refusal (`401 attendee_session_expired`).
 - The clock anchor is read **once** at module load (`fixture-clock.ts`), so every derived instant is a pure function of one real-clock read: no drift inside a run and no new nondeterminism beyond the day itself.
-- **No assertion is weakened, added, removed or skipped, and no TTL index, retry, sleep or timeout is introduced.** The `git diff` contains no `it(`, `expect(` or `describe(` line.
+- **No assertion is weakened, added, removed or skipped, and no TTL index, retry, sleep or timeout is introduced.** The spec's diff adds no test-declaration, assertion or suite line.
 
 ### Why the fixture's clock and the route's clock must agree
 
@@ -165,7 +165,7 @@ The TTL monitor runs in `mongod` on the **real** clock; the route runs in-proces
 ## Consequences
 
 - The exposure is removed at its cause for this case at **any** monitor cadence: the lapsed row's `expireAt` is future-dated against the real clock by construction, so no pass can delete it between the `$set` and either read.
-- The file's 45 cases (36 `it()` declarations, one of them `I8`'s ten-row `it.each`) are unchanged in behaviour; only the seeded clock constant, one `$set` value and the clock the two lapsed reads run under move.
+- The file's 45 cases (36 case declarations, one of them `I8`'s ten-row table case) are unchanged in behaviour; only the seeded clock constant, one `$set` value and the clock the two lapsed reads run under move.
 - A second worked example now exists for a shape ADR-0148 did not cover: **a row that must look expired to a reader that reads the real clock**. The record states the three moves (anchor the fixture clock, derive `expiry = anchor − n`, fake `Date` to the anchor) so the next spec of this shape does not have to rediscover that anchoring alone is not enough.
 - The harness pitfall above is recorded so a "forced cadence" claim can be checked (`getParameter`) instead of trusted.
 
