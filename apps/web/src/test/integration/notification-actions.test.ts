@@ -10,6 +10,7 @@ import { POST as createInvitation } from "@/app/api/v1/tenants/[tenantId]/events
 import { DELETE as revokeInvitation } from "@/app/api/v1/tenants/[tenantId]/events/[eventId]/invitations/[invitationId]/route";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
+import { emitDomainEvent } from "@/server/domain/domain-events";
 import { runNotificationFanOut } from "@/server/notifications/fan-out";
 import { invalidateNotificationTypeCache } from "@/server/notifications/notification-type-cache";
 import {
@@ -1407,5 +1408,269 @@ describe("POST /api/v1/me/notifications/{id}/actions/{actionKey} — refusals", 
 
     expect(response.status).toBe(401);
     expect((await errorOf(response)).code).toBe("authentication_required");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* A1/A3/A4/A5 — the producer of the pay_now affordance                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Integration / contract — the **producer** half of the `pay_now` affordance
+ * (OP-140 §4.6 of ADR-0942, contract §7.3, notification design §7).
+ *
+ * Every case above seeds its feed row with `insertFeedRow`, so none of them can
+ * see *who is allowed to receive an affordance*. The endpoint's delegate
+ * (`startOutstandingCharge`) is owner-only (`charge-outstanding.ts:97-105`), and
+ * the trunk offers `actions: []` to every type but an invitation, so the shipped
+ * `pay_now` arm is production code no user can reach. These cases deliver the
+ * real domain event (`billing.payment.failed`, the emit at
+ * `webhook-projection.ts:968`) through the real fan-out and read what the feed
+ * serves:
+ *
+ * 1. an **owner** receives exactly one `pay_now` — the recipient the delegate
+ *    will accept (A1);
+ * 2. a billing contact who is an active member but **not** the owner receives
+ *    the notification and **no** affordance (A3);
+ * 3. a click on the produced row charges once and closes it everywhere (A4);
+ * 4. the key set follows the target's stored state — `pay_now` **or**
+ *    `complete_mandate`, never both (A5, ADR-0942 §4.3).
+ *
+ * The event goes through `emitDomainEvent`, not a hand-built outbox document, so
+ * the row carries production's own validated key, expiry and dispatch flag.
+ *
+ * Assumptions this file makes about the implementation (ADR-0945):
+ *
+ * - **P-1** — the affordance's label copy is **not** pinned (only non-empty), per
+ *   the card's scope note; the `style` is pinned only to §7.1's enumeration.
+ * - **P-2** — `actionTarget.kind` is the emit's `subjectRef.kind` (`subscription`
+ *   here), never a type→kind map (`fan-out.ts:458`).
+ * - **P-3** — A5's positive half pins the *exclusion* (`pay_now` is absent from
+ *   an `incomplete` row with a stored checkout, and `complete_mandate` is absent
+ *   from a `past_due` one), not `complete_mandate`'s own delegate, which stays
+ *   deferred (ADR-0942 §4.7).
+ */
+describe("billing.payment.failed — the producer of the pay_now affordance", () => {
+  /** The type key whose catalogue row must offer the action. */
+  const PAYMENT_FAILED_TYPE_KEY = "billing.payment.failed";
+
+  /** The styles contract §7.1 allows on a rendered action. */
+  const SHIPPED_STYLES = ["primary", "secondary", "danger"];
+
+  /**
+   * Emit one `billing.payment.failed` domain event, as the billing webhook
+   * projection does, and drain it through the notification fan-out.
+   *
+   * The payload and subject are the projection's own (`webhook-projection.ts:968`):
+   * `subjectRef: {kind: "subscription", id}`, `payload: {subscriptionId}`.
+   *
+   * @param fixture - The workspace whose subscription failed a charge.
+   */
+  async function deliverPaymentFailed(fixture: BillingFixture): Promise<void> {
+    await emitDomainEvent(
+      {
+        eventKey: PAYMENT_FAILED_TYPE_KEY,
+        tenantId: fixture.tenantId.toHexString(),
+        actorRef: { kind: "system", id: "billing" },
+        subjectRef: { kind: "subscription", id: fixture.subscriptionId.toHexString() },
+        payload: { subscriptionId: fixture.subscriptionId.toHexString() },
+      },
+      { db: app.db }
+    );
+    await runNotificationFanOut({
+      db: app.db,
+      transport: getNotificationTransport(),
+      recipients: mongoRecipientRepository(app.db),
+      claimerId: "spec.op140-producer",
+    });
+  }
+
+  /**
+   * The `billing.payment.failed` rows the caller's feed serves.
+   *
+   * @param cookie - The caller's session.
+   * @returns Every served row of that type (the `GET` projection, §7.1).
+   */
+  async function paymentFailedRows(cookie: string): Promise<Record<string, unknown>[]> {
+    const response = await readFeed(feedRequest(cookie));
+    expect(response.status).toBe(200);
+    const rows = ((await body(response)).data ?? []) as Record<string, unknown>[];
+    return rows.filter((row) => row.typeKey === PAYMENT_FAILED_TYPE_KEY);
+  }
+
+  /**
+   * The action keys of one served row, in stored order.
+   *
+   * @param row - The served feed row.
+   * @returns One key per served action.
+   */
+  function servedActionKeys(row: Record<string, unknown> | undefined): string[] {
+    return ((row?.actions ?? []) as { readonly key: string }[]).map((action) => action.key);
+  }
+
+  it("A1: serves the owner's produced row exactly one pay_now action", async () => {
+    const billing = await seedBillingWorkspace("op140-a1-owner");
+
+    // Act: the event the billing projection emits after a failed charge.
+    await deliverPaymentFailed(billing);
+
+    // Assert: one row, pointing at the subscription, with one live affordance.
+    const rows = await paymentFailedRows(billing.owner.cookie);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.actionTarget).toEqual({
+      kind: "subscription",
+      id: billing.subscriptionId.toHexString(),
+      state: "open",
+    });
+    const actions = (rows[0]?.actions ?? []) as {
+      readonly key: string;
+      readonly label: string;
+      readonly style: string;
+      readonly state: string;
+    }[];
+    // One action only — a second cannot ride along — and no extra element key.
+    expect(actions).toHaveLength(1);
+    expect(Object.keys(actions[0] ?? {}).sort()).toEqual(["key", "label", "state", "style"]);
+    expect(actions[0]?.key).toBe("pay_now");
+    expect(actions[0]?.state).toBe("available");
+    expect(SHIPPED_STYLES).toContain(String(actions[0]?.style));
+    // The copy itself is not pinned; that it exists is (P-1).
+    expect((actions[0]?.label ?? "").trim().length).toBeGreaterThan(0);
+  });
+
+  it("A3: serves a non-owner billing contact the row and no action", async () => {
+    const billing = await seedBillingWorkspace("op140-a3-billing-contact");
+    const contact = await signInVerified(makeIdentity("op140-a3-billing-contact-user"));
+
+    // Arrange: an active member who is not the owner is named the workspace's
+    // billing contact — the owner-settable field the fan-out's `billing_contact`
+    // audience reads (`notification-recipients.ts:139-145`).
+    await app.db.collection(COLLECTIONS.tenantMembers).insertOne({
+      tenantId: billing.tenantId,
+      userId: contact.userId,
+      role: "member",
+      status: "active",
+      joinedAt: new Date("2026-01-02T00:00:00.000Z"),
+    });
+    await app.db
+      .collection(COLLECTIONS.tenants)
+      .updateOne({ _id: billing.tenantId }, { $set: { billingContactUserId: contact.userId } });
+
+    // Act: the same failed charge.
+    await deliverPaymentFailed(billing);
+
+    // Assert: the audience resolved the contact — the row is theirs...
+    const contactRows = await paymentFailedRows(contact.cookie);
+    expect(contactRows).toHaveLength(1);
+    // ...and offers no control, because `pay_now` would answer `403` to them.
+    expect(contactRows[0]?.actionTarget).toBeNull();
+    expect(contactRows[0]?.actions).toEqual([]);
+
+    // The audience is `billing_contact` only, so the owner receives no row.
+    expect(await paymentFailedRows(billing.owner.cookie)).toHaveLength(0);
+  });
+
+  it("A4: applies the produced pay_now once and closes the produced row", async () => {
+    const billing = await seedBillingWorkspace("op140-a4-produced");
+    await deliverPaymentFailed(billing);
+    const rows = await paymentFailedRows(billing.owner.cookie);
+    expect(rows).toHaveLength(1);
+    const notificationId = String(rows[0]?.id);
+
+    // Act: the owner clicks the affordance the fan-out just wrote.
+    const first = await actOnNotification(
+      actionRequest(billing.owner.cookie, notificationId, "pay_now")
+    );
+
+    // Assert: the transition applied, with one pending charge intent.
+    expect(first.status).toBe(200);
+    expect(await body(first)).toMatchObject({
+      notificationId,
+      actionKey: "pay_now",
+      outcome: "applied",
+      alreadyResolved: false,
+    });
+    const charges = await chargeRows(billing.tenantId);
+    expect(charges).toHaveLength(1);
+    expect(charges[0]).toMatchObject({ status: "pending", amountMinor: DUE_MINOR });
+
+    // Assert: the next feed read serves the produced row closed (§7.3 rule 3).
+    const after = await paymentFailedRows(billing.owner.cookie);
+    expect(after).toHaveLength(1);
+    expect(after[0]?.actionTarget).toEqual({
+      kind: "subscription",
+      id: billing.subscriptionId.toHexString(),
+      state: "resolved",
+    });
+    expect(actionPairs(after[0])).toEqual([["pay_now", "unavailable"]]);
+
+    // Act: the second click.
+    const second = await actOnNotification(
+      actionRequest(billing.owner.cookie, notificationId, "pay_now")
+    );
+
+    // Assert: a replay, and no second charge.
+    expect(second.status).toBe(200);
+    expect(await body(second)).toMatchObject({
+      outcome: "already_resolved",
+      alreadyResolved: true,
+    });
+    expect(await chargeRows(billing.tenantId)).toHaveLength(1);
+  });
+
+  it("A5: never offers pay_now on an incomplete subscription that carries a checkout", async () => {
+    const billing = await seedBillingWorkspace("op140-a5-incomplete");
+    // Arrange: the §4.3 shape `complete_mandate` is live for — `incomplete` with
+    // a stored checkout still inside its window — and no outstanding due, so
+    // `pay_now`'s own condition (`pendingDueMinor > 0`) is not met either.
+    await app.db.collection(COLLECTIONS.subscriptions).updateOne(
+      { _id: billing.subscriptionId },
+      {
+        $set: {
+          status: "incomplete",
+          pendingDueMinor: 0,
+          mandateStatus: "pending",
+          checkout: {
+            url: "https://payments.example.test/checkout/op140-a5",
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
+        },
+      }
+    );
+
+    // Act: the failed charge.
+    await deliverPaymentFailed(billing);
+
+    // Assert: at most one candidate key, and never `pay_now` (§4.3, P-3).
+    const rows = await paymentFailedRows(billing.owner.cookie);
+    expect(rows).toHaveLength(1);
+    expect(servedActionKeys(rows[0])).not.toContain("pay_now");
+    expect(servedActionKeys(rows[0]).length).toBeLessThanOrEqual(1);
+  });
+
+  it("A5: never offers complete_mandate on a past_due row that still carries a checkout", async () => {
+    const billing = await seedBillingWorkspace("op140-a5-past-due");
+    // Arrange: a checkout left behind on a row whose charge already failed —
+    // the presence of `checkout` must not be what selects the key.
+    await app.db.collection(COLLECTIONS.subscriptions).updateOne(
+      { _id: billing.subscriptionId },
+      {
+        $set: {
+          checkout: {
+            url: "https://payments.example.test/checkout/op140-a5-stale",
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
+        },
+      }
+    );
+
+    // Act: the failed charge.
+    await deliverPaymentFailed(billing);
+
+    // Assert: the stale checkout does not add a second key, and `pay_now` is
+    // still the one the row offers.
+    const rows = await paymentFailedRows(billing.owner.cookie);
+    expect(rows).toHaveLength(1);
+    expect(servedActionKeys(rows[0])).toEqual(["pay_now"]);
   });
 });
