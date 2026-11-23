@@ -8,7 +8,10 @@
   `resolveActionScope` (`apps/web/src/server/notifications/fan-out.ts:571-603`) behaviour the
   producer emits and [ADR-0942](ADR-0942-op140-notification-action-endpoint-red.md) §4.1 forbids:
   _never emit a control the delegate refuses_.
-- **Branch:** `OP-140-task-pay-now-delegate-parity-pins`, cut from `origin/main` `0c084248`.
+- **Branch:** `OP-140-task-pay-now-delegate-parity-pins`, cut from `origin/main` `0c084248` and merged
+  with `origin/main` `2c2c6a7a` (PR #846, a docs-only ledger status cell for `0947`) before the push;
+  the focused spec was re-run on the merge result and still reads `3 failed | 25 passed (28)`, the
+  eight `adr-*` guards `280 passed (280)`, and the `OP-140 notifications lane` cell stayed at `0949`.
   **Worktree:** `/root/openpic/openpic-webapp/.worktrees/op140-affordance-producer-green`.
 - **Touches:** one file — `apps/web/src/test/integration/notification-actions.test.ts`, exactly one
   `describe` appended at the end (`+160/−0`; the twenty-three shipped cases, every helper, factory
