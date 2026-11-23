@@ -31,6 +31,7 @@ import {
   type TestApp,
 } from "../helpers/authed-app";
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 
 /**
  * Integration / contract — data-subject requests, consent history and policy
@@ -174,6 +175,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -375,7 +377,9 @@ let seededSlugSeq = 0;
  */
 async function seedEvent(tenantKey: string, ownerUserId: string): Promise<SeededEvent> {
   const _id = new ObjectId();
-  const now = new Date("2026-01-02T00:00:00.000Z");
+  // Anchored to the real UTC day, two days ahead (ADR-0148), so every fixture
+  // this seed derives stays ahead of the real clock and its TTL indexes.
+  const now = new Date(fixtureInstant("00:00:00.000Z", 2));
   seededSlugSeq += 1;
   const slug = `op138${String(seededSlugSeq).padStart(6, "0")}`;
   const name = "Rahul & Priya's Wedding";
@@ -1633,12 +1637,20 @@ describe("I29 — the receipt alone reads the row after the session is gone (§8
       cookie: lapsed.cookie,
       body: { requestType: "access" },
     });
+    // Lapsed to the fixture clock below while sitting in the real future, so
+    // the `attendee_sessions_expire_at_ttl` monitor cannot delete the row
+    // between this write and the refusal it pins (ADR-0941).
     await app.db
       .collection(COLLECTIONS.attendeeSessions)
       .updateOne(
         { _id: new ObjectId(lapsed.sessionId) },
-        { $set: { expireAt: new Date("2026-01-01T00:00:00.000Z") } }
+        { $set: { expireAt: new Date(fixtureInstant("00:00:00.000Z", 1)) } }
       );
+
+    // The route reads the real clock, so both reads below run under the same
+    // anchored instant the row is lapsed against.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(fixtureInstant("00:00:00.000Z", 2)));
 
     const withStaleCookie = await getDataRequestHandler(
       getRequest(String(lapsedFiled.pollUrl), { cookie: lapsed.cookie })
@@ -1658,6 +1670,8 @@ describe("I29 — the receipt alone reads the row after the session is gone (§8
     );
     expect(lapsedBare.status).toBe(401);
     expect((await errorBody(lapsedBare)).code).toBe("attendee_session_expired");
+
+    vi.useRealTimers();
   });
 });
 
