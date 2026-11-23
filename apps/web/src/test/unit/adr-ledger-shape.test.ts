@@ -1,6 +1,6 @@
 /**
  * OP-140 TEST — pin the ADR ledger's **row shape** (S1), the record-`Status:` ↔
- * ledger-cell **agreement** (S2), and the **rowless-record** warning list (S3).
+ * ledger-cell **agreement** (S2), and the **rowless-record** hard failure (S3).
  *
  * **Why this exists.** The seven landed `adr-*` guards check number uniqueness,
  * file-name shape, lane ranges, links, citations, consumers and code-span
@@ -53,23 +53,30 @@
  * as load-bearing: the two words really differ, and only the cell's
  * `superseded` makes it green.
  *
- * **S3 — a missing row is a warning.** A record with no ledger row is **not**
- * an issue: the convention is undecided (`0911` has a row, its GREEN sibling
- * `0963` does not, and ADR-0910's own prose says a GREEN may write none). The
- * list is asserted explicitly so a future change is visible — it is a decision
- * for the orchestrator, not something this pin settles.
+ * **S3 — a missing row is a failure.** Every record under `docs/adr/` carries
+ * its own ledger row, added by the same pull request, so the record set equals
+ * the row set at every merged head and the rowless-record list over the real
+ * tree must be **empty** — `expect(missingRows).toEqual([])`. The list keeps
+ * its `{ number, file }` shape (the docs card's own verification reads it), and
+ * the synthetic cases below prove the rule is not vacuous in either direction:
+ * a record with no row is reported once, a record with its row is not reported.
  *
- * **The card was corrected before this run, and the correction is honoured.**
- * The card body asked S2 to treat a missing ledger row as an S2 issue. The
- * reviewer's comment on the card (`2026-11-23`) narrowed that: S2 is hard only
- * over rows that **exist**, and a rowless record is S3's warning list. That is
- * why `findAdrRecordsWithoutLedgerRow` is a separate function with its own
- * `it()` and why no case here fails because `0963` has no row.
+ * **S2 still reads only rows that exist.** The earlier card body asked S2 to
+ * treat a missing ledger row as an S2 issue; the reviewer's comment
+ * (`2026-11-23`) narrowed that, and the narrowing stands: S2 is hard over rows
+ * that **exist**, and a rowless record is S3's business. That is why
+ * `findAdrRecordsWithoutLedgerRow` is a separate function with its own `it()`,
+ * and why S2's report stays green while S3 hard-fails on the same tree.
  *
- * **The census at this branch head** (`origin/main` `d507965f`, the repair card
- * `t_e3f7eabb` / PR #837's squash): **456** records, **455** ledger rows,
- * **0** shape issues, **0** agreement issues, and exactly one rowless record
- * (`0963`). The pin is not vacuous — replayed against the pre-repair bytes
+ * **The census at this branch head** (`origin/main` `9f51c3bb`: the repair card
+ * `t_e3f7eabb` / PR #837's squash, plus PR #839's S1–S3 pins — both test-only):
+ * **456** records, **455** ledger rows, **0** shape issues, **0** agreement
+ * issues, and exactly one rowless record — `0963`. So S3's real-tree case is
+ * **RED by design** at this head: the record is `Accepted` and carries no row,
+ * and that red is the pin working, not a missing repair. The repair is the
+ * gated docs card that writes the row and merges this flip, so no trunk commit
+ * is red in between. S1 and S2 are not vacuous either — replayed against the
+ * pre-repair bytes
  * (`d507965f^`) the same rules report **20** shape-defective rows (the 19 stray
  * pipes plus `0892`'s three-cell row) and **21** agreement failures (those 20,
  * whose status cell is unreadable, plus `0893`'s `Accepted`/`Draft`). That
@@ -78,12 +85,13 @@
  * three-row case below is the in-suite proof that the parser is not vacuous.
  *
  * **Out of scope, stated so it is not mistaken for a gap.** No `docs/adr/`
- * byte is edited here (the repair card owns that); the ledger's *prose* blocks
- * are not read as tables; a row inside a fenced block would be read, but the
- * real ledger carries none at this head (455 row-shaped lines, 455 ledger
- * rows); a record's multi-line `Status:` value is cut at its first line, which
- * is the only line that carries the word; and the missing-row policy is left
- * open on purpose.
+ * byte is edited here (the gated docs card owns the row and the ADR that
+ * records the rule); the ledger's *prose* blocks are not read as tables; a row
+ * inside a fenced block would be read, but the real ledger carries none at this
+ * head (455 row-shaped lines, 455 ledger rows); a record's multi-line `Status:`
+ * value is cut at its first line, which is the only line that carries the word;
+ * and the missing-row policy is **decided** — this pin is the RED half of it,
+ * not a place to re-open it.
  */
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -511,10 +519,16 @@ describe("checkAdrLedgerStatusAgreement — the real ledger", () => {
 });
 
 /* ------------------------------------------------------------------------- *
- * S3 — a rowless record is a warning, never a failure
+ * S3 — a rowless record is a failure: the record set equals the row set
  * ------------------------------------------------------------------------- */
 
-describe("findAdrRecordsWithoutLedgerRow — a rowless record is a warning", () => {
+describe("findAdrRecordsWithoutLedgerRow — a rowless record is a failure", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("counts a malformed row as present and lists only the record with no row", () => {
     // Arrange — `0892`'s pre-repair shape: a row that is present but wrong. It
     // must not be reported as missing; `0900` really has no row.
@@ -530,23 +544,54 @@ describe("findAdrRecordsWithoutLedgerRow — a rowless record is a warning", () 
     // Act
     const missing = findAdrRecordsWithoutLedgerRow(ledger, records);
 
-    // Assert
+    // Assert — the rowless record is reported with its `{ number, file }` pair.
     expect(missing).toEqual([{ number: "0900", file: "ADR-0900-b.md" }]); // adr-fixture: synthetic record name
   });
 
-  it("lists the real tree's rowless record, and nothing settles the policy", () => {
-    // Arrange + Act — the whole tree.
-    const { missingRows } = checkRepositoryAdrLedgerShape(repoRoot);
+  it("reports exactly the one record of a fixture tree that carries no row", () => {
+    // Arrange — a throwaway tree with one record and a ledger that carries the
+    // header but no row for it.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0302-beta.md": "- **Status:** Accepted\n", // adr-fixture: fixture record name
+      "docs/adr/README.md": [...HEADER_LINES, ""].join("\n"),
+    });
 
-    // Assert — asserted explicitly so a future record that writes no row (or one
-    // that starts writing one) is visible. `0963` is the GREEN sibling ADR-0910
-    // says may write no row; the missing-row convention is an open decision for
-    // the orchestrator, not something this pin decides.
-    expect(missingRows).toEqual([
-      {
-        number: "0963",
-        file: "ADR-0963-op140-attendee-selfie-rejected-and-active-slug-resolver-green.md", // adr-fixture: the cited record name; its Consumers list does not name this spec
-      },
-    ]);
+    // Act
+    const { shape, missingRows } = checkRepositoryAdrLedgerShape(root);
+
+    // Assert — exactly one entry, and the sweep really read the ledger.
+    expect(shape.rows).toBe(0);
+    expect(missingRows).toEqual([{ number: "0302", file: "ADR-0302-beta.md" }]); // adr-fixture: synthetic record name
+  });
+
+  it("reports no record when the fixture tree's only record carries its row", () => {
+    // Arrange — the same tree with the row written, so the empty list below
+    // cannot be a sweep that read nothing.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0301-alpha.md": "- **Status:** Accepted\n", // adr-fixture: fixture record name
+      "docs/adr/README.md": [
+        ...HEADER_LINES,
+        "| [0301](ADR-0301-alpha.md) | the record | Accepted |", // adr-fixture: synthetic row, no such record
+        "",
+      ].join("\n"),
+    });
+
+    // Act
+    const { shape, missingRows } = checkRepositoryAdrLedgerShape(root);
+
+    // Assert — the row was counted and nothing is missing.
+    expect(shape.rows).toBe(1);
+    expect(missingRows).toEqual([]);
+  });
+
+  it("reports no record of the real tree as rowless", () => {
+    // Arrange + Act — the whole tree.
+    const { shape, missingRows } = checkRepositoryAdrLedgerShape(repoRoot);
+
+    // Assert — every record that lands carries its own ledger row, so this list
+    // is empty. A record without its row fails here; the gated docs card writes
+    // the row that repairs the one record this pin currently reports.
+    expect(shape.rows).toBeGreaterThanOrEqual(455);
+    expect(missingRows).toEqual([]);
   });
 });
