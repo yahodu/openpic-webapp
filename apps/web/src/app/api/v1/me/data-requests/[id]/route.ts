@@ -1,7 +1,9 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 
+import { verifyDsrReceipt } from "@/server/compliance/receipt";
 import { isoOf } from "@/server/compliance/serialize";
+import { getConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { defineRoute } from "@/server/http/define-route";
@@ -9,7 +11,7 @@ import { appError } from "@/server/http/errors";
 import { platformRepo } from "@/server/repos";
 
 import { acknowledgementFor } from "../_lib/acknowledgement";
-import { dsrAuth } from "../_lib/principal";
+import { dsrReadAuth, liveAttendeeSession } from "../_lib/principal";
 
 /**
  * `GET /api/v1/me/data-requests/{id}` — the data subject reads their own request
@@ -56,25 +58,52 @@ function requestIdFrom(request: Request): ObjectId | null {
 export const GET = defineRoute({
   route: "/api/v1/me/data-requests/:id",
   response: detailSchema,
-  auth: dsrAuth,
+  auth: dsrReadAuth,
   handler: async (ctx) => {
     const db = getDb();
     const principal = ctx.principal;
+    const requestId = requestIdFrom(ctx.request);
+    const receipt = new URL(ctx.request.url).searchParams.get("receipt");
 
-    // The owner is the signed-in user, or else the anonymous session that filed
-    // it — the credential `dsrAuth` already resolved, so no second read.
+    // A receipt is a credential in its own right: it must verify, and it is only
+    // good for the id it names. A valid token for another id is the ordinary
+    // not-found answer, never a confirmation that the id exists (§8.1).
+    if (receipt !== null) {
+      const verdict = verifyDsrReceipt(receipt, getConfig().internal.apiSecret);
+      if (!verdict.valid) {
+        throw appError("unauthenticated");
+      }
+      if (requestId?.toHexString() !== verdict.requestId) {
+        throw appError("not_found", { details: { resource: "data_request" } });
+      }
+    }
+
+    // The owner is the signed-in user, the live attendee session, or — once that
+    // session has lapsed or gone — the receipt itself. The receipt only ever
+    // reads an anonymous row, so a user's row cannot be opened with one.
     let owner: Record<string, unknown>;
-    if (principal === undefined) {
+    if (principal !== undefined) {
+      owner = { "subject.kind": "user", "subject.userId": new ObjectId(principal) };
+    } else if (receipt !== null) {
+      const session = await liveAttendeeSession(ctx.request);
+      owner =
+        session === null
+          ? { "subject.kind": "anonymous" }
+          : {
+              "subject.kind": "anonymous",
+              "subject.attendeeSessionId": session._id.toHexString(),
+            };
+    } else {
+      // The session that filed it is the credential `dsrAuth` already resolved,
+      // so the detail read does not pay for the same `attendeeSessions` lookup
+      // twice (OP-138).
       const sessionId = ctx.attendeeSessionId;
       if (sessionId === undefined) {
         throw appError("unauthenticated");
       }
       owner = { "subject.kind": "anonymous", "subject.attendeeSessionId": sessionId };
-    } else {
-      owner = { "subject.kind": "user", "subject.userId": new ObjectId(principal) };
     }
 
-    const requestId = requestIdFrom(ctx.request);
     const row =
       requestId === null
         ? null

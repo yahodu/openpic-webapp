@@ -217,7 +217,7 @@ the tree the review approved.
 | 1     | §20.3's three `dataSubjectRequests` indexes                  | `indexes.test.ts` (+3 cases, 15 → 18) | **3 red** / 15 green                                            |
 | 2     | `scope.tenantIds` typed like `scope.eventIds`                | `I16`                                 | **red** (`expected false to be true`)                           |
 | 3     | §15.4 `evidence` on the acknowledgement row                  | `I17`                                 | **red** (`expected undefined to be 'in_app_action'`)            |
-| 3     | §8.2's `policyUrl` / `eventId` / `method` on the history row | `I18`                                 | **red** (4 of 9 keys present)                                   |
+| 3     | §8.2's `policyUrl` / `eventId` / `method` on the history row | `I18`                                 | **red** (6 of 9 keys; 5 of §8.2's eight + `policyDocumentHash`) |
 | 4     | a repeated acknowledgement appends history                   | `I25`                                 | **green** (characterization)                                    |
 | 5     | a matching `verifiedEmail` is stored                         | `I19`                                 | **red** (`expected undefined to be 'i19-…@example.com'`)        |
 | 5     | a differing `verifiedEmail` → `422 invalid_verified_email`   | `I20`                                 | **red** (`expected 202 to be 422`)                              |

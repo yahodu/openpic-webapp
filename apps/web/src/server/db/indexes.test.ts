@@ -336,4 +336,28 @@ describe("index spec pins — OP-138 §20.3 data subject requests (ADR-0901)", (
       ["status", 1],
     ]);
   });
+
+  it('backs the anonymous attendee list with {"subject.attendeeSessionId":1, receivedAt:-1}', () => {
+    const spec = specLeading("subject.attendeeSessionId");
+
+    expect(
+      spec,
+      "missing the §20.3 {subject.attendeeSessionId:1, receivedAt:-1} index on dataSubjectRequests: " +
+        "the attendee branch of GET /me/data-requests filters on subject.kind + " +
+        "subject.attendeeSessionId and sorts {receivedAt:-1, _id:-1}, so the read is a " +
+        "collection scan with a blocking sort without it"
+    ).toBeDefined();
+    expect(spec?.collection).toBe(COLLECTIONS.dataSubjectRequests);
+    expect(spec?.keys).toEqual([
+      ["subject.attendeeSessionId", 1],
+      ["receivedAt", -1],
+    ]);
+    // The route's attendee filter always carries the kind predicate, so the
+    // partial is a legal match; `subject.kind:"user"` rows carry no session key
+    // and stay out of the index entirely.
+    expect(
+      spec?.partialFilterExpression,
+      'the {subject.attendeeSessionId:1, receivedAt:-1} index must be partial on subject.kind:"anonymous"'
+    ).toEqual({ "subject.kind": "anonymous" });
+  });
 });
