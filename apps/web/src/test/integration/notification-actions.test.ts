@@ -1233,7 +1233,7 @@ describe("POST /api/v1/me/notifications/{id}/actions/pay_now", () => {
     const payNow = actions.find((action) => action.key === "pay_now");
     expect(payNow).toBeDefined();
     // The closed affordance has one literal, not "anything but available":
-    // design §7 pins `state:"available"|"unavailable"` and the contract §7.3
+    // design §19.4 pins `state:"available"|"unavailable"`; contract §7.1 item 3
     // renders `"unavailable"` as the disabled button. A wrong string is a bug.
     expect(payNow?.state).toBe("unavailable");
 
