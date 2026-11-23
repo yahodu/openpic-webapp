@@ -1,3 +1,9 @@
+## [1.82.0](https://github.com/yahodu/openpic-webapp/compare/v1.81.0...v1.82.0) (2026-11-23)
+
+### Features
+
+- **notifications:** OP-140 route attendee.selfie.rejected to its own subject ([#838](https://github.com/yahodu/openpic-webapp/issues/838)) ([2ea6e1c](https://github.com/yahodu/openpic-webapp/commit/2ea6e1cd1e1512198aca8a9ac11092faf4edcd18))
+
 ## [1.81.0](https://github.com/yahodu/openpic-webapp/compare/v1.80.0...v1.81.0) (2026-11-23)
 
 ### Features
