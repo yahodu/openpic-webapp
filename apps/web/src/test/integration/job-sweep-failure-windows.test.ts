@@ -10,6 +10,7 @@ import { verificationNudgeJob } from "@/server/jobs/verification-nudge";
 import { fixedClock } from "@/server/runtime/clock";
 
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 import { startTestApp, type TestApp } from "../helpers/authed-app";
 import { recordingLogger } from "../helpers/recording-logger";
 
@@ -55,8 +56,19 @@ import { recordingLogger } from "../helpers/recording-logger";
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
-/** The instant every run in this file is timed at. */
-const NOW = new Date("2026-11-17T09:00:00.000Z");
+/**
+ * The instant every run in this file is timed at, anchored **two UTC days ahead
+ * of the real day** (ADR-0940). `invitations` carries
+ * `invitations_expire_at_ttl` (`{ expireAt: 1 }`, `expireAfterSeconds: 0`), and
+ * mongod evaluates that index against the real wall clock, not against the
+ * injected `fixedClock(NOW)`. A literal anchor would therefore seed a row that
+ * is already TTL-expired at insert time, and a monitor pass could delete it
+ * between the seed and the case's read. The anchor is derived at runtime so
+ * every `NOW ± n days` fixture stays in the real future while keeping its
+ * position relative to the injected clock. See ADR-0148 for the shared helper
+ * and ADR-0940 for this file.
+ */
+const NOW = new Date(fixtureInstant("09:00:00.000Z", 2));
 
 /** The platform collection the deleted account's contact is retained in. */
 const TOMBSTONES = "accountDeletionTombstones";
