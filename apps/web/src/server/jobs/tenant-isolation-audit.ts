@@ -76,6 +76,9 @@ function hexOf(value: unknown): string | null {
   return null;
 }
 
+/** Ids per parent lookup; bounds one `$in` well below MongoDB's 16 MB limit. */
+const PARENT_LOOKUP_BATCH_SIZE = 1_000;
+
 /**
  * Sweep every tenant-scoped collection and raise the day's findings.
  *
@@ -104,16 +107,14 @@ export async function tenantIsolationAudit(options: AuditRunOptions): Promise<Cr
   const missing = new Map<string, Finding>();
 
   for (const collection of TENANT_SCOPED_COLLECTIONS) {
-    const rows = (await platformRepo(db)
-      .collection(collection)
-      .find({}, { projection: { tenantId: 1, eventId: 1 } })
-      .toArray()) as unknown as ScopedRow[];
-
-    scannedByCollection.set(collection, rows.length);
-    scanned += rows.length;
-
+    const projected = { projection: { tenantId: 1, eventId: 1 } };
     const eventIds = new Set<string>();
-    for (const row of rows) {
+    let collectionScanned = 0;
+    // A cursor, not `toArray()`: a whole collection must not be loaded in memory.
+    for await (const row of platformRepo(db)
+      .collection(collection)
+      .find({}, projected) as unknown as AsyncIterable<ScopedRow>) {
+      collectionScanned += 1;
       const tenantId = hexOf(row.tenantId);
       if (tenantId === null) {
         const finding = missing.get(collection) ?? { tenantId: PLATFORM_TENANT_ID, count: 0 };
@@ -133,26 +134,34 @@ export async function tenantIsolationAudit(options: AuditRunOptions): Promise<Cr
       }
     }
 
+    scannedByCollection.set(collection, collectionScanned);
+    scanned += collectionScanned;
+
     // A12: a document whose parent event is gone is not flagged — there is no
     // parent to disagree with, and that is the retention lane's business.
     if (eventIds.size === 0) {
       continue;
     }
     const parentTenant = new Map<string, string>();
-    for (const parent of await platformRepo(db)
-      .collection(COLLECTIONS.events)
-      .find(
-        { _id: { $in: [...eventIds].map((id) => new ObjectId(id)) } },
-        { projection: { tenantId: 1 } }
-      )
-      .toArray()) {
-      const parentId = hexOf(parent._id);
-      const parentTenantId = hexOf(parent.tenantId);
-      if (parentId !== null && parentTenantId !== null) {
-        parentTenant.set(parentId, parentTenantId);
+    const parentIds = [...eventIds].map((id) => new ObjectId(id));
+    // One `$in` per 1,000 parents: an unbounded list hits MongoDB's 16 MB cap.
+    for (let start = 0; start < parentIds.length; start += PARENT_LOOKUP_BATCH_SIZE) {
+      for await (const parent of platformRepo(db)
+        .collection(COLLECTIONS.events)
+        .find(
+          { _id: { $in: parentIds.slice(start, start + PARENT_LOOKUP_BATCH_SIZE) } },
+          { projection: { tenantId: 1 } }
+        ) as unknown as AsyncIterable<{ readonly _id?: unknown; readonly tenantId?: unknown }>) {
+        const parentId = hexOf(parent._id);
+        const parentTenantId = hexOf(parent.tenantId);
+        if (parentId !== null && parentTenantId !== null) {
+          parentTenant.set(parentId, parentTenantId);
+        }
       }
     }
-    for (const row of rows) {
+    for await (const row of platformRepo(db)
+      .collection(collection)
+      .find({}, projected) as unknown as AsyncIterable<ScopedRow>) {
       const tenantId = hexOf(row.tenantId);
       const eventId = hexOf(row.eventId);
       if (tenantId === null || eventId === null || !liveTenants.has(tenantId)) {

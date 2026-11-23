@@ -1,4 +1,4 @@
-import type { Db, ObjectId } from "mongodb";
+import type { Db } from "mongodb";
 import { ObjectId as ObjectIdValue } from "mongodb";
 
 import { dateKeySchema } from "@openpic/contracts";
@@ -266,22 +266,8 @@ function countRow(
   totals.scanned += 1;
 }
 
-/** Upsert one `{ scope, dateKey }` rollup row. */
-async function writeRollup(
-  db: Db,
-  scope: { readonly kind: "tenant" | "event" | "platform"; readonly id: ObjectId | null },
-  dateKey: string,
-  metrics: AnalyticsMetrics,
-  computedAt: Date
-): Promise<void> {
-  await platformRepo(db)
-    .collection(COLLECTIONS.analyticsDaily)
-    .updateOne(
-      { "scope.kind": scope.kind, "scope.id": scope.id, dateKey },
-      { $set: { metrics, computedAt } },
-      { upsert: true }
-    );
-}
+/** Scope rows per `bulkWrite`; a busier day is written in several chunks. */
+const WRITE_BATCH_SIZE = 1_000;
 
 /** Options for one rollup invocation. */
 interface RollupRunOptions {
@@ -424,32 +410,45 @@ export async function analyticsRollup(options: RollupRunOptions): Promise<CronRu
   }
 
   const computedAt = clock.now();
-  let affected = 0;
-  for (const [tenantId, metrics] of totals.tenants) {
-    await writeRollup(
-      db,
-      { kind: "tenant", id: new ObjectIdValue(tenantId) },
-      dateKey,
+  const scopeWrites: {
+    readonly kind: "tenant" | "event" | "platform";
+    readonly id: ObjectIdValue | null;
+    readonly metrics: AnalyticsMetrics;
+  }[] = [
+    ...[...totals.tenants].map(([tenantId, metrics]) => ({
+      kind: "tenant" as const,
+      id: new ObjectIdValue(tenantId),
       metrics,
-      computedAt
-    );
-    affected += 1;
-  }
-  for (const [eventId, metrics] of totals.events) {
-    await writeRollup(
-      db,
-      { kind: "event", id: new ObjectIdValue(eventId) },
-      dateKey,
+    })),
+    ...[...totals.events].map(([eventId, metrics]) => ({
+      kind: "event" as const,
+      id: new ObjectIdValue(eventId),
       metrics,
-      computedAt
-    );
-    affected += 1;
-  }
+    })),
+  ];
   // A6: the platform row exists only when the day has activity — a synthetic
   // all-zero row is indistinguishable from "the job did not run".
   if (totals.scanned > 0) {
-    await writeRollup(db, { kind: "platform", id: null }, dateKey, totals.platform, computedAt);
-    affected += 1;
+    scopeWrites.push({ kind: "platform", id: null, metrics: totals.platform });
+  }
+
+  // One `bulkWrite` per chunk: a day costs `ceil(scopes / 1_000)` round trips
+  // instead of one per scope (ADR-0919 §8, closed by ADR-0928).
+  let affected = 0;
+  for (let start = 0; start < scopeWrites.length; start += WRITE_BATCH_SIZE) {
+    const chunk = scopeWrites.slice(start, start + WRITE_BATCH_SIZE);
+    await platformRepo(db)
+      .collection(COLLECTIONS.analyticsDaily)
+      .bulkWrite(
+        chunk.map(({ kind, id, metrics }) => ({
+          updateOne: {
+            filter: { "scope.kind": kind, "scope.id": id, dateKey },
+            update: { $set: { metrics, computedAt } },
+            upsert: true,
+          },
+        }))
+      );
+    affected += chunk.length;
   }
 
   logger.info("analytics rollup completed", {
