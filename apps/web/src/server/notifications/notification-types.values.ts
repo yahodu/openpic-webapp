@@ -366,6 +366,7 @@ const TYPE_SPECS: readonly TypeSpec[] = [
     severity: "critical",
     optOutAllowed: false,
     throttle: rate(1, 24),
+    actionable: true,
   },
   {
     key: "billing.grace.reminder",

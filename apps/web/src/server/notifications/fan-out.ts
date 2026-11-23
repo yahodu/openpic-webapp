@@ -30,8 +30,10 @@
 
 import type { Db, Document, ObjectId as ObjectIdValue } from "mongodb";
 import { ObjectId } from "mongodb";
+import { z } from "zod";
 
 import { TransportError } from "@/server/adapters/transport-error";
+import { providerRefOf, providerRefsSchema } from "@/server/billing/one-time-charge";
 import { getAppEnv } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
@@ -52,6 +54,7 @@ import {
   type ChannelGroup,
   type NotificationType,
 } from "@/server/notifications/notification-types";
+import { actionKeysForKind } from "@/server/notifications/notification-actions";
 import {
   notificationTemplateSchema,
   type NotificationTemplate,
@@ -77,6 +80,11 @@ import { SEED_NOTIFICATION_TYPES } from "@/server/notifications/notification-typ
 import { platformRepo } from "@/server/repos";
 import { systemClock, type Clock } from "@/server/runtime/clock";
 import { addDays } from "@/server/runtime/time";
+import {
+  decideRetryEligibility,
+  mandateStatusSchema,
+  subscriptionStatusSchema,
+} from "@/server/services/subscriptions";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
 
 /** The Better Auth user collection (schema §13.1) — a literal, not `COLLECTIONS.users`. */
@@ -191,6 +199,39 @@ interface FeedAction {
   readonly state: "available" | "unavailable";
 }
 
+/**
+ * One actionable event's live affordance, resolved once (ADR-0942 §4.3/§4.4).
+ *
+ * `recipientUserId` is the only recipient the delegates accept, or `null` when
+ * the target's own document decides (an invitation is resolved by its token).
+ */
+interface ActionScope {
+  readonly recipientUserId: string | null;
+  readonly actions: readonly FeedAction[];
+}
+
+/** The stored live `subscriptions` fields the `pay_now` state rule reads (§14.3). */
+const actionableSubscriptionSchema = z.object({
+  status: subscriptionStatusSchema,
+  mandateStatus: mandateStatusSchema.nullable().default(null),
+  pendingDueMinor: z.number().default(0),
+  externalRefs: providerRefsSchema,
+});
+
+/** The invitation decision pair (design §7): the `invitations` document owns the outcome. */
+const INVITATION_ACTIONS: readonly FeedAction[] = [
+  { key: "accept", label: "Accept", style: "primary", state: "available" },
+  { key: "reject", label: "Reject", style: "danger", state: "available" },
+];
+
+/** The `subscription` × `pay_now` action, emitted only when the row owes a chargeable due. */
+const PAY_NOW_ACTION: FeedAction = {
+  key: "pay_now",
+  label: "Pay now",
+  style: "primary",
+  state: "available",
+};
+
 /** Per-recipient facts the coordinator loads once. */
 interface RecipientContext {
   readonly userId: string;
@@ -206,6 +247,8 @@ interface EventContext {
   readonly event: DomainEventDocument;
   readonly typeRow: NotificationType;
   readonly templates: ReadonlyMap<string, readonly NotificationTemplate[]>;
+  /** The actionable target's live affordance, or `null` for a non-actionable event. */
+  readonly actionScope: ActionScope | null;
   readonly eventId: string | null;
   readonly tenantId: string;
   readonly now: Date;
@@ -448,26 +491,94 @@ function selectTemplate(
   );
 }
 
-/** Build the in-app action target + actions for an actionable type (schema §19.4). */
+/**
+ * Build one recipient's in-app action target + actions (schema §19.4,
+ * ADR-0942 §4.3/§4.4). The live key set is shared by every recipient; the
+ * recipient gate is what differs.
+ */
 function buildActions(
   typeRow: NotificationType,
-  subjectRef: { readonly kind: string; readonly id: string }
+  subjectRef: { readonly kind: string; readonly id: string },
+  scope: ActionScope | null,
+  userId: string
 ): { readonly actionTarget: FeedRow["actionTarget"]; readonly actions: readonly FeedAction[] } {
-  if (!typeRow.actionable) return { actionTarget: null, actions: [] };
+  if (!typeRow.actionable || scope === null || scope.actions.length === 0) {
+    return { actionTarget: null, actions: [] };
+  }
+  if (scope.recipientUserId !== null && scope.recipientUserId !== userId) {
+    return { actionTarget: null, actions: [] };
+  }
 
-  const actionTarget = { kind: subjectRef.kind, id: subjectRef.id, state: "open" };
+  return {
+    actionTarget: { kind: subjectRef.kind, id: subjectRef.id, state: "open" },
+    actions: scope.actions,
+  };
+}
 
-  // An invitation is the only actionable target in v1 (design §7): accepting or
-  // rejecting delegates to the `invitations` document, which owns the outcome.
-  const actions: readonly FeedAction[] =
-    actionTarget.kind === "invitation"
-      ? [
-          { key: "accept", label: "Accept", style: "primary", state: "available" },
-          { key: "reject", label: "Reject", style: "danger", state: "available" },
-        ]
-      : [];
+/**
+ * Resolve the workspace owner's user id — the one recipient the billing
+ * delegate accepts (`charge-outstanding.ts` `requireWorkspaceOwner`).
+ */
+async function loadOwnerUserId(db: Db, tenantId: string): Promise<string | null> {
+  const id = asObjectId(tenantId);
+  if (id === null) return null;
 
-  return { actionTarget, actions };
+  const membership = (await platformRepo(db)
+    .collection(COLLECTIONS.tenantMembers)
+    .findOne({ tenantId: id, role: "owner", status: "active" })) as {
+    readonly userId?: unknown;
+  } | null;
+  const userId = membership?.userId;
+  if (userId instanceof ObjectId) return userId.toHexString();
+  return typeof userId === "string" ? userId : null;
+}
+
+/**
+ * Resolve one actionable event's live affordance, once per event (ADR-0942
+ * §4.3/§4.4).
+ *
+ * The candidate keys come from the single §7.3 table (`actionKeysForKind`); the
+ * target's own stored state decides which is live. Only kinds whose delegate
+ * exists emit a key — the other four §7.3 rows stay deferred (§4.7).
+ *
+ * @param db - The database handle.
+ * @param tenantId - The event's workspace.
+ * @param subjectRef - The emit's target pointer (`actionTarget.kind`/`.id`).
+ * @param ownerOf - The run's memoised owner lookup.
+ * @returns The live affordance, or `null` when nothing is live for this target.
+ */
+async function resolveActionScope(
+  db: Db,
+  tenantId: string,
+  subjectRef: { readonly kind: string; readonly id: string },
+  ownerOf: (tenantId: string) => Promise<string | null>
+): Promise<ActionScope | null> {
+  if (subjectRef.kind === "invitation") {
+    return { recipientUserId: null, actions: INVITATION_ACTIONS };
+  }
+  if (
+    subjectRef.kind !== "subscription" ||
+    !actionKeysForKind(subjectRef.kind).includes("pay_now")
+  ) {
+    return null;
+  }
+
+  const id = asObjectId(subjectRef.id);
+  const stored =
+    id === null
+      ? null
+      : await platformRepo(db).collection(COLLECTIONS.subscriptions).findOne({ _id: id });
+  const parsed = stored === null ? null : actionableSubscriptionSchema.safeParse(stored);
+  if (!parsed?.success) return null;
+
+  const chargeable =
+    decideRetryEligibility(parsed.data).allowed &&
+    providerRefOf(parsed.data.externalRefs, "subscription") !== null;
+  if (!chargeable) return null;
+
+  const owner = await ownerOf(tenantId);
+  // No resolvable owner: nobody may be offered a key the delegate would refuse.
+  return owner === null ? null : { recipientUserId: owner, actions: [PAY_NOW_ACTION] };
 }
 
 /** True when the type's in-app feed row aggregates instead of inserting fresh. */
@@ -598,7 +709,12 @@ async function writeFeedRow(
   body: string
 ): Promise<void> {
   const { typeRow } = ctx;
-  const { actionTarget, actions } = buildActions(typeRow, ctx.event.subjectRef);
+  const { actionTarget, actions } = buildActions(
+    typeRow,
+    ctx.event.subjectRef,
+    ctx.actionScope,
+    userId
+  );
   const data: Record<string, unknown> = { ...ctx.event.payload };
 
   const base = {
@@ -1222,7 +1338,8 @@ async function fanOutToRecipient(
  */
 async function processEvent(
   options: FanOutRunOptions,
-  event: DomainEventDocument
+  event: DomainEventDocument,
+  ownerOf: (tenantId: string) => Promise<string | null>
 ): Promise<{ readonly retryableFailure: boolean }> {
   const db = options.db ?? getDb();
   const clock = options.clock ?? systemClock;
@@ -1274,6 +1391,9 @@ async function processEvent(
     event,
     typeRow,
     templates,
+    actionScope: typeRow.actionable
+      ? await resolveActionScope(db, event.tenantId, event.subjectRef, ownerOf)
+      : null,
     eventId,
     tenantId: event.tenantId,
     now,
@@ -1331,8 +1451,18 @@ export async function runNotificationFanOut(options: FanOutRunOptions): Promise<
   let processed = 0;
   let failed = 0;
 
+  // One `tenantMembers` read per workspace per run, not per recipient or event
+  // (ADR-0942 §4.4).
+  const ownerByTenant = new Map<string, string | null>();
+  const ownerOf = async (tenantId: string): Promise<string | null> => {
+    if (!ownerByTenant.has(tenantId)) {
+      ownerByTenant.set(tenantId, await loadOwnerUserId(db, tenantId));
+    }
+    return ownerByTenant.get(tenantId) ?? null;
+  };
+
   for (const event of claimed) {
-    const { retryableFailure } = await processEvent(options, event);
+    const { retryableFailure } = await processEvent(options, event, ownerOf);
     if (retryableFailure) {
       await markFailed(event._id, "notifications", { db });
       failed += 1;
