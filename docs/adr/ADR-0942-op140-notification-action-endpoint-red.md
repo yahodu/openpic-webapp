@@ -303,3 +303,48 @@ refactor.
 `b1cec73e`); the merge kept both lane rows ascending, set the `OP-136 jobs lane`
 and `unallocated (future lanes)` cells to `0962`, kept both ledger paragraphs and
 is prettier-clean with the `adr-*` guards green.
+
+## Review — round 1 (artifact lens, card `t_39c2bf80`)
+
+Verdict **APPROVED WITH FINDINGS**; landed by squash on PR
+[#810](https://github.com/yahodu/openpic-webapp/pull/810) from the reviewed
+head `03e8105c`, on the trunk tip `895d368c` (`chore(release): 1.75.0`), with
+the lane ledger unioned against the OP-139 records `ADR-0921`/`ADR-0922`.
+
+Reproduced by the reviewer rather than taken from the handoff: `unit` 194 files
+`3261 passed | 3 skipped`, `integration` 158 files `1673 passed`, the focused
+`28` unit and `10` integration cases of this contract, the seven `adr-*` guards
+`248 passed`, the three pin files byte-identical to the RED head
+(`e3a4f0af…`, `b6e61bff…`, `ca6bab98…`), the GREEN commit `03e8105c` carrying
+four production files and nothing else, and 14/14 PR checks on that head
+(including `ci`, which runs the Playwright suite). A diff-wide honesty scan
+found no fixture-shaped constant, suppression, environment conditional or
+console noise.
+
+Findings, all beyond the pinned contract and routed rather than fixed:
+
+- **F1 (Medium) — `pay_now` closes no affordance.** After `outcome: "applied"`
+  the row still serves `actions: [{ key: "pay_now", state: "available" }]` and
+  `actionTarget.state: "open"`; the closure is invitation-only. This record's
+  own _Out of scope_ narrowed the acceptance criterion to the invitation
+  story, so the implementation follows the accepted contract; the decision to
+  keep that narrowing or supersede it is card `t_d08eeb7f`, which owns the
+  TEST→GREEN fan-out. Latent today: `collab.invite.sent` is the only
+  `actionable` catalogue entry.
+- **F2 (Low) — five §7.3 rows answer `unavailable`** (a documented `shortcut:`
+  comment). No stored checkout URL and no selfie redirect target exist on the
+  trunk, so even those two rows need a design decision; `requeueImages` exists
+  but needs its own adapter. Routed to `t_d08eeb7f`.
+- **F3 (Low) — `I4` does not measure "the provider is asked once".** Measured
+  in a throwaway worktree: a replay branch that re-issued `chargeOnce` and
+  rewrote the refs stayed green, because `recordChargeRefs` `$set`s and the
+  memory provider mints the payment id from the idempotency key. The extra arm
+  is routed to the pre-created TEST card `t_b4c8f1d9`.
+
+Recorded as Info, no card: the retry-charge route's default
+`idempotency-key` fallback is unreachable (`required: true`), `isDuplicateKeyError`
+is duplicated across four `server/` modules, `ratelimit.limiter_failed` logs
+`error` and fails open on every class-keyed route under the harness, and an
+`unavailable` outcome reports the cached `actionTarget.state` as its
+`targetState`. Nothing in §1–§4 or the Assumptions is retracted; the follow-up
+cards' own records document what followed.
