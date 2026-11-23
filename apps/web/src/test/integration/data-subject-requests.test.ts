@@ -1895,8 +1895,8 @@ async function termsHistory(cookie: string): Promise<Record<string, unknown>[]> 
   return (await jsonOf(listed, 200, "GET /me/consents")) as Record<string, unknown>[];
 }
 
-describe("I30 — a consent row keeps its own policyUrl across a rotation (§8.2)", () => {
-  it("I30: the pre-rotation row answers its own policyVersion and URL after the terms rotate", async () => {
+describe("I34 — a consent row keeps its own policyUrl across a rotation (§8.2)", () => {
+  it("I34: the pre-rotation row answers its own policyVersion and URL after the terms rotate", async () => {
     const { user } = await seedOwnerEvent("i30");
     const shipped = await currentSettings();
 
@@ -1941,6 +1941,12 @@ describe("I30 — a consent row keeps its own policyUrl across a rotation (§8.2
       row.policyUrl,
       "§8.2: a consent row answers the policyUrl of the document it acknowledged, not the rotated document's URL"
     ).toBe(acknowledged.url);
+    // The digest is the other half of the pair §15.4 keeps as evidence: a
+    // read-time join to the live document would answer the rotated digest here.
+    expect(
+      row.policyDocumentHash,
+      "§15.4: the policyVersion and policyDocumentHash pair is what makes the acknowledgement demonstrable years later, so the row must carry the digest of the document it acknowledged, not the rotated one"
+    ).toBe(acknowledged.documentHash);
     expect(row.method, "§15.4: the method records how that acknowledgement was given").toBe(
       "in_app_action"
     );
@@ -1948,8 +1954,8 @@ describe("I30 — a consent row keeps its own policyUrl across a rotation (§8.2
   });
 });
 
-describe("I31 — a rotated acknowledgement lands beside the earlier row (§8.2, characterization)", () => {
-  it("I31: two rows across a rotation each carry their own policyVersion and policyUrl pair", async () => {
+describe("I35 — a rotated acknowledgement lands beside the earlier row (§8.2, characterization)", () => {
+  it("I35: two rows across a rotation each carry their own policyVersion and policyUrl pair", async () => {
     const { user } = await seedOwnerEvent("i31");
     const shipped = await currentSettings();
 
@@ -2002,6 +2008,16 @@ describe("I31 — a rotated acknowledgement lands beside the earlier row (§8.2,
       postRotated?.policyUrl,
       "§8.2: the post-rotation row answers the document it acknowledged"
     ).toBe(after.url);
+    // Each row keeps its own half of the §15.4 pair: the digest must come from
+    // the row, not from whichever document the platform happens to serve now.
+    expect(
+      preRotated?.policyDocumentHash,
+      "§15.4: the policyVersion and policyDocumentHash pair is what makes consent demonstrable years later, so the pre-rotation row keeps the digest of the document it acknowledged"
+    ).toBe(before.documentHash);
+    expect(
+      postRotated?.policyDocumentHash,
+      "§15.4: the policyVersion and policyDocumentHash pair is what makes consent demonstrable years later, so the post-rotation row carries its own document's digest"
+    ).toBe(after.documentHash);
     expect(preRotated?.method).toBe("in_app_action");
     expect(postRotated?.method).toBe("in_app_action");
     expect(preRotated?.id).not.toBe(postRotated?.id);
