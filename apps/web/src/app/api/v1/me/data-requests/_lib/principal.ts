@@ -21,8 +21,9 @@ import { systemClock } from "@/server/runtime/clock";
  * the principal itself: a missing credential is `401 unauthenticated`, an
  * account runs the `user` rules with the §0.3 ban exemption (a statutory right
  * is never gated on the ban), and an anonymous session is admitted as-is. The
- * user id is published on `ctx.principal`; a handler that sees none resolves
- * the attendee session itself.
+ * user id is published on `ctx.principal`, an attendee session's row id on
+ * `ctx.attendeeSessionId`, so a handler reads the credential this stage already
+ * resolved instead of paying for the same `attendeeSessions` lookup twice.
  */
 export const dsrAuth: RouteStage = async (ctx, request) => {
   const database = getDb();
@@ -45,6 +46,8 @@ export const dsrAuth: RouteStage = async (ctx, request) => {
         ? {}
         : { sessionId: principal.sessionId }),
     });
+  } else {
+    Object.assign(ctx, { attendeeSessionId: principal.sessionId });
   }
 
   return undefined;

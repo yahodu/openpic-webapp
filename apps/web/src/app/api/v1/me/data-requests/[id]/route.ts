@@ -1,7 +1,6 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 
-import { findRequestAttendeeSession } from "@/server/attendee/session-resolver";
 import { verifyDsrReceipt } from "@/server/compliance/receipt";
 import { isoOf } from "@/server/compliance/serialize";
 import { getConfig } from "@/server/config/env";
@@ -95,14 +94,14 @@ export const GET = defineRoute({
               "subject.attendeeSessionId": session._id.toHexString(),
             };
     } else {
-      const session = await findRequestAttendeeSession({ database: db }, ctx.request);
-      if (session === null) {
+      // The session that filed it is the credential `dsrAuth` already resolved,
+      // so the detail read does not pay for the same `attendeeSessions` lookup
+      // twice (OP-138).
+      const sessionId = ctx.attendeeSessionId;
+      if (sessionId === undefined) {
         throw appError("unauthenticated");
       }
-      owner = {
-        "subject.kind": "anonymous",
-        "subject.attendeeSessionId": session._id.toHexString(),
-      };
+      owner = { "subject.kind": "anonymous", "subject.attendeeSessionId": sessionId };
     }
 
     const row =
