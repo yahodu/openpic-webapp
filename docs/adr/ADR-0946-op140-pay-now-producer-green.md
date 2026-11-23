@@ -133,8 +133,9 @@ $ pnpm exec vitest run --project unit <the seven adr-* guards>
 > (3299)**, `integration` **163 files | 1732 passed (1732)** and the **eight** `adr-*` guards **276
 > passed (276)** — the eighth guard, `adr-ledger-shape`, was already on `origin/main` `4ffcf173` and
 > is green. The block above is left exactly as it was measured; nothing in it is rewritten. The
-> `0946` ledger row's "seven `adr-*` guards `248 passed (248)`" carries the same correction (eight /
-> 276). The two heads are compared with `git diff --name-only 1dc86d01 077967b4`, which lists exactly those two files.
+> `0946` ledger row's "seven `adr-*` guards `248 passed (248)`" carries the same correction — eight /
+> **276** for the guards, and `195` / `3296` / `3 skipped` with `163` / `1732` for the two suite counts.
+> The two heads are compared with `git diff --name-only 1dc86d01 077967b4`, which lists exactly those two files.
 
 The eighteen shipped cases and every helper are untouched and green; the two green-on-arrival arms
 are green for their own reasons (see below), not because a pin was weakened.
