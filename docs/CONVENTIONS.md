@@ -166,6 +166,7 @@ A story is complete only when **all** of the following hold:
 - [ ] No hard-coded tunables — runtime knobs are read from `platformSettings`.
 - [ ] An ADR was added in `docs/adr/` for any new decision.
 - [ ] The ADR number is the `Consumes` value reserved in the card body — never derived from `docs/adr/README.md` — and no same-lane ADR-minting sibling card is in flight.
+- [ ] The ADR record carries its own `docs/adr/README.md` ledger row **in the same PR** — a record with no row or a row with no record is a DoD failure (**ADR-0319**).
 - [ ] The merge gate printed PASS on the exact head SHA and its output is in the PR (§9.1).
 
 This list is mirrored, copy-pasteably, in `.github/pull_request_template.md`.
