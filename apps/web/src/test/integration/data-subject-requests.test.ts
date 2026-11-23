@@ -11,6 +11,8 @@ import * as consentsRouteModule from "@/app/api/v1/me/consents/route";
 import * as legalPoliciesRouteModule from "@/app/api/v1/legal/policies/current/route";
 import { ATTENDEE_COOKIE_NAME } from "@/server/attendee/session-cookie";
 import { hashAttendeeSessionToken } from "@/server/attendee/session-token";
+import { signDsrReceipt } from "@/server/compliance/receipt";
+import { getConfig } from "@/server/config/env";
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
 import {
@@ -1742,5 +1744,79 @@ describe("I31 — the list admits the attendee session and stays scoped to it (�
     );
     expect(onTheList.status).toBe(401);
     expect((await errorBody(onTheList)).code).toBe("unauthenticated");
+  });
+});
+
+describe("I32 — a receipt is never a user row's credential (§8.1)", () => {
+  it("I32: a token minted for a user's filing answers `404 not_found` and returns no row", async () => {
+    const { user } = await seedOwnerEvent("i32");
+    const filed = await fileRequest({ cookie: user.cookie, body: { requestType: "access" } });
+    const requestId = String(filed.id);
+    const token = signDsrReceipt({ requestId, secret: getConfig().internal.apiSecret });
+
+    // Control: the account, not the token, is the credential a user's filing is
+    // read with — the row exists and its owner reads it.
+    const asOwner = await getDataRequestHandler(
+      getRequest(`/api/v1/me/data-requests/${requestId}`, { cookie: user.cookie })
+    );
+    expect(asOwner.status).toBe(200);
+    const ownBody = await bodyOf(asOwner, 200, "GET /me/data-requests/:id (the filing user)");
+    expect(ownBody.id).toBe(requestId);
+
+    // The same id, a token signed with the live secret, and no cookie: the
+    // receipt reads anonymous rows only, so a user's row is the ordinary
+    // not-found path. A token that failed to verify would answer `401`, so the
+    // `404` also proves this token verified.
+    const asReceipt = await getDataRequestHandler(
+      getRequest(`/api/v1/me/data-requests/${requestId}?receipt=${token}`)
+    );
+    expect(asReceipt.status).toBe(404);
+
+    // The whole body is the §0.8 refusal envelope: no `id`, no `executionLog`,
+    // no row.
+    const refusalBody = (await asReceipt.clone().json()) as Record<string, unknown>;
+    expect(keysOf(refusalBody)).toEqual(["error"]);
+    expect(JSON.stringify(refusalBody)).not.toContain(requestId);
+
+    const refusal = await errorBody(asReceipt);
+    expect(refusal.code).toBe("not_found");
+    expect(refusal.details).toEqual({ resource: "data_request" });
+  });
+});
+
+describe("I33 — the receipt read carries the counted `executionLog` (§8.1)", () => {
+  it("I33: a counted step on the filed row comes back through the receipt alone", async () => {
+    const { event } = await seedOwnerEvent("i33");
+    const session = await createAttendeeSession(event.slug, nextIp());
+    const filed = await fileRequest({
+      cookie: session.cookie,
+      body: { requestType: "erasure" },
+    });
+
+    // One counted step, in the shape schema §20.3 declares. A filing stores an
+    // empty log, so this is the only entry the read can return.
+    const at = new Date("2026-11-20T09:30:00.000Z");
+    await app.db
+      .collection<{ executionLog: { step: string; count: number; at: Date }[] }>(
+        DATA_SUBJECT_REQUESTS
+      )
+      .updateOne(
+        { _id: new ObjectId(String(filed.id)) },
+        { $push: { executionLog: { step: "faceEmbeddings.deleted", count: 412, at } } }
+      );
+
+    // The session is gone: the receipt is the only credential left.
+    await app.db
+      .collection(COLLECTIONS.attendeeSessions)
+      .deleteOne({ _id: new ObjectId(session.sessionId) });
+
+    const read = await getDataRequestHandler(getRequest(String(filed.pollUrl)));
+    expect(read.status).toBe(200);
+    const readBody = await bodyOf(read, 200, "GET /me/data-requests/:id (receipt, counted log)");
+    expect(readBody.id).toBe(filed.id);
+    // The counts are the evidence §8.1 promises: the step, its number and when.
+    expect(readBody.executionLog).toEqual([
+      { step: "faceEmbeddings.deleted", count: 412, at: "2026-11-20T09:30:00.000Z" },
+    ]);
   });
 });
