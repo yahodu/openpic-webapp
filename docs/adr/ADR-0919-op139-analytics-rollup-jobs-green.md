@@ -200,3 +200,39 @@ the pack changes, and the implementation already behaves that way.
    card's "drift above a threshold".
 4. **Store an audit cursor instead of reading the live tenant set.** Rejected: a reused cursor
    hides a tenant created since the last run, which is the case the audit exists for.
+
+## Review — round 1
+
+**Verdict: APPROVED WITH FINDINGS** — the artefact-lens round, on reviewed head `468ab713` (PR #780, base `main`). The verdict and its six inline findings are recorded on PR #780 (`#issuecomment-7098166351`, plus comments `4664581097`, `4664581304`, `4664581503`, `4664581724`, `4664581958`, `4664582141`) and on card `t_c414a059`; round 2 then verified the squash `b1cec73e`. This section records round 1, the round that carried the verdict.
+
+### Acceptance criteria → evidence (measured at `468ab713`)
+
+- **The rollup is idempotent per date** — the case `I1: rolling the same date twice leaves every analyticsDaily document identical` compares the canonical JSON of every row, `_id` included, and asserts no duplicated scope/day pair.
+- **Reconciliation corrects drift and records `reconciledAt`** — the case `I2: corrects every drifted tenant, event and profile counter and stamps reconciledAt`, and the agreeing-counter arm `I2: leaves an agreeing counter alone, logs no delta and still stamps reconciledAt`.
+- **The isolation audit reports counts, never document contents** — the case `I3: an orphan tenantId document is flagged once, with counts only`, which asserts `Object.keys(payload).sort() === ["collection","count","reason"]`.
+
+### Measured suite state on the reviewed head
+
+- The four OP-139 integration specs — `analytics-rollup` 9, `counter-reconcile` 6, `tenant-isolation-audit` 4, `dsr-sla-check` 4 — report **4 files / 23 passed (23)** on the real `MongoMemoryReplSet`.
+- `analytics-rollup-buckets` and `counter-reconcile-drift` report **1 failed | 22 passed (23)**, and the single red is §9's contradicting assertion: line 77 of `apps/web/src/test/unit/analytics-rollup-buckets.test.ts` against its own line 45 table row and its line 91. Card `t_17103f93` corrected those two literals, and PR #780 merged as `b1cec73e`.
+- The `adr-numbering` guard reports **29 passed (29)**, and `docs/adr` held **440 records at `468ab713` with no duplicate `ADR-NNNN`**.
+- The implementation commit `5780929f` touches **11 production/config files and zero test files** (`git show --stat`).
+- Re-measured for this section in a detached worktree at `468ab713`, so the figures above are this append's own runs and not a transcription of the round-1 handoff.
+
+### Findings (all beyond the three pinned criteria)
+
+| #   | Severity | Finding                                                                                                      | Routed to                   |
+| --- | -------- | ------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| F1  | Medium   | the audit is blind to a tenant-scoped row that carries no `tenantId` — measured `{"scanned":2,"affected":0}` | `t_f12d7d0f` → `t_b0c51c6e` |
+| F2  | Medium   | `billingTransactions` is never read, so `revenueMinor` is permanently `0`                                    | `t_0555c437` → `t_e704435e` |
+| F3  | Medium   | the DSR check starves its tail once the per-run limit is reached                                             | `t_3f90448c` → `t_4f24b078` |
+| F4  | Medium   | one unbounded `$in` query (the 16 MB limit) over a whole-collection `toArray()` in the audit                 | `t_516fb5e6`                |
+| F5  | Low      | one sequential `updateOne` per scope in the rollup                                                           | `t_516fb5e6`                |
+
+### Scope note
+
+Every finding is _beyond_ the three pinned acceptance criteria, and the delivery satisfies all three. F2 amends the premise of ADR-0918 §A16 for `revenueMinor` only — the other four unlineaged metrics stay pinned by presence and integrality — and F1 extends ADR-0918 §A10 (the platform address) and turns §A11's two exclusive reasons into three.
+
+### Post-review status
+
+The `revenueMinor`, `missing_tenant` and DSR-paging follow-ups are tracked on the cards above, and at this section's landing each of those cards had completed and its record had landed on the trunk: F1 in `0921`/`0922` (PR #811, `6613c5d0`), F2 in `0923`/`0924` (PR #814, `eeb49f2a`), F3 in `0925`/`0926` (PR #817, `a371ac65`) plus its cold-start pin `0927` (PR #820, `fcba6748`), and F4/F5 in `0928` (PR #822, `f416657c`). Nothing in §4–§9 is retracted: those sections describe the state at delivery, and the records named above are where the later behaviour is decided. This section consumes no ADR number, and the OP-139 lane cell read `0929` at `origin/main` `3616db8a` when it was cut.
