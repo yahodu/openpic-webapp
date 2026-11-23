@@ -4,7 +4,9 @@
 - **Card:** `t_b27b8d1a` (OP-140 TEST, Low, phase 6-M2M · epic Notifications) — the **producer
   slice** decided by the round-2 append `t_b1bebbc8` to
   [ADR-0942](ADR-0942-op140-notification-action-endpoint-red.md) §4.6.
-- **Branch:** `OP-140-test-pay-now-producer`, cut from `origin/main` `0628629f` (the squash of the
+- **Branch:** `OP-140-task-pay-now-producer` (the card body suggested `OP-140-test-pay-now-producer`;
+  `test` is not a work type in the CI branch-name rule `^OP-[0-9]+-(feature|bug|task)-[a-z0-9_-]+$`,
+  so the delivered branch uses `task` and nothing else changed), cut from `origin/main` `0628629f` (the squash of the
   round-2 append). **Worktree:** `/root/openpic/openpic-webapp/.worktrees/op140-affordance-producer`.
 - **Touches:** one spec file, **append-only**
   (`apps/web/src/test/integration/notification-actions.test.ts`: five cases in one new `describe`,
