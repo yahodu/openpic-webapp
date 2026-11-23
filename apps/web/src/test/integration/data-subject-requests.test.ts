@@ -1834,3 +1834,176 @@ describe("I33 — the receipt read carries the counted `executionLog` (§8.1)", 
     ]);
   });
 });
+
+/* ──── a consent row keeps the policyUrl it acknowledged, across a rotation ──── */
+
+/**
+ * Pins the property `I18` cannot see: a consent row answers the URL of **the
+ * document it acknowledged**, not the URL of the document the platform serves
+ * now. `currentPolicies` is the single *current* list — terms and biometric read
+ * from `platformSettings.legal` and re-read after `invalidatePlatformSettings()`
+ * — so a reader that joined the URL at read time would keep `I18` green and
+ * still strip every older row's URL at the next `legal.terms.updated` rotation.
+ * That is the "verifiable years later" property schema §15.4 and contract §8.2
+ * state the consent record exists to provide (ADR-0908).
+ *
+ * Append-only: the shipped cases, helpers and fixtures above are untouched.
+ */
+
+/**
+ * A `terms_of_service` triple no seed in this file ships, so neither case can
+ * pass by reading a hard-coded answer: the value must come from the rotated
+ * `platformSettings.legal` document (ADR-0908).
+ */
+const ROTATED_TERMS = {
+  version: "tos-2099-11",
+  url: "https://openpic.in/legal/terms/2099-11",
+  effectiveFrom: "2099-11-01T00:00:00.000Z",
+} as const;
+/**
+ * Rotate the singleton's terms document to {@link ROTATED_TERMS}, the shape
+ * `I7c` already uses: replace the document, then drop the process read cache.
+ *
+ * @param shipped - The `legal` section to carry the untouched fields from.
+ */
+async function rotateTermsPolicy(shipped: PlatformSettings["legal"]): Promise<void> {
+  await app.db.collection(PLATFORM_SETTINGS).deleteMany({});
+  await app.db.collection(PLATFORM_SETTINGS).insertOne(
+    makePlatformSettingsDocument({
+      compliance: { slaDays: { ...SLA_DAYS } },
+      legal: {
+        ...shipped,
+        termsPolicyVersion: ROTATED_TERMS.version,
+        termsPolicyUrl: ROTATED_TERMS.url,
+        effectiveFrom: ROTATED_TERMS.effectiveFrom,
+      },
+    })
+  );
+  invalidatePlatformSettings();
+}
+
+/**
+ * The caller's `terms_of_service` consent history, read through the route.
+ *
+ * @param cookie - The caller's session cookie.
+ * @returns The §8.2 rows the route answered.
+ */
+async function termsHistory(cookie: string): Promise<Record<string, unknown>[]> {
+  const listed = await listConsentsHandler(
+    getRequest(`/api/v1/me/consents?purpose=${TERMS_PURPOSE}`, { cookie })
+  );
+  return (await jsonOf(listed, 200, "GET /me/consents")) as Record<string, unknown>[];
+}
+
+describe("I30 — a consent row keeps its own policyUrl across a rotation (§8.2)", () => {
+  it("I30: the pre-rotation row answers its own policyVersion and URL after the terms rotate", async () => {
+    const { user } = await seedOwnerEvent("i30");
+    const shipped = await currentSettings();
+
+    // Fixture guard: the seed must differ from the document this case installs,
+    // or a hard-coded answer would satisfy the pin by accident (§8.2).
+    expect(
+      {
+        version: shipped.legal.termsPolicyVersion,
+        url: shipped.legal.termsPolicyUrl,
+        effectiveFrom: shipped.legal.effectiveFrom,
+      },
+      "§8.2: the seeded terms triple must differ from the rotated one, or this case cannot tell the two documents apart"
+    ).not.toEqual(ROTATED_TERMS);
+
+    const acknowledged = await currentTermsPolicy();
+    const receipt = await acknowledgeConsentHandler(
+      acknowledgeRequest(user.cookie, acknowledged.version)
+    );
+    expect(receipt.status).toBe(201);
+
+    await rotateTermsPolicy(shipped.legal);
+
+    // Control: the rotation is live, so the history row below cannot pass by
+    // reading an unchanged policy list.
+    const served = await currentTermsPolicy();
+    expect(served.version, "§8.2: the rotation must change the document the platform serves").toBe(
+      ROTATED_TERMS.version
+    );
+    expect(served.url).toBe(ROTATED_TERMS.url);
+    expect(served.version).not.toBe(acknowledged.version);
+
+    const history = await termsHistory(user.cookie);
+    expect(history).toHaveLength(1);
+    const row = history[0] ?? {};
+    // The row is evidence of the document *it* acknowledged (§15.4): after the
+    // rotation it must still answer that version's URL, never the live one.
+    expect(
+      row.policyVersion,
+      "§8.2: a consent row keeps the policyVersion it acknowledged, even after the platform rotates"
+    ).toBe(acknowledged.version);
+    expect(
+      row.policyUrl,
+      "§8.2: a consent row answers the policyUrl of the document it acknowledged, not the rotated document's URL"
+    ).toBe(acknowledged.url);
+    expect(row.method, "§15.4: the method records how that acknowledgement was given").toBe(
+      "in_app_action"
+    );
+    expect(row.eventId, "§8.2: an in-app acknowledgement names no event").toBeNull();
+  });
+});
+
+describe("I31 — a rotated acknowledgement lands beside the earlier row (§8.2, characterization)", () => {
+  it("I31: two rows across a rotation each carry their own policyVersion and policyUrl pair", async () => {
+    const { user } = await seedOwnerEvent("i31");
+    const shipped = await currentSettings();
+
+    expect(
+      {
+        version: shipped.legal.termsPolicyVersion,
+        url: shipped.legal.termsPolicyUrl,
+        effectiveFrom: shipped.legal.effectiveFrom,
+      },
+      "§8.2: the seeded terms triple must differ from the rotated one, or the two rows could share a document"
+    ).not.toEqual(ROTATED_TERMS);
+
+    const before = await currentTermsPolicy();
+    const first = await acknowledgeConsentHandler(acknowledgeRequest(user.cookie, before.version));
+    expect(first.status).toBe(201);
+
+    await rotateTermsPolicy(shipped.legal);
+
+    const after = await currentTermsPolicy();
+    expect(after.version, "§8.2: the rotation must change the document the platform serves").toBe(
+      ROTATED_TERMS.version
+    );
+    // Two distinct documents: without this the per-row pin would be ambiguous.
+    expect(after.version).not.toBe(before.version);
+
+    const second = await acknowledgeConsentHandler(acknowledgeRequest(user.cookie, after.version));
+    expect(second.status).toBe(201);
+
+    const history = await termsHistory(user.cookie);
+    expect(history).toHaveLength(2);
+
+    // Selected by version, never by array index: the list's `grantedAt`
+    // ordering is not what this case decides.
+    const preRotated = history.find((row) => row.policyVersion === before.version);
+    const postRotated = history.find((row) => row.policyVersion === after.version);
+    expect(
+      preRotated,
+      "§8.2: the pre-rotation acknowledgement must still appear in the history after a rotation"
+    ).toBeDefined();
+    expect(
+      postRotated,
+      "§8.2: the post-rotation acknowledgement must appear in the history"
+    ).toBeDefined();
+
+    expect(
+      preRotated?.policyUrl,
+      "§8.2: the pre-rotation row answers its own document's URL, not the rotated document's"
+    ).toBe(before.url);
+    expect(
+      postRotated?.policyUrl,
+      "§8.2: the post-rotation row answers the document it acknowledged"
+    ).toBe(after.url);
+    expect(preRotated?.method).toBe("in_app_action");
+    expect(postRotated?.method).toBe("in_app_action");
+    expect(preRotated?.id).not.toBe(postRotated?.id);
+  });
+});

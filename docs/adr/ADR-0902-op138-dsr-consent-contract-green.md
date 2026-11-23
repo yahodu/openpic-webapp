@@ -189,3 +189,30 @@ ADR-0901 §9 count) and the OP-138 docs debt ADR-0898 recorded.
   existence oracle. Rejected (§6).
 - **Declare `consents`' §15.4 index trio too** — untested in this pack; recorded
   as a follow-up instead (§2).
+
+## Review — round 1
+
+Sign-off card `t_1bb1a84a` records the round-1 (artifact lens) review of this GREEN (card `t_0eab7a02`, PR [#781](https://github.com/yahodu/openpic-webapp/pull/781)). The reviewed head is `29d95e11` and the squash is `50a5e56f`; the suite figures are the review's own runs at `29d95e11`, and the landing, blob and ledger facts below are this sign-off's re-measurement at `8e08f190`, the base this section lands on.
+
+- **Verdict: `APPROVED WITH FINDINGS`**, landed. No blocker and no changes requested: the three findings below are routed to their own cards and none of them contradicts §1–§8.
+- **Independent re-run at `29d95e11`.** `data-subject-requests.test.ts` **38 passed (38)**, `indexes.test.ts` **18 passed (18)**, whole `unit` **191 files / 3209 passed | 3 skipped**, whole `integration` **153 files / 1631 passed**, `tsc -p` exit `0` on `apps/web` and `packages/contracts`, `eslint` **0 errors**, `prettier --check` clean, `gh pr checks 781` **14/14** pass.
+- **The three `eslint` warnings are pre-existing.** Re-running eslint on the base blobs reports the same three: the two `security/detect-object-injection` spots move from `indexes.ts` 979:21 and 1000:5 to 1013:21 and 1034:5, and the one in `catalog.ts` from 677:10 to 685:10. None is introduced by this delivery.
+- **The pin pack was carried, not edited.** `indexes.test.ts`, `catalog.ts`, `packages/contracts/src/errors.ts` and this lane's ADR-0901 are byte-identical at the pin head `b56fb340` and at the squash (blobs `4e3a8709`, `90933195`, `dbdeb417`, `7b419b08`); the spec file is `+58/−0` and those 58 lines are main's `I7b`/`I7c` verbatim. The draft pin PR #778 was closed unmerged as superseded.
+- **Honesty audit:** no `process.env` / `NODE_ENV` / `VITEST` conditional, no `eslint-disable` or `ts-ignore`, no `.skip` or `.only`, and no fixture literal in the production diff.
+- **Landing proof.** `git rev-parse 50a5e56f^{tree}` is `a0fa16a8d22dce7136c28ad693eb4372ad1c95ca`, identical to the `git merge-tree --write-tree origin/main 29d95e11` result computed before the merge; the only path differing from the reviewed head is `docs/adr/ADR-0900-…md` (`+18`), which main landed in `166b2698`. Focused pins re-run on the merged trunk read **47 passed** (`indexes.test.ts` 18 + the `adr-numbering` guard 29) and **38 passed** (`data-subject-requests.test.ts`).
+- **Measured at this section's base `8e08f190`**, where later lane landings added cases: `adr-numbering` **29 passed (29)**, `indexes.test.ts` **19 passed (19)**, `data-subject-requests.test.ts` **45 passed (45)**, `prettier --check "docs/adr/**/*.md"` clean, this record's blob `f30759be`, `docs/adr/README.md` blob `2d7d5465` (`sha256 25f0c0d5…`), the OP-138 lane cell at `0908` and 435 records under `docs/adr/`.
+
+### Findings and routing
+
+Three findings beyond the pinned criteria, all routed by the review's completion. Each is named by the card that owns it; the landing facts are this sign-off's re-measurement.
+
+- **F1 · Low · card `t_1e732648`** — `GET /me/data-requests/{id}` resolved the attendee session twice: `dsrAuth` → `resolvePrincipal` → `resolveAttendee` → `findRequestAttendeeSession`, and then the handler called `findRequestAttendeeSession` again at `[id]/route.ts:69`. Landed as PR #783 (squash `d27aceb8`), and the same duplicate read in the receipt arm and in the list read followed in cards `t_31f0a940` (PR #794, squash `996c39a2`) and `t_8be9aceb` (PR #796, squash `0083856f`).
+- **F2 · Medium · card `t_4fdff479`** — the attendee's own DSR read was bound to a credential whose TTL (`platformSettings.retention.attendeeSessionDays`, default 30) matches the SLA, no re-verification path existed for an anonymous attendee, and the list route stayed `user`-only. The orchestrator decided a signed, stateless receipt token carried in the `pollUrl` with no `exp` claim, plus an attendee-symmetric list read, and routed it as a RED → GREEN → REVIEW chain recorded in [ADR-0905](ADR-0905-op138-dsr-attendee-receipt.md) (PR #786, squash `8f45462b`).
+- **F3 · Low · card `t_4b37e5de`** — `verifiedEmail` is compared verbatim, so a case-variant of the caller's own address answers `422`, and no pin held that rule. Landed as PR #784 (squash `2c278191`): `I27` characterizes the verbatim comparison (`+58/−0` on the spec, `I1`–`I26` and every helper byte-identical) and [ADR-0903](ADR-0903-op138-verified-email-case-pin.md) records the decision, including the rejected normalise option.
+- **Info (no card)** — the `subject.attendeeSessionId` hex-string versus `subject.userId` `ObjectId` asymmetry is pre-existing and pinned by `I23`; `gh pr checks 781` reported 14/14 pass at the reviewed head.
+
+### Nothing retracted, and what followed
+
+No decision of §1–§8 is retracted or amended, and this section appends only. §9's two residual sentences stand as written for the tree they describe: the list route's `user`-only scope and the verbatim `verifiedEmail` comparison were the shipped state, and the follow-ups changed what came next rather than what this record measured. The follow-ups' own records document that: [ADR-0903](ADR-0903-op138-verified-email-case-pin.md) for the case-variant pin, [ADR-0905](ADR-0905-op138-dsr-attendee-receipt.md) for the durable receipt and the attendee list read, and the attendee index pair [ADR-0906](ADR-0906-op138-dsr-attendee-index-red.md) / [ADR-0907](ADR-0907-op138-dsr-attendee-index-green.md) for the fourth index the list read gained.
+
+The reviewed bytes stand: this record's blob is `f30759be` at the reviewed head `29d95e11`, at the squash `50a5e56f` and at the base this section lands on (`8e08f190`). `docs/adr/README.md` is byte-identical to that base (blob `2d7d5465`); at the squash it read `8a6b5218` with the lane cell at `0903`, and the base reads `0908` because later OP-138 records advanced it. This sign-off mints no ADR number, adds no ledger row and edits no cell of `docs/adr/README.md`.
