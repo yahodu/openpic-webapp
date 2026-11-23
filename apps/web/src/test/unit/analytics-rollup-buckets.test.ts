@@ -74,8 +74,10 @@ describe("U1: the date bucket computation in Asia/Kolkata", () => {
   it("returns the half-open UTC window of an IST day", () => {
     const window = dayWindowUtc("2026-11-17", IST);
 
-    expect(window.start.toISOString()).toBe("2026-11-17T18:30:00.000Z");
-    expect(window.end.toISOString()).toBe("2026-11-18T18:30:00.000Z");
+    // IST midnight on the 17th is 18:30Z on the 16th: the window opens one UTC
+    // day earlier than the key reads, and ends at the 18th's IST midnight.
+    expect(window.start.toISOString()).toBe("2026-11-16T18:30:00.000Z");
+    expect(window.end.toISOString()).toBe("2026-11-17T18:30:00.000Z");
   });
 
   it("returns the UTC-midnight window when the zone is UTC", () => {
