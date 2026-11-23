@@ -11,6 +11,7 @@ import { fixedClock } from "@/server/runtime/clock";
 
 import { startTestApp, type TestApp } from "../helpers/authed-app";
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
+import { fixtureInstant } from "../helpers/fixture-clock";
 import { recordingLogger } from "../helpers/recording-logger";
 
 /**
@@ -97,8 +98,19 @@ import { recordingLogger } from "../helpers/recording-logger";
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
-/** The instant every run in this file is timed at. */
-const NOW = new Date("2026-11-17T09:00:00.000Z");
+/**
+ * The instant every run in this file is timed at, anchored **two UTC days ahead
+ * of the real day** (ADR-0940). `upload_sessions` carries
+ * `upload_sessions_expire_at_ttl` (`{ expireAt: 1 }`, `expireAfterSeconds: 0`),
+ * and mongod evaluates that index against the real wall clock, not against the
+ * injected `fixedClock(NOW)`. A literal anchor would therefore seed a row that
+ * is already TTL-expired at insert time, and a monitor pass could delete it
+ * between the seed and the assertion. The anchor is derived at runtime so every
+ * `NOW ± n days` fixture stays in the real future while keeping its position
+ * relative to the injected clock. See ADR-0148 for the shared helper and
+ * ADR-0940 for this file.
+ */
+const NOW = new Date(fixtureInstant("09:00:00.000Z", 2));
 
 /** The page size every draining case runs with — smaller than its population. */
 const PAGE = 2;
@@ -167,7 +179,9 @@ async function seedSession(updatedAt: Date): Promise<ObjectId> {
     ],
     createdAt: new Date(updatedAt.getTime() - DAY_MS),
     updatedAt,
-    // Inside the §16.2 five-day window, so the TTL monitor cannot race a case.
+    // Inside the §16.2 five-day window. `NOW` is anchored ahead of the real day
+    // (ADR-0940), so the row is future-dated against the TTL monitor's clock and
+    // a pass cannot delete it between this seed and a case's read.
     expireAt: new Date(NOW.getTime() + 4 * DAY_MS),
   });
   return sessionId;
