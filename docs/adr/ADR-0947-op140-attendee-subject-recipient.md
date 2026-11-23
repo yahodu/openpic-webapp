@@ -1,6 +1,6 @@
 # ADR-0947 — OP-140: an `attendee.*` row reaches its subject (`attendee_subject`)
 
-- **Status:** Accepted (TEST / RED by design; the GREEN `t_5039edaa` implements §Decision D5 on this branch)
+- **Status:** Accepted (TEST half RED by design; the GREEN `t_5039edaa` implemented §Decision D5 and landed as `2ea6e1cd`, PR #838)
 - **Date:** 2026-11-23
 - **Card:** `t_f26559df` (OP-140 TEST, Low, phase 6-M2M · epic Notifications) — the RED half of finding **F1** in [ADR-0962](ADR-0962-op140-attendee-selfie-slug-resolver-and-rejected-producer.md) §3. The routing decision is card `t_f6f20d62` (`openpic-orchestrator`); the producer GREEN is the parent `t_c38a626a` ([ADR-0963](ADR-0963-op140-attendee-selfie-rejected-and-active-slug-resolver-green.md)).
 - **Branch:** `OP-140-task-attendee-subject-recipient` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/op140-attendee-subject-recipient` · **Base:** `origin/main` `942a31e5` (the squash of PR #835, `b6cad7ea`, plus the release commit).
@@ -68,7 +68,7 @@ The port method is deliberately **not** optional: every fake of `RecipientReposi
 
 ### D7 — Numbers
 
-`Consumes: 0947`, used as given. `docs/adr/README.md` gains this row (rows ascend, so it follows `0962`) and the `OP-140 notifications lane` cell moves `0945` → **`0948`** (the higher of the trunk value and `max(consumed)+1`). No other cell moves, no cell is lowered, and the pool cursor is untouched.
+`Consumes: 0947`, used as given. `docs/adr/README.md` gains this row (rows ascend; at the time of writing it sits after `0944` and before `0962`) and the `OP-140 notifications lane` cell moves `0945` → **`0948`** (the higher of the trunk value and `max(consumed)+1`). No other cell moves, no cell is lowered, and the pool cursor is untouched.
 
 ## Evidence
 
@@ -157,3 +157,22 @@ When the catalogue row carries `attendee_subject` and an emitted rejection reach
 - **The port method is a compile-time checklist.** Every `RecipientRepository` fake must now answer `getAttendeeProfileUserId`, so a new fake cannot quietly route an `attendee.*` row to a broadcast.
 - **The feed row still carries no affordance.** `attendee.selfie.rejected` ships `actionable: false` (`build()`'s default; its §4.8 spec has no `actionable` key), so `buildActions` returns a `null` target and the row has no `actionTarget` even though the emit's subject is the selfie. Giving it the `selfie × retry` action is the delegate arm ADR-0942 §2 deferred (ADR-0963 §Follow-ups F-3). `E1` pins today's `null` deliberately, so that arm reds it by design — recorded as **F-1** of this card rather than smuggled into a routing record.
 - **No migration, no seed edit for the audience:** `audiences` is a `ROUTING_FIELDS` member, so the boot seed reconciles the stored row and bumps its `version` by one (D6).
+
+## Review — round 1 (card `t_f26559df`, reviewer)
+
+**Verdict: APPROVED** as a RED pin delivery; the draft PR #838 carried the pins and the GREEN `t_5039edaa` completed the branch. No code change was requested, and nothing the record decides changes: the only edit inside a decision section is the §D7 parenthetical corrected as F1 below, and the header's `Status:` line now names the landing squash instead of "on this branch".
+
+What this review measured itself, at the reviewed head `3dcefbbd` and again on the merged trunk `bd2dbb39`:
+
+- the four spec files are RED for the named reasons — unit `2 failed | 40 passed (45)` (`U1` `expected [] to deeply equal [ 'u_owner' ]`, `U3` the same, `U4` the port not called, `U6` the `ZodError`, the catalogue still `[ 'attendee_identified' ]`) and integration `2 failed | 11 passed (17)` (`R1`–`R4` `repository.getAttendeeProfileUserId is not a function`, `E1` `expected … to have a length of 1 but got 2`, `E3` `expected [ … ] to deeply equal []`).
+- the pins go green under D5: `45 passed (45)` unit and `17 passed (17)` integration, measured in a throwaway worktree at `3dcefbbd` and again at the merged trunk `bd2dbb39` — the production tree the branch now carries is the one both packs accept.
+- the three mutation arms reproduce on the merged trunk, each restored and `sha256`-checked afterwards: **A** an `attendee_subject` that resolves through `listIdentifiedAttendeeUserIds` (the null-profile guard kept) → `3 failed | 26 passed (29)` (`U1`, `U3`, `U4`) plus `E1` `1 failed | 2 passed (3)` and `E3` green, because a row without a `profileId` still breaks on the guard; **B** the guard reduced to the event id with the port called on `""` → `1 failed | 28 passed (29)` (`U2` alone) with `E3` `3 passed (3)`, so the card's prediction that B would red `E3` is correctly corrected — the real port answers `null` for `""` and the guard's only observable is that the port is not called; **C** `findOne({ _id })` without the tenant and event match → `1 failed | 13 passed (14)` (`R3` alone).
+- no production file in the RED diff: the four production blobs are byte-identical to the branch point `942a31e5` — one OID each for `fan-out.ts` (`b65d3c25`), `notification-types.ts` (`29a08811`), `notification-types.values.ts` (`c3b464e7`) and `notification-recipients.ts` (`41298fd2`) at both commits — `tsc` red only in the two touched spec files (28 errors, all about the token, the method and the field), `eslint` exit `0`, `prettier --check` clean, and the `adr-*` guards `191 passed (191)`.
+- whole `unit` `2 failed | 192 passed (194)` files (`5 failed | 3263 passed | 3 skipped (3271)`) — the two red files are the two this card touches, and the CI `unit_test` and `test_coverage` jobs name the same two.
+
+Findings:
+
+- F1 (Low, corrected above in §D7): the clause said the ledger row "follows `0962`"; the row sits **before** it. Measured at `3dcefbbd`, at `2ea6e1cd` and at the trunk `bd2dbb39`, the order is `0944` → `0947` → `0962`.
+- F2 (Info, coupling): `E1` pins `actionTarget: null`, because `attendee.selfie.rejected` ships `actionable: false` — the catalogue row (`notification-types.values.ts:805-813`) carries no `actionable` key, so `build()`'s default `actionable: spec.actionable ?? false` (`:145`) applies and `fan-out.ts:477` returns the `null` target. The card's `actionTarget.kind === "selfie"` arm is unsatisfiable without the deferred affordance. **When the `selfie × retry` delegate arm lands (ADR-0942 §2 / ADR-0963 F-3) that assertion must flip** — the arm's card must update it rather than delete it.
+- F3 (Info): D6 (the boot seed reconciling `audiences` and bumping the stored row's `version` by one) is not pinned; pre-existing seed behaviour, outside the card's scope.
+- F4 (Info, post-merge record accuracy): once the GREEN landed as `2ea6e1cd`, the header's `Status:` line still read "implements §Decision D5 on this branch"; it is corrected in the header. The `0947` ledger row's status cell carries the same staleness and is out of this record's scope (`docs/adr/README.md` stays byte-identical to the trunk) — it is card `t_a2cbb922`.
