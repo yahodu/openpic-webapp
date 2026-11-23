@@ -170,10 +170,10 @@ apps/web/src/test/integration/consent-acknowledgement-service.test.ts(7,36):
 **Type-correctness probe.** A throwaway faithful implementation at the intended
 path made `tsc -p apps/web/tsconfig.json --noEmit` exit `0` and the file answer
 `Tests 9 passed (9)` — so every case is satisfiable and fails at assertion level,
-never at load. That stub was deleted before handoff (`sha256
-20f57303ebdc47919f0e6506b55173dc8b8fcd4114a4de7f09b82cc69d23452d` before and
-after the mutation runs, and the file is gone from `git status`); no production
-file is in this diff.
+never at load. That stub was deleted before handoff (it is absent from `git
+status`), so the deleted artefact can no longer be re-derived and no digest of it
+is asserted here; what stands is the four-mutation measurement below. No
+production file is in this diff.
 
 **Four single-anchor mutations of that stub**, each restored byte-identically:
 
