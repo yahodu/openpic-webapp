@@ -65,6 +65,11 @@ export interface CronJobContext {
   readonly clock: Clock;
   /** The logger the job may use for its own per-record diagnostics. */
   readonly logger: Logger;
+  /**
+   * The explicit `YYYY-MM-DD` day a re-runnable job was asked for (`?date=`),
+   * or `undefined` when the job derives its own window (ADR-0919).
+   */
+  readonly date?: string;
 }
 
 /** Options accepted by {@link CronJob.run}. */
@@ -75,6 +80,8 @@ export interface CronRunOptions {
   readonly clock: Clock;
   /** The logger the summary line is emitted through. */
   readonly logger: Logger;
+  /** The explicit `YYYY-MM-DD` day a re-runnable job was asked for (`?date=`). */
+  readonly date?: string;
 }
 
 /** A job declaration accepted by {@link defineCronJob}. */
@@ -157,7 +164,12 @@ export function defineCronJob(definition: CronJobDefinition): CronJob {
       });
 
       const startedAt = options.clock.now();
-      const outcome = await definition.run({ limit, clock: options.clock, logger: options.logger });
+      const outcome = await definition.run({
+        limit,
+        clock: options.clock,
+        logger: options.logger,
+        ...(options.date === undefined ? {} : { date: options.date }),
+      });
       const finishedAt = options.clock.now();
       const durationMs = finishedAt.getTime() - startedAt.getTime();
 

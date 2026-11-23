@@ -59,6 +59,22 @@
     {
       "path": "/api/v1/internal/cron/attendee-no-match-check",
       "schedule": "35 * * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/analytics-rollup",
+      "schedule": "30 20 * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/counter-reconcile",
+      "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/tenant-isolation-audit",
+      "schedule": "15 21 * * *"
+    },
+    {
+      "path": "/api/v1/internal/cron/dsr-sla-check",
+      "schedule": "45 2 * * *"
     }
   ]
 }
