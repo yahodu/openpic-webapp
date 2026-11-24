@@ -210,3 +210,46 @@ diff) and its `15 passed (15)` are inside the integration count.
 The discriminator was re-measured on that same merged tree and answered `2 passed (2)` focused and
 `1 failed | 16 passed (17)` against the `typeKey`-scoped variant, `F1D` alone, with `fan-out.ts`
 restored to `sha256 c6a0cd45…`.
+
+## Round-1 review sign-off
+
+- **Reviewer:** `openpic-webapp-reviewer` · **Round:** 1 (artifact lens) ·
+  **Card:** `t_dd0046f3` · **Verdict: APPROVED WITH FINDINGS** — the findings are beyond the pinned
+  criteria, not against them.
+- **Verified on the merged artifact, not the narrative.** PR
+  [#911](https://github.com/yahodu/openpic-webapp/pull/911) head `2190e25c`, squash `f0422e2e`:
+  `git diff 2190e25c f0422e2e` is empty (byte-identical) and `f0422e2e` is an ancestor of
+  `origin/main`; the diff against its parent is exactly three files (847 insertions, 5 deletions) —
+  the new spec, this record, and the ledger, whose 8 insertions and 5 deletions are the four
+  pool-mirror cells and ADR-0980's forward pointer.
+- **Checks re-run by the reviewer on a detached worktree at `f0422e2e`:** focused new spec
+  `2 passed (2)`; the single-key `typeKey` mutation of `fan-out.ts:425`
+  `1 failed | 16 passed (17)` (`F1D` alone, `expected [] to have a length of 1 but got +0`), with
+  `fan-out.ts` restored to
+  `sha256 c6a0cd457c05d25efb1bd70fc1624901333c7158827f6b0e9484d52cc9421481`;
+  `unit` 201 files / `3401 passed | 3 skipped (3404)`; `integration` 167 files /
+  `1812 passed (1812)`; `tsc` `0` / `0` / `0` on the three projects; the ten `adr-*` guard files
+  320 passed (320); prettier clean on the spec, this record and the ledger; every
+  `gh pr checks 911` check `pass` (`ci`, `lint`, `test_coverage`, `secret-scan`, `audit`, CodeQL).
+- **Findings routed by card id, not by ADR number** — an unmerged record may renumber before it
+  lands, so the routing is the card:
+  - **F1 (Low) — §Consequences' "the near-miss class is closed" holds for the single-key shape
+    only.** A `typeKey` **list** variant —
+    `new Set(["billing.plan.downgrade_scheduled", "billing.plan.upgraded"])` gating the splice —
+    reads `17 passed (17)`: the shipped rule's own answer, so the pair does not tell a two-key
+    scope from the audience scope. Routed to `t_8217bd99` (a synthetic-`typeKey` unit pin over the
+    exemption).
+  - **F2 (Medium) — the two §D5 items were measured but not routed.** No board card existed for the
+    absent-`currentPeriodEnd` duplicate (two events, two feed rows, two emails) or for
+    [ADR-0980](ADR-0980-op101-downgrade-scheduled-event-green.md) §Consequences' recorded `500`
+    against the eight measured `[200, 200]` rounds. Routed to `t_cb891a2c` (orchestrator
+    decision), because both are product decisions rather than pins.
+- **Recorded, no card:** `F1E` is a control, not a discriminator, exactly as §Evidence says — and the
+  reviewer's probe shows it is load-bearing against the "spare the actor as such" shape: adding the
+  actor for every `billing_contact` type and skipping the splice reds `F1E` **and** the downgrade
+  spec's `D2` (`2 failed | 15 passed (17)`). The ~250 lines of fixture helpers this pack duplicates
+  from `billing-downgrade-scheduled-event.test.ts` are accepted under §D1: extracting them would
+  have touched that file's bytes, which the commissioning card forbade.
+- **Nothing in §D1–§D6 or §Evidence is retracted.** Every figure above stands at the merged head;
+  the one sentence this review narrows is §Consequences' "closed" claim, and the narrowing is routed
+  (F1) rather than re-stated here.
