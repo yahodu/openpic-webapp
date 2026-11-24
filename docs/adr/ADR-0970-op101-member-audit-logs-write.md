@@ -236,16 +236,20 @@ The card proposed `0965`; that cursor value is **stale by four draws**. Measured
 ([ADR-0965](ADR-0965-op132-confirm-transaction-failure-pins.md),
 [ADR-0966](ADR-0966-op132-confirm-outbox-failure-pins.md),
 [ADR-0967](ADR-0967-merged-lane-local-branch-deletion.md)), `0968` is on the trunk
-([ADR-0968](ADR-0968-op134-attendee-claim-i2-clock.md)), and `0969` is held in flight by
-open PR [#879](https://github.com/yahodu/openpic-webapp/pull/879) and by the running
+([ADR-0968](ADR-0968-op134-attendee-claim-i2-clock.md)), and `0969` was held in flight by
+open PR [#879](https://github.com/yahodu/openpic-webapp/pull/879) (which has since landed as
+[ADR-0969](ADR-0969-op132-confirm-deactivation-sweep-pin.md)) and by the running
 card `t_6ee47a21`, which also reserves `0969`). The lowest free number above the highest in-flight
 one is **`0970`**, which this record takes.
 
-The draw advances every cell that reads `0969` at this head — `board-wide / process`,
-`OP-129 attendee identity lane`, `OP-136 jobs lane` and the `unallocated (future
-lanes)` cursor — to **`0971`** (forward only; no cell is lowered and no range is
-re-cut). If PR #879 lands first it writes `0970` into the same cells and this row's
-union keeps `0971`, so the two landings cannot rewind each other.
+The draw advances every cell that reads `0969` at this record's cut — `board-wide /
+process`, `OP-129 attendee identity lane`, `OP-136 jobs lane` and the `unallocated
+(future lanes)` cursor — to **`0971`** (forward only; no cell is lowered and no range is
+re-cut). PR [#879](https://github.com/yahodu/openpic-webapp/pull/879) then landed
+([ADR-0969](ADR-0969-op132-confirm-deactivation-sweep-pin.md)) while this record was in
+review and wrote `0970` into the same four cells, so this record's merge keeps the
+**higher** value `0971` on every cell and discards nothing: the two landings cannot
+rewind each other.
 
 The pre-mint sweep covered all four surfaces and no non-`done` card body:
 
