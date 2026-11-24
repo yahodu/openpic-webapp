@@ -130,11 +130,12 @@ export function projectMember(
  *
  * The rows are read in one `find`, and the users/profiles they reference in two
  * `$in` reads — three round trips total, independent of the member count. The
- * result is ordered by join time so the listing is stable between calls.
+ * rows ascend by join time, and an equal instant is broken by ascending
+ * `userId`, which is what makes the listing deterministic between calls.
  *
  * @param db - The database to read.
  * @param tenantId - The resolved workspace id.
- * @returns The projected members, ordered by join time.
+ * @returns The projected members, ascending by join time then by `userId`.
  */
 export async function listWorkspaceMembers(db: Db, tenantId: ObjectId): Promise<Member[]> {
   const repo = platformRepo(db);
