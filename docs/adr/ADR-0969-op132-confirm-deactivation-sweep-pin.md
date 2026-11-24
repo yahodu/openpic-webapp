@@ -112,3 +112,40 @@ This replaces the three-write enumeration in [ADR-0966](ADR-0966-op132-confirm-o
 - **Assert the `notifications` fan-out rows.** Rejected: the fan-out runs through `after()`, which throws outside a request scope in this harness, so the claim cannot red on its own (ADR-0965 §Consequences F2). The outbox row counts are the primary "announces nothing" observable.
 - **Use `code: 11000`.** Rejected: that is the dedupe code `emitDomainEvent` owns and ADR-0965's control pins in the other direction; `91` is what discriminates "not the duplicate-key collision".
 - **Draw a number from a lane row.** Rejected: OP-132 has no reserved row, and its last four records (`0877`, `0878`, `0965`, `0966`) were pool draws — ADR-0300 §11 item 18 is the applicable rule.
+
+## Review — round 2 (execution lens)
+
+**Verdict: APPROVED.** PR [#879](https://github.com/yahodu/openpic-webapp/pull/879) merged as squash `7f7b0f1b` on `main` at 2026-11-24T14:24:25Z. Round 1 asked for one change — **F1, a duplicate `ADR-0968`** — and the renumber to `0969` landed: `docs/adr` holds exactly one file with that number (`git ls-tree -r --name-only origin/main docs/adr/ | grep -c 'ADR-0969'` prints `1`), and `adr-numbering.test.ts` is green in the eight-guard run below.
+
+**Checks, measured by this reviewer.** The reviewed head is `6b4e0441`; this record, the spec and `confirm/route.ts` have the same blobs at that head, at the squash `7f7b0f1b` and at `origin/main` `8e1a0ec4` — the base this section is appended on — so each count below was run at `8e1a0ec4` and holds for both trees.
+
+- Focused `selfie-confirm-publication.test.ts`: `24 passed (24)`. The pair with `selfie-confirm-exhausted-budget.test.ts`: `33 passed (33)`.
+- The eight `adr-*` guards: `280 passed (280)`.
+- `prettier --check` clean on the three changed files (the spec, this record, `docs/adr/README.md`).
+- CI on `6b4e0441`: every check-run is `success` — 20 entries because the head carried both a `push` and a `pull_request` run, naming 15 distinct checks: the 14 gates plus the close-time `notify-discord` side effect (`14/14`).
+
+**Integrity.**
+
+- Spec: `head -1518` hashes to `sha256 c4cfd84a…` at `6b4e0441`, at `7f7b0f1b` and at `origin/main`; the blob is `5c91f7bd` at all three.
+- No production change: `confirm/route.ts` is `sha256 c37b7233…dff9a7`, blob `6f48ab5f`, identical at the reviewed head and at `8e1a0ec4`.
+- Diff at the squash: `git diff --numstat 7f7b0f1b^ 7f7b0f1b` reads spec `+223/−0`, this record `+114/−0`, `docs/adr/README.md` `+6/−4` — three files. The card says README `+10/−4`; measured, `10` is the `git diff --stat` change count (6 additions plus 4 deletions), and this section quotes the numstat.
+- The four mirror cells (`board-wide / process`, `OP-129`, `OP-136`, `unallocated`) read `0970` at `7f7b0f1b` and at `8e1a0ec4`; no cell was lowered, and this record consumes only `0969`.
+
+**Land proof.** `6b4e0441^{tree}` = `7f7b0f1b^{tree}` = `0a7a1332369f8123c507d8de11a89a70a164f02c`, and `git diff --stat 6b4e0441 7f7b0f1b` is empty.
+
+**Probes.** Each arm was re-run by this reviewer at `8e1a0ec4`, one at a time, with `confirm/route.ts` restored to `sha256 c37b7233…dff9a7` (and the spec to `head -1518` = `c4cfd84a…`) after it; `git status --porcelain` was empty before the next arm.
+
+| Probe                   | Mutation                                                                                            | Result                                                                                                                                                                                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A — the status arm**  | the transaction's `selfies.updateMany` call wrapped in `try { … } catch {}`                         | `1 failed \| 23 passed (24)`, `expected 200 to be 500` — only the new case red, the twenty-three shipped cases green                                                                                                                                |
+| **B — the pointer arm** | the same swallow, with the case's `activeSelfieIds()` assertion moved ahead of the status assertion | `1 failed \| 23 passed (24)`, `expected [ '6b05a2b34d52957a07630c30', …(1) ] to deeply equal [ '6b05a2b34d52957a07630c30' ]` — two active selfies                                                                                                   |
+| **C — the sweep gone**  | the `selfies.updateMany` call deleted (new in this round; not in the implementer's handoff)         | `1 failed \| 23 passed (24)`, `expected [] to deeply equal [ { …(4) } ]` — the anti-vacuity record (`sweeps`) bites on its own, so a route that dropped the sweep cannot pass on the "one active selfie" count alone                                |
+| **D — not evidence**    | the sweep rewritten as a `bulkWrite`                                                                | `24 failed (24)` with `tenant scope violation` on every confirm: a tenant-scoped handle refuses `bulkWrite` (`apps/web/src/server/repos/collection.ts:372-378`), so the rewrite is not behaviour-identical and this arm says nothing about the pins |
+
+**Findings, Info only, no code change:**
+
+- **F1 — the "do not constrain internal structure" sentence reads narrower than measured, and narrower than the card assumes.** §Consequences' "The pins do not constrain internal structure" is imprecise: the anti-vacuity record does pin that the sweep is issued as `updateMany` on the driver `Collection`, because the case spies `Collection.prototype.updateMany` and requires exactly one recorded sweep. The card's illustration — a behaviour-identical `bulkWrite` rewrite that reds the guard — did **not** reproduce: the tenant-scoped handle refuses `bulkWrite` outright (probe D, `24 failed (24)`, every confirm a `tenant scope violation`), so that rewrite is not behaviour-identical in this route and no measurement of a behaviour-identical alternative exists. The finding stands in the measured form above; the class is the one [PR #881](https://github.com/yahodu/openpic-webapp/pull/881) recorded against ADR-0966, not its instance.
+- **F2 — the ledger table break has landed.** At review time the `docs/adr/README.md` table break hid rows `0965`–`0969`; it was owned by card `t_a2124da9` and has since landed as [PR #886](https://github.com/yahodu/openpic-webapp/pull/886), squash `8e1a0ec4`, and rows `0965`, `0966`, `0968` and `0969` render on the trunk this section lands on.
+- **F3 — the cells read `0970` while records in flight draw it.** The four mirror cells read `0970` at this base. Open [PR #884](https://github.com/yahodu/openpic-webapp/pull/884) (branch `OP-101-task-member-mutation-audit-records`) adds a record that draws the bare number `0970`, and open [PR #885](https://github.com/yahodu/openpic-webapp/pull/885) (branch `OP-134-task-attendee-sessions-ttl-regressions`) adds the record that draws `0973`. The card names `0971`–`0973` for the OP-134 lane; measured, `0971` and `0972` exist on no ref and that lane's open PR carries `0973` alone. This record lowers no cell and consumes only `0969`; the mechanism for a concurrent pool draw is card `t_0904efc1`.
+
+**Post-review status.** F1 needs no code change, F2 landed as PR #886 under card `t_a2124da9`, and F3's mechanism is card `t_0904efc1`. Nothing in this record is retracted: no sentence of §Context, §Decision, §Evidence, §Reversal condition, §Consequences or §Alternatives is withdrawn, edited or renumbered, and the numbers the record drew — `0969` consumed, four cells `0970`, none lowered — stand as measured.
