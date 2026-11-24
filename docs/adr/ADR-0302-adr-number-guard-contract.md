@@ -4,7 +4,7 @@
 - **Card:** OP-101 follow-up (process/ADR) — record the ADR-number guard's contract and scope boundary (`t_2ae626e9`, orchestrator; raised by the review of `t_8675b675`, OP-96 R-1, PR [#229](https://github.com/yahodu/openpic-webapp/pull/229))
 - **Relates to:** [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (the policy this guard is the mechanical backstop for), [ADR-0128](ADR-0128-op96-green-review-signoff.md) (the OP-96 integration renumber), [ADR-0133](ADR-0133-op96-f1-f4-round2-red.md) (a cross-lane allocation settled by card `t_cf0b1f77`), [ADR-0143](ADR-0143-op96-flush-overlap-single-send-green.md) / [ADR-0145](ADR-0145-op96-f1-unrecorded-flush-bound-green.md) (the collisions the policy ends)
 - **Schema:** n/a · **Contract:** n/a (test-only tooling; no application code)
-- **Implementation:** `apps/web/src/test/helpers/` — `adr-numbering.ts` (barrel; invariants i–ii), `adr-lane-ranges.ts` (iii), `adr-source-references.ts` (iv), `adr-consumers.ts` (v), `adr-record-links.ts` (vi), shared report shapes in `adr-guard-types.ts` · **Spec:** `apps/web/src/test/unit/` — `adr-numbering.test.ts`, `adr-lane-ranges.test.ts`, `adr-source-references.test.ts`, `adr-consumers.test.ts`, `adr-record-links.test.ts`
+- **Implementation:** `apps/web/src/test/helpers/` — `adr-numbering.ts` (barrel; invariants i–ii), `adr-lane-ranges.ts` (iii), `adr-source-references.ts` (iv), `adr-consumers.ts` (v), `adr-record-links.ts` (vi), `adr-item-sections.ts` (vii), shared report shapes in `adr-guard-types.ts` · **Spec:** `apps/web/src/test/unit/` — `adr-numbering.test.ts`, `adr-lane-ranges.test.ts`, `adr-source-references.test.ts`, `adr-consumers.test.ts`, `adr-record-links.test.ts`, `adr-item-sections.test.ts`
 
 ## Context
 
@@ -32,18 +32,19 @@ inherits the _why_, not just the _what_.
 ## Decision
 
 The guard is one module per invariant under `apps/web/src/test/helpers/`, behind
-the frozen barrel `adr-numbering.ts` (§10). It enforces **six mechanical
+the frozen barrel `adr-numbering.ts` (§10). It enforces **seven mechanical
 invariants**, and its boundary is fixed. This table is the list's one home: each
 row names the module that implements the invariant and the spec that pins it.
 
-| #     | Invariant                                                                               | Code                                                       | Module                     | Spec                            |
-| ----- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------- | ------------------------------- |
-| (i)   | No two in-scope files share an `ADR-NNNN` prefix                                        | `checkAdrNumbers`                                          | `adr-numbering.ts`         | `adr-numbering.test.ts`         |
-| (ii)  | Every in-scope `ADR-*.md` name is well-formed                                           | `checkAdrNumbers`, `parseAdrNumber`                        | `adr-numbering.ts`         | `adr-numbering.test.ts`         |
-| (iii) | Ledger ranges are disjoint, and a range-shaped row that does not parse is reported (§6) | `parseLaneRanges`, `checkAdrDirectory`                     | `adr-lane-ranges.ts`       | `adr-lane-ranges.test.ts`       |
-| (iv)  | Every in-source `ADR-NNNN` reference resolves to a record (§8)                          | `checkSourceAdrReferences`, `checkRepositoryAdrReferences` | `adr-source-references.ts` | `adr-source-references.test.ts` |
-| (v)   | Every citation of a declaring record names the citing file (§9)                         | `checkSourceAdrConsumers`, `checkRepositoryAdrConsumers`   | `adr-consumers.ts`         | `adr-consumers.test.ts`         |
-| (vi)  | Every markdown link target inside a record resolves (§7)                                | `checkAdrRecordLinks`, `checkRepositoryAdrLinks`           | `adr-record-links.ts`      | `adr-record-links.test.ts`      |
+| #     | Invariant                                                                               | Code                                                               | Module                     | Spec                            |
+| ----- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------- | ------------------------------- |
+| (i)   | No two in-scope files share an `ADR-NNNN` prefix                                        | `checkAdrNumbers`                                                  | `adr-numbering.ts`         | `adr-numbering.test.ts`         |
+| (ii)  | Every in-scope `ADR-*.md` name is well-formed                                           | `checkAdrNumbers`, `parseAdrNumber`                                | `adr-numbering.ts`         | `adr-numbering.test.ts`         |
+| (iii) | Ledger ranges are disjoint, and a range-shaped row that does not parse is reported (§6) | `parseLaneRanges`, `checkAdrDirectory`                             | `adr-lane-ranges.ts`       | `adr-lane-ranges.test.ts`       |
+| (iv)  | Every in-source `ADR-NNNN` reference resolves to a record (§8)                          | `checkSourceAdrReferences`, `checkRepositoryAdrReferences`         | `adr-source-references.ts` | `adr-source-references.test.ts` |
+| (v)   | Every citation of a declaring record names the citing file (§9)                         | `checkSourceAdrConsumers`, `checkRepositoryAdrConsumers`           | `adr-consumers.ts`         | `adr-consumers.test.ts`         |
+| (vi)  | Every markdown link target inside a record resolves (§7)                                | `checkAdrRecordLinks`, `checkRepositoryAdrLinks`                   | `adr-record-links.ts`      | `adr-record-links.test.ts`      |
+| (vii) | Every `§N item M` citation of an ADR-0300 item names the section that holds that item   | `checkItemSectionCitations`, `checkRepositoryItemSectionCitations` | `adr-item-sections.ts`     | `adr-item-sections.test.ts`     |
 
 The sections below follow the order the checks were added, not the numeric order.
 
@@ -424,14 +425,16 @@ table above.
   public surface, so every import of `helpers/adr-numbering.js` keeps working
   with the same names and signatures. _New invariants are imported from their own
   module and are added to this barrel only if an external caller needs them._ The
-  barrel exists because the specs and the ADR-0300 §12 pre-merge command import
+  barrel exists because the specs and the ADR-0300 §9 pre-merge command import
   from it — not because appending here is how the guard grows.
 - `adr-guard-types.ts` holds the shared report and issue shapes plus the
   deterministic comparators. All report shapes live here (the specs import six of
-  them from this path); it holds no filesystem access and no invariant logic, so
-  it never imports an invariant module.
+  them from this path), except (vii)'s `ItemSectionIssue`, which no spec imports
+  and which therefore sits beside its own invariant; it holds no filesystem
+  access and no invariant logic, so it never imports an invariant module.
 - `adr-lane-ranges.ts` (iii), `adr-source-references.ts` (iv), `adr-consumers.ts`
-  (v) and `adr-record-links.ts` (vi) each own exactly one invariant.
+  (v), `adr-record-links.ts` (vi) and `adr-item-sections.ts` (vii) each own
+  exactly one invariant.
 - The guard family's two `fs` call sites (`readDirectoryEntries`,
   `readTextFile`) and the tree walk (`collectSourceFiles`) live in
   `adr-source-references.ts`; the other readers import them, so the security
@@ -472,8 +475,8 @@ other than (v)'s crossing ~900 lines is still a layout smell.
 **The rule: a new invariant is a new module + its spec + one row in the
 `## Decision` table.** It is never another section appended to `adr-numbering.ts`.
 
-**Pre-merge command — supersedes ADR-0300 §12 item 12.** ADR-0300 item 12 pins
-the single-spec run; the guard is now five specs, so the pre-merge run is
+**Pre-merge command — supersedes ADR-0300 §9 item 12.** ADR-0300 item 12 pins
+the single-spec run; the guard is now six specs, so the pre-merge run is
 
 ```sh
 ./node_modules/.bin/vitest run --project unit apps/web/src/test/unit/adr-*.test.ts
