@@ -41,8 +41,9 @@
 
 - **committed refs** — `git rev-list --objects --all -- docs/adr` reports
   `docs/adr/ADR-0969-op132-confirm-deactivation-sweep-pin.md` (OP-132's branch,
-  open PR [#879](https://github.com/yahodu/openpic-webapp/pull/879)); the trunk
-  (`origin/main` `5565eec9`) stops at `ADR-0968`;
+  open PR [#879](https://github.com/yahodu/openpic-webapp/pull/879)); the cut
+  (`origin/main` `5565eec9`) stopped at `ADR-0968`, and `0969` then landed on the
+  trunk as `8e1a0ec4` — this branch's final base — while the card ran;
 - **live worktrees** — `.worktrees/t_52256cb7` holds `ADR-0969` **and** its ledger
   cells already read `0970`; `.worktrees/t_b142c5d8` (running card `t_b142c5d8`,
   branch `OP-101-task-member-mutation-audit-records`) holds an uncommitted
@@ -55,7 +56,8 @@
   table repair) consume no number; no row reserves `0973`.
 
 Highest in-flight reservation is therefore `0972`, and this record takes `0973`,
-advancing the four cells that read `0970` at the merged head (`0969` at the branch cut) — `board-wide / process`,
+advancing the four cells `0970` → `0974` (`0970` on the final base `8e1a0ec4`,
+`0969` on the earlier cut) — `board-wide / process`,
 `OP-129 attendee identity lane`, `OP-136 jobs lane`, `unallocated (future lanes)` —
 to `0974` (the next free after this draw). No cell is lowered and no range is
 re-cut. A concurrent draw at `0970`–`0972` is the very collision
@@ -210,9 +212,13 @@ for the guard's default resolver, both of which read `systemClock` directly, and
 ## Evidence
 
 All commands ran in
-`/root/openpic/openpic-webapp/.worktrees/op134-attendee-claim-i2-ttl` on
-`origin/main` `5565eec9`, with the toolchain installed by
-`CI=true pnpm install --frozen-lockfile --prefer-offline`.
+`/root/openpic/openpic-webapp/.worktrees/op134-attendee-claim-i2-ttl` on the
+delivered base `origin/main` `8e1a0ec4`, with the toolchain installed by
+`CI=true pnpm install --frozen-lockfile --prefer-offline`. The card cut was
+`5565eec9`; `8e1a0ec4` is that cut plus [ADR-0969](ADR-0969-op132-confirm-deactivation-sweep-pin.md)
+and one sibling lane's spec, none of the four files this record touches, and the
+determinism, mutation and gate runs below were re-executed at `8e1a0ec4` before
+the push.
 
 ### Determinism — ten consecutive focused runs per repaired case
 
@@ -266,7 +272,7 @@ pnpm lint                             exit 0 (the two security/detect-object-inj
                                       warnings in the harness helpers predate this diff)
 prettier --check (8 changed files)    All files formatted correctly
 four focused specs                    4 files / 90 passed
---project integration (full)          165 files / 1780 passed  (254.78 s)
+--project integration (full)          165 files / 1781 passed  (334 s wall, 0 failed)
 --project unit (full)                 196 files / 3354 passed | 3 skipped
 eight adr-* guards                    8 files / 280 passed
 ```
