@@ -39,6 +39,9 @@ export type {
   ExistingSubscriptionFacts,
 } from "./checkout";
 
+export { readStoredCheckout } from "./stored-checkout";
+export type { ReadStoredCheckoutInput, StoredCheckout } from "./stored-checkout";
+
 export {
   comparePlanTiers,
   computeDowngradeConsequences,

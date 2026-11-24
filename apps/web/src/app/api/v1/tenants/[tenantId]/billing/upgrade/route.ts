@@ -308,6 +308,9 @@ export const POST = defineRoute({
     }
 
     const subscriptionId = new ObjectId();
+    // The mandate's own decision expiry, derived exactly as the checkout path
+    // stores it (ADR-0403): the hosted link expires when the vendor says so.
+    const expiresAt = new Date(mandate.expiresAt);
     await withTransaction(async (session: ClientSession) => {
       // Old row leaves the live slot first, so the partial index admits the new
       // one; both writes commit together or not at all.
@@ -345,6 +348,7 @@ export const POST = defineRoute({
           billingCycle: sold.price.billingCycle,
           paymentMethodKind: SELF_SERVE_PAYMENT_METHOD,
           mandateStatus: "pending",
+          checkout: { url: mandate.checkoutUrl, expiresAt },
           gracePeriodEndsAt: null,
           pendingDueMinor: 0,
           currency: sold.price.currency,

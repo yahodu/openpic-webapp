@@ -1,3 +1,9 @@
+## [1.84.0](https://github.com/yahodu/openpic-webapp/compare/v1.83.2...v1.84.0) (2026-11-24)
+
+### Features
+
+- **billing:** OP-140 persist checkout on the upgrade mint and expose the read seam ([#853](https://github.com/yahodu/openpic-webapp/issues/853)) ([f14066d](https://github.com/yahodu/openpic-webapp/commit/f14066de1953337bba174f9fba917d37f6dbaccd))
+
 ## [1.83.2](https://github.com/yahodu/openpic-webapp/compare/v1.83.1...v1.83.2) (2026-11-23)
 
 ### Bug Fixes
