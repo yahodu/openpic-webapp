@@ -23,6 +23,16 @@
  * the decision and its rationale; the shape matrix is pinned, one case per row,
  * in the sibling spec.
  *
+ * **Comments are not code (OP-140 follow-up).** A `//` run to the end of the
+ * line and a `/*`-opened block comment are skipped whole: a comment never names
+ * a property, and its first word must not take the key position, because then
+ * the property after it would never be examined. The earlier posture — read the
+ * comment as code and let its first word surface as a phantom key — was
+ * replaced because the phantom is only loud for some comment shapes (a
+ * documented first word, a numbered comment and a block comment were all
+ * silent). The comment matrix is pinned, one case per row, in the sibling spec;
+ * why the real-tree census does not move is stated there.
+ *
  * @see apps/web/src/test/unit/design-doc-subscriptions-fields.test.ts
  */
 
@@ -246,11 +256,22 @@ function unresolvedKeyError(source: string, openBrace: number, reason: string): 
  * keys belong to this literal's own property list, and this reader stops at the
  * nested brace, so returning a set would omit them.
  *
- * Comments inside a literal are read as code. Neither mint literal carries one,
- * and a comment that did would surface as a phantom key — a loud red, never a
- * silent pass. A spread and a method shorthand report their target or modifier
- * the same way (`...baseDoc` reports `baseDoc`, `async markPaid() {}` reports
- * `async`): phantom, loud, safe.
+ * Comments are **not** code, so they are skipped whole: a `//` run to the end
+ * of the line, and a `/*`-opened block comment through its closing delimiter.
+ * A comment never contributes a key, and `expectKey` is left untouched across
+ * one, so the property after the comment is still read. The earlier posture —
+ * read the comment as code and let its first word surface as a phantom key —
+ * was replaced because the phantom is only loud for *some* comment shapes: after
+ * `// status is derived at mint` (a documented first word) the scanner returned
+ * `["status"]` and the undocumented `taxMinor` after it was never examined; a
+ * numbered comment returned no phantom at all; and a block comment whose first
+ * word was the documented `currency` hid `billingCycle`. A comment taking the
+ * key position therefore swallowed the next property in silence, the exact
+ * fail-open this reader exists to prevent.
+ *
+ * A spread and a method shorthand report their target or modifier the same way
+ * (`...baseDoc` reports `baseDoc`, `async markPaid() {}` reports `async`):
+ * phantom, loud, safe.
  *
  * @param source - The source text.
  * @param openBrace - Index of the literal's opening `{`.
@@ -290,6 +311,22 @@ function depthOneKeys(source: string, openBrace: number): string[] {
 
       index = stringEnd;
       expectKey = false;
+      continue;
+    }
+
+    // A comment is not code. Skip it whole and leave `expectKey` as it is, so
+    // the property after the comment is still read: letting the comment's first
+    // word take the key position would consume that position and hide the
+    // property (see the TSDoc for the measured shapes this replaced).
+    if (char === "/" && source.charAt(index + 1) === "/") {
+      const lineEnd = source.indexOf("\n", index + 2);
+      index = lineEnd === -1 ? source.length : lineEnd;
+      continue;
+    }
+
+    if (char === "/" && source.charAt(index + 1) === "*") {
+      const commentEnd = source.indexOf("*/", index + 2);
+      index = commentEnd === -1 ? source.length : commentEnd + 2;
       continue;
     }
 
