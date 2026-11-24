@@ -1602,12 +1602,14 @@ async function activeSelfieIds(): Promise<string[]> {
  * there.
  *
  * What the client sees is the app-wide `500 internal_error` with no `details`,
- * and nothing committed: the profile row keeps its pre-call `ready` /
- * `activeSelfieId: A` / `matchCount: 3` and its §15.3 watermark, **exactly one**
- * active selfie exists and it is still A, and no `attendee.matches.new` row's
- * count moves. The `notifications` rows are **not** asserted: the fan-out is
- * deferred through `after()`, which throws outside a request scope, so in this
- * harness the claim cannot red on its own (ADR-0965 §Consequences, finding F2).
+ * and nothing committed: the profile row keeps its pre-call state exactly —
+ * `processing`, `activeSelfieId: A`, `matchCount: 3` (the submit that created
+ * B returns the status to `processing` while the pointer and the total still
+ * describe A) and its §15.3 watermark — **exactly one** active selfie exists
+ * and it is still A, and no `attendee.matches.new` row's count moves. The
+ * `notifications` rows are **not** asserted: the fan-out is deferred through
+ * `after()`, which throws outside a request scope, so in this harness the
+ * claim cannot red on its own (ADR-0965 §Consequences, finding F2).
  */
 describe("when the confirmation's deactivation sweep fails for a reason that is not a duplicate key", () => {
   it("answers 500 internal_error and leaves exactly the previous selfie active", async () => {
