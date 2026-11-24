@@ -28,6 +28,9 @@ import { getPlatformSettings } from "@/server/settings/platform-settings";
  * - {@link emitDomainEvent} validates, gates the `eventKey`, deep-scans the
  *   payload, derives `expireAt` from `platformSettings`, inserts once (deduping
  *   on an optional `dedupeKey`) and logs `domain_event.emitted`.
+ * - {@link findDomainEventByDedupeKey} answers a producer's "was this key
+ *   already emitted?" — the pre-read a transactional producer needs because a
+ *   duplicate-key failure aborts its transaction.
  * - {@link claimPendingEvents} atomically claims up to a batch of rows for one
  *   consumer, reclaiming claims stale for more than five minutes.
  * - {@link markDone} / {@link markFailed} complete or retry a claim.
@@ -118,6 +121,14 @@ export interface EmitDomainEventOptions {
   /** The clock that stamps `occurredAt`; defaults to the system clock. */
   readonly clock?: Clock;
   /** The caller's transaction; the insert joins it when supplied. */
+  readonly session?: ClientSession;
+}
+
+/** Seams for {@link findDomainEventByDedupeKey}. */
+export interface FindDomainEventByDedupeKeyOptions {
+  /** The database handle; defaults to the shared client. */
+  readonly db?: Db;
+  /** The caller's transaction; the read joins it when supplied. */
   readonly session?: ClientSession;
 }
 
@@ -381,6 +392,30 @@ export async function emitDomainEvent(
   }
 
   return { deduped: false, id: String(insertedId) };
+}
+
+/**
+ * Ask the outbox whether a `dedupeKey` was already emitted.
+ *
+ * A producer that emits inside a transaction must ask first: a duplicate-key
+ * failure aborts the whole transaction, and {@link emitDomainEvent}'s own
+ * `{ deduped: true }` catch is only settled outside one. This seam only reads;
+ * {@link emitDomainEvent} stays the collection's only writer.
+ *
+ * @param dedupeKey - The caller's event identity.
+ * @param options - Database/transaction seams.
+ * @returns The stored row id, or `null` when the key was never emitted.
+ */
+export async function findDomainEventByDedupeKey(
+  dedupeKey: string,
+  options: FindDomainEventByDedupeKeyOptions = {}
+): Promise<string | null> {
+  const db = options.db ?? getDb();
+  const row = (await domainEventsCollection(db).findOne(
+    { dedupeKey },
+    options.session === undefined ? {} : { session: options.session }
+  )) as Document | null;
+  return row === null ? null : String(row._id);
 }
 
 /**

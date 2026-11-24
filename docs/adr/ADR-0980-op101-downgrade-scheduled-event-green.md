@@ -104,14 +104,19 @@ keeping the highest value in every cell.
 
 ## Evidence
 
-Measured on this branch, head `ada320ed` plus this card's commits.
+Measured at the delivered head `e91cfed7` (PR #906's squash). The branch merged
+`origin/main` `d944df8a` — OP-132 #907 — before delivery, which is why the
+whole-project figures sit 20 tests above the pre-merge run: that merge brought
+the `adr-gate-conditions` spec, one file of 20 tests, so the guard family is ten
+files here and not the nine the branch cut carried.
 
 ```
 $ pnpm exec vitest run --project integration apps/web/src/test/integration/billing-downgrade-scheduled-event.test.ts
 Tests  15 passed (15)          # before: 13 failed | 2 passed (15); three consecutive runs identical
 
-$ pnpm exec vitest run --project integration          # whole project
-$ pnpm exec vitest run --project unit                 # whole project
+$ pnpm exec vitest run --project integration          # whole project: 166 files, Tests 1810 passed (1810)
+$ pnpm exec vitest run --project unit                 # whole project: 200 files, Tests 3398 passed | 3 skipped (3401)
+$ pnpm exec vitest run --project unit adr-            # the adr-* guards: 10 files, Tests 319 passed (319)
 $ pnpm typecheck                                      # exit 0
 $ pnpm exec eslint <both files>                        # 0 errors (8 pre-existing warnings, untouched lines)
 $ pnpm exec prettier --check <both files>               # All files formatted correctly
@@ -128,3 +133,32 @@ FAIL  C1 … AssertionError: expected { toPlanKey: 'free', …(2) } to be null
 
 — and the file is then restored byte-identically
 (`sha256 e66bcc7f…a8e09` before == after).
+
+## Round-1 review sign-off
+
+- **Reviewer:** `openpic-webapp-reviewer` · **Round:** 1 (artifact lens) · **Card:** `t_a24b1dc1` · **Verdict: APPROVED WITH FINDINGS.**
+- **Verified on the merged artifact, not the narrative.** `e91cfed7` is an
+  ancestor of `origin/main` (`git merge-base --is-ancestor`), its tree is
+  byte-identical to the tested head `a2ed9833` (`git diff --stat` empty), and the
+  three lane blobs on `main` equal the reviewed tree (`route.ts` `51de695c`,
+  `fan-out.ts` `83a1c8ce`, the spec `36058408`). The spec blob is identical at the
+  RED commit, the head and the squash, so no assertion was edited.
+- **Counts at `e91cfed7`:** focused spec `15 passed (15)` on three runs; whole
+  `integration` 166 files `1810 passed (1810)`; whole `unit` 200 files
+  `3398 passed | 3 skipped (3401)`; the ten `adr-*` guards 10 files
+  `319 passed (319)`; typecheck 0/0/0; eslint 0 errors; prettier clean. The unit
+  and guard figures this record first carried (199 files, `3378 passed` with 3
+  skipped, nine guards) were the pre-merge run; §Evidence now states the head the
+  record describes, and says why the counts moved (finding F3).
+- **Conformance:** §D1–§D5 landed line by line — one `withTransaction` holding the
+  update and one emit, §D2's event exactly, the branches and the `200` body
+  byte-identical, the exemption audience-scoped by construction, no `auditLogs`
+  row, and `DELETE …/billing/scheduled-change` still log-only.
+- **Measured finding (F1):** a `typeKey`-scoped variant of the §D3 exemption — the
+  shape §D3 rejects — still answers `15 passed (15)`, so the pins cannot tell the
+  audience-scoped rule from the one it replaces. Routed to `t_dd0046f3` (with the
+  unpinned `billing.plan.upgraded` side effect, the null-`currentPeriodEnd`
+  fallback and the concurrent-repeat answer) and to `t_05a6943b` (the dedupe probe
+  reads `COLLECTIONS.domainEvents` outside the domain-events seam).
+- **Merged** as squash `e91cfed7`; PR
+  [#906](https://github.com/yahodu/openpic-webapp/pull/906) carries the verdict.
