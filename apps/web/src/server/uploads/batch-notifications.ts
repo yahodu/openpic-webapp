@@ -296,7 +296,7 @@ export async function checkUploadBatchTransition(
         eventKey,
         tenantId: input.tenantKey,
         actorRef: { kind: "user", id: uploader },
-        subjectRef: { kind: "user", id: uploader },
+        subjectRef: { kind: "upload_batch", id: input.eventId.toHexString() },
         // `fileCount` and `durationMs` are what §4.7's email rule reads, so the
         // resolver decides from the payload alone (ADR-0760 D4).
         payload: {
