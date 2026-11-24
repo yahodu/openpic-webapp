@@ -4,6 +4,7 @@ import { z } from "zod";
 import { findForbiddenFields } from "@openpic/contracts";
 
 import { GET as getAddons } from "@/app/api/v1/addons/route";
+import type { PlanPrice } from "@/server/plans/plans";
 
 import { makeAddon, makeAddonPrice, type StoredAddon } from "../factories/addon";
 import { APP_ORIGIN, startTestApp, type TestApp } from "../helpers/authed-app";
@@ -214,5 +215,135 @@ describe("GET /api/v1/addons (§3.6) — I4: a retired add-on is excluded", () =
 
     expect(response.status).toBe(200);
     expect(body.data.map((addon) => addon.addonKey)).toEqual(["storage-50gb"]);
+  });
+});
+
+/**
+ * Characterisation pin — the conditional `GET /api/v1/addons` (OP-102 follow-up,
+ * contract §3.6 / §0.10, ADR-0324).
+ *
+ * `I4` pins the `200` shape and its cache headers, and `conditional-etag.test.ts`
+ * (I2) pins the reusable ETag *stage*, but nothing sent an `If-None-Match` to
+ * this route: its `304` arm and `addonCatalogueETag`'s stability were free to
+ * regress silently. These cases pin the wire behaviour of the arm that exists on
+ * the trunk (PR #278's unlanded pins, re-homed in the harness that owns §3.6).
+ *
+ * They are deliberately implementation-agnostic: the tag's digest is not
+ * asserted — only the invariants §0.10 makes of it. A revalidation is answered
+ * `304` **iff** the presented tag identifies exactly the bytes this request
+ * would otherwise serve; the tag is stable for an unchanged catalogue and
+ * distinct for a changed one, including a `?currency` variant.
+ */
+
+/** The `etag` header, failing loudly instead of comparing against `null`. */
+function etagOf(response: Response): string {
+  const etag = response.headers.get("etag");
+  expect(etag).toBeTruthy();
+  if (etag === null) {
+    throw new Error("GET /api/v1/addons served no etag header");
+  }
+  return etag;
+}
+
+/** A GET of the add-on catalogue presenting `If-None-Match: <ifNoneMatch>`. */
+function revalidationRequest(ifNoneMatch: string, query = ""): Request {
+  return new Request(new URL(`${ADDONS_PATH}${query}`, APP_ORIGIN), {
+    method: "GET",
+    headers: { "if-none-match": ifNoneMatch },
+  });
+}
+
+/** One price in a second currency, so the `?currency` variants are not identical. */
+function usdPrice(): PlanPrice {
+  return makeAddonPrice({
+    priceKey: "storage-50gb-monthly-usd",
+    currency: "USD",
+    amountMinor: 2_900,
+  });
+}
+
+describe("GET /api/v1/addons (§3.6) — conditional GET", () => {
+  it("an unconditional GET returns 200 with the public cache policy, an ETag and the catalogue", async () => {
+    await seedAddons([makeAddon()]);
+
+    const response = await getAddons(addonsRequest());
+    const body = (await response.json()) as { data: Array<{ addonKey: string }> };
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300");
+    // §0.10: a public catalogue read answers a **strong** tag (RFC 7232 quoted form).
+    expect(etagOf(response)).toMatch(/^"[^"]+"$/);
+    expect(body.data.map((addon) => addon.addonKey)).toEqual(["storage-50gb"]);
+  });
+
+  it("replaying the ETag as If-None-Match returns 304 with the same ETag and no body", async () => {
+    await seedAddons([makeAddon()]);
+
+    const first = await getAddons(addonsRequest());
+    const etag = etagOf(first);
+
+    const revalidated = await getAddons(revalidationRequest(etag));
+
+    expect(revalidated.status).toBe(304);
+    expect(revalidated.headers.get("etag")).toBe(etag);
+    expect(revalidated.headers.get("cache-control")).toBe("public, max-age=300");
+    // The `304` carries no served add-on: the pipeline strips the handler's body.
+    expect((await revalidated.arrayBuffer()).byteLength).toBe(0);
+  });
+
+  it("a non-matching If-None-Match returns the full 200 catalogue", async () => {
+    await seedAddons([makeAddon()]);
+
+    const response = await getAddons(revalidationRequest('"stale-tag"'));
+    const body = (await response.json()) as { data: Array<{ addonKey: string }> };
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300");
+    expect(body.data.map((addon) => addon.addonKey)).toEqual(["storage-50gb"]);
+  });
+});
+
+describe("GET /api/v1/addons (§3.6) — the catalogue ETag identifies the served representation", () => {
+  it("serves the same ETag for an unchanged catalogue", async () => {
+    await seedAddons([makeAddon()]);
+
+    const first = await getAddons(addonsRequest());
+    const second = await getAddons(addonsRequest());
+
+    expect(etagOf(second)).toBe(etagOf(first));
+  });
+
+  it("changes the ETag when a served add-on changes, and no longer revalidates the old tag to 304", async () => {
+    await seedAddons([makeAddon()]);
+    const previousTag = etagOf(await getAddons(addonsRequest()));
+
+    await seedAddons([makeAddon({ name: "50 GB storage (renamed)" })]);
+    const after = await getAddons(addonsRequest());
+    const body = (await after.json()) as { data: Array<{ name: string }> };
+
+    // The served bytes really changed, so the tag assertion below is not vacuous.
+    expect(body.data.map((addon) => addon.name)).toEqual(["50 GB storage (renamed)"]);
+    expect(etagOf(after)).not.toBe(previousTag);
+
+    const revalidated = await getAddons(revalidationRequest(previousTag));
+    expect(revalidated.status).toBe(200);
+  });
+
+  it("mints a distinct ETag per currency variant of the same catalogue", async () => {
+    await seedAddons([makeAddon({ prices: [makeAddonPrice(), usdPrice()] })]);
+
+    const unfilteredTag = etagOf(await getAddons(addonsRequest()));
+    const inr = await getAddons(addonsRequest("?currency=INR"));
+    const usd = await getAddons(addonsRequest("?currency=USD"));
+    const inrTag = etagOf(inr);
+    const usdTag = etagOf(usd);
+
+    // The variants serve different price sets, so their tags must differ.
+    expect((await inr.json()) as unknown).not.toEqual((await usd.json()) as unknown);
+    expect(new Set([unfilteredTag, inrTag, usdTag]).size).toBe(3);
+
+    // A tag minted for one variant must not revalidate another to a `304`.
+    const crossVariant = await getAddons(revalidationRequest(inrTag, "?currency=USD"));
+    expect(crossVariant.status).toBe(200);
   });
 });
