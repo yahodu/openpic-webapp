@@ -363,3 +363,48 @@ describe("GET /api/v1/me/notifications/unread-count — conditional requests (I5
     expect(((await after.json()) as UnreadCountBody).unreadCount).toBe(2);
   });
 });
+
+/**
+ * Characterisation pin — the RFC 7232 **list** form of `If-None-Match` (OP-102
+ * follow-up, contract §7.2 / §0.10, ADR-0325).
+ *
+ * `me/notifications/unread-count/route.ts` must hand the header to the shared
+ * `ifNoneMatchSatisfied` helper, which compares each comma-separated member
+ * (RFC 7232 §3.2). Both cases of the I5 block above present a **single** tag,
+ * so a route that re-implemented the comparison as a literal string equality
+ * would keep them green while a real client — which sends the (weak) tag it
+ * holds inside a list — stopped revalidating. Both arms are asserted: a list
+ * that contains this badge's tag (→ `304`) and a list that contains only other
+ * tags (→ `200`, so an always-`304` route cannot satisfy the case).
+ */
+describe("GET /api/v1/me/notifications/unread-count — the If-None-Match list form", () => {
+  it("revalidates a list containing this badge's tag to 304, and serves 200 for a list of only other tags", async () => {
+    const session = await app.signIn(makeIdentity("op97-unread-etag-list"));
+    await insertFeedRow(app.db, {
+      userId: session.userId,
+      typeKey: "account.welcome",
+      createdAt: daysAgo(1),
+    });
+
+    const fresh = await getUnreadCount(countRequest(session));
+    const etag = fresh.headers.get("etag");
+    if (etag === null) {
+      throw new Error("the unread-count response carried no ETag");
+    }
+
+    const listed = await getUnreadCount(
+      countRequest(session, { "if-none-match": `"previous-badge-tag", ${etag}` })
+    );
+
+    expect(listed.status).toBe(304);
+    expect(listed.headers.get("etag")).toBe(etag);
+    expect((await listed.arrayBuffer()).byteLength).toBe(0);
+
+    const othersOnly = await getUnreadCount(
+      countRequest(session, { "if-none-match": '"previous-badge-tag", "stale-badge-tag"' })
+    );
+
+    expect(othersOnly.status).toBe(200);
+    expect(((await othersOnly.json()) as UnreadCountBody).unreadCount).toBe(1);
+  });
+});
