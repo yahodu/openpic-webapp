@@ -4,7 +4,7 @@
 - **Card:** OP-101 follow-up (process/ADR) — record the ADR-number guard's contract and scope boundary (`t_2ae626e9`, orchestrator; raised by the review of `t_8675b675`, OP-96 R-1, PR [#229](https://github.com/yahodu/openpic-webapp/pull/229))
 - **Relates to:** [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (the policy this guard is the mechanical backstop for), [ADR-0128](ADR-0128-op96-green-review-signoff.md) (the OP-96 integration renumber), [ADR-0133](ADR-0133-op96-f1-f4-round2-red.md) (a cross-lane allocation settled by card `t_cf0b1f77`), [ADR-0143](ADR-0143-op96-flush-overlap-single-send-green.md) / [ADR-0145](ADR-0145-op96-f1-unrecorded-flush-bound-green.md) (the collisions the policy ends)
 - **Schema:** n/a · **Contract:** n/a (test-only tooling; no application code)
-- **Implementation:** `apps/web/src/test/helpers/` — `adr-numbering.ts` (barrel; invariants i–ii), `adr-lane-ranges.ts` (iii), `adr-source-references.ts` (iv), `adr-consumers.ts` (v), `adr-record-links.ts` (vi), `adr-item-sections.ts` (vii), shared report shapes in `adr-guard-types.ts` · **Spec:** `apps/web/src/test/unit/` — `adr-numbering.test.ts`, `adr-lane-ranges.test.ts`, `adr-source-references.test.ts`, `adr-consumers.test.ts`, `adr-record-links.test.ts`, `adr-item-sections.test.ts`
+- **Implementation:** `apps/web/src/test/helpers/` — `adr-numbering.ts` (barrel; invariants i–ii), `adr-lane-ranges.ts` (iii), `adr-source-references.ts` (iv), `adr-consumers.ts` (v), `adr-record-links.ts` (vi), `adr-item-sections.ts` (vii), `adr-gate-conditions.ts` (viii), shared report shapes in `adr-guard-types.ts` · **Spec:** `apps/web/src/test/unit/` — `adr-numbering.test.ts`, `adr-lane-ranges.test.ts`, `adr-source-references.test.ts`, `adr-consumers.test.ts`, `adr-record-links.test.ts`, `adr-item-sections.test.ts`, `adr-gate-conditions.test.ts`
 
 ## Context
 
@@ -32,19 +32,20 @@ inherits the _why_, not just the _what_.
 ## Decision
 
 The guard is one module per invariant under `apps/web/src/test/helpers/`, behind
-the frozen barrel `adr-numbering.ts` (§10). It enforces **seven mechanical
+the frozen barrel `adr-numbering.ts` (§10). It enforces **eight mechanical
 invariants**, and its boundary is fixed. This table is the list's one home: each
 row names the module that implements the invariant and the spec that pins it.
 
-| #     | Invariant                                                                               | Code                                                               | Module                     | Spec                            |
-| ----- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------- | ------------------------------- |
-| (i)   | No two in-scope files share an `ADR-NNNN` prefix                                        | `checkAdrNumbers`                                                  | `adr-numbering.ts`         | `adr-numbering.test.ts`         |
-| (ii)  | Every in-scope `ADR-*.md` name is well-formed                                           | `checkAdrNumbers`, `parseAdrNumber`                                | `adr-numbering.ts`         | `adr-numbering.test.ts`         |
-| (iii) | Ledger ranges are disjoint, and a range-shaped row that does not parse is reported (§6) | `parseLaneRanges`, `checkAdrDirectory`                             | `adr-lane-ranges.ts`       | `adr-lane-ranges.test.ts`       |
-| (iv)  | Every in-source `ADR-NNNN` reference resolves to a record (§8)                          | `checkSourceAdrReferences`, `checkRepositoryAdrReferences`         | `adr-source-references.ts` | `adr-source-references.test.ts` |
-| (v)   | Every citation of a declaring record names the citing file (§9)                         | `checkSourceAdrConsumers`, `checkRepositoryAdrConsumers`           | `adr-consumers.ts`         | `adr-consumers.test.ts`         |
-| (vi)  | Every markdown link target inside a record resolves (§7)                                | `checkAdrRecordLinks`, `checkRepositoryAdrLinks`                   | `adr-record-links.ts`      | `adr-record-links.test.ts`      |
-| (vii) | Every `§N item M` citation of an ADR-0300 item names the section that holds that item   | `checkItemSectionCitations`, `checkRepositoryItemSectionCitations` | `adr-item-sections.ts`     | `adr-item-sections.test.ts`     |
+| #      | Invariant                                                                               | Code                                                               | Module                     | Spec                            |
+| ------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------- | ------------------------------- |
+| (i)    | No two in-scope files share an `ADR-NNNN` prefix                                        | `checkAdrNumbers`                                                  | `adr-numbering.ts`         | `adr-numbering.test.ts`         |
+| (ii)   | Every in-scope `ADR-*.md` name is well-formed                                           | `checkAdrNumbers`, `parseAdrNumber`                                | `adr-numbering.ts`         | `adr-numbering.test.ts`         |
+| (iii)  | Ledger ranges are disjoint, and a range-shaped row that does not parse is reported (§6) | `parseLaneRanges`, `checkAdrDirectory`                             | `adr-lane-ranges.ts`       | `adr-lane-ranges.test.ts`       |
+| (iv)   | Every in-source `ADR-NNNN` reference resolves to a record (§8)                          | `checkSourceAdrReferences`, `checkRepositoryAdrReferences`         | `adr-source-references.ts` | `adr-source-references.test.ts` |
+| (v)    | Every citation of a declaring record names the citing file (§9)                         | `checkSourceAdrConsumers`, `checkRepositoryAdrConsumers`           | `adr-consumers.ts`         | `adr-consumers.test.ts`         |
+| (vi)   | Every markdown link target inside a record resolves (§7)                                | `checkAdrRecordLinks`, `checkRepositoryAdrLinks`                   | `adr-record-links.ts`      | `adr-record-links.test.ts`      |
+| (vii)  | Every `§N item M` citation of an ADR-0300 item names the section that holds that item   | `checkItemSectionCitations`, `checkRepositoryItemSectionCitations` | `adr-item-sections.ts`     | `adr-item-sections.test.ts`     |
+| (viii) | A stated count of the merge-gate conditions equals its `G1…Gk` enumeration (§11)        | `checkGateConditionCounts`, `checkRepositoryGateConditionCounts`   | `adr-gate-conditions.ts`   | `adr-gate-conditions.test.ts`   |
 
 The sections below follow the order the checks were added, not the numeric order.
 
@@ -429,12 +430,13 @@ table above.
   from it — not because appending here is how the guard grows.
 - `adr-guard-types.ts` holds the shared report and issue shapes plus the
   deterministic comparators. All report shapes live here (the specs import six of
-  them from this path), except (vii)'s `ItemSectionIssue`, which no spec imports
-  and which therefore sits beside its own invariant; it holds no filesystem
-  access and no invariant logic, so it never imports an invariant module.
+  them from this path), except (vii)'s `ItemSectionIssue` and (viii)'s
+  gate-condition shapes, which no spec imports from this path and which therefore
+  sit beside their own invariants; it holds no filesystem access and no invariant
+  logic, so it never imports an invariant module.
 - `adr-lane-ranges.ts` (iii), `adr-source-references.ts` (iv), `adr-consumers.ts`
-  (v), `adr-record-links.ts` (vi) and `adr-item-sections.ts` (vii) each own
-  exactly one invariant.
+  (v), `adr-record-links.ts` (vi), `adr-item-sections.ts` (vii) and
+  `adr-gate-conditions.ts` (viii) each own exactly one invariant.
 - The guard family's two `fs` call sites (`readDirectoryEntries`,
   `readTextFile`) and the tree walk (`collectSourceFiles`) live in
   `adr-source-references.ts`; the other readers import them, so the security
@@ -476,7 +478,7 @@ other than (v)'s crossing ~900 lines is still a layout smell.
 `## Decision` table.** It is never another section appended to `adr-numbering.ts`.
 
 **Pre-merge command — supersedes ADR-0300 §9 item 12.** ADR-0300 item 12 pins
-the single-spec run; the guard is now six specs, so the pre-merge run is
+the single-spec run; the guard is now seven specs, so the pre-merge run is
 
 ```sh
 ./node_modules/.bin/vitest run --project unit apps/web/src/test/unit/adr-*.test.ts
@@ -492,6 +494,55 @@ spec. A minted record carrying a `Relates to` line raises the count, a prose
 repair that replaces a link lowers it by a few, and an equality pin would
 re-couple every ADR to the spec file. A shrink below the retirement census still
 cannot pass.
+
+### 11. The gate-condition-count invariant (viii) (2026-11-24, finding F2)
+
+ADR-0318's decision is stated as a count in prose in two places: the ledger note
+in `docs/adr/README.md` (the paragraph beginning `_The **board-wide / process**
+[ADR-0318]`) and the §9.1 gate list in `docs/CONVENTIONS.md`. The ledger note read
+"seven conditions on the exact head SHA" while enumerating only **G1–G6** for a
+day, and nothing failed: no invariant read a count phrase, so
+`grep -rn "conditions" apps/web/src/test/unit/adr-*.test.ts` matched nothing.
+PR [#902](https://github.com/yahodu/openpic-webapp/pull/902) repaired the sentence;
+this invariant makes the next drift red.
+
+The rule is textual, as (iv)'s is. A **count phrase** is a number word (`one` …
+`twelve`) or a digit run, whitespace, the word `conditions` — only that phrase,
+never a bare number word, because §9.1 says "the eleven gating names" inside G3
+and a loose matcher would read eleven conditions where the text states seven. Its
+**window** is its paragraph, extended through the block that follows when the
+paragraph's last line ends with a colon (the §9.1 shape: the count ends the
+sentence and the bullets below it enumerate), and a markdown table row is its own
+window, so the ADR-0318 index row inside the ledger table never adopts another
+row's `G3`. A phrase whose window carries no `G` token introduces no enumeration
+and is skipped, never guessed: the ledger intro (`README.md:122`) and that index
+row state "seven conditions" in prose that enumerates nothing.
+
+Three defects, one issue each: `count-mismatch` (the highest `G` token is not the
+stated count), `sequence-gap` (a gate number in `1..highest` is missing — it can
+fire beside a `count-mismatch`, because an enumeration can both stop early and
+skip a number), and `count-disagreement` (the phrase's count differs from the
+run's first phrase in report order; the issue quotes both counts in `declared` and
+`expected`, because the guard cannot tell which statement is the drift). `issues`
+and `checked` sort by file, then line, so the report is identical for any input
+order, and the `checked` list is what keeps silence non-vacuous: a sweep that read
+one document, or a matcher that stopped matching, loses an entry.
+
+`checkRepositoryGateConditionCounts(root)` reads exactly those two documents —
+`docs/adr/README.md` and `docs/CONVENTIONS.md` (`GATE_CONDITION_SOURCES`) — and
+walks no directory, so no third file can widen or slow the report. Either document
+missing throws, so a wrong root fails loudly instead of reporting a vacuous pass.
+
+**Green on arrival, load-bearing by probe.** The trunk states seven conditions
+over G1–G7 in both documents, so the spec passes at its head and opens no GREEN
+sibling. Reverting the ledger note on a scratch copy of the real tree to enumerate
+G1–G6 under "seven conditions" turns it red with the actionable report
+`count-mismatch docs/adr/README.md:1787 "seven conditions" declared 7, highest 6`
+(`1 failed | 19 passed (20)`); restoring the bytes byte-identically
+(`sha256 6486042d…`, the pre-probe hash) reads `20 passed (20)`.
+
+This section mints no ADR number, adds no `docs/adr/README.md` row and does not
+move the `Next free` cell.
 
 ## Consequences
 
