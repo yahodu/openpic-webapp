@@ -342,8 +342,12 @@ function toPreferences(doc: Record<string, unknown> | null): ResolvePreferences 
  * `attendee_subject` reads the one profile the row's `payload.profileId` names,
  * `billing_contact` reads the tenant billing contact and `platform_admin` the
  * platform admins. `attendee_anonymous` is deliberately unreachable. A
- * `subjectUserId` is always included, the `actorUserId` is always removed, and
- * the result is deduped preserving first-seen order.
+ * `subjectUserId` is always included and the result is deduped preserving
+ * first-seen order. The `actorUserId` is removed — except when the audience
+ * itself named them as the billing contact: §4.3 makes the payer the recipient
+ * with no actor exclusion (only §4.5's event-lifecycle audiences carry "minus
+ * the actor"), and `provisioning.ts:162` makes the owner the contact by
+ * default, so excluding them would silence the payer's own confirmation.
  *
  * @param input - The type row, scope, actor/subject/attendee ids and the recipient port.
  * @returns The recipient user ids, in first-seen order.
@@ -354,6 +358,8 @@ export async function resolveRecipients(input: ResolveRecipientsInput): Promise<
 
   const ordered: string[] = [];
   const seen = new Set<string>();
+  /** The ids `billing_contact` resolved, which the actor exclusion spares (§4.3). */
+  const payers = new Set<string>();
   const add = (id: string | null): void => {
     if (id === null || id.length === 0 || seen.has(id)) return;
     seen.add(id);
@@ -397,7 +403,9 @@ export async function resolveRecipients(input: ResolveRecipientsInput): Promise<
         break;
       }
       case "billing_contact": {
-        add(await repository.getBillingContactUserId({ tenantId }));
+        const contactId = await repository.getBillingContactUserId({ tenantId });
+        if (contactId !== null) payers.add(contactId);
+        add(contactId);
         break;
       }
       case "platform_admin": {
@@ -414,7 +422,7 @@ export async function resolveRecipients(input: ResolveRecipientsInput): Promise<
 
   add(subjectUserId);
 
-  if (actorUserId !== null) {
+  if (actorUserId !== null && !payers.has(actorUserId)) {
     seen.delete(actorUserId);
     const index = ordered.indexOf(actorUserId);
     if (index >= 0) ordered.splice(index, 1);
@@ -1352,6 +1360,11 @@ async function fanOutToRecipient(
 /**
  * Process one claimed outbox row: resolve the type and recipients, then fan out
  * to each recipient in isolation.
+ *
+ * The billing contact keeps receiving when they are the actor (§4.3: the payer,
+ * with no actor exclusion), which `resolveRecipients` already spares; a
+ * `user` subject is additionally re-added so the owner of an event sees its
+ * outcome.
  *
  * @param options - The run seams.
  * @param event - The claimed `domainEvents` row.
