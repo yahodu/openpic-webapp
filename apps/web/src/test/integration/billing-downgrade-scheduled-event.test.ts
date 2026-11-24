@@ -47,10 +47,14 @@ import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
  *          `dedupeKey`, `expireAt − occurredAt` derived from
  *          `platformSettings.retention.domainEventDays`, and
  *          `dispatch.notifications: "pending"`;
- *   B1–B4  dedupe: a repeated request for the same target and instant is `200`
+ *   B1–B5  dedupe: a repeated request for the same target and instant is `200`
  *          and leaves one row (and one event's worth of delivery), while a
  *          different target plan or a later effective date is a new intent and
- *          leaves a second row;
+ *          leaves a second row. `B5` submits the same intent **concurrently**
+ *          rather than sequentially — two requests in flight at once — and
+ *          answers `[200, 200]` with one event and one delivery, because the
+ *          loser aborts on its write to the same subscription row and the
+ *          retried callback then sees the winner's committed event (ADR-0983);
  *   C1–C2  atomicity (§D1): with the `domain_events` insert refused by the
  *          member-lane refusal-stub recipe (driver `code: 91`, **no**
  *          `TransientTransactionError` label, every other collection forwarded
@@ -703,6 +707,40 @@ describe("POST …/billing/downgrade — the dedupe key separates intents (§D2)
       PERIOD_END.toISOString(),
       LATER_PERIOD_END.toISOString(),
     ]);
+  });
+
+  it("B5: answers 200 to two concurrent identical requests and leaves one event and one delivery", async () => {
+    const { owner, tenantId, subscriptionId } = await seedDowngradeFixture("op101-b5");
+    await seedDeliverableRecipient(owner.userId);
+
+    // The same intent arriving twice at once, not a retry of a settled request:
+    // both are in flight before either has answered. The loser's write to the
+    // same `subscriptions` row conflicts before the emit, the driver retries the
+    // callback, and the in-transaction re-read then sees the winner's committed
+    // row — so the answer is two `200`s and one event, never a `500` and never a
+    // second row (ADR-0983).
+    const [first, second] = await Promise.all([
+      downgradePlan(downgradeRequest(tenantId, owner.cookie)),
+      downgradePlan(downgradeRequest(tenantId, owner.cookie)),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    const rows = await outboxRows(tenantId);
+    expect(rows).toHaveLength(1);
+    // The fixture's live row carries `PERIOD_END`, so `effectiveAt` — and with
+    // it the §D2 key — is fixed by the seed rather than by a request clock.
+    expect(rows[0]?.dedupeKey).toBe(
+      `billing.plan.downgrade_scheduled:${subscriptionId.toHexString()}:${TARGET_PLAN_KEY}:${PERIOD_END.toISOString()}`
+    );
+
+    // One intent, one confirmation, however the two requests interleaved.
+    const drained = await drainOutbox(tenantId);
+    expect(feedRowsFor(drained.notifications, owner.userId)).toHaveLength(1);
+    const sentEmails = dispatchRowsFor(drained.dispatches, owner.userId).filter(
+      (dispatch) => dispatch.channel === "email" && dispatch.status === "sent"
+    );
+    expect(sentEmails).toHaveLength(1);
   });
 });
 
