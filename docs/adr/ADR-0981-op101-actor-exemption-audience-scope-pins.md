@@ -253,3 +253,11 @@ restored to `sha256 c6a0cd45…`.
 - **Nothing in §D1–§D6 or §Evidence is retracted.** Every figure above stands at the merged head;
   the one sentence this review narrows is §Consequences' "closed" claim, and the narrowing is routed
   (F1) rather than re-stated here.
+- **Post-review status when this section was written.** Both routings had been picked up. F1's card
+  `t_8217bd99` shipped the type-key-agnostic pin as PR
+  [#917](https://github.com/yahodu/openpic-webapp/pull/917) (squash `c28cc394`): a synthetic
+  `billing.plan.probed` type in `fan-out.test.ts` that neither a single key nor an enumerated list can
+  spare, so the narrowing above is pinned by a unit case as well as stated here. F2's card `t_cb891a2c`
+  decided both §D5 behaviours — `[200, 200]` with one event for the concurrent double-submit, and a
+  refusal for a live row with no `currentPeriodEnd` — and routed them to `t_9eafff78`, `t_e05af75c` and
+  `t_b4d8d70e`; none of those follow-up records has landed at this head.
