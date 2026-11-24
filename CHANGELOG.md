@@ -1,3 +1,9 @@
+## [1.88.0](https://github.com/yahodu/openpic-webapp/compare/v1.87.0...v1.88.0) (2026-11-24)
+
+### Features
+
+- **billing:** OP-101 write the two subscription.downgraded audit rows (ADR-0977) ([#904](https://github.com/yahodu/openpic-webapp/issues/904)) ([362ed06](https://github.com/yahodu/openpic-webapp/commit/362ed061deac38e7e06af0e8fef068a126775e40))
+
 ## [1.87.0](https://github.com/yahodu/openpic-webapp/compare/v1.86.0...v1.87.0) (2026-11-24)
 
 ### Features
