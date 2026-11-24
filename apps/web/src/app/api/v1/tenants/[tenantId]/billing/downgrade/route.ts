@@ -3,11 +3,13 @@ import { z } from "zod";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
+import { withTransaction } from "@/server/db/transaction";
+import { emitDomainEvent } from "@/server/domain/domain-events";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
 import type { Plan } from "@/server/plans/plans";
-import { tenantRepo } from "@/server/repos";
+import { platformRepo, tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { periodKey } from "@/server/services/entitlements";
 import {
@@ -42,6 +44,9 @@ import { tenantStage } from "@/server/tenancy/route-stage";
 
 /** The `statusHistory`-independent reason a self-serve downgrade records (§3.3). */
 const SELF_DOWNGRADE_REASON = "self_downgrade";
+
+/** The catalogue key an accepted request announces (§3.3, ADR-0978 §D2). */
+const DOWNGRADE_SCHEDULED_EVENT = "billing.plan.downgrade_scheduled";
 
 /** The stored live-row fields a downgrade reads (schema §14.3). */
 const liveSubscriptionSchema = z.object({
@@ -153,19 +158,54 @@ export const POST = defineRoute({
     }
 
     const effectiveAt = current.currentPeriodEnd ?? now;
-    await subscriptions.updateOne(
-      { _id: current._id },
-      {
-        $set: {
-          scheduledChange: {
-            toPlanKey: targetPlan.key,
-            effectiveAt,
-            reason: SELF_DOWNGRADE_REASON,
+    const subscriptionId = current._id.toHexString();
+    const dedupeKey = `${DOWNGRADE_SCHEDULED_EVENT}:${subscriptionId}:${targetPlan.key}:${effectiveAt.toISOString()}`;
+    await withTransaction(async (session) => {
+      await subscriptions.updateOne(
+        { _id: current._id },
+        {
+          $set: {
+            scheduledChange: {
+              toPlanKey: targetPlan.key,
+              effectiveAt,
+              reason: SELF_DOWNGRADE_REASON,
+            },
+            updatedAt: now,
           },
-          updatedAt: now,
         },
+        { session }
+      );
+
+      // A repeated request for the same target and instant is the same intent,
+      // so it re-announces nothing (§D2). Read before writing: a duplicate-key
+      // failure inside a transaction aborts the write instead of deduping it.
+      const alreadyEmitted = await platformRepo(db)
+        .collection(COLLECTIONS.domainEvents)
+        .findOne({ dedupeKey }, { session });
+
+      // §3.3: an accepted request emits `billing.plan.downgrade_scheduled`. The
+      // emit joins this transaction, so an aborted write leaves neither a
+      // schedule nobody was told about nor an event about a change that never
+      // stored. The instant is part of the key, so a re-schedule to a later
+      // period is a new intent and speaks again.
+      if (alreadyEmitted === null) {
+        await emitDomainEvent(
+          {
+            eventKey: DOWNGRADE_SCHEDULED_EVENT,
+            tenantId,
+            actorRef: { kind: "user", id: scope.userId },
+            subjectRef: { kind: "subscription", id: subscriptionId },
+            payload: {
+              fromPlanKey: currentPlan.key,
+              toPlanKey: targetPlan.key,
+              effectiveAt: effectiveAt.toISOString(),
+            },
+            dedupeKey,
+          },
+          { db, session }
+        );
       }
-    );
+    });
 
     getLogger().info("billing plan downgrade scheduled", {
       event: "billing.plan.downgrade_scheduled",
