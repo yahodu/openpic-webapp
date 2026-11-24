@@ -184,3 +184,27 @@ FAIL  C1 … AssertionError: expected { toPlanKey: 'free', …(2) } to be null
 - The merged PR's handoff claimed this sign-off already carried a note that `#909` had
   landed on trunk. It did not — a `grep -n 909` of the merged record returned nothing —
   so that note is this paragraph, added after the fact.
+
+## Correction — 2026-11-24
+
+§Consequences above records, of a concurrent double-submit:
+
+> a truly concurrent double-submit is out of the pinned contract (ADR-0979 §out_of_scope) and
+> still ends at the unique index, whose failure mode is a `500` on the losing request rather
+> than a second row.
+
+**Eight measured rounds contradict that sentence.** Each round submitted two identical
+`POST …/billing/downgrade` requests through `Promise.all`; every round answered `[200, 200]`
+with **one** `domain_events` row, and none answered `500` (the measurement is quoted verbatim
+in [ADR-0981](ADR-0981-op101-actor-exemption-audience-scope-pins.md) §Evidence, `P3`).
+
+The shipped answer is therefore **`[200, 200]` with one event**: both requests write the same
+`subscriptions` document inside the one `withTransaction` callback, so the loser aborts there —
+before the `domain_events` insert — and the driver's retry re-runs the callback, whose
+in-transaction dedupe re-read (`downgrade/route.ts:182`) then sees the winner's committed row
+and skips the emit, which is why the unique index is never reached by the loser.
+
+This is a **correction of the record, not a change to the code**: the decision, the numbering
+and the header above stand, and the shipped behaviour is unchanged. The answer, the mechanism,
+its pin (`B5`) and what it does not promise are recorded in
+[ADR-0983](ADR-0983-op101-downgrade-concurrent-repeat-pin.md).
