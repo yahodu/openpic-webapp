@@ -1076,14 +1076,15 @@ async function workspaceNotificationRows(tenantKey: string): Promise<unknown[]> 
  * The confirmation's transaction body, with a driver write failing.
  *
  * **Why this exists.** Every case above is green under a `catch` that swallows
- * the transaction's abort and continues: the pair case, the dry-run and the four
- * ADR-0805 cases were measured `5 passed (5)` with the confirm's
- * `withTransaction` wrapped in a degenerate `try { … } catch { return undefined }`.
- * That leaves a genuine transaction failure — a real database error, **not** the
- * outbox's duplicate-key collision the retry path exists for — answered
- * `200 status: "ready"` with no activation write, no watermark and no
- * notification: a silent failure dressed as success, where the attendee reads a
- * ready selfie that was never activated (contract §6.3/§6.4, §0.12; ADR-0965).
+ * the transaction's abort and continues: measured on this head, wrapping the
+ * confirm's `.catch` so it swallows every error leaves `20 passed (21)` — the
+ * nineteen shipped cases and the control below — and reds only the case below
+ * (probe A, ADR-0965 §Evidence). That leaves a genuine transaction failure — a
+ * real database error, **not** the outbox's duplicate-key collision the retry
+ * path exists for — answered `200 status: "ready"` with no activation write, no
+ * watermark and no notification: a silent failure dressed as success, where the
+ * attendee reads a ready selfie that was never activated (contract §6.3/§6.4,
+ * §0.12; ADR-0965).
  *
  * The first case fails the transaction's **own** write: the
  * `attendeeEventProfiles` update that sets `activeSelfieId`/`status`/
