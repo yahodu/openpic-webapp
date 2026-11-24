@@ -41,8 +41,10 @@
   `0876` and `0305`; and no non-`done` board card names `0879` or `0880` as a
   `Consumes` value. Both cells therefore advance to **`0881`**, one above this
   record and the GREEN reservation below it, so neither cell can re-mint
-  `0879`. The GREEN card `t_4b75e4ba` draws **`0880`** and writes no ledger row;
-  a later docs card owns that index row.
+  `0879`. The GREEN card `t_4b75e4ba` draws **`0880`**; row `0880` landed in that
+  later docs card, and
+  [ADR-0319](ADR-0319-every-adr-record-carries-a-ledger-row.md) now requires the
+  row with the record.
   **Deviation recorded:** the allocator's last instruction named `0873`/`0874`
   with both cells at `0875`. `0873` is free on every surface, but it is now
   _below_ both the trunk cursor (`0879`) and the highest in-flight number

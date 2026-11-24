@@ -1,3 +1,39 @@
+## [1.83.2](https://github.com/yahodu/openpic-webapp/compare/v1.83.1...v1.83.2) (2026-11-23)
+
+### Bug Fixes
+
+- **notifications:** OP-140 scope the pay_now producer to the delegate's acceptance ([#850](https://github.com/yahodu/openpic-webapp/issues/850)) ([70fe8a4](https://github.com/yahodu/openpic-webapp/commit/70fe8a423bd77bab9735db7ee8104a0023d2b094))
+
+## [1.83.1](https://github.com/yahodu/openpic-webapp/compare/v1.83.0...v1.83.1) (2026-11-23)
+
+### Bug Fixes
+
+- **adr:** OP-140 read a record's Status from its bulleted field, pin it ([#844](https://github.com/yahodu/openpic-webapp/issues/844)) ([1e37d06](https://github.com/yahodu/openpic-webapp/commit/1e37d06e5bb8825d0d66c60b5da89639463a68b0))
+
+## [1.83.0](https://github.com/yahodu/openpic-webapp/compare/v1.82.0...v1.83.0) (2026-11-23)
+
+### Features
+
+- **notifications:** OP-140 make the pay_now producer reachable for the owner ([#845](https://github.com/yahodu/openpic-webapp/issues/845)) ([2fa60b9](https://github.com/yahodu/openpic-webapp/commit/2fa60b9c9c4a2e628b172965979a276677080b91))
+
+## [1.82.0](https://github.com/yahodu/openpic-webapp/compare/v1.81.0...v1.82.0) (2026-11-23)
+
+### Features
+
+- **notifications:** OP-140 route attendee.selfie.rejected to its own subject ([#838](https://github.com/yahodu/openpic-webapp/issues/838)) ([2ea6e1c](https://github.com/yahodu/openpic-webapp/commit/2ea6e1cd1e1512198aca8a9ac11092faf4edcd18))
+
+## [1.81.0](https://github.com/yahodu/openpic-webapp/compare/v1.80.0...v1.81.0) (2026-11-23)
+
+### Features
+
+- **attendee:** OP-140 emit attendee.selfie.rejected and resolve an event's active slug ([#835](https://github.com/yahodu/openpic-webapp/issues/835)) ([b6cad7e](https://github.com/yahodu/openpic-webapp/commit/b6cad7ea44630f03d017cee06d5f0f7cbcd6d834))
+
+## [1.80.0](https://github.com/yahodu/openpic-webapp/compare/v1.79.1...v1.80.0) (2026-11-23)
+
+### Features
+
+- **consent:** OP-140 add the acknowledgeConsent service and a thin acknowledge route ([#830](https://github.com/yahodu/openpic-webapp/issues/830)) ([620e4bb](https://github.com/yahodu/openpic-webapp/commit/620e4bb9f64b2afb4093bc50e441f1420cf629a9))
+
 ## [1.79.1](https://github.com/yahodu/openpic-webapp/compare/v1.79.0...v1.79.1) (2026-11-23)
 
 ### Performance Improvements

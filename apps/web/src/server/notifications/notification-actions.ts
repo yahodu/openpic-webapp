@@ -86,6 +86,20 @@ const DISPATCH_TABLE: ReadonlyMap<
 ]);
 
 /**
+ * The action keys the §7.3 table offers for one target kind, in table order.
+ *
+ * The fan-out derives what it may emit from this one table (ADR-0942 §4.3); the
+ * target's own stored state decides which of the keys is live.
+ *
+ * @param kind - A stored `actionTarget.kind` (`unknown`: a row is unvalidated
+ *   input here).
+ * @returns The keys, or an empty list for an unknown or non-string kind.
+ */
+export function actionKeysForKind(kind: unknown): readonly string[] {
+  return typeof kind === "string" ? [...(DISPATCH_TABLE.get(kind)?.keys() ?? [])] : [];
+}
+
+/**
  * Resolve the delegated service for one `(kind, actionKey)` pair (§7.3).
  *
  * @param input - The row's `actionTarget.kind` and the clicked `actionKey`

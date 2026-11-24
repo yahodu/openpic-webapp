@@ -256,6 +256,7 @@ function fixedRecipients(overrides: Partial<RecipientRepository> = {}): Recipien
   return {
     listEventRoleMembers: promised<readonly string[]>([]),
     listIdentifiedAttendeeUserIds: promised<readonly string[]>([]),
+    getAttendeeProfileUserId: promised<string | null>(null),
     getBillingContactUserId: promised<string | null>(null),
     listPlatformAdminUserIds: promised<readonly string[]>([]),
     ...overrides,

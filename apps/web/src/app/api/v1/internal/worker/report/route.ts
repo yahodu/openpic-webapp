@@ -5,6 +5,7 @@ import { internalRouteAuth } from "@/server/auth/internal-hmac";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { withTransaction } from "@/server/db/transaction";
+import { emitDomainEvent } from "@/server/domain/domain-events";
 import { defineRoute } from "@/server/http/define-route";
 import { reduceReportItem } from "@/server/internal/worker-report";
 import { getLogger } from "@/server/logging";
@@ -286,6 +287,32 @@ export const POST = defineRoute<
         if (!kept) {
           loseLease(item.kind, item.id);
           continue;
+        }
+        // The attendee is told their photo was refused (design §4.8, ADR-0962
+        // §2): once per settled rejection, addressed to the selfie itself so
+        // the feed's `actionTarget.kind` can be `selfie` (ADR-0963). A `done`,
+        // `skipped` or queued-retry outcome announces nothing.
+        if (decision.status === "failed") {
+          await emitDomainEvent(
+            {
+              eventKey: "attendee.selfie.rejected",
+              tenantId: row.tenantId,
+              // A non-`user` actor keeps the actor-exclusion rule from
+              // dropping the attendee who owns the selfie.
+              actorRef: { kind: "system", id: "worker" },
+              subjectRef: { kind: "selfie", id: row._id.toHexString() },
+              payload: {
+                eventId: row.eventId?.toHexString() ?? null,
+                profileId: row.profileId?.toHexString() ?? null,
+                // The row's own stable code (§16.4), never `lastError.code`.
+                reason: row.quality?.rejectionReason ?? null,
+              },
+              // One selfie row is one attempt (§15.3), so a per-selfie key is
+              // design §4.8's 1/attempt identity (ADR-0963).
+              dedupeKey: `attendee.selfie.rejected:${row._id.toHexString()}`,
+            },
+            { db }
+          );
         }
       }
 

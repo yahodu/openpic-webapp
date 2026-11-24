@@ -406,6 +406,7 @@ Two residuals that the next delegate arm must know:
 - **F-A (Low) — the closed literal is not pinned.** A3/A4 assert `state !== "available"`; a
   route that wrote `state: "resolved"` stayed `20 passed (20)`, because the endpoint's
   projection types `state` as `z.string()`. Routed to `t_2f8d87e5` (TEST, characterization).
+- **F-A is closed** — by PR `#823` (squash `da4e24cc`, head `e2efaee8`): A3 and A4 now assert `expect(payNow?.state).toBe("unavailable")`, and A3's feed parity asserts `[["pay_now", "unavailable"]]`. The delivery, its merge proof and the two non-vacuity probes are in _Review round 3 — F-A closed_ below.
 
 ### 2. The five remaining §7.3 rows: all "wait"
 
@@ -551,3 +552,56 @@ git diff --stat origin/main...HEAD
 
 The route, the helper, the catalogue and the fan-out are **not** in this diff. This card
 changes the record only; the code changes belong to the cards named in §4.6 and §4.7.
+
+## Review round 3 — F-A closed
+
+- **Status:** Accepted (round 3) · **Date:** 2026-11-23
+- **Card:** `t_2f8d87e5` (TEST, characterization) is the delivery; this append is card `t_b86c70b7` (OP-140 DOCS, sign-off) and records it in place.
+- **Branch:** `OP-140-task-adr0942-fa-closure` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/t_5d080821` (base `origin/main` `40af157a`, `test(notifications): OP-140 correct the closed-state comment citations (#827)`).
+- **Touches:** this record only. `docs/adr/README.md` is **not** edited — this card mints no ADR number, so no index row, no lane cell and no `Next free` cell moves. The `OP-140 notifications lane` cell reads `0948` at this base (advanced by the sibling OP-140 records that landed after round 2 measured `0945`); this card neither raises nor lowers it.
+- **Measurements:** every count, `file:line` and probe below was re-measured at the base `40af157a` for this append — none is copied from the handoff. Where the handoff's figure and this measurement differ, both are given.
+
+### 1. The deliverable: one test file, `+9 / −5`
+
+PR `#823` (head `e2efaee8`, squash `da4e24cc`, merged 2026-11-23T16:05:44Z) is **test only** and **one file**:
+
+- `apps/web/src/test/integration/notification-actions.test.ts` — `git diff --numstat da4e24cc^ da4e24cc` prints `9 5 apps/web/src/test/integration/notification-actions.test.ts` and no second path.
+- A3 (`:1238`) now asserts `expect(payNow?.state).toBe("unavailable")`, where it asserted `.not.toBe("available")`.
+- A3's feed parity (`:1260`) now asserts `expect(actionPairs(served)).toEqual([["pay_now", "unavailable"]])`, and the captured **`servedState` echo is dropped** — the arm no longer compares the value it just read, so it measures the feed.
+- A4 (`:1294`) asserts the same literal on the replay.
+- Nothing else moves: no shipped case, helper, fixture, assertion or `it()` title is edited, and no production file is in the diff.
+
+### 2. Merge proof
+
+- `git rev-parse e2efaee8^{tree} da4e24cc^{tree}` prints `9a245697f31eb4475453fbb62604c6fdba31d919` **twice**.
+- `git diff e2efaee8 da4e24cc` is **empty**.
+- `git merge-base --is-ancestor da4e24cc origin/main` is true — the squash is on the trunk, so the pins are the ones `main` runs.
+
+### 3. The gates, re-measured here
+
+- Focused: `vitest run --project integration notification-action-affordance.test.ts notification-actions.test.ts` → **2 files, 20 passed (20)**.
+- Whole `integration` project at this base → **163 files, 1727 passed (1727)**. The handoff's `1692 passed (1692)` was measured inside the pin's merge window; the pin adds no case to any other file (it edits two arms in one), so the difference is sibling pins that landed later.
+- `prettier --check` clean and `eslint` 0 errors on the touched file.
+- PR `#823` on the exact head `e2efaee8` → **15 check entries, all `success`**: the 14 gates plus `notify-discord`, the close-time side-effect run the implementer's handoff did not count (the handoff says 14).
+
+### 4. Two probes: the pin is not vacuous
+
+Both were re-run here, on the two focused files, and each mutation was restored with `git checkout --` (the tree is byte-clean afterwards, `git status --porcelain` empty).
+
+- **P1 — the write side lies.** In `closeActionAffordance`, `"actions.$[].state": "unavailable"` → `"resolved"`: **7 failed | 13 passed (20)**, which is **5 failed | 13 passed (18)** for `notification-actions.test.ts` alone (the card's own figure) plus both affordance cases in its sibling file. A3 (`:1238`) and A4 (`:1294`) both fail `AssertionError: expected 'resolved' to be 'unavailable'`. The four further arms that red (the two affordance cases and three invitation feed-parity cases) are the same defect seen by every consumer of the literal.
+- **P2 — the feed projection alone lies.** In `feed.ts`, the served `actions` are mapped so every `state` reads `"resolved"` while the stored row is untouched: **4 failed | 14 passed (18)** — A3's parity red at `:1260` (`expected [ [ 'pay_now', 'resolved' ] ] to deeply equal [ [ 'pay_now', 'unavailable' ] ]`) and **A4 green**. The parity assertion therefore measures the **feed itself**, not the response it was built from.
+
+Together the two probes say what the fix is for: a wrong closed literal now fails at the response (A4), at the feed parity (A3 `:1260`) and in the affordance spec, which no `z.string()` projection can do.
+
+### 5. The finding and its route
+
+- **F1 (Low) — the two added comments cited the wrong sections.** The pin's new comment lines named design **§7** and contract **§7.3**; the authority for the literal is design **§19.4** (`docs/Notification and Database Design.md:1895`, the `notifications` feed row's `actions` shape `state: "available" | "unavailable"`) and contract **§7.1 item 3** (`docs/API Contract.md:2558`, `state: "unavailable"` renders as a disabled button). Routed to card `t_87c55393`, which lands the correction as PR `#827` (head `a3a96f1b`, squash `40af157a`, comment-only `+1 / −1`, `apps/web/src/test/integration/notification-actions.test.ts:1236`). That card **consumes no ADR number** (`Consumes: none`), so it has no record of its own; this paragraph is its citation.
+- The citation fix landed **first**: `40af157a` is the base of this append, so the `file:line` values quoted above are the corrected-bytes copy, and the record cites the right bytes for what `main` now runs.
+
+### 6. Info, recorded, no card
+
+- **(a)** The implementer's handoff metadata `pr_comment` URL named `pull/818` while the posted comment sits on `#823` — a link-only slip. The comment's content is correct on the PR that carries it, so nothing downstream depends on the wrong URL.
+- **(b)** `storedActionSchema.state` is still `z.string()` (`route.ts:47`), so the route's projection cannot reject an out-of-enum literal. That read is **defensive rather than permissive**: the write side is typed `FeedAction.state: "available" | "unavailable"` (`apps/web/src/server/notifications/fan-out.ts:197` at this base; `:191` at the pin's squash `da4e24cc`, where the file was six lines shorter). Only the pin defends the literal, not the schema — which is why §4's probes matter.
+- **(c)** A3's parity expectation assumes **exactly one** action on the `pay_now` row (`toEqual([["pay_now", "unavailable"]])`); a second action on that row would make the arm fail for a reason unrelated to the literal. §2 of this record pins the `subscription` key set as `pay_now` **or** `complete_mandate`, never both, so the assumption holds on the trunk today.
+
+None of §1–§4, the Assumptions or round 2's decisions is retracted. **F-A is closed**; **F-B** (the closure is a placement convention, not a pin) stays open exactly as round 2 recorded it.
