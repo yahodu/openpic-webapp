@@ -38,8 +38,8 @@ Measured on the delivery base `origin/main` `c291cd08` (the ADR-0978 squash):
 ## Consequences
 
 - The GREEN that follows inherits this branch tip and makes, minimally: the `withTransaction` join with §D2's event, and the audience-scoped billing-contact exemption in `resolveRecipients`. Nothing else — the catalogue, the templates, the schema and the audit vocabulary are already right.
-- **A dedupe-aware emit is required, and the pin says so.** The first near-fix probe (emit inside the transaction, relying on the unique index to answer `E11000` → `{ deduped: true }`) answered **`500` on the second identical request**, because a duplicate-key error inside a transaction aborts it and the commit then fails: `B1` reds on the naive shape. The probe's second pass — a `domainEvents.findOne({ dedupeKey }, { session })` guard inside the same transaction before the emit — answers `200` and leaves one row, and `Tests 15 passed (15)`.
-- **The atomicity pin is load-bearing and specific, measured.** Moving the emit outside the transaction (everything else identical) left exactly one red — `C1`, with `expected { toPlanKey: 'free', …(2) } to be null`: the schedule committed, the event did not, and the route claimed success. `Tests 1 failed | 14 passed (15)`. Both probe patches were reverted and both files verified byte-identical (`sha256` before == after).
+- **A dedupe-aware emit is required, and the pin says so.** The first near-fix probe (emit inside the transaction, relying on the unique index to answer `E11000` → `{ deduped: true }`) answered **`500` on the second identical request**, because a duplicate-key error inside a transaction aborts it and the commit then fails: `B1` reds on the naive shape. The probe's second pass — a `domainEvents.findOne({ dedupeKey }, { session })` guard inside the same transaction before the emit — answers `200` and leaves one row, and `Tests 15 passed (15)` (re-measured at this delivery head, below).
+- **The atomicity pin is load-bearing and specific, measured twice.** Moving the emit outside the transaction (everything else identical) left exactly one red — `C1`, with `expected { toPlanKey: 'free', …(2) } to be null`: the schedule committed, the event did not, and the route claimed success. `Tests 1 failed | 14 passed (15)`. Both probe patches were reverted and both files verified byte-identical (`sha256` before == after).
 - **Cost:** one new 15-case integration spec (~9.5 s focused) on the `integration` project; no production behaviour changes in this card.
 - **Reversal condition:** if the fan-out's actor exclusion is ever re-scoped away from the audience (a product decision to silence the payer's own actions again), `D1` is the case that must be renegotiated first — not silently deleted.
 
@@ -48,30 +48,29 @@ Measured on the delivery base `origin/main` `c291cd08` (the ADR-0978 squash):
 The board-wide / process block `0300`–`0319` is exhausted ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §11 item 18), so this record draws from the `unallocated (future lanes)` cursor. The card assigned `0979`; the four-surface sweep found it held by nothing else.
 
 ```
-$ git rev-parse --short origin/main                                    c291cd08
-$ git ls-tree -r --name-only origin/main -- docs/adr | grep -oE 'ADR-09[0-9][0-9]' | sort -u | tail -4
-                                                                      0973 0974 0975 0978
-$ for d in /root/openpic/openpic-webapp/.worktrees/*/; do ls "$d/docs/adr" | grep -oE 'ADR-09(7[6-9]|8[0-9])'; done
-                                                                      ADR-0976 ADR-0977 ADR-0978   (three worktrees)
-$ git rev-list --objects --all | grep -oE 'ADR-09(7[6-9]|8[0-9])' | sort -u
-                                                                      ADR-0976 ADR-0977 ADR-0978
-$ gh pr list --state open --json number,headRefName                    905, 904, 896
-$ git ls-tree -r --name-only <head> -- docs/adr | … | tail -3
-  #905 cb2f3a63                                                      0974 0975 0978
-  #904 afc14270                                                      0976 0977 0978
-  #896 3aa0b048                                                      0971 0972 0973
-$ python3 <read-only board probe, non-done cards>
-t_6634feb1  running  Consumes: 0977
+$ git rev-parse --short origin/main                                   9160a962
+$ git ls-tree -r --name-only origin/main -- docs/adr | grep -oE 'ADR-09(7[6-9]|8[0-2])' | sort -u
+                                                                      0976 0977 0978
+$ for d in /root/openpic/openpic-webapp/.worktrees/*/; do ls "$d/docs/adr" | grep -oE 'ADR-09(7[6-9]|8[0-2])'; done | sort -u
+                                                                      ADR-0976 ADR-0977 ADR-0978 ADR-0979
+  # 0979 resolves only inside this card's own worktree — no sibling holds it
+$ git rev-list --objects --all | grep -oE 'ADR-09(7[6-9]|8[0-2])' | sort -u
+                                                                      ADR-0976 ADR-0977 ADR-0978 ADR-0979
+  # 0979 resolves only on this branch's own commit
+$ gh pr list --state open --json number,headRefName
+                                                                      906 OP-101-task-downgrade-scheduled-event (this card)
+                                                                      896 OP-132-task-adr-item-section-pins   (records 0971–0973)
+$ python3 <read-only board probe over 7 non-done cards>
 t_7df4b288  running  Consumes: 0979   (this card)
-t_ddd87497  todo     Consumes: 0980   (the gated GREEN)
-# no other non-done card holds a 09xx number
+t_ddd87497  todo     the gated GREEN  (0980)
+# no other non-done card holds a 0979–0982 number
 ```
 
 The four cells that read `0979` — `board-wide / process`, `OP-129 attendee identity lane`, `OP-136 jobs lane`, `unallocated (future lanes)` — advance to **`0980`** (forward only; no cell is lowered and no range is re-cut).
 
 ## Evidence
 
-The RED run on the delivery base, with the card's five groups named:
+The RED run at the delivery head (`origin/main` `9160a962` merged in as `d944df8a`), with the card's five groups named:
 
 ```
 $ npx vitest run --project integration \
@@ -86,4 +85,21 @@ Test Files  1 failed (1)
      Tests  13 failed | 2 passed (15)
 ```
 
-Every red is the same missing write, and each names a different field of it: `expected [] to have a length of 1`, `expected undefined to deeply equal { kind: 'user', … }`, `expected [] to deeply equal [ 'effectiveAt', 'fromPlanKey', 'toPlanKey' ]`, `expected 200 to be 500`. Type-correctness on the pin head: `npx tsc -p apps/web/tsconfig.json --noEmit --incremental false` answered `EXIT=0` (the pins import only symbols the trunk exports — `runNotificationFanOut`, `emitDomainEvent`, `mongoRecipientRepository`, `seedNotificationTypes` / `seedNotificationTemplates`, `getPlatformSettings`, `Collection.prototype.insertOne`).
+Every red is the same missing write, and each names a different field of it: `expected [] to have a length of 1`, `expected undefined to deeply equal { kind: 'user', … }`, `expected [] to deeply equal [ 'effectiveAt', 'fromPlanKey', 'toPlanKey' ]`, `expected 200 to be 500`, `expected [] to have a length of 1 but got +0` (D1/D2).
+
+**Satisfiability (near-fix probe, reverted).** A throwaway near-fix — the `withTransaction` join with the dedupe guard, plus the audience-scoped billing-contact exemption in `resolveRecipients` — answered `Tests 15 passed (15)`: the pin set is satisfiable exactly as written, and the two changes are the whole of the GREEN.
+
+**Load-bearing (mutation probe, reverted).** With the emit moved **outside** the transaction and everything else identical, the file answered `Tests 1 failed | 14 passed (15)`: `C1` alone, `AssertionError: expected { toPlanKey: 'free', …(2) } to be null` — the schedule committed and the event did not. The probe was reverted with `git checkout --` and both files are byte-identical to their pre-probe state:
+
+```
+$ sha256sum <downgrade/route.ts> <notifications/fan-out.ts>   (before == after)
+81778782822a9ce966f39349e547d18b498395239c0f9f384950e44e4217dc16  …/billing/downgrade/route.ts
+9273ce7d154686516bd3950ac655e5d940937511fef0f73a2beaa8c98e6df020  server/notifications/fan-out.ts
+$ git status --porcelain     (empty)
+```
+
+Neither production file is in the diff.
+
+**Static gates on the delivery head.** `pnpm typecheck` answered `TYPECHECK_EXIT=0` (all three projects — `tsconfig.json`, `packages/contracts`, `apps/web`), so the pins import only symbols the trunk exports (`runNotificationFanOut`, `emitDomainEvent`, `mongoRecipientRepository`, `seedNotificationTypes` / `seedNotificationTemplates`, `getPlatformSettings`, `Collection.prototype.insertOne`). `npx eslint` on the spec: **No issues found**. `npx prettier --check` on the spec, this record and the ledger: **All files formatted correctly**. The seven `adr-*` guard files answered `Tests 262 passed (262)` (`7 passed (7)` files) with this ledger in the tree.
+
+**§D6 note.** `E1` asserts both that no `subscription.downgrade_scheduled` action appears and that the workspace's `audit_logs` is empty after the request. The second half is stricter than the card's literal wording and is deliberate: §D4's sentence is "the request gets **no** audit row", and the fixture seeds none, so any row present after the `200` was written by the request.
