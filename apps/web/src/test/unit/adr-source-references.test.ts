@@ -486,8 +486,9 @@ describe("checkRepositoryAdrReferences — the repository sweep", () => {
  * guards" for a head that measured `200 / 3398` and ten: the figures were true of
  * an earlier head and nothing tied them to the head the record described, so the
  * whole suite stayed green while the record drifted.
- * Census at `03a5fbd5`: 485 records, 314 quote a suite count, 296 name a head,
- * 18 name none.
+ * Census at this branch's base `f0422e2e`: 486 records, 315 quote a suite count,
+ * 297 name a head, 18 name none. At `03a5fbd5`, the head the card states, the same
+ * census read 485 / 314 / 296 / 18 — `#911` minted one more record since.
  *
  * **What the rule reads.**
  *
@@ -516,11 +517,11 @@ describe("checkRepositoryAdrReferences — the repository sweep", () => {
  *     314 quoting records carry a `## Evidence` section at all and 37 cite their
  *     head only outside it, so a §Evidence-scoped rule would red about 200
  *     records — a docs programme, not a guard.
- *   - The 18 records that already quote counts and name no head at `03a5fbd5` are
+ *   - The 18 records that already quote counts and name no head at `f0422e2e` are
  *     an explicit, **shrink-only** allowlist ({@link MEASURED_COMMIT_EXEMPTIONS})
  *     of bare four-digit record numbers, not a "greater than the highest number"
  *     cut-off: a cut-off is vacuous until the next record is minted, while the
- *     allowlist enforces the rule over the other 296 records today. Numbers and
+ *     allowlist enforces the rule over the other 297 records today. Numbers and
  *     not file names, because naming the eighteen files from source makes the
  *     helper their declared consumer — invariant (v) reported three
  *     `consumer-mismatch` issues when it did — and a number identifies exactly one
@@ -793,7 +794,7 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
   });
 
   it("reports the trunk as provenance-complete for every record off the allowlist", () => {
-    // Act — green on arrival: the census at `03a5fbd5` is 296 records checked.
+    // Act — green on arrival: the census at `f0422e2e` is 297 records checked.
     const report = checkRepositoryMeasuredCommitCitations(repoRoot);
 
     // Assert — floors, never an equality: a minted record raises the count and a

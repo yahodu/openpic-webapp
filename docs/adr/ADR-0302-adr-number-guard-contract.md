@@ -637,7 +637,7 @@ checked-and-passed — it appears in neither `checked` nor `issues`.
 
 - _A number cut-off_ — "enforce above the highest number at writing" — was
   rejected: it is vacuous until the next record is minted, while the list enforces
-  the rule over the other 296 records today.
+  the rule over the other 297 records today.
 - _File names_ were rejected by a measured contract: naming the eighteen files
   makes the helper their declared **consumer**, and three of them list their
   consumers, so invariant (v) reported three `consumer-mismatch` issues the moment
@@ -647,8 +647,10 @@ checked-and-passed — it appears in neither `checked` nor `issues`.
   numbers, so repairing a record reds until its number leaves the list. The list
   can only shrink.
 
-**Measured at `03a5fbd5`.** 485 records, 314 quote a suite count, 296 name a head
-and are checked, 18 are exempt. The real-tree case pins floors, not equalities —
+**Measured at this branch's base `f0422e2e`.** 486 records, 315 quote a suite
+count, 297 name a head and are checked, 18 are exempt; at `03a5fbd5`, the head the
+follow-up card states, the same census read 485 / 314 / 296 / 18 (`#911` minted one
+more record). The real-tree case pins floors, not equalities —
 `checked.length >= 280`, `scannedRecords >= 480` — per §10's census rule.
 
 **Load-bearing, measured.** Replacing every head-shaped token in

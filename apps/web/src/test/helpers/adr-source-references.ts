@@ -311,7 +311,7 @@ const HEAD_COMMIT_PATTERN = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/;
 /**
  * The records the rule cannot enforce today, as bare four-digit record numbers.
  *
- * Each one quotes a suite count and names no head commit at `03a5fbd5` — the
+ * Each one quotes a suite count and names no head commit at `f0422e2e` — the
  * eighteen the provenance clause's census found. A number is the right key and a
  * file name is not: a record number is unique on the trunk (invariant (i)), so a
  * number identifies exactly one file, and naming the eighteen files here would
@@ -325,7 +325,7 @@ const HEAD_COMMIT_PATTERN = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/;
  * stale number (a record that is now clean, retired, or renumbered) reds the same
  * way. A cut-off — "enforce above the highest number at writing" — was rejected
  * because it enforces nothing until the next record is minted, while this list
- * enforces the rule over the other 296 records on the trunk today.
+ * enforces the rule over the other 297 records on the trunk today.
  */
 export const MEASURED_COMMIT_EXEMPTIONS: readonly string[] = [
   "0046",
