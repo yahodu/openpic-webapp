@@ -1,8 +1,10 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 
+import { requestAuditActor, writeAuditLog } from "@/server/audit/audit-log";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
+import { withTransaction } from "@/server/db/transaction";
 import { defineRoute, type HandlerContext } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
@@ -54,6 +56,7 @@ function targetUserIdFromRequest(request: Request): ObjectId {
 /** The workspace scope, the caller's owner gate and the target membership. */
 interface MemberTarget {
   readonly tenantId: ObjectId;
+  readonly callerId: string;
   readonly targetUserId: ObjectId;
   readonly membership: MembershipDocument;
 }
@@ -84,7 +87,7 @@ async function resolveMemberTarget(ctx: HandlerContext): Promise<MemberTarget> {
     throw appError("cannot_demote_owner");
   }
 
-  return { tenantId: scope.tenantId, targetUserId, membership };
+  return { tenantId: scope.tenantId, callerId: scope.userId, targetUserId, membership };
 }
 
 export const PATCH = defineRoute({
@@ -94,15 +97,30 @@ export const PATCH = defineRoute({
   auth: (ctx, request) => userAuth()(ctx, request),
   tenant: tenantStage(),
   handler: async (ctx) => {
-    const { tenantId, targetUserId } = await resolveMemberTarget(ctx);
+    const { tenantId, callerId, targetUserId, membership } = await resolveMemberTarget(ctx);
     const role = ctx.body.role;
+    const actor = requestAuditActor(ctx.request, callerId);
 
-    await platformRepo(getDb())
-      .collection(COLLECTIONS.tenantMembers)
-      .updateOne(
-        { tenantId, userId: targetUserId },
-        { $set: { role, updatedAt: systemClock.now() } }
-      );
+    // The row and the state change commit together (ADR-0970 §D3): an audit
+    // failure aborts the mutation, so a `200` is evidence of both writes.
+    await withTransaction(async (session) => {
+      await platformRepo(getDb())
+        .collection(COLLECTIONS.tenantMembers)
+        .updateOne(
+          { tenantId, userId: targetUserId },
+          { $set: { role, updatedAt: systemClock.now() } },
+          { session }
+        );
+
+      await writeAuditLog(session, {
+        actor,
+        action: "member.role_changed",
+        target: { kind: "user", id: targetUserId.toHexString() },
+        tenantId: tenantId.toHexString(),
+        before: { role: membership.role },
+        after: { role },
+      });
+    });
 
     getLogger().info("member role changed", {
       event: "member.role_changed",
@@ -121,14 +139,30 @@ export const DELETE = defineRoute({
   auth: (ctx, request) => userAuth()(ctx, request),
   tenant: tenantStage(),
   handler: async (ctx) => {
-    const { tenantId, targetUserId } = await resolveMemberTarget(ctx);
+    const { tenantId, callerId, targetUserId, membership } = await resolveMemberTarget(ctx);
+    const actor = requestAuditActor(ctx.request, callerId);
 
-    await platformRepo(getDb())
-      .collection(COLLECTIONS.tenantMembers)
-      .updateOne(
-        { tenantId, userId: targetUserId },
-        { $set: { status: "removed", removedAt: systemClock.now(), updatedAt: systemClock.now() } }
-      );
+    // Same shape as `PATCH` (ADR-0970 §D3): one transaction, both writes.
+    await withTransaction(async (session) => {
+      await platformRepo(getDb())
+        .collection(COLLECTIONS.tenantMembers)
+        .updateOne(
+          { tenantId, userId: targetUserId },
+          {
+            $set: { status: "removed", removedAt: systemClock.now(), updatedAt: systemClock.now() },
+          },
+          { session }
+        );
+
+      await writeAuditLog(session, {
+        actor,
+        action: "member.removed",
+        target: { kind: "user", id: targetUserId.toHexString() },
+        tenantId: tenantId.toHexString(),
+        before: { status: membership.status },
+        after: { status: "removed" },
+      });
+    });
 
     getLogger().info("member removed", {
       event: "member.removed",

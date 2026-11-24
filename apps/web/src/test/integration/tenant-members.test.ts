@@ -1,6 +1,6 @@
-import type { Document, WithId } from "mongodb";
-import { ObjectId } from "mongodb";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { Document, InsertOneOptions, WithId } from "mongodb";
+import { Collection, ObjectId } from "mongodb";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { findForbiddenFields } from "@openpic/contracts";
 
@@ -20,6 +20,7 @@ import {
   type Logger,
   type MemoryTransport,
 } from "@/server/logging";
+import { platformRepo } from "@/server/repos";
 
 import { body } from "../helpers/auth-requests";
 import {
@@ -1261,6 +1262,408 @@ describe("OP-101 tenant-member residuals (ADR-0304 fresh pins, ADR-0288)", () =>
       // The reason is the stage's own classification; the pin is that the
       // uniform denial is logged at all, at warn level (§0.4).
       expect(denials[0]).toMatchObject({ level: "warn" });
+    });
+  });
+});
+
+/**
+ * OP-101 / ADR-0970 — the **durable** audit record of a workspace-member
+ * mutation (contract §2.2, schema §20.2/§22, ADR-0970 §D2/§D3/§D7, ADR-0971).
+ *
+ * The user story: *who changed this member's role, who removed them, and when* —
+ * answerable for a full audit year. The two structured log lines the shipped
+ * route emits are the operator's tail: no retention promise, no query surface and
+ * no per-tenant index, which is why ADR-0288 R2 keeps pinning them above,
+ * untouched. §20.2's `auditLogs` is the durable record, and at the head this
+ * block was written nothing inserted into it — `git grep -n "auditLogs" --
+ * apps/web/src` found the collection name and its TTL index and no writer.
+ *
+ * The observable is therefore the document itself, read through the same
+ * platform handle the writer uses (`platformRepo(db).collection(
+ * COLLECTIONS.auditLogs)`), never a route: `GET /admin/audit-logs` is
+ * contract-only at this head (ADR-0970 §D5), so pinning a response would pin
+ * something this repository does not have.
+ *
+ * ## Contract expected of the implementation (ADR-0970 §D2/§D3/§D7)
+ *
+ * - `PATCH` and `DELETE` each write **exactly one** row per successful call, and
+ *   the row's key set is exactly the eight §D2 fields plus the driver's `_id`:
+ *   `{ actor, action, target, tenantId, before, after, at, expireAt }`.
+ * - `actor` is `{ kind: "user", id, ipHash, uaHash }` — the caller's principal
+ *   id and **salted SHA-256 digests** of the request's IP and user agent, so no
+ *   raw address and no raw agent is ever stored. `target` is
+ *   `{ kind: "user", id: <target userId hex> }`, `tenantId` is the workspace
+ *   **hex string** (the type §18.3's `domainEvents` uses), and `before`/`after`
+ *   are narrowed to the field the verb changes: `{ role }` for
+ *   `member.role_changed`, `{ status }` for `member.removed`.
+ * - `expireAt` is exactly `400 * 24 * 60 * 60 * 1000` ms after `at` (§22).
+ * - The row and the membership `updateOne` are **one transaction** (§D3): an
+ *   insert failure aborts the mutation, answers the app-wide
+ *   `500 internal_error`, and leaves the membership untouched — so a `200`/`204`
+ *   is evidence that both writes committed, and a mutation nobody can attribute
+ *   is never committed.
+ *
+ * ## What is RED at the branch point, and what is a control
+ *
+ * At the branch point nothing writes `audit_logs`, so `T1` and `T2` fail on
+ * `toHaveLength(1)` against `[]`, and `T4`'s first half fails because the route
+ * answers `200` and commits the membership. `T3`'s two refusal arms and `T4`'s
+ * second half are **controls**: green on arrival, and every GREEN must keep them
+ * green. `T4`'s second half is also the anti-vacuity guard for its first half —
+ * a route that never writes a row cannot pass `T4`, because after the stub is
+ * restored the same call must answer `200` and write exactly one row.
+ *
+ * ## Assumptions (recorded in ADR-0971)
+ *
+ * - **A1 — `actor.id` is the Better Auth `user._id` hex.** ADR-0970 §D2 writes
+ *   `requestAuditActor(request, id)`; the route's only principal id is the
+ *   session user's, which is the value every other tenancy row stores.
+ * - **A2 — the fingerprints are asserted by shape, not by value.** §D2 fixes the
+ *   digest (64-hex, salted) but not the salt's source, so these cases require a
+ *   SHA-256 hex digest and the absence of the raw values, never a literal hash.
+ * - **A3 — `at` is not pinned to an instant.** It is whatever the route's clock
+ *   read; only its type and its exact distance to `expireAt` are pinned, so no
+ *   case can flake on a millisecond boundary.
+ * - **A4 — one row per successful call, not per state transition** (§D7): no
+ *   case re-sends a mutation, so the accepted non-idempotence is neither pinned
+ *   nor contradicted here.
+ */
+describe("OP-101 / ADR-0970 — the `auditLogs` row a workspace-member mutation writes", () => {
+  /** §22 — the retention every row carries, exactly 400 days. */
+  const FOUR_HUNDRED_DAYS_MS = 400 * 24 * 60 * 60 * 1000;
+
+  /** The document's key set: the eight §D2 fields plus the driver's `_id`. */
+  const AUDIT_ROW_KEYS = [
+    "_id",
+    "action",
+    "actor",
+    "after",
+    "at",
+    "before",
+    "expireAt",
+    "target",
+    "tenantId",
+  ];
+
+  /** The `actor` sub-document's four keys (§D2). */
+  const AUDIT_ACTOR_KEYS = ["id", "ipHash", "kind", "uaHash"];
+
+  /** The `target` sub-document's two keys (§D2). */
+  const AUDIT_TARGET_KEYS = ["id", "kind"];
+
+  /** A 64-character lowercase hex digest — SHA-256, never a raw value. */
+  const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+  /** The client address and user agent every mutation in this block presents. */
+  const CALLER_IP = "198.51.100.24";
+  const CALLER_USER_AGENT = "OpenPicMemberAudit/1.0 (ADR-0970 spec)";
+
+  /**
+   * The driver's own `Collection#insertOne`, resolved once when this block is
+   * registered.
+   *
+   * The stub below must forward every other collection to the **real** method,
+   * and reading `Collection.prototype.insertOne` at call time would find the
+   * stub itself: an unbounded recursion answers a `RangeError`, which is also a
+   * `500`, so `T4` would pass for the wrong reason
+   * (`billing-checkout.test.ts:177` precedent).
+   */
+  const driverInsertOne = ((): typeof Collection.prototype.insertOne => {
+    const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "insertOne");
+    if (descriptor === undefined || typeof descriptor.value !== "function") {
+      throw new Error("expected Collection.prototype.insertOne to be a function");
+    }
+    return descriptor.value as typeof Collection.prototype.insertOne;
+  })();
+
+  /**
+   * A `PATCH`/`DELETE /tenants/{tenantId}/members/{userId}` request that presents
+   * a known IP and user agent, so the row's two digests are computed over values
+   * the case can prove are absent from the document.
+   */
+  function mutationRequest(
+    cookie: string,
+    tenantId: string,
+    userId: string,
+    method: "PATCH" | "DELETE",
+    payload?: unknown
+  ): Request {
+    const headers: Record<string, string> = {
+      cookie,
+      "user-agent": CALLER_USER_AGENT,
+      "x-forwarded-for": CALLER_IP,
+    };
+    if (payload !== undefined) {
+      headers["content-type"] = "application/json";
+    }
+    return new Request(new URL(`${TENANTS_PATH}/${tenantId}/members/${userId}`, APP_ORIGIN), {
+      method,
+      headers,
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+    });
+  }
+
+  /**
+   * Every `auditLogs` document that names this workspace.
+   *
+   * The read matches the hex string **and** the `ObjectId`, so a row written with
+   * the wrong `tenantId` type is still found and reds on the field assertion with
+   * a message that names the drift — instead of making the case pass vacuously on
+   * an empty list.
+   */
+  async function auditRows(tenantId: ObjectId): Promise<Document[]> {
+    return platformRepo(app.db)
+      .collection(COLLECTIONS.auditLogs)
+      .find({ $or: [{ tenantId: tenantId.toHexString() }, { tenantId }] })
+      .toArray();
+  }
+
+  /**
+   * Assert the actor trio, the target pair and the workspace id every row
+   * carries: exact keys, values by shape (§D2).
+   */
+  function expectActorTargetAndTenant(
+    row: Record<string, unknown>,
+    callerId: ObjectId,
+    targetUserId: ObjectId,
+    tenantId: ObjectId
+  ): void {
+    const actor = row.actor as Record<string, unknown>;
+    expect(Object.keys(actor).sort()).toEqual(AUDIT_ACTOR_KEYS);
+    expect(actor.kind).toBe("user");
+    expect(actor.id).toBe(callerId.toHexString());
+    expect(actor.ipHash).toMatch(SHA256_HEX);
+    expect(actor.uaHash).toMatch(SHA256_HEX);
+
+    const target = row.target as Record<string, unknown>;
+    expect(Object.keys(target).sort()).toEqual(AUDIT_TARGET_KEYS);
+    expect(target).toEqual({ kind: "user", id: targetUserId.toHexString() });
+
+    expect(row.tenantId).toBe(tenantId.toHexString());
+  }
+
+  /** Assert the §22 retention: a real instant, and `expireAt` exactly 400 days on. */
+  function expectRetention(row: Record<string, unknown>): void {
+    expect(row.at).toBeInstanceOf(Date);
+    expect(row.expireAt).toBeInstanceOf(Date);
+    expect((row.expireAt as Date).getTime() - (row.at as Date).getTime()).toBe(
+      FOUR_HUNDRED_DAYS_MS
+    );
+  }
+
+  /**
+   * T1 — the re-role's row.
+   *
+   * An owner promoting a `member` to `admin` is `200`, and the durable record of
+   * that one call is one `member.role_changed` row naming the caller, the target,
+   * the workspace, the role it moved from and the role it set, kept 400 days.
+   */
+  it("writes exactly one member.role_changed row when an owner re-roles a member", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, member, "Priya Sharma");
+
+    const response = await changeMemberRole(
+      mutationRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "PATCH", {
+        role: "admin",
+      })
+    );
+
+    expect(response.status).toBe(200);
+
+    const rows = await auditRows(tenantId);
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
+
+    // §D2 fixes the key set exactly: an added `reason` or a dropped `before`
+    // reds here, not in a later reader.
+    expect(Object.keys(row).sort()).toEqual(AUDIT_ROW_KEYS);
+    expect(row.action).toBe("member.role_changed");
+    expectActorTargetAndTenant(row, owner.userId, member.userId, tenantId);
+    expect(row.before).toEqual({ role: "member" });
+    expect(row.after).toEqual({ role: "admin" });
+    expectRetention(row);
+
+    // §D2: the fingerprints are digests — the request's own values are never
+    // stored, so a row cannot leak the caller's address or agent.
+    const serialized = JSON.stringify(row);
+    expect(serialized).not.toContain(CALLER_IP);
+    expect(serialized).not.toContain(CALLER_USER_AGENT);
+
+    // The other verb's action belongs to the other verb.
+    expect(rows.filter((candidate) => candidate.action === "member.removed")).toEqual([]);
+  });
+
+  /**
+   * T2 — the removal's row.
+   *
+   * A soft removal is `204` and writes one `member.removed` row with the same
+   * actor, target and workspace keys, narrowed to the field the verb changes:
+   * `before: { status: "active" }`, `after: { status: "removed" }`.
+   */
+  it("writes exactly one member.removed row when an owner removes a member", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, member, "Priya Sharma");
+
+    const response = await removeMember(
+      mutationRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "DELETE")
+    );
+
+    expect(response.status).toBe(204);
+
+    const rows = await auditRows(tenantId);
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
+
+    expect(Object.keys(row).sort()).toEqual(AUDIT_ROW_KEYS);
+    expect(row.action).toBe("member.removed");
+    expectActorTargetAndTenant(row, owner.userId, member.userId, tenantId);
+    expect(row.before).toEqual({ status: "active" });
+    expect(row.after).toEqual({ status: "removed" });
+    expectRetention(row);
+
+    expect(rows.filter((candidate) => candidate.action === "member.role_changed")).toEqual([]);
+  });
+
+  /**
+   * T3 (first arm) — a refused non-owner call writes nothing.
+   *
+   * The owner-only gate denies an `admin` caller on both verbs before any write,
+   * so a refusal is total: no membership change (the shipped 403 cases) and no
+   * audit row either. A row written before the gate — or in a `finally` — reds
+   * here.
+   */
+  it("writes no row when a non-owner is refused on either verb", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const admin = await app.signIn(makeIdentity("dev-admin"));
+    const target = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, admin, "Dev Admin", "admin");
+    await addMember(tenantId, target, "Priya Sharma");
+
+    const patched = await changeMemberRole(
+      mutationRequest(admin.cookie, CURRENT_ALIAS, target.userId.toHexString(), "PATCH", {
+        role: "admin",
+      })
+    );
+    const deleted = await removeMember(
+      mutationRequest(admin.cookie, CURRENT_ALIAS, target.userId.toHexString(), "DELETE")
+    );
+
+    expect(patched.status).toBe(403);
+    expect((await errorEnvelope(patched)).code).toBe("forbidden");
+    expect(deleted.status).toBe(403);
+    expect((await errorEnvelope(deleted)).code).toBe("forbidden");
+
+    expect(await auditRows(tenantId)).toEqual([]);
+  });
+
+  /**
+   * T3 (second arm) — the owner-protection refusal writes nothing.
+   *
+   * §2.2's `409 cannot_demote_owner` protects the owner from their own removal.
+   * The refusal happens before the transaction, so it must leave the workspace's
+   * audit collection empty.
+   */
+  it("writes no row when the owner's own removal is refused", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+
+    const response = await removeMember(
+      mutationRequest(owner.cookie, CURRENT_ALIAS, owner.userId.toHexString(), "DELETE")
+    );
+
+    expect(response.status).toBe(409);
+    expect((await errorEnvelope(response)).code).toBe("cannot_demote_owner");
+
+    expect(await auditRows(tenantId)).toEqual([]);
+  });
+
+  /**
+   * T4 — the row is written **inside the mutation's transaction** (§D3), the
+   * load-bearing case.
+   *
+   * The audit insert is refused with a driver error that carries no
+   * `TransientTransactionError` label (`code: 91`, a primary-election error that
+   * `withTransaction` rethrows on the first attempt, so no retry can absorb it).
+   * The mutation must therefore abort with the app-wide `500 internal_error`,
+   * leaving the membership exactly as it was — same `role`, same `updatedAt` —
+   * and no row at all: a mutation nobody can attribute is the failure mode the
+   * row exists to prevent (§D3, §20.2 P5).
+   *
+   * The second half is the **anti-vacuity guard**: the stub is restored and the
+   * same call is repeated, and it must answer `200` and write exactly one row.
+   * Without it, a route that writes no row at all would pass the refusal half.
+   */
+  it("answers 500 and commits neither the role nor the row when the audit insert fails, then writes the row once the driver recovers", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, member, "Priya Sharma");
+
+    // A pre-call `updatedAt` on the row, so "unchanged" is a claim a route that
+    // really did commit would break.
+    const preCallUpdatedAt = new Date("2026-05-05T06:07:08.900Z");
+    await app.db
+      .collection(COLLECTIONS.tenantMembers)
+      .updateOne({ tenantId, userId: member.userId }, { $set: { updatedAt: preCallUpdatedAt } });
+    const before = await findMembership(tenantId, member.userId);
+    expect(before?.role).toBe("member");
+    expect(before?.updatedAt).toEqual(preCallUpdatedAt);
+
+    const driverError = Object.assign(new Error("not primary"), { code: 91 });
+    const insertStub = vi.spyOn(Collection.prototype, "insertOne").mockImplementation(function (
+      this: Collection,
+      document: Document,
+      options?: InsertOneOptions
+    ) {
+      if (this.collectionName === COLLECTIONS.auditLogs) {
+        return Promise.reject(driverError);
+      }
+      return driverInsertOne.call(this, document, options);
+    });
+
+    let refused: Response;
+    try {
+      refused = await changeMemberRole(
+        mutationRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "PATCH", {
+          role: "admin",
+        })
+      );
+    } finally {
+      insertStub.mockRestore();
+    }
+
+    expect(refused.status).toBe(500);
+    const error = (await errorEnvelope(refused)) as { code: string; details?: unknown };
+    expect(error.code).toBe("internal_error");
+    expect(error.details).toBeUndefined();
+
+    // Nothing committed: the membership keeps its role and its instant, and the
+    // workspace has no audit row.
+    const after = await findMembership(tenantId, member.userId);
+    expect(after?.role).toBe("member");
+    expect(after?.updatedAt).toEqual(preCallUpdatedAt);
+    expect(await auditRows(tenantId)).toEqual([]);
+
+    // The anti-vacuity guard: the same call, with the driver healthy again, must
+    // answer 200 and write exactly one row.
+    const accepted = await changeMemberRole(
+      mutationRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "PATCH", {
+        role: "admin",
+      })
+    );
+
+    expect(accepted.status).toBe(200);
+    const rows = await auditRows(tenantId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      action: "member.role_changed",
+      before: { role: "member" },
+      after: { role: "admin" },
     });
   });
 });

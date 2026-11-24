@@ -1,3 +1,9 @@
+## [1.86.0](https://github.com/yahodu/openpic-webapp/compare/v1.85.2...v1.86.0) (2026-11-24)
+
+### Features
+
+- **tenants:** OP-101 write auditLogs rows for workspace-member mutations ([#894](https://github.com/yahodu/openpic-webapp/issues/894)) ([8f4e126](https://github.com/yahodu/openpic-webapp/commit/8f4e126e87a72a96bf39595593370c4dcb11654d))
+
 ## [1.85.2](https://github.com/yahodu/openpic-webapp/compare/v1.85.1...v1.85.2) (2026-11-24)
 
 ### Bug Fixes
