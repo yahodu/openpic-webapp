@@ -275,7 +275,7 @@ touched.
 
 ## Review — round 1 (reviewer)
 
-**Verdict: APPROVED WITH FINDINGS.** PR [#866](https://github.com/yahodu/openpic-webapp/pull/866) is a **RED-by-design pin pack**: R1 is red on purpose, so a squash-merge would redden the trunk's integration job. The review therefore left that PR **draft and unmerged**, and said so on the PR itself (issue comment `7129021023`). The tie-break GREEN is what landed, as PR [#871](https://github.com/yahodu/openpic-webapp/pull/871) (squash `774e5584`), carrying the three pin files byte-identical; PR #866 was closed as superseded by that merge. Nothing above this section is retracted, and no §D1–§D7 decision is withdrawn.
+**Verdict: APPROVED WITH FINDINGS.** PR [#866](https://github.com/yahodu/openpic-webapp/pull/866) is a **RED-by-design pin pack**: R1 is red on purpose, so a squash-merge would redden the trunk's integration job. The review therefore left that PR **draft and unmerged**, and said so on the PR itself (issue comment `7129021023`). The tie-break GREEN is what landed, as PR [#871](https://github.com/yahodu/openpic-webapp/pull/871) (squash `774e5584`), carrying the pin spec and this record byte-identical (blobs `c91c3716…` and `3c8704b3…`) and merging `docs/adr/README.md` as a union with the trunk; PR #866 was closed as superseded by that merge. Nothing above this section is retracted, and no §D1–§D7 decision is withdrawn.
 
 **Reviewed range and re-measurement.** Reviewed head `140c0b5f`, base `b8c0f1c6`, against `origin/main` `eea4f14a`. Re-measured on 2026-11-24 in a detached probe worktree at `140c0b5f` (with `packages/contracts` byte-identical between that head and this append's base):
 
