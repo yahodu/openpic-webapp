@@ -27,6 +27,7 @@ import {
 } from "../helpers/db";
 import { startTestApp, type TestApp } from "../helpers/authed-app";
 import { authPost, body, cookiePair, sessionCookie } from "../helpers/auth-requests";
+import { withClockAt } from "../helpers/clock";
 
 /**
  * Integration / contract — the auth guards (OP-86, contract §0.3).
@@ -735,16 +736,19 @@ describe("attendee label (§0.3, §1.5)", () => {
 
   it("F3: a lapsed session with the default resolver is 401 attendee_session_expired", async () => {
     const token = await createAttendeeToken();
+    // Real future, so `attendee_sessions_expire_at_ttl` cannot select the row:
+    // a swept row resolves to no principal at all, which is the sibling case
+    // below (`401 authentication_required`) — measured at this cut (ADR-0973,
+    // class ADR-0148).
+    const expiresAt = new Date(Date.now() + 60_000);
     await attendeeApp.db
       .collection(COLLECTIONS.attendeeSessions)
-      .updateOne(
-        { tokenHash: hashAttendeeSessionToken(token) },
-        { $set: { expireAt: new Date(Date.now() - 1_000) } }
-      );
+      .updateOne({ tokenHash: hashAttendeeSessionToken(token) }, { $set: { expireAt: expiresAt } });
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
 
-    const response = await requestGuardRoute(
-      guardRoute(attendeeHarness(), "attendee"),
-      `op_att=${token}`
+    // Act — only the clock moves past the stamp; the row is untouched.
+    const response = await withClockAt(expiresAt, () =>
+      requestGuardRoute(guardRoute(attendeeHarness(), "attendee"), `op_att=${token}`)
     );
 
     expect(response.status).toBe(401);

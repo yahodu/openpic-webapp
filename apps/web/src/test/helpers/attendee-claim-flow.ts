@@ -169,21 +169,29 @@ export async function readSessionRow(app: TestApp, token: string): Promise<Sessi
 }
 
 /**
- * Move one session's `expireAt` to the instant a case means, so the clock — not
- * the row's presence — decides whether it has lapsed.
+ * Stamp one session's `expireAt` with the instant a case means, so the clock —
+ * not the row's presence — decides whether it has lapsed.
  *
  * `attendee_sessions` carries a TTL index (`attendee_sessions_expire_at_ttl`,
  * `{expireAt: 1}`, `expireAfterSeconds: 0`), so an `expireAt` in the **real**
  * past is a row mongod may delete between the write and the assertion, which
  * turns a `401 attendee_session_expired` into a `404 not_found`. Callers pass an
- * instant in the real future and move the injected process clock past it
- * instead (ADR-0968; class ADR-0148/ADR-0938).
+ * instant in the real future and move the process clock past it instead
+ * (`withClockAt` in `./clock`; ADR-0968/ADR-0973, class ADR-0148/ADR-0938).
+ *
+ * The old name was `lapseSession`, which said the opposite of what a repaired
+ * call site asks for: the instant it is handed is in the future, and the row is
+ * left un-lapsed so the TTL monitor can never select it.
  *
  * @param app - The booted test app.
  * @param token - The raw bearer token of the session to re-stamp.
- * @param expireAt - The session's new expiry instant.
+ * @param expireAt - The session's new expiry instant (the real future).
  */
-export async function lapseSession(app: TestApp, token: string, expireAt: Date): Promise<void> {
+export async function stampSessionExpiry(
+  app: TestApp,
+  token: string,
+  expireAt: Date
+): Promise<void> {
   await app.db
     .collection(COLLECTIONS.attendeeSessions)
     .updateOne({ tokenHash: hashAttendeeSessionToken(token) }, { $set: { expireAt } });

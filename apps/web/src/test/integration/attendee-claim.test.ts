@@ -1,5 +1,5 @@
 import { type ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
@@ -16,16 +16,17 @@ import {
   claimBodyOf,
   claimSession,
   createBoundAttendeeSession,
-  lapseSession,
   readSessionRow,
   seedProfile,
   seedSelfie,
   selfieIds,
+  stampSessionExpiry,
   type ClaimCallOptions,
   type ClaimProfileRow,
 } from "../helpers/attendee-claim-flow";
 import { makeIdentity, startTestApp, type TestApp } from "../helpers/authed-app";
 import { setCookies } from "../helpers/auth-requests";
+import { withClockAt } from "../helpers/clock";
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
 import {
   errorBody,
@@ -219,23 +220,17 @@ function singleProfile(rows: readonly ClaimProfileRow[]): ClaimProfileRow {
  *
  * The route's expiry check reads the injected `Clock` port, whose production
  * implementation (`systemClock`) reads the process wall clock on every call, and
- * the route threads no clock of its own. Faking **only** `Date` moves that read
- * without touching timers, so the driver, the readiness polls and the HTTP
- * plumbing keep their real scheduling (the same seam `attendee-sessions.test.ts`
- * I4 uses; ADR-0148).
+ * the route threads no clock of its own. The fake-`Date` seam lives once, in
+ * `withClockAt` (`../helpers/clock`), so this suite and the other three
+ * `attendee_sessions` suites move the clock the same way (ADR-0968, ADR-0973;
+ * class ADR-0148).
  *
  * @param instant - The instant every `Date` read during the call reports.
  * @param options - The caller's credential, client address and session token.
  * @returns The raw response.
  */
 async function claimWithClockAt(instant: Date, options: ClaimCallOptions): Promise<Response> {
-  vi.useFakeTimers({ toFake: ["Date"] });
-  try {
-    vi.setSystemTime(instant);
-    return await claimSession(options);
-  } finally {
-    vi.useRealTimers();
-  }
+  return withClockAt(instant, () => claimSession(options));
 }
 
 describe("when an attendee claims an anonymous session", () => {
@@ -490,7 +485,7 @@ describe("when a session is already spoken for", () => {
       subject: { kind: "anonymous", attendeeSessionId: session.sessionId },
     });
     const expiresAt = new Date(Date.now() + 60_000);
-    await lapseSession(app, session.token, expiresAt);
+    await stampSessionExpiry(app, session.token, expiresAt);
     const user = await app.signIn(makeIdentity("op134-i2-expired-user"));
 
     // Assert — the row is live for the monitor and present at the act, so the

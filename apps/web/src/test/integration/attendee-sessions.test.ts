@@ -23,6 +23,7 @@ import { createRateLimiter } from "@/server/rate-limit";
 
 import { setCookies } from "../helpers/auth-requests";
 import { APP_ORIGIN, startTestApp, type TestApp } from "../helpers/authed-app";
+import { withClockAt } from "../helpers/clock";
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
 
 /**
@@ -666,10 +667,31 @@ describe("GET /api/v1/p/attendee-sessions/current", () => {
   });
 
   it("I4: a session whose expireAt has passed is 401 attendee_session_expired", async () => {
+    // Arrange — a session whose `expireAt` the **clock** has reached.
+    //
+    // The instant is in the **real** future, so `attendee_sessions_expire_at_ttl`
+    // (`{expireAt: 1}`, `expireAfterSeconds: 0`) cannot select the row: the TTL
+    // monitor deletes only rows already past and runs on the real clock at a
+    // ~60 s cadence (measured 56.8 s at this cut). A row stamped into the real
+    // past is deleted mid-case, and `findAttendeeSession` then finds nothing at
+    // all: `401 authentication_required`, not this case's
+    // `attendee_session_expired` (ADR-0973; class ADR-0148, the first member).
     const created = await createdSession();
-    await ageSession(created.sessionToken, new Date(Date.now() - 1_000));
+    const expiresAt = new Date(Date.now() + 60_000);
+    await ageSession(created.sessionToken, expiresAt);
 
-    const response = await currentSession({ "x-attendee-session": created.sessionToken });
+    // Assert — the row is live for the monitor and present at the act, so the
+    // status below can only be the expiry answer, never a missing row.
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
+    const stamped = (await storedSession(created.sessionToken)).document as {
+      readonly expireAt?: Date;
+    };
+    expect(stamped.expireAt).toEqual(expiresAt);
+
+    // Act — only the clock moves past the stamp; the row is untouched.
+    const response = await withClockAt(expiresAt, () =>
+      currentSession({ "x-attendee-session": created.sessionToken })
+    );
     expect(response.status).toBe(401);
 
     const parsed = await jsonOf<{
@@ -688,14 +710,16 @@ describe("GET /api/v1/p/attendee-sessions/current", () => {
     const created = await createdSession();
     const expiresAt = Date.parse(created.expiresAt);
 
-    vi.useFakeTimers({ toFake: ["Date"] });
-
-    vi.setSystemTime(new Date(expiresAt - 1));
-    const beforeExpiry = await currentSession({ "x-attendee-session": created.sessionToken });
+    // The seam lives once, in `withClockAt` (`../helpers/clock`); each call
+    // restores the real clock in its `finally`.
+    const beforeExpiry = await withClockAt(new Date(expiresAt - 1), () =>
+      currentSession({ "x-attendee-session": created.sessionToken })
+    );
     expect(beforeExpiry.status).toBe(200);
 
-    vi.setSystemTime(new Date(expiresAt));
-    const atExpiry = await currentSession({ "x-attendee-session": created.sessionToken });
+    const atExpiry = await withClockAt(new Date(expiresAt), () =>
+      currentSession({ "x-attendee-session": created.sessionToken })
+    );
     expect(atExpiry.status).toBe(401);
     const parsed = await jsonOf<{ error: { code: string } }>(atExpiry);
     expect(parsed.error.code).toBe("attendee_session_expired");
@@ -824,13 +848,22 @@ describe("GET /api/v1/p/attendee-sessions/current — cookie vs header precedenc
    */
   it("F4: a lapsed op_att cookie is 401 attendee_session_expired even with a valid header", async () => {
     const lapsed = await createdSession();
-    await ageSession(lapsed.sessionToken, new Date(Date.now() - 1_000));
+    // Real future, so the TTL monitor cannot select the row: a swept row is no
+    // row, and the cookie would fall through to the valid header — the sibling
+    // case above, `200` (measured: ADR-0973, class ADR-0148).
+    const expiresAt = new Date(Date.now() + 60_000);
+    await ageSession(lapsed.sessionToken, expiresAt);
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
     const valid = await createdSession();
 
-    const response = await currentSession({
-      cookie: `op_att=${lapsed.sessionToken}`,
-      "x-attendee-session": valid.sessionToken,
-    });
+    // Act — the clock is at the lapsed session's expiry; only the cookie's row
+    // has lapsed, and the valid header must not be reached.
+    const response = await withClockAt(expiresAt, () =>
+      currentSession({
+        cookie: `op_att=${lapsed.sessionToken}`,
+        "x-attendee-session": valid.sessionToken,
+      })
+    );
 
     expect(response.status).toBe(401);
 
