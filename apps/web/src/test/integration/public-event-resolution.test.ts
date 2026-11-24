@@ -891,7 +891,7 @@ describe("GET /api/v1/p/events/{slug} — the session hint (contract §6.1)", ()
     // `expireAfterSeconds: 0`) cannot select it: a row stamped into the real
     // past is deleted by the monitor ~57 s later, and the landing call would
     // then resolve no session at all and answer `hasProfile: false` — the same
-    // body as no credential (measured; ADR-0969, class ADR-0148).
+    // body as no credential (measured; ADR-0973, class ADR-0148).
     const { tenantId, event } = await seedPublishedEvent("op130-lapsed-session");
     const cookie = await createSessionCookie(event.slug);
     const token = cookie.slice(cookie.indexOf("=") + 1);

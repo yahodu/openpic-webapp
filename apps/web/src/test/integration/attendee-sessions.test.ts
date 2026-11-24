@@ -675,7 +675,7 @@ describe("GET /api/v1/p/attendee-sessions/current", () => {
     // ~60 s cadence (measured 56.8 s at this cut). A row stamped into the real
     // past is deleted mid-case, and `findAttendeeSession` then finds nothing at
     // all: `401 authentication_required`, not this case's
-    // `attendee_session_expired` (ADR-0968; class ADR-0148/ADR-0969).
+    // `attendee_session_expired` (ADR-0973; class ADR-0148, the first member).
     const created = await createdSession();
     const expiresAt = new Date(Date.now() + 60_000);
     await ageSession(created.sessionToken, expiresAt);
@@ -850,7 +850,7 @@ describe("GET /api/v1/p/attendee-sessions/current — cookie vs header precedenc
     const lapsed = await createdSession();
     // Real future, so the TTL monitor cannot select the row: a swept row is no
     // row, and the cookie would fall through to the valid header — the sibling
-    // case above, `200` (measured: ADR-0969, class ADR-0148).
+    // case above, `200` (measured: ADR-0973, class ADR-0148).
     const expiresAt = new Date(Date.now() + 60_000);
     await ageSession(lapsed.sessionToken, expiresAt);
     expect(expiresAt.getTime()).toBeGreaterThan(Date.now());

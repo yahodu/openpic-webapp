@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 /**
- * The fake-`Date` seam for integration specs (ADR-0148, ADR-0968, ADR-0969).
+ * The fake-`Date` seam for integration specs (ADR-0973, class ADR-0148).
  *
  * **Why this exists.** A spec that wants a persisted row to be *lapsed* has two
  * ways to say so, and they are not equivalent. Stamping the row's `expireAt`
@@ -11,8 +11,8 @@ import { vi } from "vitest";
  * deleted at an instant the spec cannot control — and whenever the answer
  * depends on the row it changes from the pinned one to the absent-row one. That
  * is the class [`ADR-0148`](../../../../../docs/adr/ADR-0148-integration-fixture-clock-anchor.md)
- * names and [`ADR-0968`](../../../../../docs/adr/ADR-0968-op134-attendee-claim-i2-clock.md)
- * repaired for the first `attendee_sessions` member.
+ * names, and the shape the claim suite's `I2` repair measured and adopted before
+ * this helper existed.
  *
  * The other way is to keep the row **live** (`expireAt` in the real future, so
  * the monitor can never select it) and move the *reader's* clock past it. That

@@ -222,7 +222,7 @@ function singleProfile(rows: readonly ClaimProfileRow[]): ClaimProfileRow {
  * implementation (`systemClock`) reads the process wall clock on every call, and
  * the route threads no clock of its own. The fake-`Date` seam lives once, in
  * `withClockAt` (`../helpers/clock`), so this suite and the other three
- * `attendee_sessions` suites move the clock the same way (ADR-0968, ADR-0969;
+ * `attendee_sessions` suites move the clock the same way (ADR-0968, ADR-0973;
  * class ADR-0148).
  *
  * @param instant - The instant every `Date` read during the call reports.

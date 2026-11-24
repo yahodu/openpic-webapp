@@ -177,7 +177,7 @@ export async function readSessionRow(app: TestApp, token: string): Promise<Sessi
  * past is a row mongod may delete between the write and the assertion, which
  * turns a `401 attendee_session_expired` into a `404 not_found`. Callers pass an
  * instant in the real future and move the process clock past it instead
- * (`withClockAt` in `./clock`; ADR-0968/ADR-0969, class ADR-0148/ADR-0938).
+ * (`withClockAt` in `./clock`; ADR-0968/ADR-0973, class ADR-0148/ADR-0938).
  *
  * The old name was `lapseSession`, which said the opposite of what a repaired
  * call site asks for: the instant it is handed is in the future, and the row is

@@ -738,7 +738,7 @@ describe("attendee label (§0.3, §1.5)", () => {
     const token = await createAttendeeToken();
     // Real future, so `attendee_sessions_expire_at_ttl` cannot select the row:
     // a swept row resolves to no principal at all, which is the sibling case
-    // below (`401 authentication_required`) — measured at this cut (ADR-0969,
+    // below (`401 authentication_required`) — measured at this cut (ADR-0973,
     // class ADR-0148).
     const expiresAt = new Date(Date.now() + 60_000);
     await attendeeApp.db
