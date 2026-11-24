@@ -1,3 +1,9 @@
+## [1.85.1](https://github.com/yahodu/openpic-webapp/compare/v1.85.0...v1.85.1) (2026-11-24)
+
+### Bug Fixes
+
+- **images:** OP-140 log the tenancy denial on each retryFailedEventImages refusal ([#859](https://github.com/yahodu/openpic-webapp/issues/859)) ([44ec6b7](https://github.com/yahodu/openpic-webapp/commit/44ec6b79718169d7603bb9d8ffbb459944c7e582))
+
 ## [1.85.0](https://github.com/yahodu/openpic-webapp/compare/v1.84.0...v1.85.0) (2026-11-24)
 
 ### Features
