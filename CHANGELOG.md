@@ -1,3 +1,9 @@
+## [1.85.0](https://github.com/yahodu/openpic-webapp/compare/v1.84.0...v1.85.0) (2026-11-24)
+
+### Features
+
+- **images:** OP-140 retryFailedEventImages with the admission inside and the upload_batch emit kind ([#854](https://github.com/yahodu/openpic-webapp/issues/854)) ([61fa3ee](https://github.com/yahodu/openpic-webapp/commit/61fa3eec873e74992bc4bd19d5776047d349df61))
+
 ## [1.84.0](https://github.com/yahodu/openpic-webapp/compare/v1.83.2...v1.84.0) (2026-11-24)
 
 ### Features
