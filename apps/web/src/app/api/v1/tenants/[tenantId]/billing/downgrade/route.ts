@@ -4,12 +4,12 @@ import { z } from "zod";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
 import { withTransaction } from "@/server/db/transaction";
-import { emitDomainEvent } from "@/server/domain/domain-events";
+import { emitDomainEvent, findDomainEventByDedupeKey } from "@/server/domain/domain-events";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
 import { getLogger } from "@/server/logging";
 import type { Plan } from "@/server/plans/plans";
-import { platformRepo, tenantRepo } from "@/server/repos";
+import { tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { periodKey } from "@/server/services/entitlements";
 import {
@@ -179,9 +179,7 @@ export const POST = defineRoute({
       // A repeated request for the same target and instant is the same intent,
       // so it re-announces nothing (§D2). Read before writing: a duplicate-key
       // failure inside a transaction aborts the write instead of deduping it.
-      const alreadyEmitted = await platformRepo(db)
-        .collection(COLLECTIONS.domainEvents)
-        .findOne({ dedupeKey }, { session });
+      const alreadyEmitted = await findDomainEventByDedupeKey(dedupeKey, { db, session });
 
       // §3.3: an accepted request emits `billing.plan.downgrade_scheduled`. The
       // emit joins this transaction, so an aborted write leaves neither a
