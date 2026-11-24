@@ -309,6 +309,14 @@ allocated before the policy (`≤ 0145`) are frozen history and are never moved.
   renumbering a record. A lower value is therefore never evidence that a number is
   free, and two concurrent cards in one lane never compute the same "next free"
   (ADR-0300 §7, §12 items 24–25).
+- **A note mirrors the record, not its own history.** The ledger note for a
+  record describes the record **as it now stands**: amending a record — an added
+  condition, a corrected contract, a renumber — amends its note in the **same
+  PR**. The ledger **row** (`| [NNNN](file) | … |`) is a one-line summary and
+  carries the same obligation. A deliberately historical statement belongs
+  **inside** the record and is dated there, never in the ledger note. Precedent:
+  PR #888 amended `ADR-0318` for G7, then PR #889 moved the README count and
+  PR #902 the enumeration.
 - **The guard.** `pnpm test:unit` fails on a duplicate `ADR-NNNN` prefix or a
   malformed `ADR-*.md` name
   (`apps/web/src/test/unit/adr-*.test.ts` — the guard is one spec per invariant,
