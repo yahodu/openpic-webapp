@@ -59,12 +59,20 @@ export async function retryFailedEventImages(
 
   const event = await scoped.collection(COLLECTIONS.events).findOne({ _id: input.eventId });
   if (event === null) {
+    input.logger?.warn("tenant access denied", {
+      event: "tenancy.access_denied",
+      reason: "event_not_found",
+    });
     throw appError("not_found");
   }
 
   if (
     (await resolveEventActorRole(input.db, input.eventId, tenantKey, input.actorUserId)) === null
   ) {
+    input.logger?.warn("tenant access denied", {
+      event: "tenancy.access_denied",
+      reason: "not_an_event_actor",
+    });
     throw appError("not_found");
   }
 

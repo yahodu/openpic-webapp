@@ -11,6 +11,7 @@ import {
   retryFailedEventImages,
   type RetryFailedEventImagesInput,
 } from "@/server/images/retry-failed";
+import { createLogger, memoryTransport, type Logger, type MemoryTransport } from "@/server/logging";
 import { getWorkQueue } from "@/server/queue/get-work-queue";
 import { invalidatePlatformSettings } from "@/server/settings/platform-settings";
 
@@ -381,6 +382,30 @@ async function refusalOf(call: Promise<unknown>): Promise<Refusal | null> {
     return { status: error.status, code: error.code };
   }
   return null;
+}
+
+/**
+ * Wrap a memory sink in the real logger port, as `auth-guards.test.ts` does.
+ *
+ * Passing the logger through the service's own `logger` input is the seam the
+ * service already reserves for the request logger, so nothing global
+ * (`setLogger`) is touched and the sink sees only what this call emits — there
+ * is no global to restore afterwards. `level: "trace"` keeps every level the
+ * sink might receive, and `now` is the case's instant so the entry is
+ * deterministic.
+ *
+ * @param sink - The transport that records every entry written to it.
+ * @returns A `Logger` whose entries land in `sink`.
+ */
+function loggerInto(sink: MemoryTransport): Logger {
+  return createLogger({
+    level: "trace",
+    transports: [sink],
+    service: "openpic-web",
+    env: "test",
+    version: "test-sha",
+    now: () => NOW,
+  });
 }
 
 /** The work envelopes the broker holds for one image id. */
@@ -795,5 +820,127 @@ describe("retryFailedEventImages — the admission re-checked inside the service
       attempts: 2,
     });
     expect(outboxLength()).toBe(enqueuedBefore);
+  });
+});
+
+/**
+ * Observability — the tenancy denial a refusal has to leave in the log.
+ *
+ * ## Why this block exists (finding **F1** of the round-1 review of ADR-0777)
+ *
+ * The route this service replaces refuses through `tenantStage`'s `deny`
+ * (`@/server/tenancy/route-stage.ts:147-149`), which **logs and throws**:
+ * `logger.warn("tenant access denied", { event: "tenancy.access_denied", reason })`
+ * and then `throw appError("not_found")`. `admitEventActor`
+ * (`@/server/events/access.ts:95`) calls it with `reason: "event_not_found"`
+ * when the tenant-scoped `events` read misses, and `reason:
+ * "not_an_event_actor"` when the `resolveEventActorRole` ladder answers `null`.
+ *
+ * `retryFailedEventImages` composes those two seams directly — it cannot call
+ * `admitEventActor`, which needs a `Request` and the stage's `deny` — so it
+ * throws the same `appError("not_found")` and, on the base this block was
+ * written against (`origin/main` `a96e19d0`, the GREEN `t_f8de2e20` merge
+ * `61fa3eec`), writes **no log line at all**. A refused retry on the future
+ * `upload_batch × retry_failed` delegate path is therefore invisible to
+ * security monitoring while the identical refusal over HTTP is logged. The
+ * service already carries the seam the line needs — the optional `logger?:
+ * Logger` input ADR-0777 D1 reserves and forwards to `requeueImages` — so
+ * closing the asymmetry moves no signature. These two cases pin the entry that
+ * seam must carry (ADR-0964).
+ *
+ * ## Which cases are RED, and which is the control
+ *
+ * - **RED on arrival:** the refusal case fails because the sink is empty —
+ *   `expected [] to deeply equal [ { level: "warn", event: "tenancy.access_denied",
+ *   reason: "event_not_found" } ]` — which is the defect, not a missing import.
+ * - **Green on arrival (control):** the admitted case asserts the **absence** of
+ *   a denial line. A service that never logs satisfies it by construction; it is
+ *   the arm that reddens a fix which logs on the admitted path too, so it is
+ *   declared as a control here, in the record and in the handoff rather than
+ *   claimed as RED.
+ *
+ * Out of scope, and pinned once each by the cases above: the refusal's status
+ * and code, the untouched rows and the untouched broker. This block asserts only
+ * the log entry, and not its message text — the `event` + `reason` pair is what
+ * monitoring reads and what `deny` writes.
+ */
+describe("retryFailedEventImages — the tenancy denial reaches the injected logger (§18.1)", () => {
+  /**
+   * The `tenancy.access_denied` entries a sink holds, reduced to the pair §18.1
+   * monitoring reads: level, `event` and `reason`.
+   *
+   * Filtering by the `event` field rather than by position is deliberate: a
+   * requeue may legitimately warn about something else, and that entry must
+   * neither be counted as a denial nor hide one. The message text is not
+   * asserted: the pair is the contract.
+   */
+  function denialsIn(sink: MemoryTransport): readonly Record<string, unknown>[] {
+    return sink.entries
+      .filter((entry) => entry.event === "tenancy.access_denied")
+      .map((entry) => ({ level: entry.level, event: entry.event, reason: entry.reason }));
+  }
+
+  it("logs exactly one tenancy.access_denied warn for each refusal cause", async () => {
+    // Arrange — one workspace, and a signed-in caller who is nobody on its event.
+    const workspace = await seedWorkspace("retry-log-refusal");
+    const outsider = await app.signIn(makeIdentity("retry-log-refusal-peer"));
+
+    // Act — the event does not exist in this workspace.
+    const missingSink: MemoryTransport = memoryTransport();
+    const missingRefusal = await refusalOf(
+      retry(workspace, workspace.owner.userId, {
+        eventId: new ObjectId(),
+        logger: loggerInto(missingSink),
+      })
+    );
+
+    // Assert — the same refusal the middleware answers, plus the line
+    // `deny("event_not_found")` writes for it.
+    expect(missingRefusal).toEqual({ status: 404, code: "not_found" });
+    expect(denialsIn(missingSink)).toEqual([
+      { level: "warn", event: "tenancy.access_denied", reason: "event_not_found" },
+    ]);
+
+    // Act — the event exists, but the caller has no relationship to it.
+    const outsiderSink: MemoryTransport = memoryTransport();
+    const outsiderRefusal = await refusalOf(
+      retry(workspace, outsider.userId, { logger: loggerInto(outsiderSink) })
+    );
+
+    // Assert — exactly one line, carrying the ladder's own reason…
+    expect(outsiderRefusal).toEqual({ status: 404, code: "not_found" });
+    expect(denialsIn(outsiderSink)).toEqual([
+      { level: "warn", event: "tenancy.access_denied", reason: "not_an_event_actor" },
+    ]);
+
+    // …that names this cause only: the first refusal's sink still holds its own
+    // single entry and was not written to again.
+    expect(denialsIn(missingSink)).toHaveLength(1);
+  });
+
+  it("logs no denial line when the call is admitted", async () => {
+    // Arrange — the owner's event with one failed row: a real requeue, so the
+    // logger the service carries is the one its own warn paths would use.
+    const workspace = await seedWorkspace("retry-log-admitted");
+    const imageId = await seedImage({
+      tenantKey: workspace.tenantKey,
+      eventId: workspace.eventId,
+      name: "admitted-failed",
+      status: "failed",
+    });
+    const sink: MemoryTransport = memoryTransport();
+
+    // Act
+    const answer = await retry(workspace, workspace.owner.userId, {
+      logger: loggerInto(sink),
+    });
+
+    // Assert — the admitted answer is unmoved and nothing was denied.
+    expect(answer).toEqual({ requeuedCount: 1 });
+    expect(denialsIn(sink)).toEqual([]);
+    expect((await readRow(imageId))?.processing).toMatchObject({
+      status: "queued",
+      attempts: 0,
+    });
   });
 });
