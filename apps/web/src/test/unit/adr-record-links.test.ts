@@ -7,8 +7,8 @@ import type { AdrRecordLinkFileText, AdrRecordLinkIssue } from "../helpers/adr-g
 import { checkAdrRecordLinks, checkRepositoryAdrLinks } from "../helpers/adr-record-links.js";
 
 /**
- * ADR guard, invariant (vi) — the guard's six invariants are tabulated once, in
- * `ADR-0302` (`## Decision`, the six-row invariant table). This file owns one of
+ * ADR guard, invariant (vi) — the guard's invariants are tabulated once, in
+ * `ADR-0302` (`## Decision`, the invariant table). This file owns one of
  * them: every markdown link target inside a `docs/adr/ADR-*.md` record must name
  * a file that exists.
  */

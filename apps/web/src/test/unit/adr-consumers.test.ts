@@ -12,8 +12,8 @@ import { checkRepositoryAdrConsumers, checkSourceAdrConsumers } from "../helpers
 import { checkRepositoryAdrReferences } from "../helpers/adr-source-references.js";
 
 /**
- * ADR guard, invariant (v) — the guard's six invariants are tabulated once, in
- * `ADR-0302` (`## Decision`, the six-row invariant table). This file owns one of
+ * ADR guard, invariant (v) — the guard's invariants are tabulated once, in
+ * `ADR-0302` (`## Decision`, the invariant table). This file owns one of
  * them: a citation must be *accurate*, so a record that declares a `Consumers:`
  * field must name every file that cites it.
  */

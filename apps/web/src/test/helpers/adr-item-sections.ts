@@ -1,8 +1,8 @@
 /**
  * ADR guard, invariant (vii) — a `§N item M` citation of an ADR-0300 item must
  * name the section that holds that item (finding F2 of the review of
- * `t_8ed66b5c`). The guard's seven invariants are tabulated once, in `0302`
- * (`## Decision`, the seven-row invariant table), and that row is this
+ * `t_8ed66b5c`). The guard's invariants are tabulated once, in `0302`
+ * (`## Decision`, the invariant table), and that row is this
  * invariant's whole decision record: the rule below states it.
  *
  * The guard's other invariants read citations of *records* — (iv) resolves an

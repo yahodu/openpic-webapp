@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Fixtures shared by the ADR guard's per-invariant specs (ADR-0302, `## Decision`
- * six-row invariant table).
+ * invariant table).
  *
  * The guard's spec used to be a single file; it is now one spec per invariant,
  * so everything the five specs share lives here: the repository root, the real

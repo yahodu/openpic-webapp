@@ -81,6 +81,10 @@
  *     across the two documents: the ledger note and §9.1 describe one gate. The
  *     first phrase in report order is the reference, and the issue quotes both
  *     counts, because the guard cannot tell which statement is the drift.
+ *   - The rule has **one subject**, the merge gate. A second gate family's own,
+ *     internally consistent count is therefore a `count-disagreement` against the
+ *     run's first phrase (pinned below), so a second `<n> conditions` family in
+ *     either document needs its own phrase shape — recorded in `ADR-0302` §11.
  *   - `G0` is not a gate token (gate numbers start at 1), and a phrase inside a
  *     code fence or an inline code span is read like any other: the rule is
  *     textual, exactly as invariant (iv)'s is.
@@ -491,6 +495,47 @@ describe("checkGateConditionCounts — two statements of the one gate", () => {
         highest: 6,
       },
       { file: "docs/adr/README.md", line: 1, stated: "seven conditions", declared: 7, highest: 7 },
+    ]);
+  });
+
+  it("reports a second gate family's own count against the run's first phrase", () => {
+    // Arrange — a future §9.2 gate stated beside the merge gate's own count, each
+    // internally consistent: seven conditions over G1–G7, then two over G1–G2.
+    // The rule has one subject (the merge gate), so the second family is not
+    // recognised as a family at all — its count is compared with the first
+    // phrase's and reported. Characterization pin: this is the behaviour a second
+    // gate would have to design around (ADR-0302 §11).
+    const files: SourceFileText[] = [
+      {
+        path: "docs/adr/README.md",
+        text: [
+          ledgerNoteText("seven", [1, 2, 3, 4, 5, 6, 7]),
+          "",
+          "The audit gate runs two conditions: G1 fresh, G2 complete.",
+        ].join("\n"),
+      },
+    ];
+
+    // Act
+    const report = checkGateConditionCounts(files);
+
+    // Assert — the second family's correct count is the reported defect, and the
+    // run's first phrase is the reference, exactly as for a genuine drift.
+    expect(report.issues).toEqual([
+      {
+        code: "count-disagreement",
+        file: "docs/adr/README.md",
+        line: 3,
+        stated: "two conditions",
+        declared: 2,
+        highest: 2,
+        missing: [],
+        expected: 7,
+      },
+    ]);
+    expect(report.checked).toEqual([
+      { file: "docs/adr/README.md", line: 1, stated: "seven conditions", declared: 7, highest: 7 },
+      { file: "docs/adr/README.md", line: 3, stated: "two conditions", declared: 2, highest: 2 },
     ]);
   });
 

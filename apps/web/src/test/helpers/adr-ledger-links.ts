@@ -1,8 +1,8 @@
 /**
  * ADR guard, invariant (vi)'s **ledger half** — every markdown link target
  * inside `docs/adr/README.md` names a file that exists, or a file the repository
- * carried and renamed. The six invariants are tabulated once, in `0302`
- * (`## Decision`, the six-row invariant table); `ADR-0895` records this half and
+ * carried and renamed. The invariants are tabulated once, in `0302`
+ * (`## Decision`, the invariant table); `ADR-0895` records this half and
  * `0893` records its pins.
  *
  * **Why it is a separate module.** `checkRepositoryAdrLinks`
