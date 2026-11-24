@@ -274,10 +274,20 @@ function unresolvedKeyError(source: string, openBrace: number, reason: string): 
  * followed by `*` in a value expression — reachable only through a regex literal
  * such as `/[/*]/` — opens a skip that resumes at the nearest closing delimiter,
  * and this reader never re-examines what it stepped over. Keys are lost only
- * when that span crosses a **property boundary**, i.e. when it holds a `:` or a
- * top-level `,` outside strings; a *complete* comment written after a key's
- * colon and before its value is parser-safe, because the skip ends before the
- * value and the next property is still read. No `subscriptions` write can hold
+ * when that span crosses a **property boundary**, and a property has a shape: a
+ * key's `:` **and** a separator `,`, both at the literal's own bracket depth and
+ * outside strings. One token alone is prose, not a boundary, so a *complete*
+ * comment written after a key's colon and before its value is parser-safe **when
+ * its own text carries no property shape**, because the skip then ends before
+ * the next property boundary and the next property is still read. A comment is
+ * prose, not code, so a lone colon, a lone comma or a colon nested in braces
+ * inside its *text* names no property; the sibling spec's marker detector must
+ * therefore measure that span for the whole shape rather than for either token,
+ * and its matrix pins the three prose shapes (`Cents, billed monthly`,
+ * `see the note: billed`, `{a: 1}`) as exempt. The rule remains a heuristic, and
+ * that spec states its residual class: a genuine `/[/*]/` skip whose swallowed
+ * range happens to carry no `:`+`,` pair is not detectable from text.
+ * No `subscriptions` write can hold
  * a regex and §14.3 documents no such field, so the sibling spec reddens on a
  * marker whose skip crosses a boundary inside an anchored mint literal, and on a
  * marker the literal never closes — not on the value position alone. The two
