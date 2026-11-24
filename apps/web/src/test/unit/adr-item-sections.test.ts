@@ -57,10 +57,11 @@ import {
  * exact string equality and `§09`/`§9` are not silently interchangeable.
  *
  * **`checkRepositoryItemSectionCitations`** builds that map from the tree's own
- * `docs/adr/ADR-0300-*.md` and sweeps every `docs/**\/*.md` file — the two
- * documents the guard already reads (`docs/CONVENTIONS.md` and the records) and
- * the design and contract documents citations also point into. Only items
- * written under a `## §N` heading are section items: ADR-0300's own
+ * `docs/adr/ADR-0300-*.md` and sweeps every `docs/**\/*.md` file: the records
+ * and the ledger, `docs/CONVENTIONS.md` (where the merged `§9 item 23` defect
+ * lived), and the design and contract documents ADR citations also point into
+ * (`docs/API Contract.md`, `docs/Notification and Database Design.md`). Only
+ * items written under a `## §N` heading are section items: ADR-0300's own
  * `## Decision` list items 1–7 sit in no section, so `§7 item 4` is not an
  * ADR-0300 item cite and must never be reported. Files outside `docs/` are not
  * swept. A root with no `docs/adr` throws (ENOENT): a wrong root must fail
