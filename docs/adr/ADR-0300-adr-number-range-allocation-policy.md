@@ -240,7 +240,8 @@ OP-105 (`0382`; then `0383`+`0384`, the §8 note) came first — hence the durab
 
     This is a **review-time obligation** (consistent with the guard's two
     documented out-of-scope items in `docs/CONVENTIONS.md` §11), **not** a CI
-    change.
+    change. Item 12 reads the incoming head against `origin/main` only; the
+    **sibling open head** is item 28 (§11).
 
 **Rejected alternative — "reserve the pair, not the number" (candidate 1).** It
 covers only a pin+green pair riding **one** branch/PR. The OP-110 collision was
@@ -390,7 +391,7 @@ ad hoc (ADR-0799, ADR-0800, ADR-0811, ADR-0818); items 18–21 give it a clause.
     mint from it, and the allocator **advances it with the cursor** —
     never by lowering it into its own range, which item 20 forbids. Item 27
     continues the file-wide item counter (§12's items are 22–26), so §11 carries
-    18–21 and 27 and neither section is renumbered.
+    18–21, 27 and 28 and neither section is renumbered.
 
 **The trigger for item 27.** The OP-138 RED card `t_a99f5cce` (branch
 `OP-138-task-dsr-consent-policy-red`, committed 2026-11-20) reserved
@@ -402,6 +403,65 @@ The guard cannot see the defect: `lane-range-overlap` compares reserved
 After any forward advance that sets an exhausted lane's cell equal to the pool cursor,
 the next block cut from that cursor recreates the defect — hence the rule, not
 a cleanup.
+
+28. **A pool draw is not a lock: the number a PR adds is re-checked against
+    every live head at the merge instant.** Item 23 makes the _allocation_ sweep
+    read every open PR head, and item 12 makes the _merged-tree_ check read
+    `origin/main`; neither is read again when the merge actually happens, and it
+    is the merge instant that decides. Measured: the OP-132 record drew `0968`
+    (first commit `12:55:17Z`, PR #879 opened `12:56:12Z`) and the OP-134 record
+    drew `0968` (first commit `13:00:35Z`, PR #880 opened `13:01:45Z`); both
+    allocation sweeps were correct when they ran, because the sibling head did not
+    exist yet. PR #880 merged at `13:33:08Z` (squash `7c2d315c`) while #879 still
+    held `0968`. The two records have different file names, so merging both yields
+    two `ADR-0968-*.md` files with **no conflict**; on a throwaway worktree at
+    `origin/main` `2a7f4f85` the guard answered `1 failed | 28 passed (29)`,
+    `code: "duplicate"`. So before `gh pr merge` on an ADR-carrying PR the lander
+    lists the number(s) the PR **adds**
+    (`git diff --name-status "$(git merge-base <head> origin/main)" <head> -- docs/adr`,
+    rows beginning `A`) and refuses if any other open PR head's `docs/adr/` holds one:
+
+    ```
+    N=<pr>; NUM=<NNNN>
+    for p in $(gh pr list --state open --json number -q '.[].number'); do
+      [ "$p" = "$N" ] && continue
+      sha=$(gh pr view "$p" --json headRefOid -q .headRefOid)
+      gh api "repos/yahodu/openpic-webapp/contents/docs/adr?ref=$sha" --jq '.[].name' |
+        grep -E "^ADR-${NUM}-" && echo "COLLISION: PR #$p holds ADR-${NUM}"
+    done
+    ```
+
+    A hit is a **refused merge** (ADR-0318 G6, `docs/CONVENTIONS.md` §9.1 G7):
+    the lander renumbers **its own unmerged** record — never a merged one, with
+    the renumber checklist §9's `t_c83556f9` repair used — re-runs item 12's
+    merged-tree check on the new head, and merges. The default is unilateral
+    because only the lander can act: **the record that merges second is the one
+    that moves** — measured here, `0968` → `0969`. The one exception is a sibling
+    PR with no live board card and no update for 7 days: the lander keeps its
+    number, comments the measurement on both PRs, and that PR's own lander
+    re-checks (this item) when it resumes, so the number cannot land twice.
+    _(2026-11-24, card `t_0904efc1`; filed by the OP-132 round-2 review.)_
+
+**Rejected alternatives for item 28.** Each of the three costs more than the
+merge-time re-sweep and closes less.
+
+- **CI guard on ADR-touching PRs.** Evidence is pinned to a head (ADR-0316), so a
+  sibling that opens after our run leaves our green stale — a guard that reads
+  other heads makes a green depend on another lane's act, i.e. the same race with
+  more moving parts; it also needs `pull-requests: read` on the workflow token and
+  re-runs on every sibling push. It cannot be right at the merge instant because
+  it does not run at the merge instant.
+- **A ledger row per pool draw.** `docs/adr/README.md` is already the
+  union-conflict hotspot; a row per number makes every concurrent draw conflict on
+  the same lines, and a file is not a compare-and-swap — two PRs can each add a
+  row for `0970` and the same check is still needed. It converts a rare duplicate
+  into a routine manual union where the wrong side is easy to pick.
+- **Do nothing.** The class has hit seven lanes since the policy took effect
+  (2026-10-20): OP-96 `0147`, OP-105 `0382` then `0383`+`0384`, OP-110 `0482`,
+  OP-112 `0584`, OP-104 `0366`+`0367`, OP-129 `0770`, OP-132/134 `0968` — plus
+  three standalone renumber cards on 2026-11-12 alone (`t_da4088d2`, `t_f4da0d2`,
+  `t_c3f234ae`). Each costs a review round and a renumber sweep on a live branch,
+  and the trunk stays green only because the loser notices.
 
 ## §12 — The reservation is written on the card, and the cell only moves up (2026-11-19, card `t_b3edd8a0`)
 

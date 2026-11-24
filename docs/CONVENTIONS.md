@@ -175,7 +175,7 @@ This list is mirrored, copy-pasteably, in `.github/pull_request_template.md`.
 
 The ruleset requires no status check, and the identity that merges is an `always`
 bypass actor on it, so the merge is decided by the agent that runs it. Before
-`gh pr merge`, evaluate these six conditions against the PR's **current head SHA**
+`gh pr merge`, evaluate these seven conditions against the PR's **current head SHA**
 and paste the output into the PR:
 
 - **G1** `mergeable == "MERGEABLE"` and `mergeStateStatus` ∉ {`DIRTY`, `UNKNOWN`};
@@ -198,6 +198,12 @@ and paste the output into the PR:
   do not `--admin`. Comment the failing condition on the PR and route —
   reconcile through the lane owner (merge `origin/main` in, push to re-trigger
   CI and get a fresh merge ref) or close as superseded.
+- **G7 (ADR-carrying PRs only, ADR-0300 §11 item 28)** the ADR number the PR
+  **adds** appears at **no other open PR head** — re-swept at the merge instant,
+  because §9 item 23's allocation sweep is a snapshot. Command in the block
+  below. A hit is a **failure** under G6: do not merge; the lander renumbers its
+  own unmerged record, re-runs item 12's merged-tree check on the new head, then
+  G1–G7 again on the fresh head.
 
 ```
 N=<pr>; SHA=$(gh pr view "$N" --json headRefOid -q .headRefOid)
@@ -209,6 +215,14 @@ git log --format='%cI %h %s' "$BASE"..origin/main -- \
   pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/ci.yml
 git diff --quiet "$BASE" origin/main -- \
   pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/ci.yml && echo G5-pass
+# G7 (ADR-carrying PRs only): the number this PR adds must be absent from every other open head
+N=<pr>; NUM=<NNNN>
+for p in $(gh pr list --state open --json number -q '.[].number'); do
+  [ "$p" = "$N" ] && continue
+  sha=$(gh pr view "$p" --json headRefOid -q .headRefOid)
+  gh api "repos/yahodu/openpic-webapp/contents/docs/adr?ref=$sha" --jq '.[].name' |
+    grep -E "^ADR-${NUM}-" && echo "COLLISION: PR #$p holds ADR-${NUM}"
+done
 ```
 
 The decision, its measured context and the rejected alternatives are recorded in
@@ -263,7 +277,11 @@ allocated before the policy (`≤ 0145`) are frozen history and are never moved.
   a throwaway worktree off `origin/main`, then run
   `apps/web/src/test/unit/adr-*.test.ts` and `uniq -d` over the `ADR-NNNN`
   prefixes there): a lone `docs/adr/README.md` conflict resolves cleanly while
-  hiding a duplicate **file**.
+  hiding a duplicate **file**. No ADR-carrying PR may merge while the number the
+  PR **adds** is present at any other open PR head (ADR-0300 §11 item 28): the
+  allocation sweep is a snapshot, so the lander re-sweeps at the merge instant
+  (§9.1 G7); a hit refuses the merge and the lander renumbers its own unmerged
+  record.
 - **Same-lane serialization by the task graph (ADR-0300 §9, rule C;
   `docs/adr/ADR-0312-same-lane-adr-card-serialization.md`).** Two ADR-minting cards of
   one lane's range are **never siblings**: the allocator chains them

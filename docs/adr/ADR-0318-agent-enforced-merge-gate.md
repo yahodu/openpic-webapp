@@ -57,7 +57,7 @@ seconds later — which is why condition G1 re-polls instead of reading a single
 
 The gate is a **pre-flight of the merge**, not a CI job and not a repository
 setting. Whoever runs `gh pr merge` — an agent or a human — reads the PR's
-current head SHA and evaluates the six conditions below against **that** SHA.
+current head SHA and evaluates the seven conditions below against **that** SHA.
 The gate's output is pasted into the PR (body or a comment) before the merge, so
 the evidence for the merge lives where the merge is reviewed.
 
@@ -65,7 +65,7 @@ the evidence for the merge lives where the merge is reviewed.
 one-reviewer rule that the sole `gh` identity cannot satisfy by approving its own
 PR. **A failed gate is never merged with `--admin`.**
 
-### 2. The six conditions
+### 2. The seven conditions
 
 - **G1** `mergeable == "MERGEABLE"` and `mergeStateStatus` ∉ {`DIRTY`, `UNKNOWN`}; re-poll up to 5 × 3 s when `UNKNOWN`.
 - **G2** every entry in `statusCheckRollup` for the head is `status: COMPLETED` with `conclusion: SUCCESS` — no `FAILURE`, no `PENDING`, no `CANCELLED`, no `SKIPPED` on a gating name.
@@ -73,6 +73,7 @@ PR. **A failed gate is never merged with `--admin`.**
 - **G4 (audit freshness)** No commit on `origin/main` in `<merge-base>..origin/main` may touch the **audit input surface** — `pnpm-lock.yaml`, `pnpm-workspace.yaml` (carries `audit.ignore`), `package.json`, `.github/workflows/ci.yml` (carries the `audit`/`audit-dev` jobs and thresholds) — with a commit date _later_ than the head's `audit` check `completedAt`. If one did, the green predates a change in what `audit` means: **STALE**.
 - **G5** `git diff --quiet <merge-base> origin/main -- pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/ci.yml` — if false, the merge would change the audited tree, so the head's evidence cannot cover the merge result.
 - **G6** on any failure: **do not merge**, do not rebase, do not `gh run rerun`, do not `--admin`. Comment the failing condition on the PR and route — reconcile through the lane owner (merge `origin/main` in, push to re-trigger CI and get a fresh merge ref) or close as superseded.
+- **G7** (added 2026-11-24, `ADR-0300` §11 item 28): on an ADR-carrying PR the number the PR adds must be absent from every other open PR head at the merge instant — `docs/CONVENTIONS.md` §9.1.
 
 ### 3. The commands (read-only; `gh` and `git` only)
 
@@ -126,7 +127,7 @@ stale green can only turn it red, never make it current.
   same head SHA instead of trusting the merge.
 - The gate replaces nothing. The ruleset still requires linear history, a code
   owner and one approval; `--admin` still bypasses the approval the sole `gh`
-  identity cannot give. The six conditions are added on top, at the one moment
+  identity cannot give. The seven conditions are added on top, at the one moment
   the bypass actor decides.
 - The residual risk is stated plainly: this is a process rule, so a merger that
   does not run it can still merge a red or conflicted PR. That risk is accepted
@@ -204,5 +205,5 @@ of the merge state — and a gate that read either answer alone would block a go
 merge or wave a bad one through.
 
 This record's own PR was merged under the gate it defines; the printed output of
-G1–G6 for its head SHA is in that PR's body, and the merge metadata on card
-`t_b38fd67e` repeats the verdict.
+the six conditions as they then stood, for its head SHA, is in that PR's body,
+and the merge metadata on card `t_b38fd67e` repeats the verdict.
