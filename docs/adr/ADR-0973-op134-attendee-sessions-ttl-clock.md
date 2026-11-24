@@ -48,7 +48,9 @@
   cells already read `0970`; `.worktrees/t_b142c5d8` (running card `t_b142c5d8`,
   branch `OP-101-task-member-mutation-audit-records`) holds an uncommitted
   `ADR-0970` whose record **reserves `Consumes: 0971`** for its serial TEST card
-  and **`Consumes: 0972`** for its GREEN;
+  and **`Consumes: 0972`** for its GREEN — that record landed on the trunk as
+  `712b94d0` while this card ran, advancing the four cells to `0971`, so `0971`
+  and `0972` are still spoken for and this draw steps over them;
 - **open PR heads** — `gh pr list --state open` returns one PR, `#879`
   (`OP-132-task-confirm-deactivation-failure-pins`), whose head carries `0969`;
 - **non-`done` cards** — the two live rows that mention `0968`/`0969`
