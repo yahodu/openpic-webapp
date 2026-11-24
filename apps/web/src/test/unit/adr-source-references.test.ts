@@ -1,12 +1,17 @@
 import { rmSync } from "node:fs";
+import { basename } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { makeTempRepoRoot, repoRoot, tempDirs } from "../helpers/adr-guard-fixtures.js";
+import { adrDigitsOf } from "../helpers/adr-guard-types.js";
 import type { SourceFileText } from "../helpers/adr-guard-types.js";
 import {
+  checkMeasuredCommitCitations,
   checkRepositoryAdrReferences,
+  checkRepositoryMeasuredCommitCitations,
   checkSourceAdrReferences,
+  MEASURED_COMMIT_EXEMPTIONS,
 } from "../helpers/adr-source-references.js";
 
 /**
@@ -14,6 +19,15 @@ import {
  * `ADR-0302` (`## Decision`, the invariant table). This file owns one of
  * them: every `ADR-NNNN` reference inside a source file must resolve to a
  * `docs/adr/ADR-NNNN-*.md` file.
+ *
+ * It also owns the family's **measured-count provenance clause** (`ADR-0302`
+ * §12), which lives in the same module because it is a reference rule over the
+ * records and because that module already owns the family's directory read and
+ * file read: a record that quotes a suite count must name the head commit it was
+ * measured at. The clause has no invariant row of its own on purpose — an
+ * eleventh spec file would falsify the "ten `adr-*` guards" sentence this very
+ * defect class froze into live prose (a merged record's §Evidence and its ledger
+ * cell).
  */
 
 /**
@@ -459,5 +473,348 @@ describe("checkRepositoryAdrReferences — the repository sweep", () => {
     expect(() => checkRepositoryAdrReferences(root)).toThrow(
       expect.objectContaining({ code: "ENOENT" })
     );
+  });
+});
+
+/**
+ * Measured-count provenance — a record that quotes a suite count must name the
+ * head commit it was measured at (`ADR-0302` §12; finding F3 of the review of
+ * `t_e3a344af`, PR #910).
+ *
+ * **Why this exists.** A merged record (finding F3 of the review of `t_e3a344af`,
+ * PR #910) quoted `unit` as `199 files / 3378 passed` and "the nine `adr-*`
+ * guards" for a head that measured `200 / 3398` and ten: the figures were true of
+ * an earlier head and nothing tied them to the head the record described, so the
+ * whole suite stayed green while the record drifted.
+ * Census at this branch's base `f0422e2e`: 486 records, 315 quote a suite count,
+ * 297 name a head, 18 name none. At `03a5fbd5`, the head the card states, the same
+ * census read 485 / 314 / 296 / 18 — `#911` minted one more record since.
+ *
+ * **What the rule reads.**
+ *
+ * - A **suite-count quote** is a digit run, whitespace, `passed`, whitespace, `(`
+ *   — vitest's `Tests  15 passed (15)`, its `1 failed | 14 passed (15)` arm, and
+ *   a quote whose parenthesis wrapped to the next line. The parenthesis is
+ *   required, so prose like "the 3 passed cases" is not a quote. `quoted` is the
+ *   phrase **without** the parenthesis, whitespace collapsed, so a failure
+ *   message is pasteable back into the record.
+ * - A **head commit reference** is a lowercase hexadecimal run of 7 to 40
+ *   characters that contains at least one `a`–`f` letter. A bare digit run is not
+ *   a commit — four trunk records pass the looser `[0-9a-f]{7,40}` test on an
+ *   epoch, a byte count, a magic number and a placeholder — a six-character
+ *   prefix is too short to pin a commit, a 64-character blob hash is not a commit
+ *   at all, and uppercase is not read because this repository writes SHAs
+ *   lowercase. The **first** such token in document order is what `checked.head`
+ *   reports.
+ * - Only `docs/adr/ADR-*.md` records are read; `docs/adr/README.md` is out,
+ *   because its ledger notes quote other heads' counts on purpose.
+ * - A fenced code block and an inline code span **are** read, unlike invariant
+ *   (vi): a record's measured counts and its head live in fences and backticks.
+ *
+ * **Assumptions resolved in this spec** (flagged in the handoff):
+ *
+ *   - The rule is **record-level**, not §Evidence-only. At `03a5fbd5`, 148 of the
+ *     314 quoting records carry a `## Evidence` section at all and 37 cite their
+ *     head only outside it, so a §Evidence-scoped rule would red about 200
+ *     records — a docs programme, not a guard.
+ *   - The 18 records that already quote counts and name no head at `f0422e2e` are
+ *     an explicit, **shrink-only** allowlist ({@link MEASURED_COMMIT_EXEMPTIONS})
+ *     of bare four-digit record numbers, not a "greater than the highest number"
+ *     cut-off: a cut-off is vacuous until the next record is minted, while the
+ *     allowlist enforces the rule over the other 297 records today. Numbers and
+ *     not file names, because naming the eighteen files from source makes the
+ *     helper their declared consumer — invariant (v) reported three
+ *     `consumer-mismatch` issues when it did — and a number identifies exactly one
+ *     record (invariant (i)).
+ *   - An allowlisted record is **skipped**, never checked-and-passed: it appears
+ *     in neither `checked` nor `issues`, so repairing one cannot look like a pass.
+ *   - One issue per record, not per quote: a record has one measured head.
+ */
+describe("checkMeasuredCommitCitations — a record that quotes a count names its head", () => {
+  it("accepts a record whose count names the head it was measured at", () => {
+    // Arrange — the F3 shape: a fenced vitest summary plus the head.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0302-a.md",
+        text: [
+          "## Evidence",
+          "",
+          "```",
+          "Tests  15 passed (15)",
+          "```",
+          "",
+          "Counts at `e91cfed7`: the focused spec `15 passed (15)`.",
+        ].join("\n"),
+      },
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert
+    expect(report).toEqual({
+      ok: true,
+      issues: [],
+      checked: [{ file: "docs/adr/ADR-0302-a.md", line: 4, quoted: "15 passed", head: "e91cfed7" }],
+      scannedRecords: 1,
+    });
+  });
+
+  it("reports a record that quotes a suite count and names no head commit", () => {
+    // Arrange — the defect F3 shipped: counts with nothing tying them to a head.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0323-a.md",
+        text: ["## Evidence", "", "Tests  13 failed | 2 passed (15)", ""].join("\n"),
+      },
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert
+    expect(report).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "missing-head-commit",
+          file: "docs/adr/ADR-0323-a.md",
+          line: 3,
+          quoted: "2 passed",
+        },
+      ],
+      checked: [{ file: "docs/adr/ADR-0323-a.md", line: 3, quoted: "2 passed", head: null }],
+      scannedRecords: 1,
+    });
+  });
+
+  it("ignores a record that quotes no suite count", () => {
+    // Arrange — a design record with no measurement is out of scope entirely.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0302-b.md",
+        text: ["## Decision", "", "The rule is textual, and 3 cases hold.", ""].join("\n"),
+      },
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert — `checked` stays empty, so the silence names what was skipped.
+    expect(report).toEqual({ ok: true, issues: [], checked: [], scannedRecords: 1 });
+  });
+
+  it("reports the record's first quote, whichever count it is", () => {
+    // Arrange — two quotes, the first one already at line 1.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0002-a.md",
+        text: [
+          "Tests  320 passed (320)",
+          "",
+          "```",
+          "Tests  3398 passed | 3 skipped (3401)",
+          "```",
+        ].join("\n"),
+      },
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert
+    expect(report.issues).toEqual([
+      {
+        code: "missing-head-commit",
+        file: "docs/adr/ADR-0002-a.md",
+        line: 1,
+        quoted: "320 passed",
+      },
+    ]);
+  });
+
+  it.each<[string, string]>([
+    ["a bare digit run", "1792924295000"],
+    ["a six-character hex prefix", "e91cfe"],
+    ["a forty-one-character hex run", "e".repeat(41)],
+    ["an uppercase hex token", "E91CFED7"],
+    [
+      "a 64-character blob hash",
+      "e66bcc7fc3fbbf82f97d2c3032ad802b969ae5de001c7149b654be889b3a8e09",
+    ],
+    ["a hex run glued to non-hex letters", "e91cfed7z"],
+  ])("does not read %s as a head commit", (_label, token) => {
+    // Arrange — each token is head-shaped at a glance and names no commit.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0001-a.md",
+        text: ["Tests  15 passed (15)", "", `Measured at \`${token}\`.`].join("\n"),
+      },
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert
+    expect(report.issues).toEqual([
+      { code: "missing-head-commit", file: "docs/adr/ADR-0001-a.md", line: 1, quoted: "15 passed" },
+    ]);
+    expect(report.checked[0]?.head).toBeNull();
+  });
+
+  it("reads a count whose parenthesis wrapped, and a head inside a fenced block", () => {
+    // Arrange — the measured shape: `1781 passed  (` then the timing on the next
+    // line; the head is a `git rev-parse` line inside the same fence.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0003-a.md",
+        text: [
+          "```",
+          "$ git rev-parse HEAD",
+          "e91cfed7",
+          "",
+          "--project integration (full)   165 files / 1781 passed",
+          "  (334 s wall, 0 failed)",
+          "```",
+          "",
+          "Measured earlier at `4a8fe73`.",
+        ].join("\n"),
+      },
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert — the count was read at its own line, the first head is the one named.
+    expect(report).toEqual({
+      ok: true,
+      issues: [],
+      checked: [
+        { file: "docs/adr/ADR-0003-a.md", line: 5, quoted: "1781 passed", head: "e91cfed7" },
+      ],
+      scannedRecords: 1,
+    });
+  });
+
+  it("sorts the report by file, whatever order the records arrive in", () => {
+    // Arrange — the later path is handed in first. Both numbers carry a real
+    // record on the trunk, so the source sweep reads these fixture names as
+    // resolvable references rather than as new dangling ones.
+    const records: SourceFileText[] = [
+      { path: "docs/adr/ADR-0200-b.md", text: "Tests  1 passed (1)" }, // adr-fixture: synthetic record name
+      { path: "docs/adr/ADR-0001-b.md", text: "Tests  1 passed (1)" }, // adr-fixture: synthetic record name
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert
+    expect(report.issues.map((issue) => issue.file)).toEqual([
+      "docs/adr/ADR-0001-b.md",
+      "docs/adr/ADR-0200-b.md",
+    ]);
+    expect(report.checked.map((check) => check.file)).toEqual([
+      "docs/adr/ADR-0001-b.md",
+      "docs/adr/ADR-0200-b.md",
+    ]);
+  });
+});
+
+describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads every in-scope record and reports the one that names no head", () => {
+    // Arrange — the keep-set: a record with a head, a record with no count, a
+    // ledger that quotes counts for other heads, and a file outside docs/adr.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0001-quoted-with-head.md": "Tests  15 passed (15)\n\nAt `e91cfed7`.",
+      "docs/adr/ADR-0002-quoted-no-head.md": "Tests  15 passed (15)",
+      "docs/adr/ADR-0003-design.md": "## Decision\n\nNo measurement here.",
+      "docs/adr/README.md": "| [0002](ADR-0002-quoted-no-head.md) | Tests 320 passed (320) |",
+      "apps/web/notes.md": "Tests  99 passed (99)", // adr-fixture: outside docs/adr
+    });
+
+    // Act
+    const report = checkRepositoryMeasuredCommitCitations(root, []);
+
+    // Assert — three records scanned, README and apps/ never read.
+    expect(report).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "missing-head-commit",
+          file: "docs/adr/ADR-0002-quoted-no-head.md",
+          line: 1,
+          quoted: "15 passed",
+        },
+      ],
+      checked: [
+        {
+          file: "docs/adr/ADR-0001-quoted-with-head.md",
+          line: 1,
+          quoted: "15 passed",
+          head: "e91cfed7",
+        },
+        {
+          file: "docs/adr/ADR-0002-quoted-no-head.md",
+          line: 1,
+          quoted: "15 passed",
+          head: null,
+        },
+      ],
+      scannedRecords: 3,
+    });
+  });
+
+  it("skips an allowlisted record instead of passing it", () => {
+    // Arrange — a record whose number is on the allowlist, in a throwaway tree.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0046-synthetic.md": "Tests  15 passed (15)", // adr-fixture: synthetic record name
+    });
+
+    // Act
+    const report = checkRepositoryMeasuredCommitCitations(root);
+
+    // Assert — neither checked nor reported: the skip is visible in `checked`.
+    expect(report).toEqual({ ok: true, issues: [], checked: [], scannedRecords: 1 });
+  });
+
+  it("throws an ENOENT error when the root has no docs/adr directory", () => {
+    // Arrange — a wrong root must fail loudly, never pass vacuously.
+    const root = makeTempRepoRoot({ "docs/CONVENTIONS.md": "Tests  15 passed (15)" });
+
+    // Act + Assert
+    expect(() => checkRepositoryMeasuredCommitCitations(root)).toThrow(
+      expect.objectContaining({ code: "ENOENT" })
+    );
+  });
+
+  it("reports the trunk as provenance-complete for every record off the allowlist", () => {
+    // Act — green on arrival: the census at `f0422e2e` is 297 records checked.
+    const report = checkRepositoryMeasuredCommitCitations(repoRoot);
+
+    // Assert — floors, never an equality: a minted record raises the count and a
+    // retirement lowers it, while a narrowed sweep or a dead head matcher cannot
+    // pass (it would lose the `checked` entries).
+    expect(report.issues).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.checked.length).toBeGreaterThanOrEqual(280);
+    expect(report.scannedRecords).toBeGreaterThanOrEqual(480);
+  });
+
+  it("keeps the allowlist equal to the trunk's actual offenders, so it can only shrink", () => {
+    // Arrange — the same tree, with the allowlist switched off.
+    const offenders = checkRepositoryMeasuredCommitCitations(repoRoot, [])
+      .issues.map((issue) => adrDigitsOf(basename(issue.file)))
+      .sort();
+
+    // Assert — an equality on the allowlist's own contents, not on the census:
+    // repairing a record reds here until its number leaves the allowlist, and a
+    // new offender reds here beside the rule's own case.
+    expect(offenders).toEqual([...MEASURED_COMMIT_EXEMPTIONS]);
   });
 });
