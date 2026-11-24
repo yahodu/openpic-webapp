@@ -1666,4 +1666,186 @@ describe("OP-101 / ADR-0970 — the `auditLogs` row a workspace-member mutation 
       after: { role: "admin" },
     });
   });
+
+  /**
+   * The driver's own `Collection#updateOne`, resolved once when this block is
+   * registered.
+   *
+   * The reverse-direction stub below must forward every other collection to the
+   * **real** method, and reading `Collection.prototype.updateOne` at call time
+   * would find the stub itself: an unbounded recursion answers a `RangeError`,
+   * which is also a `500`, so `R1`/`R2` would pass for the wrong reason.
+   */
+  const driverUpdateOne = ((): typeof Collection.prototype.updateOne => {
+    const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "updateOne");
+    if (descriptor === undefined || typeof descriptor.value !== "function") {
+      throw new Error("expected Collection.prototype.updateOne to be a function");
+    }
+    return descriptor.value as typeof Collection.prototype.updateOne;
+  })();
+
+  /** The driver's own `updateOne` argument tuple. */
+  type DriverUpdateOneArgs = Parameters<typeof driverUpdateOne>;
+
+  /**
+   * The driver error every refused **membership** write in `R1`/`R2` carries.
+   *
+   * `code: 91` is a replica-set election and carries **no**
+   * `TransientTransactionError` label, so `withTransaction` rethrows it on the
+   * first attempt instead of letting a retry absorb it — the same choice `T4`
+   * makes for the audit insert, in the opposite direction.
+   */
+  const membershipWriteError = Object.assign(new Error("injected failure: updateOne"), {
+    code: 91,
+  });
+
+  /**
+   * Refuse that request's membership write: every `updateOne` against
+   * `tenantMembers` rejects, and every other collection is forwarded to the
+   * driver.
+   *
+   * The **membership** write is what fails here, not the audit insert, so
+   * whatever the route wrote into `audit_logs` must be gone when the
+   * transaction aborts (§D3's reverse half).
+   *
+   * @returns The undo; call it in a `finally` so the stub cannot leak into a
+   *   later case.
+   */
+  function refuseMembershipWrites(): () => void {
+    const spy = vi.spyOn(Collection.prototype, "updateOne").mockImplementation(async function (
+      this: Collection,
+      ...args: DriverUpdateOneArgs
+    ) {
+      if (this.collectionName === COLLECTIONS.tenantMembers) {
+        throw membershipWriteError;
+      }
+      return driverUpdateOne.call(this, ...args);
+    } as never);
+    return () => {
+      spy.mockRestore();
+    };
+  }
+
+  /**
+   * R1 — the reverse half of §D3 for `PATCH`, the case `T4` does not cover.
+   *
+   * `T4` refuses the **audit** insert and requires the membership to stay put.
+   * Here the **membership** write is refused instead, which is the only shape
+   * that reds an implementation writing the audit row **outside** the
+   * transaction: such a route answers the same `500` and leaves the membership
+   * untouched, so `T4` stays green while an orphan row claims a change that
+   * never committed.
+   *
+   * The route must answer `500 internal_error`, the membership must keep its
+   * `role` **and** its pre-call `updatedAt`, and `audit_logs` must hold no row
+   * for the workspace. The second half is the anti-vacuity guard: with the stub
+   * restored the same call is repeated and must answer `200` and write exactly
+   * one `member.role_changed` row, so a route that never writes a row at all
+   * cannot pass either half. The measurement this case pins — the audit write
+   * moved out of the transaction reds exactly here and nowhere else in the file
+   * — is recorded in ADR-0974.
+   */
+  it("answers 500 and writes no row when the membership write fails on PATCH, then writes the member.role_changed row once the driver recovers", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, member, "Priya Sharma");
+
+    // A pre-call `updatedAt`, so "unchanged" is a claim a route that really did
+    // commit would break.
+    const preCallUpdatedAt = new Date("2026-07-07T08:09:10.110Z");
+    await app.db
+      .collection(COLLECTIONS.tenantMembers)
+      .updateOne({ tenantId, userId: member.userId }, { $set: { updatedAt: preCallUpdatedAt } });
+    const before = await findMembership(tenantId, member.userId);
+    expect(before?.role).toBe("member");
+    expect(before?.updatedAt).toEqual(preCallUpdatedAt);
+
+    const restore = refuseMembershipWrites();
+    let refused: Response;
+    try {
+      refused = await changeMemberRole(
+        mutationRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "PATCH", {
+          role: "admin",
+        })
+      );
+    } finally {
+      restore();
+    }
+
+    expect(refused.status).toBe(500);
+    expect((await errorEnvelope(refused)).code).toBe("internal_error");
+
+    // Nothing committed: the membership keeps its role and its instant, and the
+    // workspace has no audit row — an orphan row here is the defect this case
+    // exists to catch.
+    const after = await findMembership(tenantId, member.userId);
+    expect(after?.role).toBe("member");
+    expect(after?.updatedAt).toEqual(preCallUpdatedAt);
+    expect(await auditRows(tenantId)).toEqual([]);
+
+    // The anti-vacuity guard: the same call, with the driver healthy again,
+    // must answer 200 and write exactly one row.
+    const accepted = await changeMemberRole(
+      mutationRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "PATCH", {
+        role: "admin",
+      })
+    );
+
+    expect(accepted.status).toBe(200);
+    const rows = await auditRows(tenantId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: "member.role_changed" });
+  });
+
+  /**
+   * R2 — the same reverse half for `DELETE`, the other verb `T4` never covered.
+   *
+   * A refused membership write must answer `500 internal_error`, leave the
+   * membership `status: "active"` with its pre-call `updatedAt`, and leave
+   * `audit_logs` empty for the workspace; with the stub restored the same call
+   * must answer `204` and write exactly one `member.removed` row.
+   */
+  it("answers 500 and writes no row when the membership write fails on DELETE, then writes the member.removed row once the driver recovers", async () => {
+    const owner = await app.signIn(makeIdentity("rsvp-owner"));
+    const member = await app.signIn(makeIdentity("maya-member"));
+    const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+    await addMember(tenantId, member, "Priya Sharma");
+
+    const preCallUpdatedAt = new Date("2026-07-08T09:10:11.220Z");
+    await app.db
+      .collection(COLLECTIONS.tenantMembers)
+      .updateOne({ tenantId, userId: member.userId }, { $set: { updatedAt: preCallUpdatedAt } });
+    const before = await findMembership(tenantId, member.userId);
+    expect(before?.status).toBe("active");
+    expect(before?.updatedAt).toEqual(preCallUpdatedAt);
+
+    const restore = refuseMembershipWrites();
+    let refused: Response;
+    try {
+      refused = await removeMember(
+        mutationRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "DELETE")
+      );
+    } finally {
+      restore();
+    }
+
+    expect(refused.status).toBe(500);
+    expect((await errorEnvelope(refused)).code).toBe("internal_error");
+
+    const after = await findMembership(tenantId, member.userId);
+    expect(after?.status).toBe("active");
+    expect(after?.updatedAt).toEqual(preCallUpdatedAt);
+    expect(await auditRows(tenantId)).toEqual([]);
+
+    // The anti-vacuity guard for this verb.
+    const accepted = await removeMember(
+      mutationRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "DELETE")
+    );
+
+    expect(accepted.status).toBe(204);
+    const rows = await auditRows(tenantId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: "member.removed" });
+  });
 });
