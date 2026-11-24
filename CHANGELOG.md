@@ -1,3 +1,9 @@
+## [1.85.2](https://github.com/yahodu/openpic-webapp/compare/v1.85.1...v1.85.2) (2026-11-24)
+
+### Bug Fixes
+
+- **tenants:** OP-101 add the joinedAt userId tie-break to the workspace member listing ([#871](https://github.com/yahodu/openpic-webapp/issues/871)) ([774e558](https://github.com/yahodu/openpic-webapp/commit/774e558407fcaddd7d24675b2f130806b39cbc52)), closes [#272](https://github.com/yahodu/openpic-webapp/issues/272) [#272](https://github.com/yahodu/openpic-webapp/issues/272)
+
 ## [1.85.1](https://github.com/yahodu/openpic-webapp/compare/v1.85.0...v1.85.1) (2026-11-24)
 
 ### Bug Fixes
