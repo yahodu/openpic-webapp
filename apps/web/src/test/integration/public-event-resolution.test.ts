@@ -21,6 +21,7 @@ import {
   type SignedInUser,
   type TestApp,
 } from "../helpers/authed-app";
+import { withClockAt } from "../helpers/clock";
 import { MONGO_READY_HOOK_TIMEOUT_MS } from "../helpers/db";
 
 /**
@@ -884,30 +885,42 @@ describe("GET /api/v1/p/events/{slug} — the session hint (contract §6.1)", ()
   });
 
   it("I2: a lapsed session cookie still renders the page (§6.1 has no 401)", async () => {
-    const { event } = await seedPublishedEvent("op130-lapsed-session");
-    const token = "opat_expired-session-token-for-op130";
-    await app.db.collection(COLLECTIONS.attendeeSessions).insertOne({
-      tokenHash: hashAttendeeSessionToken(token),
-      claimedByUserId: null,
-      claimedAt: null,
-      eventIds: [event.id],
-      deviceFingerprint: {
-        uaHash: "b".repeat(64),
-        ipHash: "c".repeat(64),
-        acceptLangHash: "d".repeat(64),
-      },
-      createdAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000),
-      lastSeenAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000),
-      expireAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+    // Arrange — a real, ordinary attendee session plus the profile a selfie
+    // leaves behind. The row's own `expireAt` stays ~30 days in the **real**
+    // future, so `attendee_sessions_expire_at_ttl` (`{expireAt: 1}`,
+    // `expireAfterSeconds: 0`) cannot select it: a row stamped into the real
+    // past is deleted by the monitor ~57 s later, and the landing call would
+    // then resolve no session at all and answer `hasProfile: false` — the same
+    // body as no credential (measured; ADR-0969, class ADR-0148).
+    const { tenantId, event } = await seedPublishedEvent("op130-lapsed-session");
+    const cookie = await createSessionCookie(event.slug);
+    const token = cookie.slice(cookie.indexOf("=") + 1);
+    const stored = await app.db
+      .collection(COLLECTIONS.attendeeSessions)
+      .findOne({ tokenHash: hashAttendeeSessionToken(token) });
+    if (stored === null) {
+      throw new Error("expected the attendee session row to exist");
+    }
+    const expiresAt = stored.expireAt as Date;
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
+    await seedProfile({
+      tenantKey: tenantId.toHexString(),
+      eventId: event.id,
+      sessionId: String(stored._id),
     });
 
-    const response = await getPublicEvent(
-      publicEventRequest(event.slug, `${ATTENDEE_COOKIE_NAME}=${token}`)
+    // Act — only the clock moves past the session's expiry; the row, and the
+    // profile it resolves, are untouched.
+    const response = await withClockAt(expiresAt, () =>
+      getPublicEvent(publicEventRequest(event.slug, cookie))
     );
 
+    // Assert — §6.1 declares the route `public` and its error table has no
+    // `401`, so a lapsed cookie is a hint that still resolves: the page renders
+    // and the session hint is the attendee's own.
     expect(response.status).toBe(200);
     const parsed = (await response.json()) as Record<string, unknown>;
-    expect(objectAt(parsed, "session")).toMatchObject({ kind: "anonymous", hasProfile: false });
+    expect(objectAt(parsed, "session")).toMatchObject({ kind: "anonymous", hasProfile: true });
   });
 });
 
