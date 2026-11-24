@@ -1,5 +1,5 @@
 import { type ObjectId } from "mongodb";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { COLLECTIONS } from "@/server/db/collections";
 import { ensureIndexes } from "@/server/db/indexes";
@@ -21,6 +21,7 @@ import {
   seedProfile,
   seedSelfie,
   selfieIds,
+  type ClaimCallOptions,
   type ClaimProfileRow,
 } from "../helpers/attendee-claim-flow";
 import { makeIdentity, startTestApp, type TestApp } from "../helpers/authed-app";
@@ -211,6 +212,30 @@ function singleProfile(rows: readonly ClaimProfileRow[]): ClaimProfileRow {
     throw new Error("expected exactly one attendee profile");
   }
   return profile;
+}
+
+/**
+ * Call the claim route with the process clock at `instant`, then restore it.
+ *
+ * The route's expiry check reads the injected `Clock` port, whose production
+ * implementation (`systemClock`) reads the process wall clock on every call, and
+ * the route threads no clock of its own. Faking **only** `Date` moves that read
+ * without touching timers, so the driver, the readiness polls and the HTTP
+ * plumbing keep their real scheduling (the same seam `attendee-sessions.test.ts`
+ * I4 uses; ADR-0148).
+ *
+ * @param instant - The instant every `Date` read during the call reports.
+ * @param options - The caller's credential, client address and session token.
+ * @returns The raw response.
+ */
+async function claimWithClockAt(instant: Date, options: ClaimCallOptions): Promise<Response> {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(instant);
+    return await claimSession(options);
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 describe("when an attendee claims an anonymous session", () => {
@@ -447,7 +472,16 @@ describe("when a session is already spoken for", () => {
   });
 
   it("I2: a lapsed session is refused with 401 attendee_session_expired", async () => {
-    // Arrange — past the 30-day TTL (§13.5); the TTL monitor has not swept it yet.
+    // Arrange — a session whose `expireAt` the clock has reached.
+    //
+    // The instant is in the **real** future, so `attendee_sessions_expire_at_ttl`
+    // (`{expireAt: 1}`, `expireAfterSeconds: 0`) cannot select the row: the TTL
+    // monitor deletes only rows already past, and it runs on the real clock at a
+    // 60-second cadence. The process clock is then moved onto the instant, and
+    // expiry is decided there (`session-resolver.ts`: `now >= expireAt`). A row
+    // the monitor has swept is `404 not_found` instead — the wrong answer for a
+    // session that has lapsed — so this case must never depend on the monitor
+    // having missed it (ADR-0968; class ADR-0148, ADR-0938).
     const event = await seededEvent("op134-i2-expired");
     const session = await createBoundAttendeeSession(app, event.slug);
     await seedProfile(app, {
@@ -455,11 +489,17 @@ describe("when a session is already spoken for", () => {
       eventId: event.eventId,
       subject: { kind: "anonymous", attendeeSessionId: session.sessionId },
     });
-    await lapseSession(app, session.token);
+    const expiresAt = new Date(Date.now() + 60_000);
+    await lapseSession(app, session.token, expiresAt);
     const user = await app.signIn(makeIdentity("op134-i2-expired-user"));
 
-    // Act
-    const response = await claimSession({
+    // Assert — the row is live for the monitor and present at the act, so the
+    // status below can only be the expiry answer, never a missing row.
+    expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect((await readSessionRow(app, session.token)).expireAt).toEqual(expiresAt);
+
+    // Act — only the clock moves past the session; the row is untouched.
+    const response = await claimWithClockAt(expiresAt, {
       cookie: user.cookie,
       ip: nextIp(),
       sessionToken: session.token,
