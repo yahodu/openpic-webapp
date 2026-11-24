@@ -269,16 +269,23 @@ function unresolvedKeyError(source: string, openBrace: number, reason: string): 
  * key position therefore swallowed the next property in silence, the exact
  * fail-open this reader exists to prevent.
  *
- * **Measured limitation.** The `/*` branch cannot tell code from a value: a
- * `/*` inside a value expression — reachable only through a regex literal such
- * as `/[/*]/` — starts a comment skip and swallows the rest of the literal. No
- * `subscriptions` write can hold a regex and §14.3 documents no such field, and
- * the sibling spec reddens on a `/*` in a **value** position inside an anchored
- * mint literal — the only shape this branch misreads. The two shapes it handles
- * correctly are deliberately not banned there: a marker inside a quoted string
- * value never reaches this branch (the string is consumed at its opening
- * quote), and a complete block comment where a property may start is skipped
- * whole with `expectKey` intact, so the property after it is still read.
+ * **Measured limitation, and the boundary the sibling spec pins (OP-140
+ * follow-up).** The block-comment branch cannot tell code from a value: a `/`
+ * followed by `*` in a value expression — reachable only through a regex literal
+ * such as `/[/*]/` — opens a skip that resumes at the nearest closing delimiter,
+ * and this reader never re-examines what it stepped over. Keys are lost only
+ * when that span crosses a **property boundary**, i.e. when it holds a `:` or a
+ * top-level `,` outside strings; a *complete* comment written after a key's
+ * colon and before its value is parser-safe, because the skip ends before the
+ * value and the next property is still read. No `subscriptions` write can hold
+ * a regex and §14.3 documents no such field, so the sibling spec reddens on a
+ * marker whose skip crosses a boundary inside an anchored mint literal, and on a
+ * marker the literal never closes — not on the value position alone. The two
+ * shapes this branch handles correctly are deliberately not banned there: a
+ * marker inside a quoted string value never reaches this branch (the string is
+ * consumed at its opening quote), and a complete block comment where a property
+ * may start is skipped whole with `expectKey` intact, so the property after it
+ * is still read.
  *
  * A spread and a method shorthand report their target or modifier the same way
  * (`...baseDoc` reports `baseDoc`, `async markPaid() {}` reports `async`):
