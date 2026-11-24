@@ -200,7 +200,7 @@ and paste the output into the PR:
   CI and get a fresh merge ref) or close as superseded.
 - **G7 (ADR-carrying PRs only, ADR-0300 §11 item 28)** the ADR number the PR
   **adds** appears at **no other open PR head** — re-swept at the merge instant,
-  because §9 item 23's allocation sweep is a snapshot. Command in the block
+  because §12 item 23's allocation sweep is a snapshot. Command in the block
   below. A hit is a **failure** under G6: do not merge; the lander renumbers its
   own unmerged record, re-runs item 12's merged-tree check on the new head, then
   G1–G7 again on the fresh head.
