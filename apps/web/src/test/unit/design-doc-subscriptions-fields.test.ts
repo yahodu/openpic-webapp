@@ -88,15 +88,30 @@ import {
  * changed the parsed set for synthetic literals only. The measured census stays
  * at 24 and 25 keys, 21 written after meta, 24 documented.
  *
- * **One measured limitation, pinned by a vacuity case (OP-140 follow-up).** The
- * comment branch cannot tell code from a value, so a `/*` inside a value
- * expression starts a comment skip and swallows the rest of the literal. That
- * shape is reachable only through a regex literal (such as `/[/*]/`), which no
- * §14.3 field can hold, but it is the guard's own silent-skip class. The
- * real-tree case below therefore asserts that **no `/*` marker occurs inside
- * any anchored mint literal** (measured `0` today, over all five literal
- * bodies): a future edit that puts one there reddens there, instead of losing
- * the rest of that literal's keys in silence.
+ * **One measured limitation, pinned by a narrowed vacuity case (OP-140
+ * follow-up).** The comment branch cannot tell code from a value, so a `/*`
+ * inside a *value* expression starts a comment skip and swallows the rest of
+ * the literal. That shape is reachable only through a regex literal (such as
+ * `/[/*]/`), which no §14.3 field can hold, but it is the guard's own
+ * silent-skip class. The real-tree case below therefore reddens on **every
+ * `/*` in a value position inside an anchored mint literal** (measured `0`
+ * today, over all five literal bodies): a future edit that puts one there
+ * reddens there, naming the file, the anchor, the literal, the offset and the
+ * fix, instead of losing the rest of that literal's keys in silence.
+ *
+ * **The ban is exactly the harmful class, and that is measured, not assumed.**
+ * The first cut of the case counted a `/*` **anywhere** in a literal body and
+ * reddened on two shapes the shipped reader handles correctly: a marker inside
+ * a quoted string value (`mandateStatus: "pending/*x"` reddened at offset 376
+ * while every census case stayed green — the string branch consumes the literal
+ * at its opening quote) and a complete block comment (a `/*` through its
+ * closing delimiter) sitting where a property may start (the comment branch
+ * skips it whole and still reads the property after it — the `a block comment
+ * between properties` matrix row pins that). Both are exempt now, so the
+ * remaining red is always the value-position skip. A *complete* value-position
+ * comment is still flagged: without a real tokenizer the reader cannot tell it
+ * from `/[/*]/`, and a block comment in a mint literal belongs above the write
+ * call anyway.
  */
 
 /** The design doc that carries §14.3. */
@@ -221,8 +236,9 @@ interface AnchoredLiteralBody {
  *
  * Braces are balanced with quoted strings stepped over, so a `{` or `}` inside
  * a string value cannot end a body early. Comments are deliberately **not**
- * skipped: a `/*` marker inside a mint literal is the shape the vacuity case
- * exists to surface.
+ * skipped here: slicing is not the place to decide whether a marker is
+ * harmful — {@link blockCommentMarkers} classifies each one against the
+ * reader's own string and comment branches.
  *
  * @param source - One route file's whole text.
  * @param anchors - The write-opening substrings to slice.
@@ -276,19 +292,162 @@ function anchoredLiteralBodies(source: string, anchors: readonly string[]): Anch
 }
 
 /**
- * The offsets of every `/*` marker in one literal body.
+ * The offsets of the `/*` markers in one literal body that the reader's
+ * comment branch turns into a key-swallowing skip.
  *
- * @param body - One anchored literal's text.
- * @returns The marker offsets, in source order.
+ * The reader steps over a quoted string before it looks for a comment, so a
+ * marker inside a string value never reaches the comment branch. It also skips
+ * a complete block comment whole and leaves the key position untouched, so a
+ * comment that begins where a property may start costs no key — the matrix's
+ * block-comment rows pin that. Both shapes are parser-safe and are exempt here;
+ * a vacuity case that reddened on them named a defect while nothing was broken.
+ *
+ * What remains is the harmful class: a marker in a **value** position, which
+ * the comment branch cannot tell from a regex literal such as `/[/*]/`, and a
+ * marker that the body never closes. Either way the skip runs on to the next
+ * closing delimiter — possibly past the end of this literal — and every key in
+ * between is lost in silence. The exempt position is the literal's own start, a
+ * `{`, or a `,` at the literal's top level, with only whitespace and comments
+ * since.
+ *
+ * @param body - One anchored literal's text, from its opening `{` through its
+ *   matching `}`.
+ * @returns The harmful marker offsets, in source order.
  */
 function blockCommentMarkers(body: string): number[] {
   const markers: number[] = [];
-  for (let at = body.indexOf("/*"); at !== -1; at = body.indexOf("/*", at + 2)) {
-    markers.push(at);
+  let depth = 0;
+  let atPropertyStart = false;
+  let index = 0;
+
+  while (index < body.length) {
+    const char = body.charAt(index);
+
+    // A string is data from its opening quote on, so a `/*` inside one never
+    // reaches the comment branch.
+    if (char === '"' || char === "'" || char === "`") {
+      index += 1;
+      while (index < body.length && body.charAt(index) !== char) {
+        index += body.charAt(index) === "\\" ? 2 : 1;
+      }
+      index += 1;
+      atPropertyStart = false;
+      continue;
+    }
+
+    // A line comment runs to the end of its line; a `/*` inside it is text.
+    if (char === "/" && body.charAt(index + 1) === "/") {
+      const lineEnd = body.indexOf("\n", index + 2);
+      index = lineEnd === -1 ? body.length : lineEnd;
+      continue;
+    }
+
+    if (char === "/" && body.charAt(index + 1) === "*") {
+      const commentEnd = body.indexOf("*/", index + 2);
+      const closes = commentEnd !== -1;
+      if (!atPropertyStart || !closes) {
+        markers.push(index);
+      }
+      index = closes ? commentEnd + 2 : body.length;
+      // A comment changes no key position: the property after it is still read.
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      atPropertyStart = true;
+    } else if (char === "}" || char === "]" || char === ")") {
+      depth -= 1;
+      atPropertyStart = false;
+    } else if (char === "[" || char === "(") {
+      depth += 1;
+      atPropertyStart = false;
+    } else if (char === "," && depth === 1) {
+      atPropertyStart = true;
+    } else if (!/\s/.test(char)) {
+      atPropertyStart = false;
+    }
+
+    index += 1;
   }
 
   return markers;
 }
+
+/** One literal body and the lines the marker detector must redden on. */
+interface LiteralMarkerShape {
+  /** The shape's name, used as the case title. */
+  readonly shape: string;
+  /** The literal's body lines, between its braces. */
+  readonly body: readonly string[];
+  /** The 1-based line of each harmful marker, counting the opening `{` as line 1. */
+  readonly flagged: readonly number[];
+}
+
+/**
+ * The detector matrix: the shapes a `/*` can take inside a mint literal, and the
+ * markers that must be reported as harmful.
+ *
+ * The exempt rows are the parser-safe class the first cut of the vacuity case
+ * reddened on — a marker inside a string value (the reader consumes the string
+ * at its opening quote) and a complete block comment where a property may start
+ * (the reader skips it whole and still reads the property after it). The
+ * flagged rows are the value-position skip, the shape reachable only through a
+ * regex literal, and the unterminated comment whose skip swallows the rest of
+ * the literal.
+ */
+const LITERAL_MARKER_SHAPES: readonly LiteralMarkerShape[] = [
+  {
+    shape: "a marker in a regex value position, which starts a key-swallowing skip",
+    body: ["pattern: /[/*]/,", 'status: "active",'],
+    flagged: [2],
+  },
+  {
+    shape: "a marker in a regex value position that a later `*/` closes",
+    body: ["pattern: /[/*]/,", "note: 1 */,", 'status: "active",'],
+    flagged: [2],
+  },
+  {
+    shape: "an unterminated block comment at key position, whose skip swallows the literal",
+    body: ["/* taxMinor is billed at renewal", 'status: "active",'],
+    flagged: [2],
+  },
+  {
+    shape: "a marker inside a double-quoted string value, which the string branch consumes",
+    body: ['mandateStatus: "pending/*x",', 'status: "active",'],
+    flagged: [],
+  },
+  {
+    shape: "a marker inside a single-quoted string value",
+    body: ["note: 'a /* b',", 'status: "active",'],
+    flagged: [],
+  },
+  {
+    shape: "a marker inside a template value",
+    body: ["note: `a /* b`,", 'status: "active",'],
+    flagged: [],
+  },
+  {
+    shape: "a marker inside a line comment, which is text to the end of the line",
+    body: ['status: "active",', "// see /* the mint table", "taxMinor: 0,"],
+    flagged: [],
+  },
+  {
+    shape: "a complete block comment between properties, which the reader skips whole",
+    body: ['status: "active",', "/* currency comes from prices[] */", 'billingCycle: "monthly"'],
+    flagged: [],
+  },
+  {
+    shape: "a complete block comment before the first property",
+    body: ["/* taxMinor is billed at renewal */", 'status: "active",'],
+    flagged: [],
+  },
+  {
+    shape: "a complete trailing block comment, which contributes no key",
+    body: ['status: "active",', "/* taxMinor is billed at renewal */"],
+    flagged: [],
+  },
+];
 
 /** One way a hand-edited mint literal can name a depth-1 property. */
 interface DepthOneKeyShape {
@@ -625,6 +784,16 @@ describe("design doc §14.3 `subscriptions` field list", () => {
     });
   });
 
+  describe("the literal marker detector", () => {
+    it.each(LITERAL_MARKER_SHAPES)("classifies $shape", ({ body, flagged }) => {
+      const literal = ["{", ...body.map((line) => `  ${line}`), "}"].join("\n");
+
+      expect(
+        blockCommentMarkers(literal).map((at) => literal.slice(0, at).split("\n").length)
+      ).toEqual(flagged);
+    });
+  });
+
   describe("the real tree", () => {
     it("scans the anchored literals of both mint routes and no others", () => {
       const { routes } = measureRealTree();
@@ -634,9 +803,12 @@ describe("design doc §14.3 `subscriptions` field list", () => {
       );
     });
 
-    // A `/*` inside a value position starts a comment skip and would swallow
-    // the rest of the literal, so the pinned population must stay free of it.
-    it("carries no `/*` marker inside any anchored mint literal", () => {
+    // A `/*` in a value position starts a comment skip that would swallow the
+    // rest of the literal, so the pinned population must stay free of one.
+    // Parser-safe markers — inside a quoted string value, or a complete block
+    // comment where a property may start — are exempt: `blockCommentMarkers`
+    // classifies both, and its matrix pins that they never redden.
+    it("carries no `/*` marker in a value position inside any anchored mint literal", () => {
       const routes = MINT_ROUTES.map((route) => ({
         route,
         bodies: anchoredLiteralBodies(readTextFile(join(repoRoot, route.path)), route.anchors),
@@ -654,7 +826,9 @@ describe("design doc §14.3 `subscriptions` field list", () => {
             blockCommentMarkers(body).map(
               (offset) =>
                 `${route.path} anchor \`${anchor}\` literal ${String(index + 1)} ` +
-                `carries a \`/*\` at offset ${String(offset)}`
+                `carries a \`/*\` at offset ${String(offset)} in a value position: ` +
+                "the reader starts a block-comment skip there and swallows the rest of the " +
+                `literal — move the comment above the write call on \`${anchor}\``
             )
           )
         )
