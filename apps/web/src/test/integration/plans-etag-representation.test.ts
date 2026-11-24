@@ -198,3 +198,41 @@ describe("GET /api/v1/plans — the existing revalidation invariant still holds"
     }
   });
 });
+
+/**
+ * Characterisation pin — the RFC 7232 **list** form of `If-None-Match` (OP-102
+ * follow-up, contract §0.10, ADR-0325).
+ *
+ * `plans/route.ts` must hand the header to the shared `ifNoneMatchSatisfied`
+ * helper, which compares each comma-separated member (RFC 7232 §3.2). Every
+ * case above presents a **single** tag, so a route that re-implemented the
+ * comparison as a literal string equality against the current tag would keep
+ * this whole file green while a real client — which sends the tag it holds
+ * inside a list — stopped revalidating. Both arms are asserted: a list that
+ * contains this catalogue's tag (→ `304`) and a list that contains only other
+ * tags (→ `200`, so an always-`304` route cannot satisfy the case).
+ *
+ * This is not in `conditional-etag.test.ts`: that file drives a synthetic
+ * `defineRoute` pair, so it pins the stage, not this route's call site.
+ */
+describe("GET /api/v1/plans — the If-None-Match list form", () => {
+  it("revalidates a list containing this catalogue's tag to 304, and serves 200 for a list of only other tags", async () => {
+    await reseed();
+    const etag = etagOf(await getPlans(plansRequest()));
+
+    const listed = await getPlans(
+      plansRequest("", { "if-none-match": `"previous-catalogue-tag", ${etag}` })
+    );
+
+    expect(listed.status).toBe(304);
+    expect(listed.headers.get("etag")).toBe(etag);
+    expect((await listed.arrayBuffer()).byteLength).toBe(0);
+
+    const othersOnly = await getPlans(
+      plansRequest("", { "if-none-match": '"previous-catalogue-tag", "older-catalogue-tag"' })
+    );
+
+    expect(othersOnly.status).toBe(200);
+    expect((await servedPlans(othersOnly)).size).toBeGreaterThan(0);
+  });
+});

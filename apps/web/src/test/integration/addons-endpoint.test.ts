@@ -347,3 +347,78 @@ describe("GET /api/v1/addons (§3.6) — the catalogue ETag identifies the serve
     expect(crossVariant.status).toBe(200);
   });
 });
+
+/**
+ * Characterisation pin — the RFC 7232 **list** form of `If-None-Match` (OP-102
+ * follow-up, contract §0.10, ADR-0325).
+ *
+ * `ifNoneMatchSatisfied` compares each comma-separated member of the header
+ * (RFC 7232 §3.2), and the route must hand the header to it. Every case shipped
+ * before this block presents a **single** tag, so a route that re-implemented
+ * the comparison as a literal string equality would keep the whole §3.6 suite
+ * green while a real client — which sends the tag it holds inside a list —
+ * stopped revalidating. This case presents a two-member list on both sides: one
+ * that contains this catalogue's tag (→ `304`) and one that contains only other
+ * tags (→ `200`, so an always-`304` route cannot satisfy it).
+ */
+describe("GET /api/v1/addons (§3.6) — the If-None-Match list form", () => {
+  it("revalidates a list containing this catalogue's tag to 304, and serves 200 for a list of only other tags", async () => {
+    await seedAddons([makeAddon()]);
+    const etag = etagOf(await getAddons(addonsRequest()));
+
+    const listed = await getAddons(revalidationRequest(`"older-catalogue-tag", ${etag}`));
+
+    expect(listed.status).toBe(304);
+    expect(listed.headers.get("etag")).toBe(etag);
+    expect((await listed.arrayBuffer()).byteLength).toBe(0);
+
+    const othersOnly = await getAddons(
+      revalidationRequest('"older-catalogue-tag", "an-even-older-catalogue-tag"')
+    );
+
+    expect(othersOnly.status).toBe(200);
+    const body = (await othersOnly.json()) as { data: Array<{ addonKey: string }> };
+    expect(body.data.map((addon) => addon.addonKey)).toEqual(["storage-50gb"]);
+  });
+});
+
+/**
+ * Characterisation pin — the tag identifies the **served** representation only
+ * (OP-102 follow-up, contract §3.6, ADR-0325).
+ *
+ * The shipped case above proves one direction: a change to a *served* field
+ * moves the tag. This pins the inverse, which is what stops a tag from
+ * over-invalidating — `grantDelta` is stored (`@/server/plans/addons.ts`) and
+ * absent from the §3.6 served schema (`projectAddon` never emits it), so an
+ * edit to it changes no served byte and must leave the tag alone. Otherwise
+ * every such edit would force every client to refetch a body that did not
+ * change. The body equality is asserted first, so the tag assertion cannot be
+ * satisfied by a catalogue that ignores the edit for some other reason.
+ */
+describe("GET /api/v1/addons (§3.6) — an unserved stored edit leaves the ETag alone", () => {
+  it("keeps the served body and the ETag when only a stored-but-unserved field changes", async () => {
+    await seedAddons([makeAddon({ grantDelta: 100 })]);
+    const before = await getAddons(addonsRequest());
+    const beforeBody: unknown = await before.json();
+    const beforeTag = etagOf(before);
+
+    await seedAddons([makeAddon({ grantDelta: 200 })]);
+    const after = await getAddons(addonsRequest());
+    const afterBody: unknown = await after.json();
+
+    // The stored document really carries the edit, so the identity below is not
+    // satisfied by a seed that silently failed.
+    const stored = await app.db
+      .collection<StoredAddon>("addons")
+      .findOne({ addonKey: "storage-50gb" });
+    expect(stored?.grantDelta).toBe(200);
+
+    // `grantDelta` is stored but never served: the bytes are byte-identical…
+    expect(afterBody).toEqual(beforeBody);
+    const servedItem = (afterBody as { data: Array<Record<string, unknown>> }).data.at(0);
+    expect(servedItem).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(servedItem, "grantDelta")).toBe(false);
+    // …so the tag that identifies those bytes must not move.
+    expect(etagOf(after)).toBe(beforeTag);
+  });
+});
