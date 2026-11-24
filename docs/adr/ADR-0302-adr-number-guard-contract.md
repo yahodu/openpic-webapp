@@ -514,6 +514,15 @@ counts in this record's sign-off sections and in other records' delivery notes
 are measurements of their own heads, not invariants of this table, and stay as
 written.
 
+**One residual of the same class (2026-11-24, follow-up card `t_b3d3d346` to
+review F1 of PR #912).** One live-prose site of that class sat outside the
+previous sweep's file bound: the `adr-guard-fixtures` helper docblock said "the
+five specs" where the guard family is one spec per invariant, so the count was
+stale the moment a further invariant landed. It now says "the per-invariant
+specs" and states no number. The dated delivery measurements in
+`adr-ledger-links.ts` and in other records' delivery notes are measurements of
+their own heads and stay as written.
+
 **Census rule for the real-tree cases.** A real-tree case keeps its non-vacuity
 bounds and pins the census as a floor with headroom (`checkedLinks`) plus a
 population floor (`scannedRecords`) — never an equality; the values live in the
