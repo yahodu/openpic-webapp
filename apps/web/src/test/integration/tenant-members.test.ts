@@ -1,6 +1,6 @@
 import type { Document, WithId } from "mongodb";
 import { ObjectId } from "mongodb";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { findForbiddenFields } from "@openpic/contracts";
 
@@ -11,6 +11,15 @@ import {
 import { GET as listMembers } from "@/app/api/v1/tenants/[tenantId]/members/route";
 import { GET as tenantGet } from "@/app/api/v1/tenants/[tenantId]/route";
 import { COLLECTIONS } from "@/server/db/collections";
+import {
+  createLogger,
+  getLogger,
+  memoryTransport,
+  setLogger,
+  type LogEntry,
+  type Logger,
+  type MemoryTransport,
+} from "@/server/logging";
 
 import { body } from "../helpers/auth-requests";
 import {
@@ -850,5 +859,408 @@ describe("GET /api/v1/tenants/{tenantId}/members — a `joinedAt` outside the fo
     const memberEntry = entries.find((entry) => entry.userId === member.userId.toHexString());
     expect(memberEntry).toBeDefined();
     expect(memberEntry?.joinedAt).toBe(EPOCH_JOINED_AT_ISO);
+  });
+});
+
+/**
+ * OP-101 residual pins — the member contract the stale draft PR #272 carried
+ * (contract §2.2, schema §13.1/§13.2/§13.4, ADR-0283, ADR-0304, ADR-0288).
+ *
+ * PR #272 (`OP-101-task-tenant-members-green-restore`) was closed unmerged under
+ * ADR-0304 §Consequences: its production intent reached the trunk through other
+ * PRs, so the branch is not merged — but five pin clusters it carried are
+ * genuinely absent from `main`, and one production difference is still live.
+ * ADR-0304 asks for a fresh pin for each absent assertion, never a merge of the
+ * stale branch; these are those pins.
+ *
+ *   R1  the listing has **no tie-break**: `listWorkspaceMembers` sorts by
+ *       `joinedAt` alone (`.sort((left, right) =>
+ *       left.joinedAt.localeCompare(right.joinedAt))`), so two memberships that
+ *       share an instant come back in storage read order. #272's `d5be9af4`
+ *       added `|| left.userId.localeCompare(right.userId)`. **This one case is
+ *       expected RED at the trunk** — it is the behaviour the GREEN must add;
+ *   R2  the two member mutations emit exactly one audit entry each
+ *       (`member.role_changed` with the workspace, the target and the new role;
+ *       `member.removed` with the workspace and the target) and neither refusal
+ *       arm emits one;
+ *   R3  a membership whose `user` document is gone stays listed, with its
+ *       contact fully masked, instead of being dropped or denying the listing;
+ *   R4  a membership whose `userProfiles` document is gone stays listed with an
+ *       empty `displayName`;
+ *   R5  a malformed `{userId}` is `404 not_found` on both verbs — never `500`,
+ *       never `403`;
+ *   R6  a path with no usable tenant segment answers the uniform logged `404`.
+ *
+ * R2–R6 are characterization pins: `main` already answers them, and they are
+ * green on arrival by design (ADR-0288). Each is load-bearing — the GREEN's
+ * refactor must keep them green, and a regression in any of them reds exactly
+ * the case that names it.
+ */
+
+/** The Better Auth-owned user collection (schema §13.1), as the projection reads it. */
+const USER_COLLECTION = "user";
+
+/**
+ * Three 24-hex `{userId}` values that no sign-in ever minted, fixed rather than
+ * drawn from `new ObjectId()` so the ordering case below has a **known** id
+ * order.
+ *
+ * A sign-in's id is random, so a fixture built from real users cannot tell a
+ * `joinedAt`-then-`userId` sort from a `userId`-only one. These three pin it:
+ * the earliest instant belongs to the **largest** id, and the tie pair is
+ * stored in **descending** id order. A membership row whose `user` document
+ * does not exist is still listed, with a fully masked contact — that is pinned
+ * on its own by R3, and it is what lets this case name ids no sign-in minted.
+ */
+const ORDER_EARLIEST_JOINED_USER_ID = "ffffffffffffffffffffff00";
+const ORDER_TIE_LARGER_USER_ID = "ffffffffffffffffffffff01";
+const ORDER_TIE_SMALLER_USER_ID = "000000000000000000000001";
+
+describe("OP-101 tenant-member residuals (ADR-0304 fresh pins, ADR-0288)", () => {
+  /** The logger a case found installed, so the case can put it back. */
+  let loggerBeforeCase: Logger | undefined;
+
+  /**
+   * Install a memory sink for one case and hand it back.
+   *
+   * `@/server/logging` has no `resetLogger`, so a case that left this sink in
+   * place would silence every later case in the file; the `afterEach` below
+   * restores the logger the case found. Call it **after** the fixture is seeded:
+   * sign-in and provisioning log too, and the sink must hold only the lines the
+   * case is about.
+   *
+   * @returns The sink the request's entries land in.
+   */
+  function captureLogs(): MemoryTransport {
+    loggerBeforeCase = getLogger();
+    const sink = memoryTransport();
+    setLogger(createLogger({ level: "info", transports: [sink] }));
+    return sink;
+  }
+
+  /** The entries of one `event`, in emission order. */
+  function auditEntries(sink: MemoryTransport, event: string): LogEntry[] {
+    return sink.entries.filter((entry) => entry.event === event);
+  }
+
+  afterEach(() => {
+    if (loggerBeforeCase !== undefined) {
+      setLogger(loggerBeforeCase);
+      loggerBeforeCase = undefined;
+    }
+  });
+
+  /**
+   * R1 — the listing's total order.
+   *
+   * `joinedAt` ascends; two memberships that share an instant are ordered by
+   * ascending `userId`, so the listing is a total order that does not depend on
+   * how the storage engine happened to lay the rows out.
+   */
+  describe("GET /api/v1/tenants/{tenantId}/members — the total order", () => {
+    /** The instant of the one untied member, who joins last and sorts last. */
+    const LAST_JOINED_AT = "2026-03-03T00:00:00.000Z";
+
+    /** The instant of the member who joins before the tie pair and sorts first. */
+    const FIRST_JOINED_AT = "2026-01-01T00:00:00.000Z";
+
+    /** The instant the tie pair shares. */
+    const TIE_JOINED_AT = "2026-02-02T00:00:00.000Z";
+
+    it("orders by joinedAt ascending and breaks an equal instant by ascending userId", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+      const memberships = app.db.collection(COLLECTIONS.tenantMembers);
+
+      // The owner joins last, so the listing must put them last whatever their
+      // random id is.
+      await memberships.updateOne(
+        { tenantId, userId: owner.userId },
+        { $set: { joinedAt: new Date(LAST_JOINED_AT) } }
+      );
+
+      // The tie pair is stored in DESCENDING id order, so the storage read
+      // order is the opposite of the order the listing promises: only a
+      // `userId` tie-break produces ascending here.
+      await memberships.insertOne({
+        tenantId,
+        userId: new ObjectId(ORDER_TIE_LARGER_USER_ID),
+        role: "member",
+        status: "active",
+        joinedAt: new Date(TIE_JOINED_AT),
+      });
+      await memberships.insertOne({
+        tenantId,
+        userId: new ObjectId(ORDER_TIE_SMALLER_USER_ID),
+        role: "member",
+        status: "active",
+        joinedAt: new Date(TIE_JOINED_AT),
+      });
+      // The earliest instant belongs to the LARGEST id, so a `userId`-only
+      // sort cannot produce this ordering either.
+      await memberships.insertOne({
+        tenantId,
+        userId: new ObjectId(ORDER_EARLIEST_JOINED_USER_ID),
+        role: "member",
+        status: "active",
+        joinedAt: new Date(FIRST_JOINED_AT),
+      });
+
+      const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+      expect(response.status).toBe(200);
+      const entries = (await body(response)).data as Record<string, unknown>[];
+      expect(entries.map((entry) => entry.userId)).toEqual([
+        ORDER_EARLIEST_JOINED_USER_ID,
+        ORDER_TIE_SMALLER_USER_ID,
+        ORDER_TIE_LARGER_USER_ID,
+        owner.userId.toHexString(),
+      ]);
+    });
+  });
+
+  /**
+   * R2 — the audit trail of the two member mutations.
+   *
+   * `PATCH` emits exactly one `member.role_changed` carrying the resolved
+   * workspace, the target and the role it set; `DELETE` emits exactly one
+   * `member.removed` carrying the resolved workspace and the target. A refusal
+   * is total, so it emits nothing: the entry is written only after the write it
+   * reports has landed.
+   */
+  describe("PATCH/DELETE /api/v1/tenants/{tenantId}/members/{userId} — the audit trail", () => {
+    it("emits exactly one member.role_changed, with the workspace, the target and the new role", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      const member = await app.signIn(makeIdentity("maya-member"));
+      const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+      await addMember(tenantId, member, "Priya Sharma");
+
+      const sink = captureLogs();
+      const response = await changeMemberRole(
+        memberRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "PATCH", {
+          role: "admin",
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const entries = auditEntries(sink, "member.role_changed");
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        level: "info",
+        tenantId: tenantId.toHexString(),
+        userId: member.userId.toHexString(),
+        role: "admin",
+      });
+      // The other mutation's event belongs to the other verb.
+      expect(auditEntries(sink, "member.removed")).toEqual([]);
+    });
+
+    it("emits exactly one member.removed, with the workspace and the target", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      const member = await app.signIn(makeIdentity("maya-member"));
+      const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+      await addMember(tenantId, member, "Priya Sharma");
+
+      const sink = captureLogs();
+      const response = await removeMember(
+        memberRequest(owner.cookie, CURRENT_ALIAS, member.userId.toHexString(), "DELETE")
+      );
+
+      expect(response.status).toBe(204);
+      const entries = auditEntries(sink, "member.removed");
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        level: "info",
+        tenantId: tenantId.toHexString(),
+        userId: member.userId.toHexString(),
+      });
+      expect(auditEntries(sink, "member.role_changed")).toEqual([]);
+    });
+
+    it("emits no audit entry when a non-owner is refused (403)", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      const admin = await app.signIn(makeIdentity("dev-admin"));
+      const target = await app.signIn(makeIdentity("maya-member"));
+      const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+      await addMember(tenantId, admin, "Dev Admin", "admin");
+      await addMember(tenantId, target, "Priya Sharma");
+
+      const sink = captureLogs();
+      const patched = await changeMemberRole(
+        memberRequest(admin.cookie, CURRENT_ALIAS, target.userId.toHexString(), "PATCH", {
+          role: "admin",
+        })
+      );
+      const deleted = await removeMember(
+        memberRequest(admin.cookie, CURRENT_ALIAS, target.userId.toHexString(), "DELETE")
+      );
+
+      expect(patched.status).toBe(403);
+      expect(deleted.status).toBe(403);
+      expect(auditEntries(sink, "member.role_changed")).toEqual([]);
+      expect(auditEntries(sink, "member.removed")).toEqual([]);
+    });
+
+    it("emits no member.removed when the owner's own removal is refused (409)", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      await seedWorkspace({ userId: owner.userId, role: "owner" });
+
+      const sink = captureLogs();
+      const response = await removeMember(
+        memberRequest(owner.cookie, CURRENT_ALIAS, owner.userId.toHexString(), "DELETE")
+      );
+
+      // §2.2 and the shipped `DELETE` cases fix the code: the owner is protected
+      // by the same guard as a demotion, so the refusal is `cannot_demote_owner`
+      // — Appendix A.5's only owner-protection code (ADR-0280 §D3). The card's
+      // `cannot_remove_organizer` is the OP-121 *event*-member code
+      // (`COLLABORATION_ERROR_CODES`), not this surface's.
+      expect(response.status).toBe(409);
+      expect((await errorEnvelope(response)).code).toBe("cannot_demote_owner");
+      expect(auditEntries(sink, "member.removed")).toEqual([]);
+    });
+  });
+
+  /**
+   * R3/R4 — a membership whose joined documents are gone.
+   *
+   * The listing joins three collections; a membership row can outlive what it
+   * references (a deleted account, a half-written provisioning). The row must
+   * stay listed — one dangling reference may never drop a member or turn the
+   * whole listing into a `5xx` — and the missing facts degrade to the §2.2
+   * defaults the projection declares: a contact that masks to the fixed bullet
+   * run, and an empty `displayName`.
+   */
+  describe("GET /api/v1/tenants/{tenantId}/members — a member missing a joined document", () => {
+    /** The masked contact `maskEmail("")` produces (§0.13 fixed-width mask). */
+    const FULLY_MASKED_CONTACT = "•••";
+
+    it("keeps a member whose `user` document is gone listed, with the contact fully masked", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      const member = await app.signIn(makeIdentity("maya-member"));
+      const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+      await addMember(tenantId, member, "Priya Sharma");
+      await app.db.collection(USER_COLLECTION).deleteOne({ _id: member.userId });
+
+      const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+      expect(response.status).toBe(200);
+      const entries = (await body(response)).data as Record<string, unknown>[];
+      // One dangling reference may never push a member out of the listing.
+      expect(entries.map((entry) => entry.userId).sort()).toEqual(
+        [member.userId.toHexString(), owner.userId.toHexString()].sort()
+      );
+
+      const memberEntry = entries.find((entry) => entry.userId === member.userId.toHexString());
+      expect(memberEntry).toMatchObject({
+        emailMasked: FULLY_MASKED_CONTACT,
+        role: "member",
+        status: "active",
+        displayName: "Priya Sharma",
+      });
+      expect(Object.keys(memberEntry ?? {}).sort()).toEqual(MEMBER_DTO_KEYS);
+    });
+
+    it("keeps a member whose `userProfiles` document is gone listed, with an empty displayName", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      const member = await app.signIn(makeIdentity("maya-member"));
+      const tenantId = await seedWorkspace({ userId: owner.userId, role: "owner" });
+      await addMember(tenantId, member, "Priya Sharma");
+      await app.db.collection(COLLECTIONS.userProfiles).deleteOne({ userId: member.userId });
+
+      const response = await listMembers(listRequest(owner.cookie, CURRENT_ALIAS));
+
+      expect(response.status).toBe(200);
+      const entries = (await body(response)).data as Record<string, unknown>[];
+      expect(entries.map((entry) => entry.userId).sort()).toEqual(
+        [member.userId.toHexString(), owner.userId.toHexString()].sort()
+      );
+
+      const memberEntry = entries.find((entry) => entry.userId === member.userId.toHexString());
+      expect(memberEntry).toMatchObject({
+        displayName: "",
+        emailMasked: "m•••@example.com",
+        role: "member",
+        status: "active",
+      });
+      expect(Object.keys(memberEntry ?? {}).sort()).toEqual(MEMBER_DTO_KEYS);
+    });
+  });
+
+  /**
+   * R5 — a malformed `{userId}`.
+   *
+   * The target id is validated against `^[0-9a-f]{24}$/i` before it reaches
+   * `new ObjectId()`. A shape outside it is `404 not_found`, so the endpoint
+   * neither confirms ids it does not hold (§0.4) nor answers a `500` for a
+   * client-supplied string, on either verb.
+   */
+  describe("/api/v1/tenants/{tenantId}/members/{userId} — a malformed target id", () => {
+    it("answers 404 not_found on PATCH for a `{userId}` that is not 24 hex characters", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      await seedWorkspace({ userId: owner.userId, role: "owner" });
+
+      const response = await changeMemberRole(
+        memberRequest(owner.cookie, CURRENT_ALIAS, "not-an-object-id", "PATCH", { role: "admin" })
+      );
+
+      expect(response.status).toBe(404);
+      expect((await errorEnvelope(response)).code).toBe("not_found");
+    });
+
+    it("answers 404 not_found on DELETE for a 23-character `{userId}`", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      await seedWorkspace({ userId: owner.userId, role: "owner" });
+
+      // One hex digit short of an ObjectId: the shape check, not the lookup,
+      // must deny it.
+      const response = await removeMember(
+        memberRequest(owner.cookie, CURRENT_ALIAS, "6b055762ace8c4d298b332f", "DELETE")
+      );
+
+      expect(response.status).toBe(404);
+      expect((await errorEnvelope(response)).code).toBe("not_found");
+    });
+  });
+
+  /**
+   * R6 — a path with no usable tenant segment.
+   *
+   * The tenant stage locates the workspace by the segment after the literal
+   * `tenants`; a path that has no such anchor yields a segment that cannot be a
+   * workspace id, so the stage denies with the one uniform, logged `404`
+   * (contract §0.4) instead of resolving some other workspace or answering
+   * `500`. The denial is `warn`-logged as `tenancy.access_denied` and never
+   * echoes `X-Tenant-Id`.
+   *
+   * ADR-0288 reports a documentation defect here rather than pinning it: the
+   * doc comment on `tenantIdFromRequest` says such a path yields `""`, while the
+   * code returns `segments[0]` (`"api"`). Only the observable below is pinned,
+   * so either repair keeps this case green.
+   */
+  describe("GET /api/v1/tenants/{tenantId}/members — a path with no tenant anchor", () => {
+    it("answers the uniform logged 404 and echoes no workspace id", async () => {
+      const owner = await app.signIn(makeIdentity("rsvp-owner"));
+      await seedWorkspace({ userId: owner.userId, role: "owner" });
+
+      const sink = captureLogs();
+      // No `tenants` segment exists, so there is no workspace to resolve.
+      const response = await listMembers(
+        new Request(new URL("/api/v1/members", APP_ORIGIN), {
+          method: "GET",
+          headers: { cookie: owner.cookie },
+        })
+      );
+
+      expect(response.status).toBe(404);
+      expect((await errorEnvelope(response)).code).toBe("not_found");
+      expect(response.headers.get("x-tenant-id")).toBeNull();
+
+      const denials = auditEntries(sink, "tenancy.access_denied");
+      expect(denials).toHaveLength(1);
+      // The reason is the stage's own classification; the pin is that the
+      // uniform denial is logged at all, at warn level (§0.4).
+      expect(denials[0]).toMatchObject({ level: "warn" });
+    });
   });
 });

@@ -164,5 +164,8 @@ export async function listWorkspaceMembers(db: Db, tenantId: ObjectId): Promise<
       const userId = String(membership.userId);
       return projectMember(membership, userById.get(userId), profileByUserId.get(userId));
     })
-    .sort((left, right) => left.joinedAt.localeCompare(right.joinedAt));
+    .sort(
+      (left, right) =>
+        left.joinedAt.localeCompare(right.joinedAt) || left.userId.localeCompare(right.userId)
+    );
 }
