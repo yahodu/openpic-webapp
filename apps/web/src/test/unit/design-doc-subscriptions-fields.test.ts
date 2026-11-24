@@ -50,21 +50,40 @@ import {
  * and the name counts), a static template key (`` `taxMinor`: 0 `` — same),
  * a spread (`...baseDoc` — `baseDoc` surfaces as a phantom key, a loud red), a
  * method shorthand (`async markPaid() {}` — `async` surfaces as the phantom
- * key, also loud), a line and a block comment (the commented word surfaces as
- * the phantom key, also loud), and a template value (skipped whole, never read
- * as a key). Two shapes are refused rather than guessed: a **computed** key
- * (`[TAX_KEY]: 1`, `` `${TAX_KEY}`: 1 ``), whose name is not in the text, and
- * an **inline literal spread** (`...{ … }`), whose keys are this literal's own.
- * In both cases a returned set would silently omit a field that was really
- * written — the exact drift class this guard exists to close — so the scan
- * throws instead.
+ * key, also loud), a template value (skipped whole, never read as a key), and
+ * five comment shapes (see below). Two shapes are refused rather than guessed:
+ * a **computed** key (`[TAX_KEY]: 1`, `` `${TAX_KEY}`: 1 ``), whose name is not
+ * in the text, and an **inline literal spread** (`...{ … }`), whose keys are
+ * this literal's own. In both cases a returned set would silently omit a field
+ * that was really written — the exact drift class this guard exists to close —
+ * so the scan throws instead.
+ *
+ * **Comments are not code (OP-140 follow-up).** The matrix originally accepted
+ * a comment as code: the comment's first word took the key position and
+ * surfaced as a phantom key, which was called a loud red. Probing the real
+ * parser falsified that — the phantom is only loud for *some* comment shapes.
+ * After `// status is derived at mint` the first word is a documented field, so
+ * the `taxMinor: 0` that follows it was never examined: the scan returned
+ * `["status"]` and the undocumented write passed silently. After
+ * `// 1) currency comes from prices[]` it returned no phantom at all (`1` is
+ * not an identifier and `)` closed the literal early). A block comment before
+ * `billingCycle` whose first word was the documented `currency` was silent too.
+ * So the reader now skips a `//` comment to the end of the line and
+ * a `/*`-opened block comment whole, leaving the key position untouched: a
+ * comment contributes no key, and the property after it is still read. Each
+ * comment shape — between two properties with a documented first word, between
+ * two properties as a numbered comment, as a block comment between properties,
+ * before the first property, and trailing after the last — is its own matrix
+ * row.
  *
  * **Why the real-tree census does not move.** Neither mint route writes a
  * quoted, template or computed property name today (verified against the two
  * route files, not assumed: no `"name":` and no `[name]:` at depth 1 in
- * either), so tightening the parser changed the parsed set for synthetic
- * literals only. The measured census stays at 24 and 25 keys, 21 written after
- * meta, 24 documented.
+ * either), and no comment sits inside either mint literal (both routes write
+ * their comments above the write call — `subscriptions.insertOne(` or
+ * `updateOne(` / `$set:` — never between its braces), so the parser tightening
+ * changed the parsed set for synthetic literals only. The measured census stays
+ * at 24 and 25 keys, 21 written after meta, 24 documented.
  */
 
 /** The design doc that carries §14.3. */
@@ -189,12 +208,15 @@ interface DepthOneKeyShape {
  *
  * The matrix is the contract, so every row is its own case. Two rows are
  * *supposed* to report a name that is not a real field — a spread reports its
- * target (`baseDoc`), a method shorthand reports `async`, and a comment at key
- * position reports its first word — because a phantom key fails
- * `written − meta ⊆ documented` loudly, which is safe; a *missing* key passes,
- * which is not. Quoted and static template keys are real names and must be
- * reported. The two shapes that cannot be resolved at all — a computed key and
- * an inline literal spread — are pinned separately as throws.
+ * target (`baseDoc`) and a method shorthand reports `async` — because a phantom
+ * key fails `written − meta ⊆ documented` loudly, which is safe; a *missing*
+ * key passes, which is not. Comments are the counter-example that replaced this
+ * rule: a comment is not code, its first word must never stand in the key
+ * position, and the property after it must still be read, so every comment row
+ * reports exactly the real properties around it and no phantom (see the module
+ * TSDoc). Quoted and static template keys are real names and must be reported.
+ * The two shapes that cannot be resolved at all — a computed key and an inline
+ * literal spread — are pinned separately as throws.
  */
 const DEPTH_ONE_KEY_SHAPES: readonly DepthOneKeyShape[] = [
   {
@@ -227,15 +249,41 @@ const DEPTH_ONE_KEY_SHAPES: readonly DepthOneKeyShape[] = [
     body: ["async markPaid() {},", 'status: "active"'],
     keys: ["async", "status"],
   },
+  // A comment used to report its first word as a phantom key, which the matrix
+  // accepted as "loud, therefore safe". That posture is replaced: the phantom
+  // was only loud for *some* comment shapes — a documented first word or a
+  // numbered comment swallowed the property after it in silence — so a comment
+  // now contributes no key, and each row expects only the real properties
+  // around it.
   {
-    shape: "a line comment, which surfaces its first word as a phantom key",
-    body: ['status: "active",', "// taxMinor is billed at renewal"],
+    shape: "a line comment between properties, whose first word is a documented field",
+    body: ['status: "active",', "// currency comes from prices[]", "taxMinor: 0,"],
     keys: ["status", "taxMinor"],
   },
   {
-    shape: "a block comment, which surfaces its first word as a phantom key",
-    body: ['status: "active",', "/* taxMinor is billed at renewal */"],
+    shape: "a numbered line comment between properties",
+    body: ['status: "active",', "// 1) currency comes from prices[]", "taxMinor: 0,"],
     keys: ["status", "taxMinor"],
+  },
+  {
+    shape: "a block comment between properties",
+    body: ['status: "active",', "/* currency comes from prices[] */", 'billingCycle: "monthly"'],
+    keys: ["billingCycle", "status"],
+  },
+  {
+    shape: "a comment before the first property",
+    body: ["// taxMinor is billed at renewal", 'status: "active",'],
+    keys: ["status"],
+  },
+  {
+    shape: "a trailing line comment, which contributes no key",
+    body: ['status: "active",', "// taxMinor is billed at renewal"],
+    keys: ["status"],
+  },
+  {
+    shape: "a trailing block comment, which contributes no key",
+    body: ['status: "active",', "/* taxMinor is billed at renewal */"],
+    keys: ["status"],
   },
   {
     shape: "a template value, which is skipped whole and never read as a key",
@@ -380,6 +428,27 @@ describe("design doc §14.3 `subscriptions` field list", () => {
         "await subscriptions.insertOne({",
         '  "taxMinor": 0,',
         '  status: "active",',
+        "});",
+      ].join("\n");
+      const markdown = [
+        "### 14.3 `subscriptions`",
+        "",
+        "| Field | Type |",
+        "| --- | --- |",
+        "| `status` | string |",
+      ].join("\n");
+
+      const written = scanWrittenFields(source, ["subscriptions.insertOne("]).keys;
+
+      expect(undocumentedKeys(written, documentedFieldNames(markdown))).toEqual(["taxMinor"]);
+    });
+
+    it("reports the undocumented key after a comment, and invents no key from the comment", () => {
+      const source = [
+        "await subscriptions.insertOne({",
+        '  status: "active",',
+        "  // currency comes from prices[]",
+        "  taxMinor: 0,",
         "});",
       ].join("\n");
       const markdown = [
