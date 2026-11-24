@@ -1,6 +1,8 @@
 # ADR-0306 — A stale branch whose content is a subset of `main` is deleted; `main` is the only surviving ref
 
 - **Status:** Accepted · **Date:** 2026-10-23
+- **Amended:** 2026-11-24 — §Amendment (card `t_456b59dc`): PR-head recoverability as a second deletion
+  ground, and step 3's per-file count replaced by whole-tree title presence.
 - **Card:** board cleanup — delete the stale branches, keep only `main` (`t_c362aaf8`, dashboard-created)
 - **Relates to:** [ADR-0304](ADR-0304-stale-draft-pr-reconciliation.md) (the content-subset test this record reuses, and the sibling cleanup that closed the eight stale draft RED PRs), [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (the board-wide `0300`–`0319` range this record draws its number from; the shared `docs/adr/README.md` ledger is the file every lane branch conflicts on), [ADR-0305](ADR-0305-ci-evidence-conflicting-pr-suppression.md) (why the stale heads carried no `CI`/`PR Checks` run)
 - **Schema:** n/a · **Contract:** n/a (process only; no application code)
@@ -90,14 +92,97 @@ deletion rather than closure:
    count must be `>=` the branch's. A branch carrying a live assertion, route,
    schema field or fixture `main` lacks is **not** a subset and is **not**
    deleted — it is routed back through the normal green-PR path.
+
+   **Amended 2026-11-24:** the count clause in this item is superseded — a split
+   of a spec file on `main` must not read as lost work; use whole-tree title
+   presence instead (see §Amendment A2 below).
+
 4. **Record the tip SHAs before deleting** so the deletion is reversible by SHA.
 5. **Delete every subset branch** (`git push origin --delete <branch>`), leaving
    `main`. A branch is not preserved merely because it is _ahead_ of `main` or
    _has no merged PR_; both are artifacts of squash-merge and are explicitly
    **not** evidence of missing work.
 
+   **Amended 2026-11-24:** a branch is also deletable when it fails step 3 but
+   its tip is pinned by a surviving `refs/pull/<n>/head` ref and the gap it
+   asserts is owned by a card (see §Amendment A1 below).
+
 Deletion is reserved for a branch that **passes** step 3. A branch that fails it
 is preserved and handed to the lane that owns it.
+
+## Amendment — 2026-11-24 (card `t_456b59dc`)
+
+The decisions above are unchanged. This section records two corrections found when the sweep of
+2026-11-24 deleted the last four non-subset branches: a second, independent ground for deletion, and the
+replacement of step 3's mechanical form because it reads a **split** of a test file as lost work.
+
+### A1 — A surviving PR head ref is a sufficient recovery ground
+
+Step 3 still decides when a branch's **content** is already on `main`. A1 covers the case where it is
+not: the content may be off `main` and still be durably recoverable, because GitHub keeps
+`refs/pull/<n>/head` after the pull request closes and after the head branch is deleted.
+
+**Rule.** A branch is deletable when its content is a subset of `main` (steps 3–4, as amended by A2)
+**or** all three of the following hold:
+
+1. its tip SHA is pinned by a surviving `refs/pull/<n>/head` ref, SHA-for-SHA;
+2. that pull request is `CLOSED` with `mergedAt: null` — not `OPEN`, not `MERGED`; and
+3. the gap the branch's content asserts is owned by a board card that writes from `origin/main`, so no
+   card and no worktree depends on the ref existing.
+
+Recovery is `git push origin <sha>:refs/heads/<branch>`; no archive ref or tag is needed.
+
+**Evidence (2026-11-24, `origin/main` `8ada9d7d`).** All 95 branch tips recorded by the sweep were
+reachable through a `refs/pull/*/head` ref — 95/95, 0 unrestorable — so the 91 branches deleted under
+step 3 were recoverable too, on the same ground. The last four failed step 3 and were deleted under A1:
+
+| branch                                     | tip SHA                                    | PR head ref          | PR state         | owning card  |
+| ------------------------------------------ | ------------------------------------------ | -------------------- | ---------------- | ------------ |
+| `OP-101-task-tenant-members-green-restore` | `d5be9af49bb175ae4e19bd996272423d47f74bb4` | `refs/pull/272/head` | CLOSED, unmerged | `t_788e4b9a` |
+| `OP-101-task-tenant-members-pins`          | `9d1f943bd1fb318ab85165ede6ba1debe3eee4da` | `refs/pull/269/head` | CLOSED, unmerged | `t_788e4b9a` |
+| `OP-102-task-addons-conditional-get`       | `f3769b76646b45c67a38a81a1e8bc50a58bad374` | `refs/pull/278/head` | CLOSED, unmerged | `t_e3951910` |
+| `OP-132-task-confirm-tx-failure-pin`       | `e7c4406875a16c26b8ffd017696a26ee4dbbd048` | `refs/pull/575/head` | CLOSED, unmerged | `t_d152cac9` |
+
+After the deletion `git ls-remote --heads origin` carried `main` plus the live open-PR branch only
+(`OP-101-task-tenant-members-residual-pins`, PR #866); the four tips above still resolved from their
+`refs/pull/*/head` refs at the same SHAs. The three owning cards write their pins from `origin/main`, so
+none needed the branch to exist.
+
+### A2 — The decisive metric is whole-tree title presence, not a per-file count
+
+Step 3's accepted mechanical form — every `it()`/`describe()` title exists on `main` **and** `main`'s
+count is `>=` the branch's, compared per file — is not stable under a spec split. When `main` splits one
+spec into several files (ADR-0843 split `internal-worker-endpoints.test.ts`; the ADR-link assertions were
+split out of `adr-numbering.test.ts` into `adr-record-links.test.ts`), the branch's monolith legitimately
+holds more titles at that path than `main` does, while holding none that `main` lacks.
+
+**Rule.** A branch is a title-level subset when every `it()`/`describe()`/`test()` title in the branch's
+whole test tree, whitespace-normalised, occurs somewhere in `main`'s whole test tree, and every non-ADR
+path the branch adds is present on `main`. **Do not compare per-file counts.** A title absent from the
+whole tree is the only title-level evidence of lost work; a per-file shortfall is not.
+
+**Evidence (2026-11-24, `origin/main` `8ada9d7d`).** A same-line title extraction over the 95 recorded
+tips classified 67 clean under both metrics, **12 that fail the per-file count and pass whole-tree
+presence**, 11 that fail both, and 5 that fail only whole-tree presence. The 12 are split artifacts and
+every one is a branch that was already deleted under step 3:
+
+| file                                                              | branch copies                             | `main`                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/src/test/integration/internal-worker-endpoints.test.ts` | 7 tips, 1 926–2 706 lines, 35–46 titles   | 1 436 lines, 24 titles; split into `internal-worker-batch-heartbeat.test.ts` (245), `internal-worker-derivative.test.ts` (334), `internal-worker-report-limits.test.ts` (289) in the same directory plus `apps/web/src/test/helpers/internal-worker-harness.ts` (699) |
+| `apps/web/src/test/unit/adr-numbering.test.ts`                    | 5 tips, 3 435–4 802 lines, 119–160 titles | 398 lines; the ADR-link assertions live in `apps/web/src/test/unit/adr-record-links.test.ts` (872)                                                                                                                                                                    |
+
+Proof that nothing was lost: the title
+`sweeps docs/adr/ADR-*.md records and never docs/adr/README.md` is **absent** from `main`'s
+`adr-numbering.test.ts` and present verbatim at
+`apps/web/src/test/unit/adr-record-links.test.ts:795`.
+
+Read literally on this head, the old criterion would have flagged those 12 already-deleted branches as
+non-subsets — i.e. it would have reported lost work that is on `main`.
+
+**Known limit of the metric.** Title extraction is a lower bound: a same-line extractor finds one absent
+title on each of the four A1 branches where a line-tolerant scan finds 15, 15, 8 and 2. A whole-tree
+_pass_ is therefore only as strong as the extractor, so the exported-symbol check and the
+no-absent-non-ADR-path check remain independent gates and are not replaced by this metric.
 
 ## Consequences
 
