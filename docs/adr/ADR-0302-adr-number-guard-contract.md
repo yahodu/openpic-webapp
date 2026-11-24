@@ -1121,3 +1121,43 @@ No follow-up card beyond this sign-off. The F1 site was closed by `t_130572f1` (
 [#536](https://github.com/yahodu/openpic-webapp/pull/536), squash `302ff4d`) and the F2 site by
 `t_bd371d4d` (PR [#534](https://github.com/yahodu/openpic-webapp/pull/534), squash `a9d17bf`). Cards
 are cited by id and PRs by number, never by an ADR number that can renumber.
+
+## Review sign-off (measured-count floor + false accepts, round 1 — artifact + execution lens, landed)
+
+### Scope
+
+The §12 amendment and its characterization pins delivered on PR [#919](https://github.com/yahodu/openpic-webapp/pull/919) — card `t_9b7462a9`: the real-tree floor pair moved from `>= 280` / `>= 480` to `>= 296` / `>= 485`, and one new `describe` block pins the clause's two false-accept classes and the literal it already rejects. This section records that round only: the amendment is in place, no number is minted, no ledger row is added, and `docs/adr/README.md` is byte-identical.
+
+### Verdict and landing proof
+
+- **APPROVED** (round 1, artifact + execution lens). No change was requested and nothing was re-merged — the PR was already `MERGED` when the review ran, and the implementer, not the reviewer, performed the merge.
+- The reviewed bytes are the shipped bytes: `git rev-parse 40afd42c^{tree} fa698d0e^{tree}` prints `1fe826ead50809e818db209a5206c906def986b3` twice, and `git diff 40afd42c fa698d0e` is empty.
+- Landing shape: head `40afd42c1902e5a7ed63cfb476fb2498858a5558`, squash `fa698d0eb379f982dea244886ef3041b512d694d`, branch cut off `c28cc394` (the squash parent), trunk at review time `6ae204af`. Scope is exactly two files — `apps/web/src/test/unit/adr-source-references.test.ts` (+102/−6) and this record (+23/−2).
+- 14/14 merge-gate checks SUCCESS at the head. The commit carries fifteen check-run entries; the extra is the close-time `notify-discord` side effect, which is not a gate.
+- No number and no ledger byte: `docs/adr/README.md` reads `sha256 932f5da2528a113e53e3a78abc8e32e3f1489b972a65c36bd54e89a6cb2a15d9` at `c28cc394`, at both delivered commits and at `bf94605c`, the base this section lands on; the family stays at ten `adr-*.test.ts` files, the tree holds 487 records and no duplicate number is present.
+
+### Measured by the reviewer
+
+Re-measured at `bf94605c` in a throwaway worktree of the trunk, not transcribed from the handoff (the census probe and every mutated file removed afterwards, `git status --porcelain` empty):
+
+- **Census, independently:** `checkRepositoryMeasuredCommitCitations(repoRoot, [])` returns 487 scanned / 316 quoting / 298 checked / 18 offenders, and the eighteen offender numbers are `0046`, `0323`, `0383`, `0385`, `0393`, `0420`, `0440`, `0442`, `0460`, `0465`, `0480`, `0520`, `0580`, `0780`, `0784`, `0830`, `0833`, `0972` — `MEASURED_COMMIT_EXEMPTIONS` exactly, order included. The pair is unchanged at `6ae204af` and at the reviewed head.
+- **The floor's slack is exactly two.** Slicing the census case's `checked` list reads `-1` → `340 passed (340)`, `-2` → `340 passed (340)`, `-3` → `1 failed | 339 passed (340)` with `expected 295 to be greater than or equal to 296`; the card's required `-17` probe reads `1 failed | 339 passed (340)` with `expected 281 to be greater than or equal to 296`, the only red being `reports the trunk as provenance-complete for every record off the allowlist`. A `.slice(0, -17)` narrowing stayed green under the retired pair, which is the case this card closes.
+- **The quote-pattern narrowing now reds as well.** With `SUITE_COUNT_QUOTE_PATTERN` forced to its one-space form `/\d[\d,]* passed \(/` the family reads `2 failed | 338 passed (340)`: `reads a count whose parenthesis wrapped, and a head inside a fenced block` and the census case, the latter at `expected 294 to be greater than or equal to 296`.
+- **The three characterization rows are load-bearing.** With `HEAD_COMMIT_PATTERN` narrowed to `{40}` only the family reads `7 failed | 333 passed (340)`: `accepts another record's head as this record's head`, `accepts a truncated blob digest as a head commit`, and five pre-existing cases, while `rejects a 0x-prefixed hex literal, because the run has no word boundary` stays green. A future tightening of the clause therefore reds here first, as §12's new paragraph claims.
+- Every arm restored its file: `sha256` `47b0a582c8c86e575afcd5802e2857c5dc3f7980664a9baa261a86280c8a617d` for the helper and `d1840ec4fa7446bc2e9529632818fe93be94bde02efb0b5ec1f25a9ea94102b8` for the spec before and after each run.
+
+### Green on the tree this section lands on
+
+Family `10 files / 340 passed (340)`; full unit `201 files / 3422 passed | 3 skipped (3425)`; `tsc -p apps/web/tsconfig.json --noEmit` exit 0; `eslint` on the spec 0 errors and 0 warnings; `prettier --check` clean on both delivered files; `adr-numbering` `29 passed (29)`. The added lines carry no `.only`, no `.skip`, no `@ts-ignore` and no `console.`, and `git diff c28cc394..40afd42c` removes no `it(` line, so no case was retitled or deleted.
+
+### Findings, all Info, no code change
+
+- **I1** — §12's normative line still reads "must name the head commit it was measured at", while the paragraph "What the clause proves, and what it does not" states the weaker truth some thirty lines below. Both stand and neither is retracted: the paragraph names the limit explicitly, so a reader who stops at the rule reads a rule stricter than the guard enforces.
+- **I2** — the truncated-digest row uses a synthetic prefix, `c6a0cd45`, where the trunk's real instance is `51de695c` at `docs/adr/ADR-0980-op101-downgrade-scheduled-event-green.md:143` (a `route.ts` blob, inside a record that also quotes counts). §12's paragraph and the spec's docblock name the real one; the row does not need it, and the synthetic form keeps the case independent of a file that can be edited.
+- **I3** — the floor is family-wide: a docs-only PR that retires three or more count-quoting records reds the census case until the pair is re-measured. Intentional — it is the narrowing class the card exists to catch — and §12 carries the re-measure command beside the pair.
+
+### Post-review status
+
+The two findings the review of PR [#914](https://github.com/yahodu/openpic-webapp/pull/914) routed are closed by `fa698d0e`: F1, the corpus floor's slack that left a wide narrowing green, by the `>= 296` / `>= 485` pair and the four arms above; F2, the two false-accept classes the clause allows, by executable characterization rows instead of prose. The only remainder is the design question card `t_c1dfdb42` holds for the orchestrator — whether the clause should require the head inside `## Evidence`, adjacent to the first quote, or as a real commit object — and this delivery changed nothing about it. The reviewer found no defect in the delivered bytes.
+
+Nothing in §12 is retracted by this section: it records the form the clause takes from here on, and the stricter form is a separate decision, carried by `t_c1dfdb42`.
