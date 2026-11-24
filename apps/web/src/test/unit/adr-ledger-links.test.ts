@@ -2,7 +2,7 @@
  * ADR guard, invariant (vi)'s **ledger half** — every markdown link target inside
  * `docs/adr/README.md` must name a file that exists, **or** a file the repository
  * carried and renamed. The invariant is tabulated once, in
- * `ADR-0302` (`## Decision`, the six-row invariant table, row (vi)); `ADR-0893`
+ * `ADR-0302` (`## Decision`, the invariant table, row (vi)); `ADR-0893`
  * records this pack.
  *
  * **Why this exists.** The review of PR #754 found the ledger pointing at a

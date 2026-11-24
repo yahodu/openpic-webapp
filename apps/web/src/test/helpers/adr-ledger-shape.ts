@@ -1,6 +1,7 @@
 /**
  * ADR guard, the ledger's **row shape** and its **status agreement** — the
- * eighth invariant, and the first one that reads a record's `Status:` line.
+ * ledger-row-shape guard, recorded by `ADR-0319` and outside the `0302`
+ * invariant table, and the first one that reads a record's `Status:` line.
  *
  * **Why it is a separate module.** The seven landed guards
  * (`adr-numbering`, `adr-record-links`, `adr-ledger-links`, `adr-lane-ranges`,

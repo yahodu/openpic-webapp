@@ -1,7 +1,7 @@
 /**
  * ADR guard, invariant (iv) — every in-source `ADR-NNNN` reference resolves
- * (finding F6-b). The guard's six invariants are tabulated once, in `0302`
- * (`## Decision`, the six-row invariant table); the decision detail for this
+ * (finding F6-b). The guard's invariants are tabulated once, in `0302`
+ * (`## Decision`, the invariant table); the decision detail for this
  * one is §8.
  *
  * The check answers the question the numbering guard cannot: "does the ADR this

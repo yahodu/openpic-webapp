@@ -478,7 +478,11 @@ other than (v)'s crossing ~900 lines is still a layout smell.
 `## Decision` table.** It is never another section appended to `adr-numbering.ts`.
 
 **Pre-merge command — supersedes ADR-0300 §9 item 12.** ADR-0300 item 12 pins
-the single-spec run; the guard is now seven specs, so the pre-merge run is
+the single-spec run; the guard is one spec per module, so the pre-merge run is
+every `adr-*.test.ts` under the `unit` project. It is stated as a glob and never
+as a count: this line read "six", then "seven" (PR #907), while the glob matched
+ten specs, so a count here rots on the next guard — which is the defect (viii)
+reports, one level up.
 
 ```sh
 ./node_modules/.bin/vitest run --project unit apps/web/src/test/unit/adr-*.test.ts
@@ -486,6 +490,19 @@ the single-spec run; the guard is now seven specs, so the pre-merge run is
 
 ADR-0300 itself is not edited: this section supersedes its command, exactly as §6
 supersedes its §4 reading.
+
+**No invariant count anywhere but this table (2026-11-24, review F1 of PR #907).**
+The helper and spec docblocks used to say "the guard's six invariants are
+tabulated once, in `0302` (`## Decision`, the six-row invariant table)". The
+table holds eight rows, so every one of those docblocks stated a stale count — a
+fourth duplicate of the list this section exists to de-duplicate, and exactly the
+defect (viii) reports. They now say "the guard's invariants are tabulated once, in
+`0302` (`## Decision`, the invariant table)", and no number is restated outside
+the table. For the same reason `adr-ledger-shape.ts` no longer calls itself "the
+eighth invariant": that ordinal now names row (viii). It is recorded by
+[ADR-0319](ADR-0319-every-adr-record-carries-a-ledger-row.md), lives outside this
+table, and is named by role — the ledger-row-shape guard — so two guards cannot
+claim one ordinal.
 
 **Census rule for the real-tree cases.** A real-tree case keeps its non-vacuity
 bounds and pins the census as a floor with headroom (`checkedLinks`) plus a
@@ -527,6 +544,17 @@ run's first phrase in report order; the issue quotes both counts in `declared` a
 and `checked` sort by file, then line, so the report is identical for any input
 order, and the `checked` list is what keeps silence non-vacuous: a sweep that read
 one document, or a matcher that stopped matching, loses an entry.
+
+**A second gate family cannot share these two documents (2026-11-24, review F4 of
+PR #907).** The rule reads one subject — the merge gate — and `count-disagreement`
+compares every count phrase in the run, so a second, internally consistent
+sentence such as "The audit gate runs two conditions: G1 fresh, G2 complete." is
+reported as `count-disagreement` believing 2 where the run's first phrase states 7. A future §9.2 gate, or any other `<n> conditions` phrase in `docs/adr/README.md`
+or `docs/CONVENTIONS.md`, therefore needs its own phrase shape, or this rule needs
+a subject discriminator, before it lands. Until then both documents carry exactly
+one count-phrase family, and the characterization case "reports a second gate
+family's own count against the run's first phrase" in
+`adr-gate-conditions.test.ts` pins the behaviour that forces this choice.
 
 `checkRepositoryGateConditionCounts(root)` reads exactly those two documents —
 `docs/adr/README.md` and `docs/CONVENTIONS.md` (`GATE_CONDITION_SOURCES`) — and

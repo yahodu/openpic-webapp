@@ -16,8 +16,8 @@
  *      are read by {@link parseLaneRanges} and reported by
  *      {@link checkAdrDirectory}.
  *
- * The six invariants, and the module each one lives in, are tabulated once, in
- * `0302` (`## Decision`, the six-row invariant table). Every other invariant is
+ * The invariants, and the module each one lives in, are tabulated once, in
+ * `0302` (`## Decision`, the invariant table). Every other invariant is
  * implemented in its own module and re-exported below.
  *
  * **The barrel is frozen.** New invariants are imported from their own module
@@ -25,7 +25,7 @@
  * re-exports at the bottom exist because the specs and the `0300` §12 pre-merge
  * command import from this path — not because appending here is how the guard
  * grows. A new invariant is a new module, its own spec, and one row in that
- * six-row table.
+ * invariant table.
  *
  * @see docs/CONVENTIONS.md §11 (ADR numbering)
  * @see docs/adr/ADR-0300-adr-number-range-allocation-policy.md

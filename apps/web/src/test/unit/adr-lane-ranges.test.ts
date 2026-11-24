@@ -16,8 +16,8 @@ import { checkAdrDirectory } from "../helpers/adr-numbering.js";
 import { parseLaneRanges, type LaneRange } from "../helpers/adr-lane-ranges.js";
 
 /**
- * ADR guard, invariant (iii) — the guard's six invariants are tabulated once, in
- * `ADR-0302` (`## Decision`, the six-row invariant table). This file owns one of
+ * ADR guard, invariant (iii) — the guard's invariants are tabulated once, in
+ * `ADR-0302` (`## Decision`, the invariant table). This file owns one of
  * them: no two rows of the reserved-range ledger in `<dir>/README.md` may reserve
  * intersecting **closed** ranges. Both
  * halves live here — the `parseLaneRanges` parser, and the `checkAdrDirectory`

@@ -10,8 +10,8 @@ import {
 } from "../helpers/adr-source-references.js";
 
 /**
- * ADR guard, invariant (iv) — the guard's six invariants are tabulated once, in
- * `ADR-0302` (`## Decision`, the six-row invariant table). This file owns one of
+ * ADR guard, invariant (iv) — the guard's invariants are tabulated once, in
+ * `ADR-0302` (`## Decision`, the invariant table). This file owns one of
  * them: every `ADR-NNNN` reference inside a source file must resolve to a
  * `docs/adr/ADR-NNNN-*.md` file.
  */

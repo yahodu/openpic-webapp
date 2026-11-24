@@ -1,7 +1,7 @@
 /**
  * ADR guard, invariant (vi) — every markdown link target inside a record
- * resolves (finding F3). The guard's six invariants are tabulated once, in
- * `0302` (`## Decision`, the six-row invariant table); the decision detail for
+ * resolves (finding F3). The guard's invariants are tabulated once, in
+ * `0302` (`## Decision`, the invariant table); the decision detail for
  * this one is §7.
  *
  * The records are the one tree the source sweep never read, so a renamed
