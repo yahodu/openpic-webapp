@@ -2029,7 +2029,7 @@ One row per (notification, channel) attempt — **including skips**.
 
 ```js
 { actor: { kind: "user" | "admin" | "system", id, ipHash, uaHash },
-  action: "plan.price.updated" | "member.removed" | "subscription.downgraded" | "dsr.executed",
+  action: "plan.price.updated" | "member.removed" | "member.role_changed" | "subscription.downgraded" | "dsr.executed",
   target: { kind: "plan" | "event" | "user" | "subscription", id },
   tenantId, before: {...}, after: {...},
   reason, at, expireAt }   // TTL 400 days
