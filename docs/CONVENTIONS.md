@@ -168,6 +168,8 @@ A story is complete only when **all** of the following hold:
 - [ ] The ADR number is the `Consumes` value reserved in the card body — never derived from `docs/adr/README.md` — and no same-lane ADR-minting sibling card is in flight.
 - [ ] The ADR record carries its own `docs/adr/README.md` ledger row **in the same PR** — a record with no row or a row with no record is a DoD failure (**ADR-0319**).
 - [ ] The merge gate printed PASS on the exact head SHA and its output is in the PR (§9.1).
+- [ ] The merged PR's head is archived to `refs/prhead/<n>` and its local branch
+      released in the merge step, with the assertions printed (§9.2, **ADR-0967**).
 
 This list is mirrored, copy-pasteably, in `.github/pull_request_template.md`.
 
@@ -227,6 +229,70 @@ done
 
 The decision, its measured context and the rejected alternatives are recorded in
 `docs/adr/ADR-0318-agent-enforced-merge-gate.md`.
+
+### 9.2 The post-merge step (ADR-0967)
+
+A merged lane's tip is **archived** and its **local branch released by the merge step
+itself** — after the squash lands, in the same run, before the merging card
+completes. The repository sets `delete_branch_on_merge: true`, so the merge deletes
+the _remote_ head and the local branch is the only survivor; a later
+`git push --all` then re-creates a branch whose PR is already merged. The decision,
+its measured context and the rejected alternatives are in
+[ADR-0967](adr/ADR-0967-merged-lane-local-branch-deletion.md).
+
+The step, in order:
+
+1. **Read the reviewed tip from the pull ref, never from the branch** — the branch
+   may have moved after review:
+   `HEAD_SHA=$(git ls-remote origin "refs/pull/$N/head" | cut -f1)`
+2. **Archive the tip first**, only when the ref is absent:
+   `git update-ref "refs/prhead/$N" "$HEAD_SHA"`.
+   The archive comes **before** the delete, so a failed archive leaves the branch in
+   place; the archived ref keeps the tip reachable from a local ref, so no
+   `git gc --prune=now` can drop it.
+3. **Release the holder, then delete the ref.** A worktree that holds the branch
+   moves off it first (`git -C <wt> switch --detach`), or is removed when the gates
+   below allow. Delete with the compare-and-delete form — never `git branch -D`,
+   which refuses while the branch is checked out and cannot express "only if the tip
+   is still the reviewed SHA":
+   `git update-ref -d "refs/heads/<head-branch>" "$HEAD_SHA"`
+4. **Assert the result** — all four, quoted in the merge record:
+   `git for-each-ref "refs/heads/<head-branch>"` prints nothing;
+   `git for-each-ref "refs/prhead/$N"` prints one line; that line's SHA equals
+   `HEAD_SHA`; `git worktree prune --dry-run` is empty.
+
+The ref is released only when **all** of these gates hold, re-derived at the moment
+of deletion:
+
+- the PR is `MERGED` and the landed commit is on the trunk
+  (`git merge-base --is-ancestor <squash-sha> origin/main`);
+- the archived tip is served verbatim by `refs/pull/<n>/head`, or is already an
+  ancestor of `origin/main` — a moved tip is **kept and reported**, and nothing is
+  archived under that PR number;
+- the branch is **local-only**: `git ls-remote --heads origin "refs/heads/<head-branch>"`
+  is empty;
+- no worktree is **on** it any more (a detached worktree parked at the squash commit
+  does not block), and no **other** non-`done` board row names it in `branch_name` or
+  holds it through `workspace_path` — the merging card's own row is the lander and is
+  exempt;
+- a lane worktree is removed only when it is the merging card's own, or when it is
+  clean (`git status --porcelain` empty) and named by no live row. A **dirty** tree is
+  never removed and its branch is never deleted; it is recorded as a skipped head.
+
+**Exception.** Every unmerged PR is out of scope: a RED-by-design pin PR, a PR held
+for a dependency and a PR closed as superseded keep their branch **and** their
+worktree. The rule is authorised by a **merge**, never by a card completing. One
+lane, one head: the merger acts only on the branch the merged PR names
+(`gh pr view <n> --json headRefName`). The hygiene sweep stays the backstop for
+pre-existing, foreign and dirty heads.
+
+**Two classes, never conflated.** _Unheld_ — no worktree holds the ref — is drift.
+_Unheld and absent from origin_ is the gc hazard that needs an archive or a delete.
+A head origin still serves is not drift, and a rule keyed on "unheld" alone would
+delete an origin-backed branch.
+
+This step existed before this section as an ad-hoc note in a reviewer checklist, and
+that was not enough: a pitfall is read when it bites, not at merge time.
 
 ## 10. Authority order when documents conflict
 
