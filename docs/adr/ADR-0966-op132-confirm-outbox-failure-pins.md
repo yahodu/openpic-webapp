@@ -106,3 +106,35 @@ The runs corroborate the mechanism rather than a leak: each `500` is the injecte
 - **Plant a `dedupeKey` row instead of stubbing the insert.** Rejected: with the row present the in-transaction `alreadyPublished` read is true, `willPublish` is false and the insert never runs — the case would pass on a route that had dropped the emit (the same trap ADR-0965 §Alternatives records for its control).
 - **Stub the route's own `withTransaction` to reject.** Rejected: that is `F1.8`'s seam in the sibling file, and it is exactly the seam a swallow _inside_ the transaction body defeats.
 - **Draw a number from a lane row.** Rejected: OP-132 has no reserved row, and its own last three records (`0877`, `0878`, `0965`) were pool draws — ADR-0300 §11 item 18 is the applicable rule.
+
+## Review — round 1 (artefact lens)
+
+**Verdict: APPROVED WITH FINDINGS.** PR [#873](https://github.com/yahodu/openpic-webapp/pull/873) merged as squash `ed625e6d` on `main`. The two delivered cases are green on arrival — `F3.7-1` (the emit arm) and `F3.7-2` (the `isActive` arm) — and each is load-bearing: probed below, each reds alone under its own swallow and no shipped case moves.
+
+**Checks the reviewer ran** (measured at the reviewed head `867665c9` unless stated):
+
+- Focused spec `23 passed (23)`; the pair with `selfie-confirm-exhausted-budget.test.ts` `32 passed (32)`.
+- The eight `adr-*` guards `280 passed (280)`; `prettier --check` clean on the three changed files (the spec, this record, `docs/adr/README.md`); `eslint` exit `0` on the spec.
+- CI `14/14` SUCCESS on the head — fifteen check-runs, all `success`, the fifteenth being the close-time `notify-discord` side effect.
+- `confirm/route.ts` `sha256 c37b7233…dff9a7`, and its blob `6f48ab5f` is identical at `867665c9`, `ed625e6d` and the trunk this section lands on (`340524bc`): **no production change**.
+- ADR number `0966` unique. At review time the trunk highest was `0965` and no tree held `0966` (base `412d64ba`, both then-open PR heads, every `.worktrees/*/docs/adr`); no worktree tree carried it at review time, and the lanes that carry it now are the ones cut from the trunk after the merge.
+- `git merge-tree --write-tree 412d64ba 867665c9` exit `0` — the base the record names. Against today's trunk the same command conflicts on `docs/adr/README.md` alone, because the change is already merged; that is the post-merge reading, not a regression.
+- On the merged squash `ed625e6d`: focused spec `23 passed (23)` and the eight `adr-*` guards `280 passed (280)`. Both re-measured at the head as well, so the figures hold for a tree whose spec blob is `16b95b15` and whose route blob is `6f48ab5f`.
+
+**Probe table** — reproduced and extended at `867665c9`, the route restored to `sha256 c37b7233…dff9a7` after every arm (`git status --porcelain` empty):
+
+| Probe                    | Mutation                                                                        | Result                                                                                                                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **D** — the emit arm     | the in-transaction `emitDomainEvent` call wrapped in `try { … } catch {}`       | `1 failed \| 22 passed (23)`, `expected 200 to be 500`, the emit arm only; all twenty-one shipped cases green (reproduces the record's own probe)                                  |
+| **E** — the isActive arm | the `selfies.updateOne` `isActive` write wrapped the same way                   | `1 failed \| 22 passed (23)`, `expected 200 to be 500`, the `isActive` arm only                                                                                                    |
+| **G** — _new_            | the route refuses before `withTransaction` (first confirm of the process only)  | the emit arm reds at the anti-vacuity guard, `expected [] to deeply equal [ { …(2) } ]`                                                                                            |
+| **H** — _new_            | probe G with the `expect(outboxAttempts)` block deleted from a copy of the spec | `1 passed` — the case then accepts a `500` that never emitted, so the recorded attempt is uniquely load-bearing and §2 of the Decision is confirmed by measurement, not by reading |
+
+**Findings, routed:**
+
+- **F1 — Low — the transaction's fourth write is unpinned.** `selfies.updateMany({ profileId, _id: { $ne: selfieId } }, { $set: { isActive: false } })` (`confirm/route.ts:211-215`, the call opens at `:211`) is exercised by no case. Measured: with the call swallowed the shipped focused spec stays `23 passed (23)`, and a probe that confirms a second selfie answers `200 status: "ready"` with **two** active selfies on the profile; the same sweep failing at the driver answers `500 internal_error` with **one**. Routed to TEST card `t_52256cb7`, which also extends this record's Reversal-condition enumeration to the sweep. Its ADR number is not minted yet and is not anticipated here.
+- **F2 — Low — a record-accuracy correction to §Consequences.** The claims "The pins do not constrain internal structure" and "A refactor that keeps the transaction's atomicity passes untouched" are overstated. Measured: changing the single-row `selfies.updateOne(…)` to `updateMany(…)` — behaviour-identical for one row — reds the `isActive` arm (`1 failed | 22 passed (23)`, `expected [] to deeply equal [ { …(3) } ]`), because the anti-vacuity guard keys on the driver **method**. The measured constraint is that the attempt records pin `updateOne` and `insertOne`, not their bulk forms. §Consequences is frozen and is not rewritten; this bullet is the correction.
+- **F3 — Info.** §Context enumerates three writes and cites `profiles.updateOne` at `:217-230`; the actual span is `:217-229`, and the enumeration omits the `updateMany` of F1. Folded into `t_52256cb7`.
+- **F4 — Info.** The two cases repeat about sixty lines of recovery assertions; acceptable in this file's self-contained-case style. No action.
+
+**Post-review status.** F1 has an open follow-up card `t_52256cb7`; F2 and F3 are recorded here; F4 needs no action. Nothing in §Context, §Decision, §Evidence, §Reversal condition, §Consequences or §Alternatives is retracted.
