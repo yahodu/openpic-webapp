@@ -1,4 +1,4 @@
-# ADR-0968 — OP-132 TEST: the confirm transaction's deactivation sweep is a pinned write, so a swallow cannot answer `200` with two active selfies
+# ADR-0969 — OP-132 TEST: the confirm transaction's deactivation sweep is a pinned write, so a swallow cannot answer `200` with two active selfies
 
 - **Status:** Accepted (characterization pin; **green on arrival**, two mutation probes) · **Date:** 2026-11-24
 - **Card:** OP-132 TEST `t_52256cb7` (Low) — finding **F1** of the round-1 artifact review `t_2a76dd08` of [ADR-0966](ADR-0966-op132-confirm-outbox-failure-pins.md) (PR [#873](https://github.com/yahodu/openpic-webapp/pull/873), squash `ed625e6d`, landed). Branch `OP-132-task-confirm-deactivation-failure-pins`, worktree `/root/openpic/openpic-webapp/.worktrees/t_52256cb7`, cut from `origin/main` `340524bc`.
@@ -62,9 +62,9 @@ The card body predicts the profile "keeps its pre-call `ready`". Measured, it do
 
 ### 7. Number allocation and ledger bookkeeping
 
-- The record takes **`0968`**. Swept before minting, at this branch head (`origin/main` `340524bc`): the `unallocated (future lanes)` cell reads `0968`; the highest record on the trunk is `ADR-0967`; every `.worktrees/*/docs/adr` tree (twelve worktrees, this one included) holds no `0968`; `git rev-list --objects --all -- docs/adr` holds no `0968`; and `gh pr list --state open` returns **no** open pull request, so no PR head holds it either.
+- The record takes **`0969`**. It was first drafted as `0968` and renumbered before review sign-off: PR [#880](https://github.com/yahodu/openpic-webapp/pull/880) (OP-134) merged as `7c2d315c` while this card was in review, so `origin/main` `2a7f4f85` holds `docs/adr/ADR-0968-op134-attendee-claim-i2-clock.md`. Both files carry different names, so a merge keeps both records and `adr-numbering.test.ts` answers `code: "duplicate"` — measured, `1 failed | 28 passed (29)` on a worktree at that trunk. The trunk's number wins; this lane moves. Swept after the renumber, at this branch head merged with `origin/main` `2a7f4f85`: the highest record on the trunk is `ADR-0968`; every `.worktrees/*/docs/adr` tree (twelve worktrees, this one included) holds no `0969`; `git rev-list --objects --all -- docs/adr` holds no `0969`; and the only open PR heads ([#883](https://github.com/yahodu/openpic-webapp/pull/883), OP-140, and this one) hold none either.
 - The OP-132 lane holds **no row** in the reserved-range table and its numbers have been pool draws since [ADR-0877](ADR-0877-op132-confirm-burst-settled-reread.md), so ADR-0300 §11 item 18 applies: the record is a pool draw on that cursor.
-- The cursor advances `0968` → **`0969`**, together with every mirror cell that named `0968` at this head: `OP-129 attendee identity lane`, `OP-136 jobs lane`, and the `board-wide / process (orchestrator)` cell — the last one measured, not assumed: [ADR-0967](ADR-0967-merged-lane-local-branch-deletion.md)'s own landing moved all four `0967` → `0968` in one edit, so leaving the board-wide cell naming `0968` would hand the next board-wide draw this record's number. The card names three cells; the fourth is advanced for the same reason the other three are. No cell is lowered and no range is re-cut.
+- The cursor advances `0969` → **`0970`**, together with every mirror cell that named `0969` at this head: `OP-129 attendee identity lane`, `OP-136 jobs lane`, and the `board-wide / process (orchestrator)` cell, which [ADR-0967](ADR-0967-merged-lane-local-branch-deletion.md)'s landing and then [ADR-0968](ADR-0968-op134-attendee-claim-i2-clock.md)'s moved to `0969` in one edit each — leaving the board-wide cell behind would hand the next board-wide draw this record's number. The card names three cells; the fourth is advanced for the same reason the other three are. No cell is lowered and no range is re-cut.
 
 ## Evidence
 
@@ -103,7 +103,7 @@ This replaces the three-write enumeration in [ADR-0966](ADR-0966-op132-confirm-o
 - **The enumeration is complete, and the record that was short is named.** ADR-0966's §Context and Reversal condition are not edited (records are immutable) but no longer describe the transaction's write set on their own; a reader who arrives there should read this record's Reversal condition instead. This is the recurrence [ADR-0304](ADR-0304-stale-draft-pr-reconciliation.md) §Decision 3 warns about in another shape: coverage that matches the prose, not the code.
 - **The pins do not constrain internal structure.** They read the HTTP status, the §0.7 envelope, the stored profile/selfie fields and the outbox rows. The only driver-level assertion is the anti-vacuity record of the _attempted_ write.
 - **The sweep's identity is pinned, not just its effect.** The record reads the excluded id from the filter's `_id.$ne`, so a sweep that deactivated the wrong set (or the new selfie itself) fails even if one row happened to stay active.
-- **Hotspot:** `docs/adr/README.md` (row `0968`, four cells `0969`), which the sibling ADR cards also append to — merge as a union keeping the highest value in every cell.
+- **Hotspot:** `docs/adr/README.md` (row `0969`, four cells `0970`), which the sibling ADR cards also append to — merge as a union keeping the highest value in every cell.
 
 ## Alternatives
 

@@ -169,18 +169,24 @@ export async function readSessionRow(app: TestApp, token: string): Promise<Sessi
 }
 
 /**
- * Move one session's `expireAt` into the past, so a claim meets a lapsed TTL.
+ * Move one session's `expireAt` to the instant a case means, so the clock — not
+ * the row's presence — decides whether it has lapsed.
+ *
+ * `attendee_sessions` carries a TTL index (`attendee_sessions_expire_at_ttl`,
+ * `{expireAt: 1}`, `expireAfterSeconds: 0`), so an `expireAt` in the **real**
+ * past is a row mongod may delete between the write and the assertion, which
+ * turns a `401 attendee_session_expired` into a `404 not_found`. Callers pass an
+ * instant in the real future and move the injected process clock past it
+ * instead (ADR-0968; class ADR-0148/ADR-0938).
  *
  * @param app - The booted test app.
- * @param token - The raw bearer token of the session to lapse.
+ * @param token - The raw bearer token of the session to re-stamp.
+ * @param expireAt - The session's new expiry instant.
  */
-export async function lapseSession(app: TestApp, token: string): Promise<void> {
+export async function lapseSession(app: TestApp, token: string, expireAt: Date): Promise<void> {
   await app.db
     .collection(COLLECTIONS.attendeeSessions)
-    .updateOne(
-      { tokenHash: hashAttendeeSessionToken(token) },
-      { $set: { expireAt: new Date(Date.now() - 60_000) } }
-    );
+    .updateOne({ tokenHash: hashAttendeeSessionToken(token) }, { $set: { expireAt } });
 }
 
 /* ──────────────────────────────── the profile ────────────────────────────── */

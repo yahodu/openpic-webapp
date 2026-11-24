@@ -112,8 +112,9 @@ interface TenantMembershipDocument {
  * nested route such as `/tenants/{tenantId}/members` (or `…/members/{userId}`)
  * the last segment is `members` (or the target user id), not the workspace.
  * Taking the last segment there would make every nested request answer `404`.
- * A path with no `tenants` anchor yields `""`, which fails the id-shape check
- * below and denies with the same `404`.
+ * A path with no `tenants` anchor yields `segments[0]` — the first path segment,
+ * never a 24-hex workspace id — so the id-shape check below denies it with the
+ * same `404`.
  */
 export function tenantIdFromRequest(request: Request): string {
   const segments = new URL(request.url).pathname.split("/").filter((segment) => segment !== "");

@@ -1582,7 +1582,7 @@ async function activeSelfieIds(): Promise<string[]> {
  * active selfie today. Wrap that call in `try { … } catch {}` and the same
  * request answers **`200 status: "ready"`** while the profile ends with **two**
  * active selfies — the previously active one and the new one — and the spec
- * stays `23 passed (23)` (ADR-0968 §Evidence). Both cases above call
+ * stays `23 passed (23)` (ADR-0969 §Evidence). Both cases above call
  * `updateOne`/`insertOne` stubs, and no shipped fixture ever creates a
  * *previous* active selfie, so neither can see it.
  *
