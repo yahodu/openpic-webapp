@@ -1,15 +1,13 @@
+import { ObjectId } from "mongodb";
 import { z } from "zod";
 
-import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
-import { eventActorAdmission } from "@/server/events/access";
+import { eventActorAdmission, requirePrincipal } from "@/server/events/access";
 import { eventIdFromRequest } from "@/server/events/event-id";
 import { defineRoute } from "@/server/http/define-route";
 import { appError } from "@/server/http/errors";
-import type { EventImageListRow } from "@/server/images/dto";
-import { requeueImages } from "@/server/images/requeue";
+import { retryFailedEventImages } from "@/server/images/retry-failed";
 import { requestLogger } from "@/server/logging";
-import { tenantRepo } from "@/server/repos";
 import { systemClock } from "@/server/runtime/clock";
 import { getPlatformSettings } from "@/server/settings/platform-settings";
 import { userAuth } from "@/server/tenancy/route-scope";
@@ -23,6 +21,11 @@ import { tenantStage } from "@/server/tenancy/route-stage";
  * reset and re-enqueued (another event's failures of the same tenant are not
  * touched), and the answer is the contract's exact `{ requeuedCount }`. It is
  * the action target of `upload.batch.completed_with_errors`.
+ *
+ * The handler is a thin delegate to {@link retryFailedEventImages} (ADR-0777
+ * D6): the work — and the same admission rule this route's middleware applies —
+ * lives in the service, so a §7.3 delegate can reach it without a `Request`. The
+ * wire contract does not move.
  */
 
 /** The contract's bulk answer. */
@@ -43,23 +46,18 @@ export const POST = defineRoute({
     }
     const eventId = eventIdFromRequest(ctx.request, { segmentFromEnd: 2 });
 
-    const rows = (await tenantRepo(tenantId, db)
-      .collection(COLLECTIONS.eventImages)
-      .find({ eventId, deletedAt: null, "processing.status": "failed" })
-      .toArray()) as unknown as EventImageListRow[];
-
-    const settings = await getPlatformSettings({ db });
-    await requeueImages({
+    const body = await retryFailedEventImages({
       db,
-      tenantKey: tenantId,
+      // The stage publishes the workspace as a hex string; the service takes the id.
+      tenantId: new ObjectId(tenantId),
       eventId,
-      rows,
-      now: systemClock.now(),
-      spaceKey: settings.face.activeSpaceKey,
+      actorUserId: requirePrincipal(ctx),
+      spaceKey: (await getPlatformSettings({ db })).face.activeSpaceKey,
       requestId,
+      now: systemClock.now(),
       logger: requestLogger(ctx.request, { route: ctx.route }),
     });
 
-    return { status: 202, body: { requeuedCount: rows.length } };
+    return { status: 202, body };
   },
 });
