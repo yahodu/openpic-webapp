@@ -101,11 +101,15 @@ import {
  * 376 — the string is consumed at its opening quote), a complete block comment
  * where a property may start (skipped whole, key position intact), and a
  * complete block comment written after a key's colon and before its value (the
- * `pendingDueMinor` matrix row): its skip ends before any boundary, the reader
- * lands on the value and reads the next property, and every census case stays
- * green. Reddening on that last shape was a false red whose message also
- * claimed it swallowed the literal — a claim the reader contradicts. The
- * narrowed rule is pinned by a matrix row, one case per posture.
+ * `pendingDueMinor` matrix row): its skip ends at its own closing delimiter,
+ * before any *property* boundary, because its text carries no property shape —
+ * no `:` and no top-level `,` — so the reader lands on the value and reads the
+ * next property, and every census case stays green. Reddening on that last shape
+ * was a false red whose message also claimed it swallowed the literal — a claim
+ * the reader contradicts. The narrowed rule is pinned by a matrix row, one case
+ * per posture, and that includes three prose shapes whose *text* holds a `,` or
+ * a `:` (OP-140 follow-up): punctuation inside a comment is text, not
+ * a property boundary, so those rows must stay exempt as well.
  *
  * **What the real-tree case reports.** It reddens on every marker whose skip
  * crosses a property boundary inside an anchored mint literal (measured `0`
@@ -515,6 +519,18 @@ interface LiteralMarkerShape {
  * the shapes whose skip crosses a property boundary: the regex-literal opener,
  * whose nearest closing delimiter arrives after a later property, and the
  * comment the body never closes, whose skip runs to the end of the literal.
+ *
+ * **Punctuation inside a comment is text, not a boundary (OP-140 follow-up).**
+ * A complete value-position comment is exempt because its skip ends before the
+ * next *property* boundary, and that holds whatever prose the comment carries: a
+ * comma (`Cents, billed monthly`), a colon (`see the note: billed`) and a colon
+ * nested inside braces (`{a: 1}`) are all comment text, so no property was
+ * swallowed and no key is lost. Each of the three is its own row. The rule still
+ * discriminates: the second row below — a marker in a regex value position that
+ * a later closing delimiter reaches — is the contrasting flagged case, because
+ * its skip ends past a real property boundary (`note: 1` holds a top-level
+ * comma, and a property sits between the opener and that closing delimiter), so
+ * it stays flagged.
  */
 const LITERAL_MARKER_SHAPES: readonly LiteralMarkerShape[] = [
   {
@@ -522,6 +538,11 @@ const LITERAL_MARKER_SHAPES: readonly LiteralMarkerShape[] = [
     body: ["pattern: /[/*]/,", 'status: "active",'],
     flagged: [2],
   },
+  // The contrasting flagged row: this skip ends at a *later* closing delimiter,
+  // past a real property boundary (`note: 1` holds a top-level comma), so the
+  // property between the opener and that delimiter is lost and the row stays
+  // flagged — even though it starts at the same value position as the exempt
+  // value-position rows below.
   {
     shape: "a marker in a regex value position that a later `*/` closes",
     body: ["pattern: /[/*]/,", "note: 1 */,", 'status: "active",'],
@@ -535,6 +556,25 @@ const LITERAL_MARKER_SHAPES: readonly LiteralMarkerShape[] = [
   {
     shape: "a complete block comment in a value position, which loses no key and is exempt",
     body: ["pendingDueMinor: /* billed at renewal */ 0,", 'status: "active",'],
+    flagged: [],
+  },
+  // The three prose rows below pin the same exemption when the comment's *own
+  // text* carries punctuation a property could use: a comma is a separator only
+  // outside a comment, and a colon names a property only outside one, so no key
+  // is lost and no marker may be reported.
+  {
+    shape: "a complete value-position comment whose text holds a comma, which loses no key",
+    body: ["pendingDueMinor: /* Cents, billed monthly */ 0,", 'status: "active",'],
+    flagged: [],
+  },
+  {
+    shape: "a complete value-position comment whose text holds a colon, which loses no key",
+    body: ["pendingDueMinor: /* see the note: billed */ 0,", 'status: "active",'],
+    flagged: [],
+  },
+  {
+    shape: "a complete value-position comment whose text holds `{a: 1}`, which loses no key",
+    body: ["pendingDueMinor: /* {a: 1} */ 0,", 'status: "active",'],
     flagged: [],
   },
   {
@@ -934,9 +974,12 @@ describe("design doc §14.3 `subscriptions` field list", () => {
     // reader, so the pinned population must stay free of one: the regex-literal
     // opener and any comment the body never closes. Parser-safe markers — a
     // marker inside a quoted string value, a complete block comment where a
-    // property may start, and a complete block comment inside one value — are
-    // exempt: `blockCommentMarkers` classifies all of them, and its matrix pins
-    // that they never redden.
+    // property may start, and a complete value-position block comment whose own
+    // text carries no property shape (no `:` and no top-level `,`) — are exempt:
+    // such a comment's skip ends at its own closing delimiter, before any
+    // *property* boundary, so the reader lands on the value and reads the next
+    // property. `blockCommentMarkers` classifies all of them, and its matrix
+    // pins that they never redden.
     it("carries no `/*` marker that swallows a property inside any anchored mint literal", () => {
       const routes = MINT_ROUTES.map((route) => ({
         route,
