@@ -3,17 +3,19 @@
  * ledger-row-shape guard, recorded by `ADR-0319` and outside the `0302`
  * invariant table, and the first one that reads a record's `Status:` line.
  *
- * **Why it is a separate module.** The seven landed guards
+ * **Why it is a separate module.** The other guard modules
  * (`adr-numbering`, `adr-record-links`, `adr-ledger-links`, `adr-lane-ranges`,
- * `adr-source-references`, `adr-consumers`, `adr-inline-code-spans`) check
- * number uniqueness, file-name shape, lane ranges, links, citations and
- * code-span hygiene. None of them reads a ledger row as a **table row**, so the
- * same defect shipped four times unnoticed: a row whose title carries an
- * unescaped `|` splits into more cells than the header has, and GitHub's GFM
- * renderer drops every cell past the header's column count — the Status column
- * then renders a **title fragment**, or nothing at all (`0892` had no status
- * cell and no trailing pipe). The ledger is a rendered document; a row that
- * renders the wrong status is wrong even though the bytes are valid markdown.
+ * `adr-source-references`, `adr-consumers`, `adr-item-sections`,
+ * `adr-gate-conditions`, `adr-inline-code-spans`) check number uniqueness,
+ * file-name shape, lane ranges, links, citations, consumers, item section
+ * claims, gate conditions and code-span hygiene. None of them reads a ledger
+ * row as a **table row**, so the same defect shipped four times unnoticed: a row
+ * whose title carries an unescaped `|` splits into more cells than the header
+ * has, and GitHub's GFM renderer drops every cell past the header's column
+ * count — the Status column then renders a **title fragment**, or nothing at
+ * all (`0892` had no status cell and no trailing pipe). The ledger is a rendered
+ * document; a row that renders the wrong status is wrong even though the bytes
+ * are valid markdown.
  *
  * **The two rules.**
  *
