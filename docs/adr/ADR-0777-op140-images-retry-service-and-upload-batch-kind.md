@@ -7,7 +7,7 @@
   range)
 - **Card:** `t_9d80fb7f` (TEST, Low), worktree
   `/root/openpic/openpic-webapp/.worktrees/op140-precondition-images-retry`, branch
-  `wt/t_9d80fb7f`, cut from `origin/main` `61579449` (the card named `da4e24cc`; PR #824 landed
+  `OP-140-task-precondition-images-retry-failed`, cut from `origin/main` `61579449` (the card named `da4e24cc`; PR #824 landed
   after the card was written, and every file:line it names still holds)
 - **Consumes:** **ADR-0777** — this record is the draw. It consumes ADR-0942 §2 (the §7.3 row
   recorded as deferred, with `POST …/images:reprocess-failed` as the delegate), ADR-0942 §4.5 (the
@@ -17,7 +17,7 @@
   contract)
 - **Supersedes:** nothing. ADR-0942, ADR-0760, ADR-0762 and ADR-0763 are not edited; `docs/API
 Contract.md` is unchanged
-- **GREEN:** `t_9d80fb7f`'s sibling card, `Consumes: 0778`, carrying these specs byte-identically and
+- **GREEN:** `t_9d80fb7f`'s sibling card, the GREEN card `t_f8de2e20`, `Consumes: 0778`, carrying these specs byte-identically and
   the production change only
 
 ## Context
@@ -232,3 +232,12 @@ the subject being a user for this type (`ORGANIZERS` is the audience; the upload
 > When this service exists with the admission re-checked inside it and the `upload.batch.completed*`
 > emit names the `upload_batch` kind, the OP-140 `upload_batch × retry_failed` arm can call it (owner:
 > OP-140 notifications lane; that arm resolves the batch's event from the row's own payload).
+
+## Round-1 review (TEST card t_9d80fb7f, draft PR #829)
+
+- **Verdict — approved as delivered.** The spec set was reviewed at `1e769a7b` and approved, with the two findings below routed rather than fixed here. The RED is **by design** (ADR-0306): PR #829 stays a draft and is never merged, and this record reaches the trunk through the GREEN's PR (#854, squash `61fa3eec`). An open draft on #829 is therefore a signed-off pin delivery, not an abandoned one.
+- **Independently re-measured, not transcribed.** At `1e769a7b` the focused integration set read `13 failed | 31 passed (44)`: 8 failures in `job-pipeline-indexed-check.test.ts`, 5 in `uploads-batch-status.test.ts`, and one file-level `Cannot find package '@/server/images/retry-failed'` import failure in the new `event-images-retry-service.test.ts` (0 tests collected). `tsc -p apps/web --noEmit` reported exactly one diagnostic, the `TS2307` for that specifier. The ADR guards read `248 passed (248)` across the seven files present at that head — the family has since grown to eight files and `280 passed (280)` at the base this section lands on. `event-images-management.test.ts` read `27 passed (27)`, `prettier --check` was clean on all five changed paths, and the diff carried no `@ts-ignore`, `eslint-disable`, `console.*`, `TODO` or `.skip(`.
+- **Satisfiability proved independently.** A throwaway faithful implementation, built in a detached probe worktree from D1/D2/D4 and the two admission seams only, turned the whole set green: `54 passed (54)` across the three files. Deleting the two admission throws from that same implementation reddened **exactly** the five refusal cases, `5 failed | 5 passed (10)`. That is the load-bearing result: the set is not satisfiable by a service that skips the re-check, so the admission arm is pinned rather than merely present.
+- **D5 reviewed and accepted.** The nine OP-136 pins in `job-pipeline-indexed-check.test.ts` were retargeted by this lane although the card gave the implementer no other spec. The review measured the retarget as mechanical and intent-preserving: `subjectRef` becomes `{ kind: "upload_batch", id: <event hex> }`, the uploader the old line pinned moves to `actorRef`, the case count is unchanged at 32, and the new pair is strictly stronger than the single assertion it replaced. No case was weakened. It was accepted rather than bounced because the alternative was eight red cases left on the GREEN's merge gate with no card owning them.
+- **F1 (Low, observability) routed, not fixed here.** The service refuses with `appError("not_found")` and logs nothing, while the HTTP middleware it mirrors logs `logger.warn("tenant access denied", { event: "tenancy.access_denied", reason })` at `apps/web/src/server/tenancy/route-stage.ts:147-150` (the `warn` on `:148`, the `throw` on `:149`) before throwing the same error — so a refused delegate-path retry is invisible to security monitoring. The gap is routed to TEST card `t_f17bed7b`, cited by id rather than by an ADR number because that card may renumber while its PR is open.
+- **Nothing in §D1–§D6 is retracted.** This section records what the round-1 review verified and what it routed; it revises no decision.
