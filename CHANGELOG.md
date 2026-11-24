@@ -1,3 +1,9 @@
+## [1.87.0](https://github.com/yahodu/openpic-webapp/compare/v1.86.0...v1.87.0) (2026-11-24)
+
+### Features
+
+- **adr:** OP-132 guard §N item M section accuracy; fix ADR-0302 §12 cites that mean §9 ([#898](https://github.com/yahodu/openpic-webapp/issues/898)) ([3144050](https://github.com/yahodu/openpic-webapp/commit/3144050a72923148ada4c7396b1e2f9e7326a594)), closes [#896](https://github.com/yahodu/openpic-webapp/issues/896)
+
 ## [1.86.0](https://github.com/yahodu/openpic-webapp/compare/v1.85.2...v1.86.0) (2026-11-24)
 
 ### Features
