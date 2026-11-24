@@ -44,7 +44,7 @@ _for the wrong reason_. A defect class that the pack cannot see is not pinned.
 ## Decision
 
 Two cases appended to the existing `OP-101 / ADR-0970` `describe` in
-`apps/web/src/test/integration/tenant-members.test.ts`. The diff is `+180/−0` in
+`apps/web/src/test/integration/tenant-members.test.ts`. The diff is `+182/−0` in
 that file: every shipped case, helper and fixture stays byte-identical, no
 production file is touched, and ADR-0288's R2 log-line pins are untouched.
 
@@ -188,3 +188,23 @@ test file only; the focused file answers `Tests 47 passed (47)` again.
 - **A5 — read rows with a plain `{ tenantId }` filter on `app.db`.** Rejected: a
   row written with an `ObjectId` instead of the §D2 hex string would be missed, and
   the case would pass on an empty list instead of reding on the drift.
+
+## Review — round 1 (reviewer)
+
+**Verdict: APPROVED WITH FINDINGS.** One Low finding, `F1` — the recorded append size — corrected by this section. No decision of §Decision or §Consequences is contested or retracted. Reviewed head `f79d557eeb5150808372ecd538e58490739f42a9`, base `8f4e126e` (the GREEN's squash), merged as PR [#897](https://github.com/yahodu/openpic-webapp/pull/897) (squash `c7e398ef`).
+
+**Scope, by blob identity.** `git rev-parse` prints one blob OID per lane path across the reviewed head, the squash and `origin/main` `d2a5467b`: the spec `aaca97d6…`, this record `7e2a4919…`, `docs/adr/README.md` `40beb704…`, so the verified bytes are the shipped bytes. The whole-tree difference between the reviewed head and the squash is a single main-owned path, `docs/adr/ADR-0288-op101-tenant-members-residual-pins.md` from `ff575a1e` (`4 4`); no release-bot file is in that range.
+
+**Re-measurement at the merged tip `d2a5467b`.** Focused `tenant-members.test.ts` → **`Tests 47 passed (47)`** in three consecutive runs, no flake; `eslint` on the spec → exit `0`; `prettier --check` on the spec, this record and `docs/adr/README.md` → clean; the eight `adr-*` guards at the reviewed head → **`280 passed (280)`**; CI at `f79d557e` holds 14 substantive check-runs, all `success`. The guard family has since grown to nine at the merged tip — OP-132's `adr-item-sections` landed as `3144050a` (#898) — and reads **`299 passed (299)`** there, so the 280 is a count for `f79d557e` alone.
+
+**The negative controls, reproduced independently.** In a probe worktree at the merged tip the route was mutated and then reverted (`git status --porcelain` empty, `route.ts` back to `sha256 51357d43…`):
+
+- `PATCH` audit write outside **and before** the membership `updateOne` → **`1 failed | 46 passed (47)`**, `R1` alone, `AssertionError: expected [ { …(9) } ] to deeply equal []`;
+- the same move for `DELETE` → **`1 failed | 46 passed (47)`**, `R2` alone, the same assertion;
+- `PATCH` audit write outside **and after** `withTransaction` → **`1 failed | 46 passed (47)`** with `T4` the only red (`AssertionError: expected 'admin' to be 'member'`) and `R1` green.
+
+**Both out-of-transaction orderings are closed.** The third arm is the complementary case the delivered record did not measure: an audit row written after the transaction commits lets the role change land, so `T4` — the forward pin that requires the membership to stay put when the audit insert fails — is what reds. `T4` covers the post-write ordering and `R1`/`R2` cover the pre-write ordering, which is why §Consequences' claim that ordering _inside_ the transaction stays free holds: no case pins an internal sequence.
+
+**F1 — Low — this section.** The append size was recorded two additions short of the measured figure; `git show --numstat --format='' c7e398ef -- apps/web/src/test/integration/tenant-members.test.ts` prints `182 0`. The three sites that carried the recorded number — §Decision above, the `t_0250ac11` paragraph in `docs/adr/README.md` and its `0974` ledger row — now read `+182/−0`, and a `git grep` for the old token finds none in either file. The `auditRows` handle the review checked (`tenant-members.test.ts:1414`) reads with `$or: [{ tenantId: <hex> }, { tenantId }]` (`:1417`), so a row written with the wrong `tenantId` type reds on the assertion instead of passing on an empty list.
+
+**No decision is retracted.** §Decision, §Evidence, §Consequences, §Alternatives considered, the `0974` allocation and the four pool-mirror cells at `0975` stand as merged. This append adds no ADR number, no production file and no test file.
