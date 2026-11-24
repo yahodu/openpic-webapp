@@ -50,8 +50,11 @@ import {
  * and the name counts), a static template key (`` `taxMinor`: 0 `` — same),
  * a spread (`...baseDoc` — `baseDoc` surfaces as a phantom key, a loud red), a
  * method shorthand (`async markPaid() {}` — `async` surfaces as the phantom
- * key, also loud), a template value (skipped whole, never read as a key), and
- * five comment shapes (see below). Two shapes are refused rather than guessed:
+ * key, also loud), a template value (skipped whole, never read as a key), the
+ * six comment shapes below, and a string value that carries a `//`
+ * (`url: "https://example.com/x"` — the string branch consumes it at the
+ * opening quote, so it never starts a comment). Two shapes are refused rather
+ * than guessed:
  * a **computed** key (`[TAX_KEY]: 1`, `` `${TAX_KEY}`: 1 ``), whose name is not
  * in the text, and an **inline literal spread** (`...{ … }`), whose keys are
  * this literal's own. In both cases a returned set would silently omit a field
@@ -84,6 +87,16 @@ import {
  * `updateOne(` / `$set:` — never between its braces), so the parser tightening
  * changed the parsed set for synthetic literals only. The measured census stays
  * at 24 and 25 keys, 21 written after meta, 24 documented.
+ *
+ * **One measured limitation, pinned by a vacuity case (OP-140 follow-up).** The
+ * comment branch cannot tell code from a value, so a `/*` inside a value
+ * expression starts a comment skip and swallows the rest of the literal. That
+ * shape is reachable only through a regex literal (such as `/[/*]/`), which no
+ * §14.3 field can hold, but it is the guard's own silent-skip class. The
+ * real-tree case below therefore asserts that **no `/*` marker occurs inside
+ * any anchored mint literal** (measured `0` today, over all five literal
+ * bodies): a future edit that puts one there reddens there, instead of losing
+ * the rest of that literal's keys in silence.
  */
 
 /** The design doc that carries §14.3. */
@@ -192,6 +205,91 @@ function undocumentedKeys(written: readonly string[], documented: readonly strin
   return written.filter((key) => !documented.includes(key));
 }
 
+/** One anchored object literal read off a real route file. */
+interface AnchoredLiteralBody {
+  /** The anchor substring that opened the literal. */
+  readonly anchor: string;
+  /** The literal's text, from its opening `{` through its matching `}`. */
+  readonly body: string;
+}
+
+/**
+ * Slice the body of every object literal an anchor opens out of one route
+ * file's text — the same anchor-to-first-`{` rule {@link scanWrittenFields}
+ * uses, so the vacuity case below measures exactly the literals the census
+ * reads.
+ *
+ * Braces are balanced with quoted strings stepped over, so a `{` or `}` inside
+ * a string value cannot end a body early. Comments are deliberately **not**
+ * skipped: a `/*` marker inside a mint literal is the shape the vacuity case
+ * exists to surface.
+ *
+ * @param source - One route file's whole text.
+ * @param anchors - The write-opening substrings to slice.
+ * @returns One body per anchor occurrence, in source order.
+ * @throws If an anchor opens no object literal, as `scanWrittenFields` does.
+ */
+function anchoredLiteralBodies(source: string, anchors: readonly string[]): AnchoredLiteralBody[] {
+  const bodies: AnchoredLiteralBody[] = [];
+
+  for (const anchor of anchors) {
+    let from = 0;
+    for (;;) {
+      const anchorIndex = source.indexOf(anchor, from);
+      if (anchorIndex === -1) {
+        break;
+      }
+      const openBrace = source.indexOf("{", anchorIndex);
+      if (openBrace === -1) {
+        throw new Error(`The anchor \`${anchor}\` opens no object literal.`);
+      }
+
+      let depth = 0;
+      let index = openBrace;
+      while (index < source.length) {
+        const char = source.charAt(index);
+        if (char === '"' || char === "'" || char === "`") {
+          index += 1;
+          while (index < source.length && source.charAt(index) !== char) {
+            index += source.charAt(index) === "\\" ? 2 : 1;
+          }
+          index += 1;
+          continue;
+        }
+        if (char === "{") {
+          depth += 1;
+        } else if (char === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            bodies.push({ anchor, body: source.slice(openBrace, index + 1) });
+            break;
+          }
+        }
+        index += 1;
+      }
+
+      from = openBrace + 1;
+    }
+  }
+
+  return bodies;
+}
+
+/**
+ * The offsets of every `/*` marker in one literal body.
+ *
+ * @param body - One anchored literal's text.
+ * @returns The marker offsets, in source order.
+ */
+function blockCommentMarkers(body: string): number[] {
+  const markers: number[] = [];
+  for (let at = body.indexOf("/*"); at !== -1; at = body.indexOf("/*", at + 2)) {
+    markers.push(at);
+  }
+
+  return markers;
+}
+
 /** One way a hand-edited mint literal can name a depth-1 property. */
 interface DepthOneKeyShape {
   /** The shape's name, used as the case title. */
@@ -289,6 +387,11 @@ const DEPTH_ONE_KEY_SHAPES: readonly DepthOneKeyShape[] = [
     shape: "a template value, which is skipped whole and never read as a key",
     body: ["note: `auto`,", 'status: "active"'],
     keys: ["note", "status"],
+  },
+  {
+    shape: "a string value containing `//`, which never starts a comment",
+    body: ['url: "https://example.com/x",', 'status: "active",', "taxMinor: 0,"],
+    keys: ["status", "taxMinor", "url"],
   },
   {
     shape: "a key whose colon is separated by whitespace",
@@ -529,6 +632,33 @@ describe("design doc §14.3 `subscriptions` field list", () => {
       expect(routes.map(({ report }) => [report.literalCount, report.keys.length])).toEqual(
         MINT_ROUTES.map((route) => [route.literals, route.keys])
       );
+    });
+
+    // A `/*` inside a value position starts a comment skip and would swallow
+    // the rest of the literal, so the pinned population must stay free of it.
+    it("carries no `/*` marker inside any anchored mint literal", () => {
+      const routes = MINT_ROUTES.map((route) => ({
+        route,
+        bodies: anchoredLiteralBodies(readTextFile(join(repoRoot, route.path)), route.anchors),
+      }));
+
+      // Vacuity guard first: the marker assertion below must run over every
+      // anchored literal, not over a slice that silently found none.
+      expect(routes.map(({ route, bodies }) => [route.path, bodies.length])).toEqual(
+        MINT_ROUTES.map((route) => [route.path, route.literals])
+      );
+
+      expect(
+        routes.flatMap(({ route, bodies }) =>
+          bodies.flatMap(({ anchor, body }, index) =>
+            blockCommentMarkers(body).map(
+              (offset) =>
+                `${route.path} anchor \`${anchor}\` literal ${String(index + 1)} ` +
+                `carries a \`/*\` at offset ${String(offset)}`
+            )
+          )
+        )
+      ).toEqual([]);
     });
 
     it("writes no field that §14.3 does not document", () => {
