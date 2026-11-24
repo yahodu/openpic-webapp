@@ -41,6 +41,30 @@ import {
  * its parent key, and a table row's `/`- and `,`-packed names both parse out.
  * Only the `real tree` cases read the filesystem, and every set is sorted
  * before it is compared, so nothing depends on directory order.
+ *
+ * **Every depth-1 key shape is pinned (OP-140 follow-up).** A hand-edited mint
+ * literal can name a property in more than one way, and a shape the parser
+ * cannot see is a field the guard cannot check. The `depth-1 key shapes`
+ * describe below pins the whole matrix, one case per row: a plain key, a
+ * double- and a single-quoted key (`"taxMinor": 0` — the quotes are stripped
+ * and the name counts), a static template key (`` `taxMinor`: 0 `` — same),
+ * a spread (`...baseDoc` — `baseDoc` surfaces as a phantom key, a loud red), a
+ * method shorthand (`async markPaid() {}` — `async` surfaces as the phantom
+ * key, also loud), a line and a block comment (the commented word surfaces as
+ * the phantom key, also loud), and a template value (skipped whole, never read
+ * as a key). Two shapes are refused rather than guessed: a **computed** key
+ * (`[TAX_KEY]: 1`, `` `${TAX_KEY}`: 1 ``), whose name is not in the text, and
+ * an **inline literal spread** (`...{ … }`), whose keys are this literal's own.
+ * In both cases a returned set would silently omit a field that was really
+ * written — the exact drift class this guard exists to close — so the scan
+ * throws instead.
+ *
+ * **Why the real-tree census does not move.** Neither mint route writes a
+ * quoted, template or computed property name today (verified against the two
+ * route files, not assumed: no `"name":` and no `[name]:` at depth 1 in
+ * either), so tightening the parser changed the parsed set for synthetic
+ * literals only. The measured census stays at 24 and 25 keys, 21 written after
+ * meta, 24 documented.
  */
 
 /** The design doc that carries §14.3. */
@@ -51,9 +75,12 @@ const DESIGN_DOC_PATH = "docs/Notification and Database Design.md";
  *
  * `_id`, `createdAt`, `updatedAt` and `schemaVersion` are stamped on every
  * collection, so the design doc documents them **once for the whole schema**
- * (§14.2's combined meta row, §26) instead of as per-collection rows in §14.3.
- * Both mint literals still write them, so the comparison subtracts them; any
- * other undocumented key is drift.
+ * instead of as per-collection rows in §14.3: §13.3 `tenants` spells the
+ * metadata out as the combined row ``| `createdAt`, `updatedAt`, `schemaVersion` |``
+ * and lists `_id` as Mongo's implicit primary key, and §26 "Schema versioning"
+ * requires every collection that may evolve to carry `schemaVersion`. Both mint
+ * literals still write them, so the comparison subtracts them; any other
+ * undocumented key is drift.
  */
 const SUBSCRIPTION_META_KEYS: ReadonlySet<string> = new Set([
   "_id",
@@ -146,6 +173,82 @@ function undocumentedKeys(written: readonly string[], documented: readonly strin
   return written.filter((key) => !documented.includes(key));
 }
 
+/** One way a hand-edited mint literal can name a depth-1 property. */
+interface DepthOneKeyShape {
+  /** The shape's name, used as the case title. */
+  readonly shape: string;
+  /** The literal's body lines, at depth 1. */
+  readonly body: readonly string[];
+  /** The depth-1 names the scan must report, sorted. */
+  readonly keys: readonly string[];
+}
+
+/**
+ * The shape matrix: the ways a mint literal can name a property, and the set
+ * the scan must report for each.
+ *
+ * The matrix is the contract, so every row is its own case. Two rows are
+ * *supposed* to report a name that is not a real field — a spread reports its
+ * target (`baseDoc`), a method shorthand reports `async`, and a comment at key
+ * position reports its first word — because a phantom key fails
+ * `written − meta ⊆ documented` loudly, which is safe; a *missing* key passes,
+ * which is not. Quoted and static template keys are real names and must be
+ * reported. The two shapes that cannot be resolved at all — a computed key and
+ * an inline literal spread — are pinned separately as throws.
+ */
+const DEPTH_ONE_KEY_SHAPES: readonly DepthOneKeyShape[] = [
+  {
+    shape: "a plain key",
+    body: ['currency: "INR",', "status"],
+    keys: ["currency", "status"],
+  },
+  {
+    shape: "a double-quoted key, with the quotes stripped",
+    body: ['"taxMinor": 0,', "status"],
+    keys: ["status", "taxMinor"],
+  },
+  {
+    shape: "a single-quoted key, with the quotes stripped",
+    body: ["'taxMinor': 0,", "status"],
+    keys: ["status", "taxMinor"],
+  },
+  {
+    shape: "a static template key, with the backticks stripped",
+    body: ["`taxMinor`: 0,", "status"],
+    keys: ["status", "taxMinor"],
+  },
+  {
+    shape: "a spread, which surfaces its target as a phantom key",
+    body: ["...baseDoc,", "status"],
+    keys: ["baseDoc", "status"],
+  },
+  {
+    shape: "a method shorthand, which surfaces `async` as a phantom key",
+    body: ["async markPaid() {},", 'status: "active"'],
+    keys: ["async", "status"],
+  },
+  {
+    shape: "a line comment, which surfaces its first word as a phantom key",
+    body: ['status: "active",', "// taxMinor is billed at renewal"],
+    keys: ["status", "taxMinor"],
+  },
+  {
+    shape: "a block comment, which surfaces its first word as a phantom key",
+    body: ['status: "active",', "/* taxMinor is billed at renewal */"],
+    keys: ["status", "taxMinor"],
+  },
+  {
+    shape: "a template value, which is skipped whole and never read as a key",
+    body: ["note: `auto`,", 'status: "active"'],
+    keys: ["note", "status"],
+  },
+  {
+    shape: "a key whose colon is separated by whitespace",
+    body: ["cancelReason : null,", 'status: "active"'],
+    keys: ["cancelReason", "status"],
+  },
+];
+
 describe("design doc §14.3 `subscriptions` field list", () => {
   describe("reading the documented set", () => {
     it("takes the column headed `Field` and splits its `/` and `,` packed names", () => {
@@ -191,6 +294,18 @@ describe("design doc §14.3 `subscriptions` field list", () => {
       ].join("\n");
 
       expect(() => documentedFieldNames(markdown)).toThrow(/14\.3/);
+    });
+
+    it("throws when §14.3's table has no `Field` column", () => {
+      const markdown = [
+        "### 14.3 `subscriptions`",
+        "",
+        "| Type | Purpose |",
+        "| --- | --- |",
+        "| ObjectId | owner |",
+      ].join("\n");
+
+      expect(() => documentedFieldNames(markdown)).toThrow(/has no `Field` column/);
     });
   });
 
@@ -258,6 +373,83 @@ describe("design doc §14.3 `subscriptions` field list", () => {
       const written = scanWrittenFields(source, ["subscriptions.insertOne("]).keys;
 
       expect(undocumentedKeys(written, documentedFieldNames(markdown))).toEqual(["seats"]);
+    });
+
+    it("reports a quoted top-level key the doc does not document", () => {
+      const source = [
+        "await subscriptions.insertOne({",
+        '  "taxMinor": 0,',
+        '  status: "active",',
+        "});",
+      ].join("\n");
+      const markdown = [
+        "### 14.3 `subscriptions`",
+        "",
+        "| Field | Type |",
+        "| --- | --- |",
+        "| `status` | string |",
+      ].join("\n");
+
+      const written = scanWrittenFields(source, ["subscriptions.insertOne("]).keys;
+
+      expect(undocumentedKeys(written, documentedFieldNames(markdown))).toEqual(["taxMinor"]);
+    });
+
+    it("throws when an anchor's write is a variable, because its fields are unknowable", () => {
+      const source = "await subscriptions.updateOne({ _id: id }, { $set: patch, $push: history });";
+
+      expect(() => scanWrittenFields(source, ["$set:"])).toThrow(/opens no object literal/);
+    });
+  });
+
+  describe("the depth-1 key shapes", () => {
+    it.each(DEPTH_ONE_KEY_SHAPES)("reads $shape", ({ body, keys }) => {
+      const source = [
+        "await subscriptions.insertOne({",
+        ...body.map((line) => `  ${line}`),
+        "});",
+      ].join("\n");
+
+      expect(scanWrittenFields(source, ["subscriptions.insertOne("]).keys).toEqual(keys);
+    });
+
+    it("throws, naming the literal's line, when a key is computed", () => {
+      const source = [
+        "await subscriptions.insertOne({",
+        "  [TAX_KEY]: 1,",
+        '  status: "active",',
+        "});",
+      ].join("\n");
+
+      expect(() => scanWrittenFields(source, ["subscriptions.insertOne("])).toThrow(
+        /line 1 writes a computed property name/
+      );
+    });
+
+    it("throws when a template key interpolates, because its name is not in the text", () => {
+      const source = [
+        "await subscriptions.insertOne({",
+        "  `${TAX_KEY}`: 1,",
+        '  status: "active",',
+        "});",
+      ].join("\n");
+
+      expect(() => scanWrittenFields(source, ["subscriptions.insertOne("])).toThrow(
+        /computed property name/
+      );
+    });
+
+    it("throws when a spread is an inline literal, because its keys are this literal's", () => {
+      const source = [
+        "await subscriptions.insertOne({",
+        "  ...{ taxMinor: 0 },",
+        '  status: "active",',
+        "});",
+      ].join("\n");
+
+      expect(() => scanWrittenFields(source, ["subscriptions.insertOne("])).toThrow(
+        /spreads an inline object literal/
+      );
     });
   });
 

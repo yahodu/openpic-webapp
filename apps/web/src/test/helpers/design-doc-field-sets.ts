@@ -16,6 +16,13 @@
  * documented`) belongs to the caller, so the subtraction rule stays visible
  * where it is asserted.
  *
+ * **Key shapes (OP-140 follow-up).** `depthOneKeys` reads every way a literal
+ * can name a depth-1 property, because a shape it skips is a field the guard
+ * cannot see: quoted keys and static template keys are read as names, and a
+ * computed name fails closed instead of being dropped. See `depthOneKeys` for
+ * the decision and its rationale; the shape matrix is pinned, one case per row,
+ * in the sibling spec.
+ *
  * @see apps/web/src/test/unit/design-doc-subscriptions-fields.test.ts
  */
 
@@ -183,6 +190,29 @@ function skipStringLiteral(source: string, openQuoteIndex: number): number {
 }
 
 /**
+ * The error for a depth-1 property name that cannot be resolved from the text.
+ *
+ * Fail closed: a computed name (`[key]`, `` `${key}` ``) or an inline literal
+ * spread (`...{ … }`) is not resolved by this reader, so a set returned without
+ * it would look complete while an undocumented field was written — the
+ * silent-pass class the guard exists to close. The message names the literal's
+ * line so the route file can be opened straight away.
+ *
+ * @param source - The source text.
+ * @param openBrace - Index of the literal's opening `{`.
+ * @param reason - What the unresolved shape does, as a clause of the message.
+ * @returns The error to throw.
+ */
+function unresolvedKeyError(source: string, openBrace: number, reason: string): Error {
+  const line = source.slice(0, openBrace).split("\n").length;
+
+  return new Error(
+    `The object literal opened at line ${String(line)} ${reason}, so the written ` +
+      "field set cannot be resolved from the text."
+  );
+}
+
+/**
  * Collect the property names at **bracket depth 1** of the object literal that
  * opens at `openBrace`.
  *
@@ -192,18 +222,40 @@ function skipStringLiteral(source: string, openQuoteIndex: number): number {
  * `Purpose` cell. Arrays and call parentheses nest the same way, so keys inside
  * `statusHistory: [{ … }]` are not literal properties.
  *
- * Strings are skipped whole, so a comma, brace or colon inside a value can
- * never start a key. Shorthand properties count as keys: the upgrade mint
+ * String **values** are skipped whole, so a comma, brace or colon inside one
+ * can never start a key. Shorthand properties count as keys: the upgrade mint
  * writes `tenantId,` with no colon, and a field written that way would
  * otherwise be invisible to the guard.
  *
+ * **Quoted, template and computed keys.** A string at key position that is
+ * followed (after optional whitespace) by `:` is a property name: the quotes
+ * are stripped and the name counts, so `{ "taxMinor": 0, status }` reports
+ * `taxMinor` as well as `status`. A template literal with no interpolation is
+ * read the same way (`` `taxMinor`: 0 ``); one that does interpolate is a
+ * computed name. A **computed** name — `[TAX_KEY]: 1`, or the interpolated
+ * template — throws, deliberately: the name is not in the text, so a set
+ * returned here would omit a field that was really written, and an incomplete
+ * set makes `written − meta ⊆ documented` pass while an undocumented field
+ * ships. That is the `checkout`/`currency` drift class this module exists to
+ * close. Failing closed costs a red until a human names the field or teaches
+ * the parser the shape; failing open costs a silent undocumented write. (Escape
+ * sequences inside a quoted key are kept verbatim — a key that used one would
+ * surface as a phantom name, never as a silent pass.)
+ *
+ * An **inline literal spread** (`...{ … }`) is refused for the same reason: its
+ * keys belong to this literal's own property list, and this reader stops at the
+ * nested brace, so returning a set would omit them.
+ *
  * Comments inside a literal are read as code. Neither mint literal carries one,
  * and a comment that did would surface as a phantom key — a loud red, never a
- * silent pass.
+ * silent pass. A spread and a method shorthand report their target or modifier
+ * the same way (`...baseDoc` reports `baseDoc`, `async markPaid() {}` reports
+ * `async`): phantom, loud, safe.
  *
  * @param source - The source text.
  * @param openBrace - Index of the literal's opening `{`.
  * @returns The depth-1 property names, in source order (not deduplicated).
+ * @throws If a depth-1 property name is computed and so cannot be resolved.
  */
 function depthOneKeys(source: string, openBrace: number): string[] {
   const keys: string[] = [];
@@ -215,14 +267,68 @@ function depthOneKeys(source: string, openBrace: number): string[] {
     const char = source.charAt(index);
 
     if (char === '"' || char === "'" || char === "`") {
-      index = skipStringLiteral(source, index);
+      const stringEnd = skipStringLiteral(source, index);
+      let valueStart = stringEnd;
+      while (valueStart < source.length && /\s/.test(source.charAt(valueStart))) {
+        valueStart += 1;
+      }
+
+      // A string at key position that a colon follows is a property name, not a
+      // value: strip its quotes (or backticks) and count it.
+      if (expectKey && source.charAt(valueStart) === ":") {
+        const closed = stringEnd - 1 > index && source.charAt(stringEnd - 1) === char;
+        const name = source.slice(index + 1, closed ? stringEnd - 1 : stringEnd);
+        if (char === "`" && name.includes("${")) {
+          throw unresolvedKeyError(
+            source,
+            openBrace,
+            "writes a computed property name (an interpolated template key)"
+          );
+        }
+        keys.push(name);
+      }
+
+      index = stringEnd;
       expectKey = false;
       continue;
     }
 
-    if (char === "{" || char === "[" || char === "(") {
+    if (char === "[") {
+      // Only a `[` that would open a property name is refused; an array value
+      // (`externalRefs: [...]`) reaches here with `expectKey` false.
+      if (expectKey && depth === 1) {
+        throw unresolvedKeyError(
+          source,
+          openBrace,
+          "writes a computed property name (a bracketed key)"
+        );
+      }
+      depth += 1;
+      expectKey = false;
+      index += 1;
+      continue;
+    }
+
+    if (char === "{") {
+      // A `{` at key position is only an inline literal spread (`...{ … }`):
+      // its keys are this literal's own, and this reader stops at the nested
+      // brace, so refusing beats returning a set that omits them.
+      if (expectKey && depth === 1) {
+        throw unresolvedKeyError(
+          source,
+          openBrace,
+          "spreads an inline object literal (its keys belong to this literal)"
+        );
+      }
       depth += 1;
       expectKey = depth === 1;
+      index += 1;
+      continue;
+    }
+
+    if (char === "(") {
+      depth += 1;
+      expectKey = false;
       index += 1;
       continue;
     }
