@@ -162,3 +162,25 @@ FAIL  C1 … AssertionError: expected { toPlanKey: 'free', …(2) } to be null
   reads `COLLECTIONS.domainEvents` outside the domain-events seam).
 - **Merged** as squash `e91cfed7`; PR
   [#906](https://github.com/yahodu/openpic-webapp/pull/906) carries the verdict.
+- **Post-review status (appended 2026-11-24, after this round-1 merge).** The routed
+  follow-up **F4** (`t_05a6943b`) has since landed as PR
+  [#909](https://github.com/yahodu/openpic-webapp/pull/909), squash `404872ee`: the
+  downgrade route now asks `findDomainEventByDedupeKey`, exported beside
+  `emitDomainEvent` in `server/domain/domain-events.ts`, instead of reading
+  `platformRepo(db).collection(COLLECTIONS.domainEvents)` directly, so the dedupe-seam
+  finding above is closed and the emitter remains the only outbox writer. The
+  blob-identity sentence in this sign-off is therefore a statement about the review cut
+  `e91cfed7`, not about the trunk: on `main` (measured at `03a5fbd5` and at
+  `f0422e2e`) `route.ts` is `152e5d3c`, while `fan-out.ts` `83a1c8ce` and the spec
+  `36058408` are unchanged.
+- **F1** (`t_dd0046f3`) was still in flight when this status was drafted: the
+  audience-vs-`typeKey` pin pack, with the `billing.plan.upgraded` side effect, the
+  null-`currentPeriodEnd` fallback and the concurrent repeat. It landed before this
+  paragraph merged — PR [#911](https://github.com/yahodu/openpic-webapp/pull/911),
+  squash `f0422e2e`, carrying
+  [ADR-0981](ADR-0981-op101-actor-exemption-audience-scope-pins.md), whose §D5 leaves
+  the other two items routed — so F1 is closed by its own record and no further pin
+  is owed for the exemption itself.
+- The merged PR's handoff claimed this sign-off already carried a note that `#909` had
+  landed on trunk. It did not — a `grep -n 909` of the merged record returned nothing —
+  so that note is this paragraph, added after the fact.
