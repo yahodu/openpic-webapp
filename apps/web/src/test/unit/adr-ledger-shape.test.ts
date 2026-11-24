@@ -2,10 +2,11 @@
  * OP-140 TEST — pin the ADR ledger's **row shape** (S1), the record-`Status:` ↔
  * ledger-cell **agreement** (S2), and the **rowless-record** hard failure (S3).
  *
- * **Why this exists.** The seven landed `adr-*` guards check number uniqueness,
- * file-name shape, lane ranges, links, citations, consumers and code-span
- * hygiene. Not one reads a ledger row as a table row, and not one reads a
- * record's `Status:` line, so the same defect shipped four times:
+ * **Why this exists.** The other landed `adr-*` guards check number uniqueness,
+ * file-name shape, lane ranges, links, citations, consumers, item sections,
+ * gate conditions and code-span hygiene. Not one reads a ledger row as a table
+ * row, and not one reads a record's `Status:` line, so the same defect shipped
+ * four times:
  *
  * - `0892` (`README.md:550` before the repair) had **no status cell and no
  *   trailing pipe** → GitHub renders the Status column empty;

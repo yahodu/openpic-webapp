@@ -494,15 +494,25 @@ supersedes its §4 reading.
 **No invariant count anywhere but this table (2026-11-24, review F1 of PR #907).**
 The helper and spec docblocks used to say "the guard's six invariants are
 tabulated once, in `0302` (`## Decision`, the six-row invariant table)". The
-table holds eight rows, so every one of those docblocks stated a stale count — a
-fourth duplicate of the list this section exists to de-duplicate, and exactly the
-defect (viii) reports. They now say "the guard's invariants are tabulated once, in
-`0302` (`## Decision`, the invariant table)", and no number is restated outside
-the table. For the same reason `adr-ledger-shape.ts` no longer calls itself "the
-eighth invariant": that ordinal now names row (viii). It is recorded by
-[ADR-0319](ADR-0319-every-adr-record-carries-a-ledger-row.md), lives outside this
-table, and is named by role — the ledger-row-shape guard — so two guards cannot
-claim one ordinal.
+table's rows are the only count, so every one of those docblocks stated a stale
+count — a fourth duplicate of the list this section exists to de-duplicate, and
+exactly the defect (viii) reports. They now say "the guard's invariants are
+tabulated once, in `0302` (`## Decision`, the invariant table)", and no number is
+restated outside the table. For the same reason `adr-ledger-shape.ts` no longer
+calls itself "the eighth invariant": that ordinal now names row (viii). It is
+recorded by [ADR-0319](ADR-0319-every-adr-record-carries-a-ledger-row.md), lives
+outside this table, and is named by role — the ledger-row-shape guard — so two
+guards cannot claim one ordinal.
+
+**Residual sweep of the same class (2026-11-24, follow-up card `t_040088b6` to
+review F1 of PR #908).** Four live-prose sites outside this table still restated
+a guard count: the `adr-ledger-shape` helper and spec docblocks, the paragraph
+above — which this sweep also repairs — and
+[ADR-0893](ADR-0893-op137-readme-ledger-link-guard.md)'s `Consumes:` header,
+which pinned this table's row count. All four now state no number. The dated
+counts in this record's sign-off sections and in other records' delivery notes
+are measurements of their own heads, not invariants of this table, and stay as
+written.
 
 **Census rule for the real-tree cases.** A real-tree case keeps its non-vacuity
 bounds and pins the census as a floor with headroom (`checkedLinks`) plus a
