@@ -17,17 +17,31 @@
  * {@link collectSourceFiles}: the numbering guard, the citation-accuracy sweep
  * and the record-link sweep all read through them, so there is one place a
  * security preset can see a non-literal `fs` call.
+ *
+ * It also owns the family's **measured-count provenance clause** (`ADR-0302`
+ * §12): a record that quotes a suite count must name the head commit it was
+ * measured at. The clause lives here because it is a reference rule over the
+ * records and because this module already owns the directory read and the file
+ * read that the rule needs; it has no invariant row of its own on purpose.
  */
 
 import { readdirSync, readFileSync, type Dirent } from "node:fs";
-import { join, posix, relative, sep } from "node:path";
+import { basename, join, posix, relative, sep } from "node:path";
 
 import type {
+  MeasuredCommitCheck,
+  MeasuredCommitIssue,
+  MeasuredCommitResult,
   SourceAdrReferenceIssue,
   SourceAdrReferenceResult,
   SourceFileText,
 } from "./adr-guard-types.js";
-import { adrDigitsOf, compareSourceIssues, compareStrings } from "./adr-guard-types.js";
+import {
+  adrDigitsOf,
+  compareSourceIssues,
+  compareStrings,
+  IN_SCOPE_ADR_NAME_PATTERN,
+} from "./adr-guard-types.js";
 
 /**
  * The guard family's one directory-read call site. `checkAdrDirectory` and
@@ -264,4 +278,181 @@ export function checkRepositoryAdrReferences(root: string): SourceAdrReferenceRe
   const sources = paths.map((path) => ({ path, text: readTextFile(join(root, path)) }));
 
   return checkSourceAdrReferences(sources, adrFileNames);
+}
+
+/**
+ * A suite-count quote: a digit run, whitespace, `passed`, whitespace, `(`.
+ *
+ * That is vitest's own summary (`Tests  15 passed (15)`, `1 failed | 14 passed
+ * (15)`, `3 skipped | 3398 passed (3401)`) including a quote whose parenthesis
+ * wrapped onto the next line, which the trunk does twice. The parenthesis is
+ * part of the shape so bare prose — "the 3 passed cases" — is never a quote. It
+ * is deliberately not a `/\d+ passed \(/` (one space) pattern: four records write
+ * a double space or a wrap there, and a census that cannot see their counts
+ * cannot hold them to a head.
+ */
+const SUITE_COUNT_QUOTE_PATTERN = /\d[\d,]*\s+passed\s+\(/;
+
+/**
+ * A head commit reference: a lowercase hexadecimal run of 7 to 40 characters
+ * that carries at least one `a`–`f` letter.
+ *
+ * Each bound is load-bearing. The letter requirement rejects a bare digit run —
+ * four trunk records match the looser `\b[0-9a-f]{7,40}\b` on an epoch
+ * (`1792924295000`), a byte count (`53687091200`), a magic number and a
+ * placeholder (`0123456789`) — none of which pins a commit. The 7-character floor
+ * rejects a six-character prefix, which cannot pin one. The 40-character ceiling
+ * rejects a 64-character blob hash, which is a file's digest, not a commit.
+ * Lowercase only: this repository writes SHAs lowercase, and an uppercase token
+ * is a typo to report rather than a head to accept.
+ */
+const HEAD_COMMIT_PATTERN = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/;
+
+/**
+ * The records the rule cannot enforce today, as bare four-digit record numbers.
+ *
+ * Each one quotes a suite count and names no head commit at `f0422e2e` — the
+ * eighteen the provenance clause's census found. A number is the right key and a
+ * file name is not: a record number is unique on the trunk (invariant (i)), so a
+ * number identifies exactly one file, and naming the eighteen files here would
+ * make this helper their declared **consumer** — invariant (v) reported three
+ * `consumer-mismatch` issues when it did, because three of them list their
+ * consumers and this helper is not one. Skipping by number is what the follow-up
+ * card allows, and it keeps the record↔citation contract honest.
+ *
+ * The list can only shrink: the spec pins it equal to the tree's actual offender
+ * numbers, so repairing a record reds until its number leaves this list, and a
+ * stale number (a record that is now clean, retired, or renumbered) reds the same
+ * way. A cut-off — "enforce above the highest number at writing" — was rejected
+ * because it enforces nothing until the next record is minted, while this list
+ * enforces the rule over the other 297 records on the trunk today.
+ */
+export const MEASURED_COMMIT_EXEMPTIONS: readonly string[] = [
+  "0046",
+  "0323",
+  "0383",
+  "0385",
+  "0393",
+  "0420",
+  "0440",
+  "0442",
+  "0460",
+  "0465",
+  "0480",
+  "0520",
+  "0580",
+  "0780",
+  "0784",
+  "0830",
+  "0833",
+  "0972",
+];
+
+/**
+ * Check that every record which quotes a suite count also names the head commit
+ * it was measured at — the measured-count provenance clause of the ADR guard
+ * (`ADR-0302` §12). Pure: it never touches the filesystem.
+ *
+ * A record that quotes no suite count is out of scope and never appears in
+ * `checked`, so a design record without a measurement cannot look checked. A
+ * record that quotes counts and names a head reports that head; one that names
+ * none reports a `missing-head-commit` issue. Only the record's **first** quote is
+ * named in the report — a record has one measured head, so one defect — and only
+ * the first head-shaped token is reported, in document order. Fenced code blocks
+ * and inline code spans are read, unlike invariant (vi): a record's counts and its
+ * head live in fences and backticks.
+ *
+ * @param records - The `docs/adr` records to scan, in any order.
+ * @returns The report, sorted by record path.
+ * @example
+ * ```ts
+ * checkMeasuredCommitCitations([
+ *   { path: "docs/adr/ADR-0302-a.md", text: "Tests  15 passed (15)\n\nAt `e91cfed7`." },
+ * ]);
+ * // { ok: true, issues: [], checked: [{ file: "docs/adr/ADR-0302-a.md",
+ * //   line: 1, quoted: "15 passed", head: "e91cfed7" }], scannedRecords: 1 }
+ * ```
+ */
+export function checkMeasuredCommitCitations(
+  records: readonly SourceFileText[]
+): MeasuredCommitResult {
+  const checked: MeasuredCommitCheck[] = [];
+  const issues: MeasuredCommitIssue[] = [];
+
+  for (const record of records) {
+    const quote = SUITE_COUNT_QUOTE_PATTERN.exec(record.text);
+    if (quote === null) {
+      continue;
+    }
+
+    const line = record.text.slice(0, quote.index).split("\n").length;
+    const quoted = quote[0]
+      .replace(/\s+\($/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const head = HEAD_COMMIT_PATTERN.exec(record.text);
+
+    checked.push({ file: record.path, line, quoted, head: head === null ? null : head[0] });
+    if (head === null) {
+      issues.push({ code: "missing-head-commit", file: record.path, line, quoted });
+    }
+  }
+
+  checked.sort((left, right) => compareStrings(left.file, right.file));
+  issues.sort((left, right) => compareStrings(left.file, right.file));
+
+  return { ok: issues.length === 0, issues, checked, scannedRecords: records.length };
+}
+
+/**
+ * Apply {@link checkMeasuredCommitCitations} to a real working tree: read the
+ * `ADR-*.md` records out of `<root>/docs/adr/` — the same in-scope name predicate
+ * the numbering and record-link guards use, so the three agree on what a record
+ * is — and drop the records on `exemptions` from the report.
+ *
+ * `docs/adr/README.md` is deliberately not read: the ledger's notes quote other
+ * heads' counts on purpose, and holding them to one head would force the ledger to
+ * stop describing the deliveries it records.
+ *
+ * An exempt record is read off the tree and then dropped: it appears in neither
+ * `checked` nor `issues`, so repairing one cannot look like a pass, while
+ * `scannedRecords` still counts it.
+ *
+ * @param root - Absolute path to the repository root.
+ * @param exemptions - Bare four-digit record numbers the rule skips; defaults to
+ * {@link MEASURED_COMMIT_EXEMPTIONS}. Pass `[]` to enumerate every offender.
+ * @returns The same report shape as {@link checkMeasuredCommitCitations}.
+ * @throws If `docs/adr` cannot be read — a wrong root must fail loudly instead of
+ * sweeping nothing and reporting a vacuous pass.
+ */
+export function checkRepositoryMeasuredCommitCitations(
+  root: string,
+  exemptions: readonly string[] = MEASURED_COMMIT_EXEMPTIONS
+): MeasuredCommitResult {
+  // The directory read comes first on purpose: a bad root throws here, before any
+  // record is read, so "nothing to report" can never be a false pass.
+  const records: SourceFileText[] = readDirectoryEntries(join(root, "docs/adr"))
+    .filter((entry) => entry.isFile() && IN_SCOPE_ADR_NAME_PATTERN.test(entry.name))
+    .map((entry) => ({
+      path: `docs/adr/${entry.name}`,
+      text: readTextFile(join(root, "docs/adr", entry.name)),
+    }));
+
+  const report = checkMeasuredCommitCitations(records);
+  if (exemptions.length === 0) {
+    return report;
+  }
+
+  const exempt = new Set(exemptions);
+  const kept = (path: string): boolean => {
+    const digits = adrDigitsOf(basename(path));
+    return digits === null || !exempt.has(digits);
+  };
+
+  return {
+    ok: report.issues.every((issue) => !kept(issue.file)),
+    issues: report.issues.filter((issue) => kept(issue.file)),
+    checked: report.checked.filter((check) => kept(check.file)),
+    scannedRecords: report.scannedRecords,
+  };
 }

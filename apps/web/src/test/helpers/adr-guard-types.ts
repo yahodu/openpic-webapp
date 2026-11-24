@@ -283,3 +283,66 @@ export interface AdrRecordLinkResult {
   /** Records swept, so "no issues" can never be a vacuous pass. */
   scannedRecords: number;
 }
+
+/**
+ * One record that quotes a measured suite count and names no head commit — the
+ * provenance clause of the ADR guard (ADR-0302 §12), implemented by
+ * {@link checkMeasuredCommitCitations}.
+ *
+ * `quoted` keeps the count phrase as written, whitespace collapsed, so a report
+ * reads `quotes \`15 passed\` and names no head commit` and the reader can paste
+ * the phrase back into the record. `line` is 1-based and names the **first**
+ * quote in the record, because a record with one measured head reports one
+ * defect whatever number of counts it quotes.
+ */
+export interface MeasuredCommitIssue {
+  /** Always `"missing-head-commit"`; the discriminant for this issue family. */
+  code: "missing-head-commit";
+
+  /** Repo-relative POSIX path of the record, e.g. `docs/adr/ADR-0302-….md`. */
+  file: string;
+
+  /** 1-based line number of the record's first suite-count quote. */
+  line: number;
+
+  /** The count phrase as written, whitespace collapsed, e.g. `"15 passed"`. */
+  quoted: string;
+}
+
+/**
+ * One record the provenance rule evaluated: it quotes a measured suite count and
+ * is not on the exemption allowlist.
+ *
+ * `head` names the commit reference that satisfied the rule, or `null` when the
+ * record names none — the same record also appears in
+ * {@link MeasuredCommitResult.issues}. The list exists so a narrowed sweep, or a
+ * head matcher that stops matching, cannot pass as silence.
+ */
+export interface MeasuredCommitCheck {
+  /** Repo-relative POSIX path of the record. */
+  file: string;
+
+  /** 1-based line number of the record's first suite-count quote. */
+  line: number;
+
+  /** The count phrase as written, whitespace collapsed, e.g. `"15 passed"`. */
+  quoted: string;
+
+  /** The record's first head commit reference, as written; `null` when absent. */
+  head: string | null;
+}
+
+/** The report shape returned by the measured-count provenance rule. */
+export interface MeasuredCommitResult {
+  /** `true` exactly when {@link MeasuredCommitResult.issues} is empty. */
+  ok: boolean;
+
+  /** One entry per record that quotes counts and names no head, sorted by `file`. */
+  issues: MeasuredCommitIssue[];
+
+  /** Every in-scope record the rule evaluated, sorted by `file`. */
+  checked: MeasuredCommitCheck[];
+
+  /** Records handed in (or read off the tree), so silence is never vacuous. */
+  scannedRecords: number;
+}
