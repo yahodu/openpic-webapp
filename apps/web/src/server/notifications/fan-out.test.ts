@@ -301,8 +301,10 @@ describe("resolveRecipients — actor exclusion (U2)", () => {
  * half of the same rule, but it runs on one concrete key (`billing.plan.upgraded`),
  * so a `typeKey`-keyed variant that enumerates a list of keys still reads green
  * under it. This case runs on a **synthetic** key that exists in no catalogue and
- * in no plausible spared list, so any re-scoping of the exemption onto `typeKey` —
- * one key or an enumerated list — reds here and nowhere else.
+ * in no plausible spared list, so a re-scoping of the exemption onto `typeKey` —
+ * one key or an enumerated list — reds here and nowhere else. A **prefix**-shaped
+ * gate (`typeKey.startsWith("billing.plan.")`) is invisible to this key, so that
+ * shape carries its own pin in the sibling describe below.
  *
  * The non-`billing_contact` actor is still excluded by
  * `resolveRecipients — actor exclusion (U2)` above; that half is not duplicated.
@@ -317,6 +319,54 @@ describe("resolveRecipients — billing-contact actor exemption (OP-101, ADR-097
       makeInput({
         typeRow: makeNotificationType({
           typeKey: "billing.plan.probed",
+          audiences: ["billing_contact"],
+        }),
+        actorUserId: "u_payer",
+        repository,
+      })
+    );
+
+    expect(recipients).toEqual(["u_payer"]);
+  });
+});
+
+/**
+ * The billing-contact actor exemption is **namespace-agnostic**, not only
+ * list-agnostic — the half `ADR-0982` left open (OP-101, review finding F2 of
+ * PR #917).
+ *
+ * `ADR-0982` §Consequences claims that "any `typeKey`-keyed exemption — one key
+ * or an enumerated list — reds the new case". The round-2 review measured the
+ * third shape: a **prefix** gate,
+ * `typeRow.typeKey.startsWith("billing.plan.") && payers.has(actorUserId)`. It
+ * is still `typeKey`-scoped, it is a natural way to write the same wrong "fix",
+ * and it is invisible to both pins that came before it — the sibling case's key
+ * (`billing.plan.probed`) sits inside the prefix, and both integration
+ * `EVENT_KEY`s are `billing.plan.*` too. Measured on the landed tree `c28cc394`:
+ * the focused file answers `30 passed (30)` under that gate, i.e. the gate
+ * escapes.
+ *
+ * This case therefore runs on a key **outside** the billing namespace —
+ * `account.payment_probed`, which no `billing.plan.` prefix can carry. Under the
+ * prefix gate it is the only red in this file:
+ * `expected [] to deeply equal [ 'u_payer' ]`.
+ *
+ * The other halves are pinned, not duplicated here: the **enumerated-list** half
+ * (a single key, or a `Set` of keys) is
+ * `spares the actor the billing_contact audience resolved, whatever the type key
+ * is` in the describe above, and the non-`billing_contact` actor half stays at
+ * `resolveRecipients — actor exclusion (U2)`.
+ */
+describe("resolveRecipients — billing-contact actor exemption outside the billing namespace (OP-101)", () => {
+  it("spares the actor on a type key that no billing prefix carries", async () => {
+    const repository = makeRepository({
+      getBillingContactUserId: vi.fn(promised("u_payer")),
+    });
+
+    const recipients = await resolveRecipients(
+      makeInput({
+        typeRow: makeNotificationType({
+          typeKey: "account.payment_probed",
           audiences: ["billing_contact"],
         }),
         actorUserId: "u_payer",
