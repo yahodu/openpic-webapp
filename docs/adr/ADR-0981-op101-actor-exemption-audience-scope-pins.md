@@ -197,11 +197,16 @@ P3 [{"statuses":[200,200],"events":1}, … eight rounds, all {"statuses":[200,20
 `Invalid input: expected date, received null` — recorded because the finding is about the **absent**
 field, and the two shapes are not interchangeable.
 
-**Static gates on the delivery head.** `pnpm typecheck` answered `TYPECHECK_EXIT=0` on all three
-projects (`tsconfig.json`, `packages/contracts`, `apps/web`); `npx eslint` on the new spec reported
-`0 errors, 0 warnings`; `npx prettier --check` on the spec, this record and the ledger is clean; the
-ten `adr-*` guard files answered `10 files / 320 passed (320)`; the whole `unit` project answered
-`200 files / 3399 passed | 3 skipped (3402)`, `UNIT_EXIT=0`; and the whole `integration` project
-answered `167 files / 1812 passed (1812)`, `INT_EXIT=0` — the pre-existing `166 / 1810` plus this
-file's one file and two cases. `billing-downgrade-scheduled-event.test.ts` is byte-identical (it is
-not in the diff) and its `15 passed (15)` are inside the integration count.
+**Static gates on the delivery head.** Measured on the tree merged with `origin/main` `03a5fbd5`
+(the head this record ships on). `pnpm typecheck` answered `0` on all three projects
+(`tsconfig.json`, `packages/contracts`, `apps/web`); `npx eslint` on the new spec reported `0 errors,
+0 warnings`; `npx prettier --check` on the spec, this record and the ledger is clean; the ten `adr-*`
+guard files answered `10 files / 320 passed (320)`; the whole `unit` project answered
+`201 files / 3401 passed | 3 skipped (3404)`, exit `0`; and the whole `integration` project answered
+`167 files / 1812 passed (1812)`, exit `0` — the `166 / 1810` the trunk carried plus this file's one
+file and two cases. `billing-downgrade-scheduled-event.test.ts` is byte-identical (it is not in the
+diff) and its `15 passed (15)` are inside the integration count.
+
+The discriminator was re-measured on that same merged tree and answered `2 passed (2)` focused and
+`1 failed | 16 passed (17)` against the `typeKey`-scoped variant, `F1D` alone, with `fan-out.ts`
+restored to `sha256 c6a0cd45…`.
