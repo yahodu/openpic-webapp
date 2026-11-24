@@ -13,8 +13,8 @@
 - **Implements:** nothing. No production file, no existing spec, no fixture and
   no helper is edited: the diff is one new spec, this record and the ledger row,
   the two `Next free` cells and the ledger's prose note.
-- **Consumes:** [ADR-0302](ADR-0302-adr-number-guard-contract.md) (the six-row
-  invariant table whose row (vi) this extends one file over, and the fixture
+- **Consumes:** [ADR-0302](ADR-0302-adr-number-guard-contract.md) (the invariant
+  table in `0302`, whose row (vi) this extends one file over, and the fixture
   marker / leaf rules the record sweep uses),
   [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §10 item 14 and
   §11 items 18–21 (a pool draw advances both cells).
