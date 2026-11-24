@@ -276,8 +276,14 @@ function unresolvedKeyError(source: string, openBrace: number, reason: string): 
  * and this reader never re-examines what it stepped over. Keys are lost only
  * when that span crosses a **property boundary**, i.e. when it holds a `:` or a
  * top-level `,` outside strings; a *complete* comment written after a key's
- * colon and before its value is parser-safe, because the skip ends before the
- * value and the next property is still read. No `subscriptions` write can hold
+ * colon and before its value is parser-safe **when its own text carries no
+ * property shape** (no `:` and no top-level `,`), because the skip then ends
+ * before the next property boundary and the next property is still read. A
+ * comment is prose, not code, so a colon or a comma inside its *text* names no
+ * property either; the sibling spec's marker detector must therefore measure
+ * that span against the comment's text, and its matrix pins the three prose
+ * shapes (`Cents, billed monthly`, `see the note: billed`, `{a: 1}`) as exempt.
+ * No `subscriptions` write can hold
  * a regex and §14.3 documents no such field, so the sibling spec reddens on a
  * marker whose skip crosses a boundary inside an anchored mint literal, and on a
  * marker the literal never closes — not on the value position alone. The two
