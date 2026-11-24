@@ -63,7 +63,8 @@ import { server } from "./setup";
  *
  *   - **I1** (C6, §10.2.1) — a dunning run over a tenant that owns events,
  *     images and assets changes **only** `subscriptions` (besides the
- *     `domain_events` outbox every job writes), proven by a whole-database diff;
+ *     `audit_logs` transition row and the `domain_events` outbox every job
+ *     writes), proven by a whole-database diff;
  *   - **I2** (§10.2 rule 1) — two concurrent dunning runs transition once;
  *     the loser matches zero documents and is a no-op, never corruption;
  *   - **I3** (§10.2 `dunning-reminders`) — running the reminders twice on grace
