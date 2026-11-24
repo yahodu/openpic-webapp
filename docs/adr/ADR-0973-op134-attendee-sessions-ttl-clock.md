@@ -55,7 +55,7 @@
   table repair) consume no number; no row reserves `0973`.
 
 Highest in-flight reservation is therefore `0972`, and this record takes `0973`,
-advancing the four cells that read `0969` — `board-wide / process`,
+advancing the four cells that read `0970` at the merged head (`0969` at the branch cut) — `board-wide / process`,
 `OP-129 attendee identity lane`, `OP-136 jobs lane`, `unallocated (future lanes)` —
 to `0974` (the next free after this draw). No cell is lowered and no range is
 re-cut. A concurrent draw at `0970`–`0972` is the very collision
