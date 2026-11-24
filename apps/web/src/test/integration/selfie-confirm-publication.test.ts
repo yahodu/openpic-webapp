@@ -1516,3 +1516,226 @@ describe("when the confirmation's outbox write fails for a reason that is not a 
     expect(await matchesNewRows()).toHaveLength(1);
   });
 });
+
+/* ── F3.8: the deactivation sweep's failure is a 500, never a masked 200 ──── */
+
+/**
+ * The driver's own `Collection#updateMany`, resolved **once at module load**,
+ * before any case installs a spy.
+ *
+ * Resolving it inside the stub would find the spy itself and recurse (the
+ * `driverUpdateOne` precedent above): a `RangeError` is also a `500`, so the
+ * pin would pass for the wrong reason.
+ */
+const driverUpdateMany = ((): typeof Collection.prototype.updateMany => {
+  const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "updateMany");
+  if (descriptor === undefined || typeof descriptor.value !== "function") {
+    throw new Error("expected Collection.prototype.updateMany to be a function");
+  }
+  return descriptor.value as typeof Collection.prototype.updateMany;
+})();
+
+/** A `selfies` sweep the confirmation asked for, as the spy saw it. */
+interface SelfieSweep {
+  /** The profile whose other selfies the sweep addressed. */
+  readonly profileId: string;
+  /** The one selfie the sweep excluded — the row being activated (§16.4). */
+  readonly excludedSelfieId: string;
+  /** The `isActive` the sweep asked for every other row: `false`. */
+  readonly askedIsActive: unknown;
+  /** True when the write carried a session, i.e. ran inside the transaction. */
+  readonly inSession: boolean;
+}
+
+/**
+ * Every selfie the profile currently has active, oldest `_id` first (§16.4).
+ *
+ * The count is the pin: §16.4's pointer is singular, so two active rows is a
+ * corrupted pointer even while `activeSelfieId` still names one of them.
+ *
+ * @returns The hex ids of the `isActive: true` selfie rows.
+ */
+async function activeSelfieIds(): Promise<string[]> {
+  const rows = (await app.db
+    .collection(COLLECTIONS.selfies)
+    .find({ isActive: true })
+    .sort({ _id: 1 })
+    .toArray()) as unknown as { readonly _id: ObjectId }[];
+  return rows.map((row) => row._id.toHexString());
+}
+
+/**
+ * The confirmation's transaction, with its **deactivation sweep** failing for a
+ * reason that is not a duplicate key.
+ *
+ * **Why this exists.** `F3.6` pins the activation and ADR-0966 pins the
+ * `isActive` flip and the outbox insert, but the transaction opens with a
+ * fourth write before all three: `selfies.updateMany({ profileId, _id: { $ne:
+ * selfieId } }, { $set: { isActive: false } }, { session })` deactivates the
+ * profile's previously active selfie (`confirm/route.ts:212-215`, §16.4's
+ * single pointer). ADR-0966's §Context enumerates three writes and Reversal
+ * condition names them; this sweep is the fourth, and it was unmeasured.
+ *
+ * Measured on `origin/main` `ed625e6d`: with `Collection.prototype.updateMany`
+ * refusing only `COLLECTIONS.selfies` (a non-duplicate driver error), the
+ * second confirm answers `500 internal_error` and the profile keeps exactly one
+ * active selfie today. Wrap that call in `try { … } catch {}` and the same
+ * request answers **`200 status: "ready"`** while the profile ends with **two**
+ * active selfies — the previously active one and the new one — and the spec
+ * stays `23 passed (23)` (ADR-0969 §Evidence). Both cases above call
+ * `updateOne`/`insertOne` stubs, and no shipped fixture ever creates a
+ * *previous* active selfie, so neither can see it.
+ *
+ * The fixture is what makes the sweep non-vacuous: selfie A is submitted,
+ * worked and **confirmed** first, so a previously active row exists to
+ * deactivate; selfie B is then submitted and worked. The injection is the same
+ * driver-level shape as the F3.6 cases — `code: 91`, no
+ * `TransientTransactionError` label, so `withTransaction` rethrows on the first
+ * attempt — rejected from `Collection.prototype.updateMany` only for
+ * `COLLECTIONS.selfies`, every other collection forwarded to the real method
+ * resolved once at module load ({@link driverUpdateMany}).
+ *
+ * Non-vacuity is the recorded attempt: exactly one sweep, naming this profile,
+ * excluding **this** selfie (from the filter's `_id.$ne`), asking for
+ * `isActive: false`, under the transaction's session. A route that answered
+ * `500` before the transaction — or one that never reached the sweep — fails
+ * there.
+ *
+ * What the client sees is the app-wide `500 internal_error` with no `details`,
+ * and nothing committed: the profile row keeps its pre-call state exactly —
+ * `processing`, `activeSelfieId: A`, `matchCount: 3` (the submit that created
+ * B returns the status to `processing` while the pointer and the total still
+ * describe A) and its §15.3 watermark — **exactly one** active selfie exists
+ * and it is still A, and no `attendee.matches.new` row's count moves. The
+ * `notifications` rows are **not** asserted: the fan-out is deferred through
+ * `after()`, which throws outside a request scope, so in this harness the
+ * claim cannot red on its own (ADR-0965 §Consequences, finding F2).
+ */
+describe("when the confirmation's deactivation sweep fails for a reason that is not a duplicate key", () => {
+  it("answers 500 internal_error and leaves exactly the previous selfie active", async () => {
+    const ready = await readyEvent("op132-f3-deactivate");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+
+    // The precondition no shipped case creates: one CONFIRMED selfie, so the
+    // profile has a previously active row the sweep below must deactivate.
+    const previous = await submitOne(ready.event.slug, ready, "f3-deactivate-a");
+    await runWorker(previous, eventContext, FIRST_RUN_MATCHES);
+    const previousConfirm = await confirm(ready.event.slug, previous.selfieId, ready);
+    expect(previousConfirm.status).toBe("ready");
+
+    const submitted = await submitOne(ready.event.slug, ready, "f3-deactivate-b");
+    await runWorker(submitted, eventContext, SECOND_RUN_NEW_MATCHES);
+
+    // The second selfie's worker result is on the row, so this confirmation
+    // WOULD publish and move the pointer: the pre-call reads are the state a
+    // rollback must preserve. The submit that created B put the profile back to
+    // `processing` (`upsertProcessingProfile`: "a submit always leaves the
+    // profile `processing`"), while the pointer and the cached total still
+    // describe A — exactly the state the sweep's failure must not move.
+    const before = await profileRow();
+    expect(before.status).toBe("processing");
+    expect(before.activeSelfieId?.toHexString()).toBe(previous.selfieId);
+    expect(before.matchCount).toBe(FIRST_RUN_MATCHES);
+    const stamped = await firstDeliveryStamp();
+    const outboxBefore = await matchesNewRows();
+    expect(outboxBefore).toHaveLength(1);
+    expect(outboxBefore[0]?.payload).toMatchObject({ count: FIRST_RUN_MATCHES });
+    const activeBefore = await activeSelfieIds();
+    expect(activeBefore).toEqual([previous.selfieId]);
+
+    // The transaction's FIRST write is refused, for a reason that is NOT the
+    // outbox's duplicate-key collision: a driver error on the deactivation
+    // sweep. A swallow here commits the new activation on top of the old one
+    // and answers a success envelope.
+    const failure = Object.assign(new Error("not primary"), { code: 91 });
+    const sweeps: SelfieSweep[] = [];
+    const sweepSpy = vi.spyOn(Collection.prototype, "updateMany").mockImplementation(function (
+      this: Collection,
+      filter,
+      update,
+      options
+    ) {
+      if (this.collectionName === COLLECTIONS.selfies) {
+        sweeps.push({
+          profileId: String(fieldOf(filter, "profileId")),
+          excludedSelfieId: String(fieldOf(fieldOf(filter, "_id"), "$ne")),
+          askedIsActive: fieldOf(setOf(update), "isActive"),
+          inSession: fieldOf(options, "session") !== undefined,
+        });
+        return Promise.reject(failure);
+      }
+      return driverUpdateMany.call(this, filter, update, options);
+    });
+
+    let response: Response;
+    try {
+      response = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+        cookie: ready.cookie,
+        ip: ready.ip,
+      });
+    } finally {
+      sweepSpy.mockRestore();
+    }
+
+    // Non-vacuity: the transaction opened and reached ITS deactivation sweep,
+    // once, under its session, excluding this selfie and asking for `false`. A
+    // route that answered `500` before the transaction — or one that dropped
+    // the sweep — fails here.
+    expect(sweeps).toEqual([
+      {
+        profileId: submitted.profileId,
+        excludedSelfieId: submitted.selfieId,
+        askedIsActive: false,
+        inSession: true,
+      },
+    ]);
+
+    // §0.12: the failure is the app-wide `500`, and the envelope leaks nothing.
+    // A `200` here is the §16.4 pointer silently corrupted: two active selfies
+    // and a `status: "ready"` that claims the sweep happened.
+    expect(
+      response.status,
+      "a confirm whose deactivation sweep failed with a non-retry driver error answered " +
+        `${String(response.status)}; it must answer the app-wide 500`
+    ).toBe(500);
+    const error = await errorBody(response);
+    expect(error.code).toBe("internal_error");
+    expect(error.details).toBeUndefined();
+
+    // Nothing moved: the §15.3 row is exactly as the first confirmation left it,
+    // and §16.4's pointer is still a single row — the previous selfie's.
+    const after = await profileRow();
+    expect(after.status).toBe(before.status);
+    expect(after.activeSelfieId?.toHexString()).toBe(previous.selfieId);
+    expect(after.matchCount).toBe(FIRST_RUN_MATCHES);
+    expect((await firstDeliveryStamp()).getTime()).toBe(stamped.getTime());
+    expect(await selfieIsActive(previous.selfieId)).toBe(true);
+    expect(await selfieIsActive(submitted.selfieId)).toBe(false);
+    expect(await activeSelfieIds()).toEqual([previous.selfieId]);
+
+    // The announcement was not re-issued either: the refused request committed
+    // no outbox row, so every `count` the attendee already saw is unchanged.
+    const outboxAfter = await matchesNewRows();
+    expect(outboxAfter.map((row) => row.payload?.count)).toEqual(
+      outboxBefore.map((row) => row.payload?.count)
+    );
+
+    // The `500` is the injected failure, not a broken fixture: the same request
+    // with a healthy driver answers the documented `200`, moves the pointer to
+    // the new selfie and leaves exactly one active row (§16.4).
+    const retried = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(keysOf(retried)).toEqual(CONFIRM_KEYS);
+    expect(retried.status).toBe("ready");
+    expect(retried.selfieId).toBe(submitted.selfieId);
+    const recovered = await profileRow();
+    expect(recovered.status).toBe("ready");
+    expect(recovered.activeSelfieId?.toHexString()).toBe(submitted.selfieId);
+    expect(recovered.matchCount).toBe(FIRST_RUN_MATCHES + SECOND_RUN_NEW_MATCHES);
+    expect(await selfieIsActive(previous.selfieId)).toBe(false);
+    expect(await selfieIsActive(submitted.selfieId)).toBe(true);
+    expect(await activeSelfieIds()).toEqual([submitted.selfieId]);
+    const delivered = await matchesNewRows();
+    expect(delivered).toHaveLength(2);
+    expect(delivered[1]?.payload).toMatchObject({ count: SECOND_RUN_NEW_MATCHES });
+  });
+});
