@@ -659,8 +659,29 @@ checked-and-passed — it appears in neither `checked` nor `issues`.
 **Measured at this branch's base `f0422e2e`.** 486 records, 315 quote a suite
 count, 297 name a head and are checked, 18 are exempt; at `03a5fbd5`, the head the
 follow-up card states, the same census read 485 / 314 / 296 / 18 (`#911` minted one
-more record). The real-tree case pins floors, not equalities —
-`checked.length >= 280`, `scannedRecords >= 480` — per §10's census rule.
+more record). The real-tree case pins floors, not equalities, and the floors sit
+two records under the census — `checked.length >= 296`, `scannedRecords >= 485` at
+`c28cc394`, which measures 487 / 316 / 298 / 18 — so a mint raises the pair and a
+retirement lowers it: re-measure with
+`checkRepositoryMeasuredCommitCitations(repoRoot, [])` before editing them. The
+pair was `>= 280` / `>= 480` until the post-review card `t_9b7462a9` measured that
+a `.slice(0, -17)` narrowing of the enforced corpus — the exact class the `checked`
+list exists to catch — stayed green, and so did the four-record narrowing of the
+quote pattern to its one-space form.
+
+**What the clause proves, and what it does not** (card `t_9b7462a9`, finding F2 of
+the same review). It proves that a record which quotes a suite count names a token
+_shaped_ like a head commit. It does not prove that the token is the commit the
+counts were measured at, and it does not prove that the token is a commit at all: a
+record that cites **any** other hash passes, because the pattern reads the record's
+first head-shaped token wherever that token sits. Two false-accept classes are real
+on the trunk — another record's head (`Landed ADR-0980 at e91cfed7`) and a
+truncated blob digest (the `51de695c` that
+[ADR-0980](ADR-0980-op101-downgrade-scheduled-event-green.md) itself cited for a
+file) both report `ok: true`. The spec pins both, and the `0x1234567a` literal the
+pattern correctly rejects, as characterization cases. A stricter form — the head
+inside `## Evidence`, or adjacent to the first quote — is a design change for the
+orchestrator, not part of this clause, and it reds those rows by design.
 
 **Load-bearing, measured.** Replacing every head-shaped token in
 [ADR-0980](ADR-0980-op101-downgrade-scheduled-event-green.md)'s bytes on a

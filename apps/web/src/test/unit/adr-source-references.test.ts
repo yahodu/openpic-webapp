@@ -794,16 +794,20 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
   });
 
   it("reports the trunk as provenance-complete for every record off the allowlist", () => {
-    // Act — green on arrival: the census at `f0422e2e` is 297 records checked.
+    // Act — the enforced census at `c28cc394` is 298 records checked.
     const report = checkRepositoryMeasuredCommitCitations(repoRoot);
 
-    // Assert — floors, never an equality: a minted record raises the count and a
-    // retirement lowers it, while a narrowed sweep or a dead head matcher cannot
-    // pass (it would lose the `checked` entries).
+    // Assert — floors two below that census, never an equality: a mint raises the
+    // pair and a retirement lowers it, so re-measure both with
+    // `checkRepositoryMeasuredCommitCitations(repoRoot, [])` (298 checked / 487
+    // scanned at `c28cc394`) before the next edit. Two records of slack is the
+    // point: the previous `>= 280` / `>= 480` pair left a `.slice(0, -17)`
+    // narrowing of the enforced corpus and the four-record quote-pattern
+    // narrowing green, and the `checked` list is what keeps silence non-vacuous.
     expect(report.issues).toEqual([]);
     expect(report.ok).toBe(true);
-    expect(report.checked.length).toBeGreaterThanOrEqual(280);
-    expect(report.scannedRecords).toBeGreaterThanOrEqual(480);
+    expect(report.checked.length).toBeGreaterThanOrEqual(296);
+    expect(report.scannedRecords).toBeGreaterThanOrEqual(485);
   });
 
   it("keeps the allowlist equal to the trunk's actual offenders, so it can only shrink", () => {
@@ -816,5 +820,97 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
     // repairing a record reds here until its number leaves the allowlist, and a
     // new offender reds here beside the rule's own case.
     expect(offenders).toEqual([...MEASURED_COMMIT_EXEMPTIONS]);
+  });
+});
+
+/**
+ * Characterization — what the head pattern proves, and what it does not.
+ *
+ * `HEAD_COMMIT_PATTERN` accepts any lowercase 7–40-character hexadecimal token
+ * that carries a letter, anywhere in the record, so the clause proves only that a
+ * quoting record names a token **shaped** like a head commit. Three shapes are
+ * pinned here so the limit is executable instead of prose only (`ADR-0302` §12):
+ *
+ * - another record's head is reported as this record's `head` — the clause never
+ *   compares the token with the commit the counts were measured at;
+ * - a truncated blob digest — seven hexadecimal characters of a file's sha256,
+ *   the shape the drift record cited for a file — is accepted as a head;
+ * - a `0x`-prefixed hex literal is rejected, because its run is glued to the
+ *   non-hex `x` and so has no word boundary.
+ *
+ * These rows are characterization, not a contract to widen. A stricter form — the
+ * head inside `## Evidence`, or adjacent to the first quote — is a design change
+ * for the orchestrator, and a pattern change that flips one of these rows must red
+ * here first.
+ */
+describe("checkMeasuredCommitCitations — head-shaped is not the measured head", () => {
+  it("accepts another record's head as this record's head", () => {
+    // Arrange — the token is a real head, of a different record.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0302-c.md",
+        text: ["Tests  15 passed (15)", "", "Landed ADR-0980 at e91cfed7."].join("\n"), // adr-fixture: verbatim record text, not a pointer
+      },
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert — a foreign head satisfies the clause exactly like an own one.
+    expect(report).toEqual({
+      ok: true,
+      issues: [],
+      checked: [{ file: "docs/adr/ADR-0302-c.md", line: 1, quoted: "15 passed", head: "e91cfed7" }],
+      scannedRecords: 1,
+    });
+  });
+
+  it("accepts a truncated blob digest as a head commit", () => {
+    // Arrange — a file's sha256 prefix, not a commit.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0302-d.md",
+        text: ["Tests  15 passed (15)", "", "blob sha256 c6a0cd45… unchanged."].join("\n"),
+      },
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert — seven hexadecimal characters carrying a letter are head-shaped.
+    expect(report).toEqual({
+      ok: true,
+      issues: [],
+      checked: [{ file: "docs/adr/ADR-0302-d.md", line: 1, quoted: "15 passed", head: "c6a0cd45" }],
+      scannedRecords: 1,
+    });
+  });
+
+  it("rejects a 0x-prefixed hex literal, because the run has no word boundary", () => {
+    // Arrange — a seven-character hexadecimal run inside a `0x` literal.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0302-e.md",
+        text: ["Tests  15 passed (15)", "", "flag is 0x1234567a here."].join("\n"),
+      },
+    ];
+
+    // Act
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert — the run is preceded by `x`, so it is not a head-shaped token.
+    expect(report).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "missing-head-commit",
+          file: "docs/adr/ADR-0302-e.md",
+          line: 1,
+          quoted: "15 passed",
+        },
+      ],
+      checked: [{ file: "docs/adr/ADR-0302-e.md", line: 1, quoted: "15 passed", head: null }],
+      scannedRecords: 1,
+    });
   });
 });
