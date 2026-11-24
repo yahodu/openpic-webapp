@@ -149,8 +149,10 @@ $ git status --porcelain
  M apps/web/src/server/notifications/fan-out.test.ts
 ```
 
-**Static gates on the delivery head.** `tsc -p` answered `0` on all three projects (`tsconfig.json`,
+**Static gates on the delivery head.** Measured at the merge head `36fb3912` (this record's own
+docs-only commit sits above it and cannot move a test count; `apps/web/src/server/notifications/fan-out.ts`
+is byte-identical to the trunk's). `tsc -p` answered `0` on all three projects (`tsconfig.json`,
 `packages/contracts`, `apps/web`); `prettier --check` on the spec, this record and the ledger is clean;
-the ten `adr-*` guard files answered `10 files / 320 passed (320)`; and the whole `unit` project
-answered `201 files / 3402 passed | 3 skipped (3405)`, exit `0` — the parent tree's `3401 | 3 skipped`
-plus this case.
+the ten `adr-*` guard files answered `10 files / 337 passed (337)`; and the whole `unit` project
+answered `201 files / 3419 passed | 3 skipped (3422)`, exit `0` — the `origin/main` `2468dbae` cut's
+`3418 passed | 3 skipped (3421)` plus this one case.
