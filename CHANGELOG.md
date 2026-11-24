@@ -1,3 +1,9 @@
+## [1.89.0](https://github.com/yahodu/openpic-webapp/compare/v1.88.0...v1.89.0) (2026-11-24)
+
+### Features
+
+- **billing:** OP-101 emit the downgrade-scheduled event and deliver it to the payer ([#906](https://github.com/yahodu/openpic-webapp/issues/906)) ([e91cfed](https://github.com/yahodu/openpic-webapp/commit/e91cfed7f70215cbcf7da67ec1cef1c213f53e48))
+
 ## [1.88.0](https://github.com/yahodu/openpic-webapp/compare/v1.87.0...v1.88.0) (2026-11-24)
 
 ### Features
