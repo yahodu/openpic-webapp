@@ -1290,3 +1290,61 @@ describe("the plan-change surface's auth and tenancy ladder", () => {
     expect(await errorEnvelope(response)).toMatchObject({ code: "not_found" });
   });
 });
+
+/**
+ * OP-101 / ADR-0975 §D2 — a downgrade **request** is intent, not a transition.
+ *
+ * `POST …/billing/downgrade` stores `scheduledChange` and changes no plan, and
+ * three shipped paths clear that intent without ever applying it
+ * (`scheduled-change/route.ts:44`, `upgrade/route.ts:364`, `checkout/route.ts:330`).
+ * A `subscription.downgraded` row written at request time would therefore assert
+ * a plan change that may never happen, so §D2 puts the row at the **transition**
+ * (the two jobs, pinned in `billing-crons.test.ts` `A1`–`A6`) and leaves the
+ * route writing its log line only.
+ *
+ * This arm is a **characterization pin**: it is GREEN on arrival, it must stay
+ * green, and it must never be "fixed" by making the route write. It is the
+ * guard against the rejected alternative §Alternatives names.
+ */
+describe("OP-101 / ADR-0975 — a downgrade request writes no audit row", () => {
+  it("A0: an accepted downgrade schedules the change and leaves audit_logs empty", async () => {
+    const owner = await app.signIn(makeIdentity("op109-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op109-downgrade-no-audit-row",
+    });
+    const tenantPath = tenantId.toHexString();
+    await seedSubscription({
+      tenantId: tenantPath,
+      planKey: "starter",
+      priceKey: "starter-monthly-inr",
+      status: "active",
+    });
+
+    // Act
+    const response = await downgradePlan(
+      planChangeRequest({
+        tenantPath,
+        route: "downgrade",
+        cookie: owner.cookie,
+        body: downgradeBody(),
+      })
+    );
+
+    // Assert — the request succeeded and stored the intent…
+    expect(response.status).toBe(200);
+    const row = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ tenantId: tenantPath, cancelledAt: null });
+    expect(row?.scheduledChange).toMatchObject({ toPlanKey: "free", reason: "self_downgrade" });
+    expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
+
+    // …and it recorded no transition, because none happened.
+    const audit = await app.db
+      .collection(COLLECTIONS.auditLogs)
+      .find({ $or: [{ tenantId: tenantPath }, { tenantId }] })
+      .toArray();
+    expect(audit).toEqual([]);
+  });
+});

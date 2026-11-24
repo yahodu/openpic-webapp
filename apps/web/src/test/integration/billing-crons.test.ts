@@ -1,4 +1,4 @@
-import { ObjectId, type Document } from "mongodb";
+import { Collection, ObjectId, type Document, type InsertOneOptions } from "mongodb";
 import { http, HttpResponse } from "msw";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -33,6 +33,7 @@ import { COLLECTIONS } from "@/server/db/collections";
 import { cronResultSchema, type CronJob, type CronResult } from "@/server/jobs/cron-job";
 import { getLogger } from "@/server/logging";
 import type { ProviderRef, SubscriptionStatus } from "@/server/payments/payment-provider";
+import { platformRepo } from "@/server/repos";
 import { fixedClock, systemClock } from "@/server/runtime/clock";
 import { invalidatePlatformSettings } from "@/server/settings/platform-settings";
 
@@ -230,6 +231,7 @@ beforeEach(async () => {
   await Promise.all([
     app.db.collection(COLLECTIONS.subscriptions).deleteMany({}),
     app.db.collection(COLLECTIONS.domainEvents).deleteMany({}),
+    app.db.collection(COLLECTIONS.auditLogs).deleteMany({}),
     app.db.collection(COLLECTIONS.providerWebhookEvents).deleteMany({}),
     app.db.collection(COLLECTIONS.billingTransactions).deleteMany({}),
     app.db.collection(COLLECTIONS.tenants).deleteMany({}),
@@ -541,10 +543,24 @@ describe("invariant C6 — dunning never touches user content (I1)", () => {
     // Act
     const result = await runJob(dunningJob, { now: NOW });
 
-    // Assert — the whole-database diff is the pin: any write outside the two
+    // Assert — the whole-database diff is the pin: any write outside the
     // permitted collections would be named by this assertion.
+    //
+    // ADR-0975 §D6 amends this list **deliberately**: the dunning transition now
+    // also writes its `subscription.downgraded` row (§20.2, §9.1), so
+    // `audit_logs` is admitted. The invariant C6 states — "dunning never touches
+    // user content" — stays proven **structurally**, not textually: the diff
+    // names every changed collection, and the six content collections (`events`,
+    // `eventImages`, `mediaAssets`, `imageFaces`, `faceMatches`,
+    // `attendeeEventProfiles`) must stay absent from it. `audit_logs` holds no
+    // reference into any content collection and can delete nothing, so admitting
+    // it cannot hide a C6 regression.
     const after = await snapshotDatabase();
-    expect(changedCollections(before, after)).toEqual(["domain_events", "subscriptions"]);
+    expect(changedCollections(before, after)).toEqual([
+      "audit_logs",
+      "domain_events",
+      "subscriptions",
+    ]);
 
     // …and the run really did the transition it is allowed to do.
     expect(result).toMatchObject({ scanned: 1, affected: 1, hasMore: false });
@@ -912,5 +928,418 @@ describe("every billing cron route answers the §10.2 envelope", () => {
 
     // Assert
     expect(response.status).toBe(401);
+  });
+});
+
+/**
+ * OP-101 / ADR-0975 (§D2–§D6) — the `subscription.downgraded` `auditLogs` row a
+ * billing transition writes, and the request that must not write one.
+ *
+ * The gap this block pins: schema §20.2 declares
+ * `action: "subscription.downgraded"`, `actor.kind: "system"`, `target.kind:
+ * "subscription"` and a `reason`, and §9.1 says every admin mutation is recorded
+ * — but nothing wrote a billing row at this head. `POST …/billing/downgrade`
+ * writes one log line and no document (that is correct: a schedule is intent),
+ * while the plan is actually reduced by two jobs: `runScheduledPlanChanges`
+ * (a scheduled self-downgrade reaching its instant) and `runDunning` (a grace
+ * period expiring). ADR-0975 §D2 therefore puts the row at the **transition**.
+ *
+ * ## Contract expected of the implementation (ADR-0975 §D3–§D5)
+ *
+ * - `@/server/audit/audit-log` widens once: `AuditLogAction` gains
+ *   `"subscription.downgraded"`, `AuditLogEntry.target` becomes
+ *   `{ kind: "user" | "subscription", id }`, an optional `reason` is written
+ *   only when the transition carries one, `systemAuditActor(id)` returns
+ *   `{ kind: "system", id, ipHash: null, uaHash: null }` (both keys **present**
+ *   and null), and `writeAuditLog(session, entry, at = systemClock.now())`
+ *   takes the caller's instant, so a job's row is stamped with its own injected
+ *   clock rather than the wall clock.
+ * - Each job writes **exactly one** row per applied transition, inside the
+ *   **same `withTransaction`** as its conditional `findOneAndUpdate` (§D4), with
+ *   `before` taken from the matched pre-image (`returnDocument: "before"`), so a
+ *   concurrent transition cannot make the row claim a state it did not replace.
+ * - The row's key set is exactly `{ actor, action, target, tenantId, before,
+ *   after, reason, at, expireAt }` plus the driver's `_id`; `tenantId` is the
+ *   workspace hex **string** (§18.3's type), `target` is
+ *   `{ kind: "subscription", id: <subscription hex> }`, and
+ *   `expireAt − at === 400 * 24 * 60 * 60 * 1000` (§22).
+ * - The rows are read through `platformRepo(db).collection(
+ *   COLLECTIONS.auditLogs)` — the handle the writer uses. `GET /admin/audit-logs`
+ *   (§9.9) is contract-only at this head, so no route is pinned.
+ *
+ * ## Which cases are RED, and which are controls
+ *
+ * RED by design on the shipped tree (both jobs write no audit row and
+ * `writeAuditLog` has no `at` parameter): `A1`/`A2` (the two row shapes) and
+ * `A5`/`A6` (the two atomicity halves — the transition applies with no row to
+ * refuse, and the recovery call finds nothing left to apply).
+ *
+ * Controls, green on arrival and every GREEN must keep them green: `A3` (a
+ * scheduled change that is not due yet writes no row and moves nothing) and `A4`
+ * (a `past_due` row inside its grace period writes no row) are the anti-vacuity
+ * arms — a job that writes unconditionally reds them. `A5`/`A6`'s second halves
+ * are the anti-vacuity guards for their own first halves: a job that never
+ * writes reds the recovery call, an out-of-transaction pre-write reds the
+ * refusal half. Each half is measured in ADR-0976 §Evidence.
+ *
+ * ## Assumptions recorded in the handoff (ADR-0976)
+ *
+ * - **S1 — `at` is the job's injected clock instant.** Every case runs with
+ *   `fixedClock(NOW)`, so `row.at` must equal `NOW`; that is what makes the
+ *   optional third `writeAuditLog` parameter load-bearing (the shipped
+ *   `systemClock.now()` inside the seam would stamp the wall clock and red).
+ * - **S2 — a refused audit insert is not swallowed.** With the driver refusing
+ *   the insert by `{ code: 91 }` (no `TransientTransactionError` label, so
+ *   `withTransaction` rethrows on the first attempt), the run rejects — the
+ *   `internal_error` path §D4 names. A job that caught the error and reported
+ *   `errors: 1` would leave a silently unaudited downgrade, so the rejection is
+ *   pinned beside the state assertions.
+ * - **S3 — the two jobs' pre-images differ by shape, not by rule.** The
+ *   scheduled row's `before` is `{ activePlanKey }` (that is the field its
+ *   conditional write replaces); the dunning row's is `{ status, activePlanKey }`
+ *   (both fields its write replaces). No other field is narrowed in, and no
+ *   field is added to `after`.
+ */
+describe("a billing downgrade transition writes one subscription.downgraded audit row (A1–A6, OP-101 / ADR-0975)", () => {
+  /** §22 — the retention every audit row carries, exactly 400 days. */
+  const FOUR_HUNDRED_DAYS_MS = 400 * 24 * 60 * 60 * 1000;
+
+  /** The document's key set: the §D5 fields plus the driver's `_id`. */
+  const AUDIT_ROW_KEYS = [
+    "_id",
+    "action",
+    "actor",
+    "after",
+    "at",
+    "before",
+    "expireAt",
+    "reason",
+    "target",
+    "tenantId",
+  ];
+
+  /** The `actor` sub-document's four keys (§D3: a system row keeps both, null). */
+  const AUDIT_ACTOR_KEYS = ["id", "ipHash", "kind", "uaHash"];
+
+  /** The `target` sub-document's two keys (§D5). */
+  const AUDIT_TARGET_KEYS = ["id", "kind"];
+
+  /**
+   * The driver's own `Collection#insertOne`, resolved once when this block is
+   * registered.
+   *
+   * The refusal stub below must forward every other collection to the **real**
+   * method, and reading `Collection.prototype.insertOne` at call time would find
+   * the stub itself: an unbounded recursion answers a `RangeError`, which the
+   * job would also report as a failure, so the atomicity case would pass for the
+   * wrong reason (`tenant-members.test.ts` `T4` precedent).
+   */
+  const driverInsertOne = ((): typeof Collection.prototype.insertOne => {
+    const descriptor = Object.getOwnPropertyDescriptor(Collection.prototype, "insertOne");
+    if (descriptor === undefined || typeof descriptor.value !== "function") {
+      throw new Error("expected Collection.prototype.insertOne to be a function");
+    }
+    return descriptor.value as typeof Collection.prototype.insertOne;
+  })();
+
+  /**
+   * Every `auditLogs` document that names this workspace.
+   *
+   * The read matches the hex string **and** the `ObjectId`, so a row written with
+   * the wrong `tenantId` type is still found and reds on the field assertion with
+   * a message that names the drift — instead of letting a case pass vacuously on
+   * an empty list.
+   */
+  async function auditRows(tenantId: string): Promise<Document[]> {
+    return platformRepo(app.db)
+      .collection(COLLECTIONS.auditLogs)
+      .find({ $or: [{ tenantId }, { tenantId: new ObjectId(tenantId) }] })
+      .toArray();
+  }
+
+  /**
+   * Assert §D3's system actor: exactly four keys, `kind: "system"`, the job id
+   * verbatim, and both fingerprints present and `null`.
+   */
+  function expectSystemActor(row: Record<string, unknown>, id: string): void {
+    const actor = row.actor as Record<string, unknown>;
+    expect(Object.keys(actor).sort()).toEqual(AUDIT_ACTOR_KEYS);
+    expect(actor).toEqual({ kind: "system", id, ipHash: null, uaHash: null });
+  }
+
+  /**
+   * Assert the §D5 row frame: the exact key set, the subscription target, the
+   * workspace as a **string**, and `at`/`expireAt` from the job's clock.
+   */
+  function expectRowFrame(
+    row: Record<string, unknown>,
+    tenantId: string,
+    subscriptionId: ObjectId
+  ): void {
+    expect(Object.keys(row).sort()).toEqual(AUDIT_ROW_KEYS);
+    expect(row.action).toBe("subscription.downgraded");
+
+    const target = row.target as Record<string, unknown>;
+    expect(Object.keys(target).sort()).toEqual(AUDIT_TARGET_KEYS);
+    expect(target).toEqual({ kind: "subscription", id: subscriptionId.toHexString() });
+
+    expect(row.tenantId).toBe(tenantId);
+    expect(row.at).toEqual(NOW);
+    expect(row.expireAt).toBeInstanceOf(Date);
+    expect((row.expireAt as Date).getTime() - (row.at as Date).getTime()).toBe(
+      FOUR_HUNDRED_DAYS_MS
+    );
+  }
+
+  /**
+   * A1 — the scheduled self-downgrade's row.
+   *
+   * A `scheduledChange` whose instant has passed is applied by the cron; the
+   * durable record of that one transition is one `subscription.downgraded` row
+   * naming the job, the workspace and the subscription, carrying the plan the
+   * conditional write replaced and the plan it set, the scheduled reason, and a
+   * 400-day retention stamped from the run's injected clock.
+   */
+  it("A1: a due scheduled self-downgrade writes one subscription.downgraded row with the matched pre-image", async () => {
+    const tenantId = await seedTenant("op101-audit-scheduled");
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      activePlanKey: "starter",
+      scheduledChange: {
+        toPlanKey: "free",
+        effectiveAt: new Date(NOW.getTime() - 3_600_000),
+        reason: "self_downgrade",
+      },
+    });
+
+    // Act
+    const result = await runJob(scheduledPlanChangesJob, { now: NOW });
+
+    // Assert — the transition still happens exactly as I7 pins it…
+    expect(result).toMatchObject({ affected: 1 });
+    expect(await readSubscription(subscriptionId)).toMatchObject({
+      activePlanKey: "free",
+      scheduledChange: null,
+    });
+
+    // …and it is now durable: exactly one row, in §D5's exact shape.
+    const rows = await auditRows(tenantId);
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
+    expectRowFrame(row, tenantId, subscriptionId);
+    expectSystemActor(row, "scheduled-plan-changes");
+    expect(row.before).toEqual({ activePlanKey: "starter" });
+    expect(row.after).toEqual({ activePlanKey: "free" });
+    expect(row.reason).toBe("self_downgrade");
+  });
+
+  /**
+   * A2 — the dunning transition's row.
+   *
+   * A `past_due` subscription whose grace has run out is downgraded to the free
+   * plan; the row is the same action and the same system actor with the `dunning`
+   * id, narrowed to the two fields that write replaces (`status`, `activePlanKey`)
+   * and the `grace_expired` reason.
+   */
+  it("A2: an expired grace period writes one subscription.downgraded row from the matched pre-image", async () => {
+    const tenantId = await seedTenant("op101-audit-dunning");
+    const subscriptionId = await seedPastGrace(tenantId);
+
+    // Act
+    const result = await runJob(dunningJob, { now: NOW });
+
+    // Assert
+    expect(result).toMatchObject({ affected: 1 });
+    expect(await readSubscription(subscriptionId)).toMatchObject({
+      status: "downgraded",
+      activePlanKey: "free",
+    });
+
+    const rows = await auditRows(tenantId);
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
+    expectRowFrame(row, tenantId, subscriptionId);
+    expectSystemActor(row, "dunning");
+    expect(row.before).toEqual({ status: "past_due", activePlanKey: "starter" });
+    expect(row.after).toEqual({ status: "downgraded", activePlanKey: "free" });
+    expect(row.reason).toBe("grace_expired");
+  });
+
+  /**
+   * A3 (anti-vacuity) — a scheduled change that is not due yet.
+   *
+   * The conditional read excludes it, so there is no transition to record: no
+   * row, no plan move, and the stored intent is still there for a later run. A
+   * job that writes a row per candidate (rather than per applied transition)
+   * reds here.
+   */
+  it("A3: a scheduled change that is not due yet writes no row and moves nothing", async () => {
+    const tenantId = await seedTenant("op101-audit-scheduled-later");
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      activePlanKey: "starter",
+      scheduledChange: {
+        toPlanKey: "free",
+        effectiveAt: new Date(NOW.getTime() + 3_600_000),
+        reason: "self_downgrade",
+      },
+    });
+
+    // Act
+    const result = await runJob(scheduledPlanChangesJob, { now: NOW });
+
+    // Assert
+    expect(result).toMatchObject({ affected: 0 });
+    expect(await auditRows(tenantId)).toEqual([]);
+    const untouched = await readSubscription(subscriptionId);
+    expect(untouched).toMatchObject({ activePlanKey: "starter" });
+    expect(untouched.scheduledChange).toMatchObject({ toPlanKey: "free" });
+  });
+
+  /**
+   * A4 (anti-vacuity) — a grace period that has not expired.
+   *
+   * The dunning filter requires `gracePeriodEndsAt < now`, so a `past_due` row
+   * still inside its window is not a transition: no row, and the status stays
+   * `past_due`.
+   */
+  it("A4: a past_due row whose grace period has not expired writes no row", async () => {
+    const tenantId = await seedTenant("op101-audit-grace-open");
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "past_due",
+      gracePeriodEndsAt: new Date(NOW.getTime() + 3_600_000),
+      pendingDueMinor: 49_900,
+    });
+
+    // Act
+    const result = await runJob(dunningJob, { now: NOW });
+
+    // Assert
+    expect(result).toMatchObject({ affected: 0 });
+    expect(await auditRows(tenantId)).toEqual([]);
+    expect(await readSubscription(subscriptionId)).toMatchObject({ status: "past_due" });
+  });
+
+  /**
+   * A5 — the scheduled transition and its row are one transaction (§D4).
+   *
+   * The audit insert is refused with a driver error carrying no
+   * `TransientTransactionError` label (`code: 91`, a primary-election error that
+   * `withTransaction` rethrows on the first attempt, so no retry can absorb it).
+   * The plan must therefore not move, the intent must still be stored, no
+   * `statusHistory` entry may be appended and no row may exist — a downgrade
+   * nobody can attribute is the failure mode the row exists to prevent. The run
+   * rejects rather than swallowing the failure (assumption S2).
+   *
+   * The second half is the **anti-vacuity guard**: with the driver restored, the
+   * same call applies the change and writes exactly one row, so a job that never
+   * writes a row cannot pass the refusal half.
+   */
+  it("A5: a refused audit insert leaves a due scheduled change unapplied and writes no row, then applies with one row once the driver recovers", async () => {
+    const tenantId = await seedTenant("op101-audit-atomic-scheduled");
+    const subscriptionId = await seedSubscription({
+      tenantId,
+      status: "active",
+      activePlanKey: "starter",
+      scheduledChange: {
+        toPlanKey: "free",
+        effectiveAt: new Date(NOW.getTime() - 3_600_000),
+        reason: "self_downgrade",
+      },
+    });
+
+    const driverError = Object.assign(new Error("not primary"), { code: 91 });
+    const insertStub = vi.spyOn(Collection.prototype, "insertOne").mockImplementation(function (
+      this: Collection,
+      document: Document,
+      options?: InsertOneOptions
+    ) {
+      if (this.collectionName === COLLECTIONS.auditLogs) {
+        return Promise.reject(driverError);
+      }
+      return driverInsertOne.call(this, document, options);
+    });
+
+    const refusal = await runJob(scheduledPlanChangesJob, { now: NOW }).then(
+      () => null,
+      (error: unknown) => error
+    );
+    insertStub.mockRestore();
+
+    // The transaction aborted: nothing applied, nothing recorded.
+    const untouched = await readSubscription(subscriptionId);
+    expect(untouched).toMatchObject({ activePlanKey: "starter" });
+    expect(untouched.scheduledChange).toMatchObject({ toPlanKey: "free" });
+    expect(untouched.statusHistory).toEqual([]);
+    expect(await auditRows(tenantId)).toEqual([]);
+    expect(refusal).toBeInstanceOf(Error);
+
+    // The anti-vacuity half: same call, healthy driver → applied, one row.
+    const accepted = await runJob(scheduledPlanChangesJob, { now: NOW });
+    expect(accepted).toMatchObject({ affected: 1 });
+    const rows = await auditRows(tenantId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      action: "subscription.downgraded",
+      reason: "self_downgrade",
+      before: { activePlanKey: "starter" },
+      after: { activePlanKey: "free" },
+    });
+  });
+
+  /**
+   * A6 — the dunning transition and its row are one transaction (§D4).
+   *
+   * The same refusal as A5, on the other job path: the subscription stays
+   * `past_due` with its plan and its grace stamp, its `statusHistory` stays
+   * empty, no row is written and the run rejects; restored, the same call
+   * downgrades it and writes exactly one `grace_expired` row.
+   */
+  it("A6: a refused audit insert leaves a past_due row untransitioned and writes no row, then downgrades with one row once the driver recovers", async () => {
+    const tenantId = await seedTenant("op101-audit-atomic-dunning");
+    const subscriptionId = await seedPastGrace(tenantId);
+    const before = await readSubscription(subscriptionId);
+
+    const driverError = Object.assign(new Error("not primary"), { code: 91 });
+    const insertStub = vi.spyOn(Collection.prototype, "insertOne").mockImplementation(function (
+      this: Collection,
+      document: Document,
+      options?: InsertOneOptions
+    ) {
+      if (this.collectionName === COLLECTIONS.auditLogs) {
+        return Promise.reject(driverError);
+      }
+      return driverInsertOne.call(this, document, options);
+    });
+
+    const refusal = await runJob(dunningJob, { now: NOW }).then(
+      () => null,
+      (error: unknown) => error
+    );
+    insertStub.mockRestore();
+
+    const untouched = await readSubscription(subscriptionId);
+    expect(untouched).toMatchObject({
+      status: "past_due",
+      activePlanKey: "starter",
+      gracePeriodEndsAt: before.gracePeriodEndsAt,
+    });
+    expect(untouched.statusHistory).toEqual([]);
+    expect(await auditRows(tenantId)).toEqual([]);
+    expect(refusal).toBeInstanceOf(Error);
+
+    const accepted = await runJob(dunningJob, { now: NOW });
+    expect(accepted).toMatchObject({ affected: 1 });
+    const rows = await auditRows(tenantId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      action: "subscription.downgraded",
+      reason: "grace_expired",
+      before: { status: "past_due", activePlanKey: "starter" },
+      after: { status: "downgraded", activePlanKey: "free" },
+    });
   });
 });
