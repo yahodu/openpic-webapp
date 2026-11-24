@@ -42,7 +42,7 @@ The failure is `Object.assign(new Error("not primary"), { code: 91 })` — a rep
 
 ### 3. The recorded attempt is the anti-vacuity guard
 
-A "still one active selfie" count is not evidence on its own: a route that deleted the sweep satisfies it and leaves the new selfie as the only active row. So the case records what the stub refused and requires **exactly one** sweep: `{ profileId: this profile, excludedSelfieId: this selfie (read from the filter's `_id.$ne`), askedIsActive: false, inSession: true }`. A route that answered `500` before opening the transaction — or one whose sweep never ran — fails there.
+A "still one active selfie" count is not evidence on its own: a route that deleted the sweep satisfies it and leaves the new selfie as the only active row. So the case records what the stub refused and requires **exactly one** sweep: its `profileId` is this profile, its `excludedSelfieId` is this selfie (read from the filter's `_id.$ne`), its `askedIsActive` is `false` and its `inSession` is `true`. A route that answered `500` before opening the transaction — or one whose sweep never ran — fails there.
 
 ### 4. "Nothing moved" is read off the row and the selfie set, and the announcement off the outbox
 
