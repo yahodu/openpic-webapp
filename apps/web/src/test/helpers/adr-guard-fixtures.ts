@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
  * invariant table).
  *
  * The guard's spec used to be a single file; it is now one spec per invariant,
- * so everything the five specs share lives here: the repository root, the real
- * `docs/adr` directory, the throwaway-directory factories and the lane-ledger
- * factory. `repoRoot` keeps the five-level depth of `helpers/`
+ * so everything the per-invariant specs share lives here: the repository root,
+ * the real `docs/adr` directory, the throwaway-directory factories and the
+ * lane-ledger factory. `repoRoot` keeps the five-level depth of `helpers/`
  * (`src/test/helpers` -> repository root), so it resolves from this module
  * exactly as it did from `src/test/unit`.
  *
