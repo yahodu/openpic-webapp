@@ -88,30 +88,39 @@ import {
  * changed the parsed set for synthetic literals only. The measured census stays
  * at 24 and 25 keys, 21 written after meta, 24 documented.
  *
- * **One measured limitation, pinned by a narrowed vacuity case (OP-140
- * follow-up).** The comment branch cannot tell code from a value, so a `/*`
- * inside a *value* expression starts a comment skip and swallows the rest of
- * the literal. That shape is reachable only through a regex literal (such as
- * `/[/*]/`), which no §14.3 field can hold, but it is the guard's own
- * silent-skip class. The real-tree case below therefore reddens on **every
- * `/*` in a value position inside an anchored mint literal** (measured `0`
- * today, over all five literal bodies): a future edit that puts one there
- * reddens there, naming the file, the anchor, the literal, the offset and the
- * fix, instead of losing the rest of that literal's keys in silence.
+ * **Decision: the ban is the class that loses keys, not the position (OP-140
+ * follow-up).** Two earlier cuts of the real-tree case were wrong about this
+ * class in opposite directions, so the rule is now stated in terms of what the
+ * reader does. The comment branch cannot tell code from a value: a `/` followed
+ * by `*` starts a skip that resumes at the nearest closing delimiter. What
+ * costs keys is therefore not the position but the **span** — the reader never
+ * re-examines what it stepped over, so a `:` or a top-level `,` inside that span
+ * (outside strings) means a property sat there and its key is gone in silence.
+ * Three shapes that an earlier cut reddened on are parser-safe and exempt: a
+ * marker inside a quoted string value (`mandateStatus: "pending/*x"`, offset
+ * 376 — the string is consumed at its opening quote), a complete block comment
+ * where a property may start (skipped whole, key position intact), and a
+ * complete block comment written after a key's colon and before its value (the
+ * `pendingDueMinor` matrix row): its skip ends before any boundary, the reader
+ * lands on the value and reads the next property, and every census case stays
+ * green. Reddening on that last shape was a false red whose message also
+ * claimed it swallowed the literal — a claim the reader contradicts. The
+ * narrowed rule is pinned by a matrix row, one case per posture.
  *
- * **The ban is exactly the harmful class, and that is measured, not assumed.**
- * The first cut of the case counted a `/*` **anywhere** in a literal body and
- * reddened on two shapes the shipped reader handles correctly: a marker inside
- * a quoted string value (`mandateStatus: "pending/*x"` reddened at offset 376
- * while every census case stayed green — the string branch consumes the literal
- * at its opening quote) and a complete block comment (a `/*` through its
- * closing delimiter) sitting where a property may start (the comment branch
- * skips it whole and still reads the property after it — the `a block comment
- * between properties` matrix row pins that). Both are exempt now, so the
- * remaining red is always the value-position skip. A *complete* value-position
- * comment is still flagged: without a real tokenizer the reader cannot tell it
- * from `/[/*]/`, and a block comment in a mint literal belongs above the write
- * call anyway.
+ * **What the real-tree case reports.** It reddens on every marker whose skip
+ * crosses a property boundary inside an anchored mint literal (measured `0`
+ * today, over all five literal bodies) and on every marker a literal never
+ * closes, wherever it sits. `pattern: /[/*]/` is the shape that does lose keys —
+ * its skip ends at a *later* closing delimiter, so the properties in between
+ * vanish — and no §14.3 field can hold it, but it is the guard's own
+ * silent-skip class, so a future edit that puts one inside a mint literal
+ * reddens here instead of hiding fields. The message names the file, the
+ * anchor, the literal index, the offset, the key position the reader was in at
+ * the opener (`key position` or `value position`), why the skip loses a key,
+ * and the fix. The key position is named because the reader reaches an opener
+ * there *before* any property was read — describing an unterminated opener at
+ * key position as a value-position marker was itself a defect of this case, and
+ * it misrouted the reader.
  */
 
 /** The design doc that carries §14.3. */
@@ -291,31 +300,101 @@ function anchoredLiteralBodies(source: string, anchors: readonly string[]): Anch
   return bodies;
 }
 
+/** Where the reader stood when its comment branch reached a block-comment opener. */
+type MarkerPosition = "key position" | "value position";
+
+/** One block-comment opener the reader's branch turns into a key-losing skip. */
+interface HarmfulBlockCommentMarker {
+  /** Offset of the opener inside the literal body. */
+  readonly offset: number;
+  /** The key position the reader was in when it reached the opener. */
+  readonly position: MarkerPosition;
+  /** Whether the body carries no closing delimiter after the opener. */
+  readonly unclosed: boolean;
+}
+
 /**
- * The offsets of the `/*` markers in one literal body that the reader's
- * comment branch turns into a key-swallowing skip.
+ * True when the text between a block-comment opener and its nearest closing
+ * delimiter runs across a property boundary: it holds a `:` or a `,` at bracket
+ * depth 0, outside strings.
+ *
+ * This is the measured boundary of the reader's comment branch. The reader
+ * resumes at the nearest closing delimiter and never re-examines the text it
+ * stepped over, so a boundary token inside the span means at least one property
+ * sat there and its key is gone. A span that holds neither — a complete comment
+ * written after a key's colon, before that key's value — costs no key.
+ *
+ * @param body - One anchored literal's text.
+ * @param from - Index just past the opener.
+ * @param to - Index of the nearest closing delimiter, or the body's length when
+ *   the body never closes it.
+ * @returns Whether a property could have sat inside the skip.
+ */
+function skipCrossesPropertyBoundary(body: string, from: number, to: number): boolean {
+  let depth = 0;
+  let index = from;
+
+  while (index < to) {
+    const char = body.charAt(index);
+
+    if (char === '"' || char === "'" || char === "`") {
+      index += 1;
+      while (index < to && body.charAt(index) !== char) {
+        index += body.charAt(index) === "\\" ? 2 : 1;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (char === ":") {
+      return true;
+    }
+    if (char === "(" || char === "[" || char === "{") {
+      depth += 1;
+    } else if (char === ")" || char === "]" || char === "}") {
+      depth = Math.max(0, depth - 1);
+    } else if (char === "," && depth === 0) {
+      return true;
+    }
+
+    index += 1;
+  }
+
+  return false;
+}
+
+/**
+ * The block-comment openers in one literal body that the reader's comment
+ * branch turns into a key-losing skip, each with the key position it was found
+ * in.
  *
  * The reader steps over a quoted string before it looks for a comment, so a
  * marker inside a string value never reaches the comment branch. It also skips
  * a complete block comment whole and leaves the key position untouched, so a
  * comment that begins where a property may start costs no key — the matrix's
- * block-comment rows pin that. Both shapes are parser-safe and are exempt here;
- * a vacuity case that reddened on them named a defect while nothing was broken.
+ * block-comment rows pin that.
  *
- * What remains is the harmful class: a marker in a **value** position, which
- * the comment branch cannot tell from a regex literal such as `/[/*]/`, and a
- * marker that the body never closes. Either way the skip runs on to the next
- * closing delimiter — possibly past the end of this literal — and every key in
- * between is lost in silence. The exempt position is the literal's own start, a
- * `{`, or a `,` at the literal's top level, with only whitespace and comments
- * since.
+ * Neither of those is the harmful class. What is harmful is a skip that runs
+ * across a **property boundary**, because the reader resumes at the nearest
+ * closing delimiter and never re-examines what it stepped over: a `:` or a
+ * top-level `,` inside the skipped span (outside strings) means a property sat
+ * there, and its key is lost in silence. So a complete comment written after a
+ * key's colon and before its value — the `pendingDueMinor` row of the matrix —
+ * is parser-safe and exempt: the reader lands on the value, then continues and
+ * reads the next property. `pattern: /[/*]/` is the shape that does lose keys:
+ * the `/` at a value position opens a skip whose nearest closing delimiter is a
+ * *later* one, and every property in between vanishes. A marker the body never
+ * closes loses the rest of the literal, so it is flagged wherever it sits.
+ *
+ * The exempt position is the literal's own start, a `{`, or a `,` at the
+ * literal's top level, with only whitespace and comments since.
  *
  * @param body - One anchored literal's text, from its opening `{` through its
  *   matching `}`.
- * @returns The harmful marker offsets, in source order.
+ * @returns The harmful markers, in source order.
  */
-function blockCommentMarkers(body: string): number[] {
-  const markers: number[] = [];
+function blockCommentMarkers(body: string): HarmfulBlockCommentMarker[] {
+  const markers: HarmfulBlockCommentMarker[] = [];
   let depth = 0;
   let atPropertyStart = false;
   let index = 0;
@@ -345,8 +424,19 @@ function blockCommentMarkers(body: string): number[] {
     if (char === "/" && body.charAt(index + 1) === "*") {
       const commentEnd = body.indexOf("*/", index + 2);
       const closes = commentEnd !== -1;
-      if (!atPropertyStart || !closes) {
-        markers.push(index);
+      const position: MarkerPosition = atPropertyStart ? "key position" : "value position";
+      // At a key position a closed comment costs nothing: the reader skips it
+      // and still reads the property after it. In a value position it costs
+      // nothing either *unless* the skip crosses a property boundary, which is
+      // exactly when the reader cannot resume without losing keys.
+      let losesKeys = false;
+      if (!closes) {
+        losesKeys = true;
+      } else if (!atPropertyStart) {
+        losesKeys = skipCrossesPropertyBoundary(body, index + 2, commentEnd);
+      }
+      if (losesKeys) {
+        markers.push({ offset: index, position, unclosed: !closes });
       }
       index = closes ? commentEnd + 2 : body.length;
       // A comment changes no key position: the property after it is still read.
@@ -374,6 +464,34 @@ function blockCommentMarkers(body: string): number[] {
   return markers;
 }
 
+/**
+ * The failure text for one harmful marker: the file, the anchor, the literal
+ * index, the offset, the key position it was found in, why the skip loses a
+ * key, and the routing sentence.
+ *
+ * @param route - The route the literal was read from.
+ * @param anchor - The anchor that opened the literal.
+ * @param literalIndex - The literal's 1-based index among that anchor's literals.
+ * @param marker - The harmful marker to report.
+ * @returns The message.
+ */
+function markerMessage(
+  route: MintRouteSource,
+  anchor: string,
+  literalIndex: number,
+  marker: HarmfulBlockCommentMarker
+): string {
+  const where =
+    `${route.path} anchor \`${anchor}\` literal ${String(literalIndex)} ` +
+    `carries a \`/*\` at offset ${String(marker.offset)} in a ${marker.position}`;
+  const why = marker.unclosed
+    ? " and the body never closes it: the skip runs to the end of the literal, so every key after it is lost"
+    : ", and its nearest `*/` lies past a `:` or a top-level `,`: the reader's skip crosses a " +
+      "property boundary, so every property inside the skip is lost";
+
+  return `${where}${why} — move the comment above the write call on \`${anchor}\``;
+}
+
 /** One literal body and the lines the marker detector must redden on. */
 interface LiteralMarkerShape {
   /** The shape's name, used as the case title. */
@@ -385,16 +503,18 @@ interface LiteralMarkerShape {
 }
 
 /**
- * The detector matrix: the shapes a `/*` can take inside a mint literal, and the
- * markers that must be reported as harmful.
+ * The detector matrix: the shapes a block-comment opener can take inside a mint
+ * literal, and the markers that must be reported as harmful.
  *
- * The exempt rows are the parser-safe class the first cut of the vacuity case
- * reddened on — a marker inside a string value (the reader consumes the string
- * at its opening quote) and a complete block comment where a property may start
- * (the reader skips it whole and still reads the property after it). The
- * flagged rows are the value-position skip, the shape reachable only through a
- * regex literal, and the unterminated comment whose skip swallows the rest of
- * the literal.
+ * The exempt rows are the parser-safe class: a marker inside a string value
+ * (the reader consumes the string at its opening quote), a complete block
+ * comment where a property may start (the reader skips it whole and still reads
+ * the property after it), and a complete block comment inside one value (the
+ * skip ends at its own closing delimiter, before any property boundary, so the
+ * reader lands on the value and reads the next property). The flagged rows are
+ * the shapes whose skip crosses a property boundary: the regex-literal opener,
+ * whose nearest closing delimiter arrives after a later property, and the
+ * comment the body never closes, whose skip runs to the end of the literal.
  */
 const LITERAL_MARKER_SHAPES: readonly LiteralMarkerShape[] = [
   {
@@ -411,6 +531,11 @@ const LITERAL_MARKER_SHAPES: readonly LiteralMarkerShape[] = [
     shape: "an unterminated block comment at key position, whose skip swallows the literal",
     body: ["/* taxMinor is billed at renewal", 'status: "active",'],
     flagged: [2],
+  },
+  {
+    shape: "a complete block comment in a value position, which loses no key and is exempt",
+    body: ["pendingDueMinor: /* billed at renewal */ 0,", 'status: "active",'],
+    flagged: [],
   },
   {
     shape: "a marker inside a double-quoted string value, which the string branch consumes",
@@ -789,7 +914,9 @@ describe("design doc §14.3 `subscriptions` field list", () => {
       const literal = ["{", ...body.map((line) => `  ${line}`), "}"].join("\n");
 
       expect(
-        blockCommentMarkers(literal).map((at) => literal.slice(0, at).split("\n").length)
+        blockCommentMarkers(literal).map(
+          ({ offset }) => literal.slice(0, offset).split("\n").length
+        )
       ).toEqual(flagged);
     });
   });
@@ -803,12 +930,14 @@ describe("design doc §14.3 `subscriptions` field list", () => {
       );
     });
 
-    // A `/*` in a value position starts a comment skip that would swallow the
-    // rest of the literal, so the pinned population must stay free of one.
-    // Parser-safe markers — inside a quoted string value, or a complete block
-    // comment where a property may start — are exempt: `blockCommentMarkers`
-    // classifies both, and its matrix pins that they never redden.
-    it("carries no `/*` marker in a value position inside any anchored mint literal", () => {
+    // A `/*` whose skip crosses a property boundary hides fields from the
+    // reader, so the pinned population must stay free of one: the regex-literal
+    // opener and any comment the body never closes. Parser-safe markers — a
+    // marker inside a quoted string value, a complete block comment where a
+    // property may start, and a complete block comment inside one value — are
+    // exempt: `blockCommentMarkers` classifies all of them, and its matrix pins
+    // that they never redden.
+    it("carries no `/*` marker that swallows a property inside any anchored mint literal", () => {
       const routes = MINT_ROUTES.map((route) => ({
         route,
         bodies: anchoredLiteralBodies(readTextFile(join(repoRoot, route.path)), route.anchors),
@@ -823,12 +952,8 @@ describe("design doc §14.3 `subscriptions` field list", () => {
       expect(
         routes.flatMap(({ route, bodies }) =>
           bodies.flatMap(({ anchor, body }, index) =>
-            blockCommentMarkers(body).map(
-              (offset) =>
-                `${route.path} anchor \`${anchor}\` literal ${String(index + 1)} ` +
-                `carries a \`/*\` at offset ${String(offset)} in a value position: ` +
-                "the reader starts a block-comment skip there and swallows the rest of the " +
-                `literal — move the comment above the write call on \`${anchor}\``
+            blockCommentMarkers(body).map((marker) =>
+              markerMessage(route, anchor, index + 1, marker)
             )
           )
         )
