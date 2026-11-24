@@ -47,7 +47,7 @@ the rejected alternatives are recorded in
 | OP-98 notification preferences      | `0220`–`0239`                   | `0223`    |
 | OP-99 one-click unsubscribe         | `0240`–`0259`                   | `0243`    |
 | OP-100 tenancy                      | `0260`–`0279`                   | `0263`    |
-| OP-101 CI lane-shape                | `0280`–`0299`                   | `0288`    |
+| OP-101 CI lane-shape                | `0280`–`0299`                   | `0289`    |
 | OP-102 plans & billing lane         | `0320`–`0339`                   | `0324`    |
 | OP-103 entitlements lane            | `0340`–`0359`                   | `0349`    |
 | OP-104 entitlements & usage lane    | `0360`–`0379`                   | `0372`    |
@@ -296,6 +296,7 @@ _The **board-wide / process** [ADR-0312](ADR-0312-same-lane-adr-card-serializati
 | [0285](ADR-0285-op101-tenant-members-instant-range-green.md)                       | OP-101 GREEN: the `joinedAt` reader bounds the accept-set to the wire's four-digit-year window                          | Accepted                  |
 | [0286](ADR-0286-op101-tenant-members-string-instant-pins.md)                       | OP-101 TEST: the members listing bounds a string `joinedAt` to the same four-digit-year window                          | Accepted                  |
 | [0287](ADR-0287-op101-tenant-members-date-instant-pins.md)                         | OP-101 TEST: the members listing bounds a `Date` `joinedAt` to the same four-digit-year window                          | Accepted                  |
+| [0288](ADR-0288-op101-tenant-members-residual-pins.md)                             | OP-101 TEST: the tenant-member residuals the stale PR #272 carried                                                      | Accepted                  |
 | [0300](ADR-0300-adr-number-range-allocation-policy.md)                             | ADR numbers are drawn from per-lane reserved ranges, never the shared high-water mark                                   | Accepted                  |
 | [0301](ADR-0301-ci-audit-dev-vs-prod-scope.md)                                     | Split the `audit` gate: blocking `pnpm audit --prod`, non-blocking `pnpm audit --dev`                                   | Accepted                  |
 | [0302](ADR-0302-adr-number-guard-contract.md)                                      | The `docs/adr/` number guard: its mechanical contract and its deliberate scope boundary                                 | Accepted                  |
