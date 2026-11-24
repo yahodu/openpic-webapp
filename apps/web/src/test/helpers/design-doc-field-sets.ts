@@ -273,8 +273,12 @@ function unresolvedKeyError(source: string, openBrace: number, reason: string): 
  * `/*` inside a value expression — reachable only through a regex literal such
  * as `/[/*]/` — starts a comment skip and swallows the rest of the literal. No
  * `subscriptions` write can hold a regex and §14.3 documents no such field, and
- * the sibling spec asserts that no anchored mint literal carries a `/*` marker,
- * so the pinned population stays free of the shape.
+ * the sibling spec reddens on a `/*` in a **value** position inside an anchored
+ * mint literal — the only shape this branch misreads. The two shapes it handles
+ * correctly are deliberately not banned there: a marker inside a quoted string
+ * value never reaches this branch (the string is consumed at its opening
+ * quote), and a complete block comment where a property may start is skipped
+ * whole with `expectKey` intact, so the property after it is still read.
  *
  * A spread and a method shorthand report their target or modifier the same way
  * (`...baseDoc` reports `baseDoc`, `async markPaid() {}` reports `async`):
