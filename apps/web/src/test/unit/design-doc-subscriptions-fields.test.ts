@@ -655,6 +655,41 @@ const LITERAL_MARKER_SHAPES: readonly LiteralMarkerShape[] = [
     body: ['status: "active",', "/* taxMinor is billed at renewal */"],
     flagged: [],
   },
+  // The four rows below pin the *residual* class `skipCrossesPropertyBoundary`'s
+  // TSDoc states: the rule reads text, never syntax, so it cannot be exact in
+  // either direction. Rows 1 and 2 are the accepted **false positive** — prose
+  // carrying a `:` and a `,` at the literal's own depth is shaped like a
+  // property, so a comment that loses no key is flagged by the shape rule.
+  // Row 4 is the accepted **false negative** — text alone cannot tell a brace
+  // inside a comment from a brace the reader swallowed, so a skip whose text
+  // holds a *nested* object's property stays exempt. Row 3 states why the two
+  // directions agree: a comma nested in `()` sits below the literal's own depth,
+  // so it is not a separator. Changing either verdict is a behaviour change that
+  // needs the card that owns the classifier — not a row edit here.
+  {
+    shape:
+      "a complete value-position comment whose prose is shaped like a property, which the shape rule flags although no key is lost",
+    body: ["pendingDueMinor: /* note, and: more */ 0,", 'status: "active",'],
+    flagged: [2],
+  },
+  {
+    shape:
+      "a complete value-position comment whose prose holds two key-colon pairs, which the shape rule also flags although no key is lost",
+    body: ["pendingDueMinor: /* a: b, c: d */ 0,", 'status: "active",'],
+    flagged: [2],
+  },
+  {
+    shape:
+      "a complete value-position comment whose comma is nested in `()`, below the literal's own depth, so it is not a separator",
+    body: ["pendingDueMinor: /* (a, b): c */ 0,", 'status: "active",'],
+    flagged: [],
+  },
+  {
+    shape:
+      "a skip that swallows a nested object's property, which is exempt because `propertyDepth` is the literal's own level",
+    body: ["nested: /* { inner: 1, */ 0,", 'status: "active",'],
+    flagged: [],
+  },
 ];
 
 /** One way a hand-edited mint literal can name a depth-1 property. */
