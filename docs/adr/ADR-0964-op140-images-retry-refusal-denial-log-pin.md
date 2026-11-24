@@ -3,8 +3,8 @@
 - **Status:** Accepted · **Date:** 2026-11-24
 - **Card:** `t_f17bed7b` (OP-140 TEST, Low, phase 6-M2M · epic Notifications) — finding **F1** of the round-1 review `t_9d80fb7f` of [ADR-0777](ADR-0777-op140-images-retry-service-and-upload-batch-kind.md) (draft PR [#829](https://github.com/yahodu/openpic-webapp/pull/829))
 - **Lane:** `OP-126 uploads lane` (`0760`–`0779`) — **exhausted**: `0779` is the range end (ADR-0777 §Number allocation). This record is therefore a **pool draw** per ADR-0300 §11 item 18, and the `unallocated (future lanes)` cursor read `0964` at this branch head.
-- **Branch:** `OP-140-task-images-retry-refusal-log-pin` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/op140-images-retry-refusal-log-pin` (cut from `origin/main` `a96e19d0`, i.e. after the GREEN `t_f8de2e20` merged as `61fa3eec`)
-- **ADR number:** `0964` — swept before minting: `origin/main` `a96e19d0` (highest record `ADR-0963`), every `.worktrees/*/docs/adr` tree (highest `0963`), the nine open PR heads (#857, #856, #852 → `0963`; #832 → `0962`; #829 → `0944`; #828 → `0944`; #755, #743 and #272 hold no `09xx`; highest `0963`), `git rev-list --objects --all -- docs/adr` (highest `0963`) and every non-`done` card body on the active board (`$HERMES_KANBAN_DB`; the only literal at or above `0940` is the placeholder `9999` of `t_7ac40bd9`, which is not an allocation) — none of which holds `0964`.
+- **Branch:** `OP-140-task-images-retry-refusal-log-pin` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/op140-images-retry-refusal-log-pin` (cut from `origin/main` `a96e19d0`, i.e. after the GREEN `t_f8de2e20` merged as `61fa3eec`, then folded with `origin/main` `8666932e` — the ADR-0777 sign-off (#856) merge, `+11/−2` on `docs/adr/ADR-0777-…md` only, so no record, cell or ledger row moved under it)
+- **ADR number:** `0964` — swept before minting: `origin/main` `a96e19d0`, re-read as `8666932e` after the sign-off merge (highest record `ADR-0963` on both), every `.worktrees/*/docs/adr` tree (highest `0963`), the nine open PR heads (#857, #856, #852 → `0963`; #832 → `0962`; #829 → `0944`; #828 → `0944`; #755, #743 and #272 hold no `09xx`; highest `0963`), `git rev-list --objects --all -- docs/adr` (highest `0963`) and every non-`done` card body on the active board (`$HERMES_KANBAN_DB`; the only literal at or above `0940` is the placeholder `9999` of `t_7ac40bd9`, which is not an allocation) — none of which holds `0964`.
 - **Consumes:** `0964` (this record). The GREEN sibling takes **no** number and writes **no** ledger row, so the `unallocated (future lanes)` cursor, the `OP-129 attendee identity lane` cell and the `OP-136 jobs lane` mirror cell all advance `0964` → `0965`.
 - **Consumers:** `apps/web/src/test/integration/event-images-retry-service.test.ts`
 - **Touches:** one **test-only** file (two appended cases; the ten shipped cases, every helper and the harness stay byte-identical), this record, its index row, three ledger cells and one ledger note. **No production code** — the `warn` is the GREEN's.
@@ -13,7 +13,7 @@
 
 `retryFailedEventImages` (`apps/web/src/server/images/retry-failed.ts`, ADR-0777 D1/D2) is the service the `upload_batch × retry_failed` delegate will call instead of `POST …/events/{eventId}/images:reprocess-failed`. It re-checks the caller itself, because a delegate has no `Request` to run a stage against: it reads the tenant-scoped `events` row and then asks `resolveEventActorRole`, refusing both times with `appError("not_found")`.
 
-The route it replaces refuses through `tenantStage`'s `deny` (`apps/web/src/server/tenancy/route-stage.ts:139-146`), which **logs and throws**:
+The route it replaces refuses through `tenantStage`'s `deny` (`apps/web/src/server/tenancy/route-stage.ts:147-149`), which **logs and throws**:
 
 ```ts
 const deny: (reason: string) => never = (reason) => {
@@ -21,6 +21,8 @@ const deny: (reason: string) => never = (reason) => {
   throw appError("not_found");
 };
 ```
+
+The block sits at `route-stage.ts:147-149` — `const deny` on `:147`, the `warn` on `:148`, the `throw` on `:149`, measured on `8666932e`. The routing card's `139-146` is the JSDoc comment above it, not a different file: the blob is unchanged on the trunk.
 
 `admitEventActor` (`apps/web/src/server/events/access.ts:95`) calls `deny` twice, with the only two reasons a refused event-actor admission has:
 

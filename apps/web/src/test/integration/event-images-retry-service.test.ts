@@ -829,7 +829,7 @@ describe("retryFailedEventImages — the admission re-checked inside the service
  * ## Why this block exists (finding **F1** of the round-1 review of ADR-0777)
  *
  * The route this service replaces refuses through `tenantStage`'s `deny`
- * (`@/server/tenancy/route-stage.ts:139-146`), which **logs and throws**:
+ * (`@/server/tenancy/route-stage.ts:147-149`), which **logs and throws**:
  * `logger.warn("tenant access denied", { event: "tenancy.access_denied", reason })`
  * and then `throw appError("not_found")`. `admitEventActor`
  * (`@/server/events/access.ts:95`) calls it with `reason: "event_not_found"`
