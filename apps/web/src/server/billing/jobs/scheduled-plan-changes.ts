@@ -1,5 +1,7 @@
+import { systemAuditActor, writeAuditLog } from "@/server/audit/audit-log";
 import { COLLECTIONS } from "@/server/db/collections";
 import { getDb } from "@/server/db/mongo";
+import { withTransaction } from "@/server/db/transaction";
 import { emitDomainEvent } from "@/server/domain/domain-events";
 import type { CronRunOutcome } from "@/server/jobs/cron-job";
 import { getLogger } from "@/server/logging";
@@ -67,12 +69,21 @@ function asCandidate(value: unknown): ScheduledChangeCandidate | null {
 }
 
 /**
+ * The matched pre-image carries no plan to name in `before`. Thrown inside the
+ * transaction so the transition is not applied either: a row is never written
+ * with a guessed value (ADR-0975 §D5), and the candidate counts as `skipped`.
+ */
+class UnrecordablePreImage extends Error {}
+
+/**
  * Apply and clear every due scheduled plan change, bounded by `limit`.
  *
  * The transition is a conditional `findOneAndUpdate` whose filter carries the
  * prior state (`"scheduledChange.effectiveAt": { $lte: now }`), so a lost race —
  * or a second run after the row was cleared — matches zero documents and is a
- * no-op (contract §10.2 rule 1).
+ * no-op (contract §10.2 rule 1). The transition and its
+ * `subscription.downgraded` `auditLogs` row commit in one transaction
+ * (ADR-0975 §D4): a refused insert aborts the change.
  *
  * @param options - Database/clock seams and the per-run limit.
  * @returns The §10.2 run outcome (`hasMore` when the candidate window filled).
@@ -99,29 +110,63 @@ export async function runScheduledPlanChanges(
 
   for (const row of candidates) {
     const { toPlanKey, reason } = row.scheduledChange;
-    const updated = await subscriptions.findOneAndUpdate(
-      { _id: row._id, "scheduledChange.effectiveAt": { $lte: now } },
-      {
-        $set: { activePlanKey: toPlanKey, scheduledChange: null, updatedAt: now },
-        $push: {
-          statusHistory: {
-            from: "scheduled_change",
-            to: toPlanKey,
-            at: now,
-            reason,
-            actor: "system",
+    const subscriptionId = String(row._id);
+
+    // The change and its row commit together (ADR-0975 §D4): an audit failure
+    // aborts the transition, so an applied downgrade always has one row.
+    const applied = await withTransaction(async (session) => {
+      const previous = await subscriptions.findOneAndUpdate(
+        { _id: row._id, "scheduledChange.effectiveAt": { $lte: now } },
+        {
+          $set: { activePlanKey: toPlanKey, scheduledChange: null, updatedAt: now },
+          $push: {
+            statusHistory: {
+              from: "scheduled_change",
+              to: toPlanKey,
+              at: now,
+              reason,
+              actor: "system",
+            },
           },
         },
-      },
-      { returnDocument: "after" }
-    );
-    if (updated === null) {
+        { returnDocument: "before", session }
+      );
+      if (previous === null) {
+        return false;
+      }
+
+      const before = (previous as { readonly activePlanKey?: unknown }).activePlanKey;
+      if (typeof before !== "string") {
+        throw new UnrecordablePreImage();
+      }
+
+      await writeAuditLog(
+        session,
+        {
+          actor: systemAuditActor("scheduled-plan-changes"),
+          action: "subscription.downgraded",
+          target: { kind: "subscription", id: subscriptionId },
+          tenantId: row.tenantId,
+          before: { activePlanKey: before },
+          after: { activePlanKey: toPlanKey },
+          reason,
+        },
+        now
+      );
+      return true;
+    }).catch((error: unknown) => {
+      if (error instanceof UnrecordablePreImage) {
+        return false;
+      }
+      throw error;
+    });
+
+    if (!applied) {
       skipped += 1;
       continue;
     }
 
     affected += 1;
-    const subscriptionId = String(row._id);
     await emitDomainEvent(
       {
         eventKey: "billing.plan.downgrade_applied",
