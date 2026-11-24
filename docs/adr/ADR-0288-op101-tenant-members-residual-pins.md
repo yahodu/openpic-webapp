@@ -202,13 +202,11 @@ draft by design:
 | `test_coverage`                                                                                                                                      | fail — the same integration failure |
 
 The integration job's whole-project result is `1 failed \| 1765 passed (1766)`,
-and the single red is this pack's R1
-(`apps/web/src/test/integration/tenant-members.test.ts > OP-101 tenant-member residuals (ADR-0304 fresh pins, ADR-0288) > …
-
-> orders by joinedAt ascending and breaks an equal instant by ascending userId`)
-> with the assertion printed in §"The one red, verbatim". No other case in the
-> 1 766 fails, so the nine green pins hold in a full-project run and the red is not
-> masking a second defect.
+and the single red is this pack's R1 — the case titled
+"orders by joinedAt ascending and breaks an equal instant by ascending userId" —
+with the assertion printed in §"The one red, verbatim". No other case in the
+1 766 fails, so the nine green pins hold in a full-project run and the red is not
+masking a second defect.
 
 ## Consequences
 
