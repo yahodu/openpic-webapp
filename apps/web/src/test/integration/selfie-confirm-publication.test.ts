@@ -1275,3 +1275,244 @@ describe("when the confirmation's transaction fails for a reason that is not a d
     expect(await matchesNewRows()).toHaveLength(0);
   });
 });
+
+/* ─ F3.7: the outbox write's own failure is a 500, never a masked 200 ─────── */
+
+/** A `selfies` write the confirmation asked for, as the spy saw it. */
+interface SelfieWrite {
+  /** The selfie the write addressed, so the case cannot pass on another row. */
+  readonly selfieId: string;
+  /** The `isActive` the write asked for — the §16.4 pointer itself. */
+  readonly askedIsActive: unknown;
+  /** True when the write carried a session, i.e. ran inside the transaction. */
+  readonly inSession: boolean;
+}
+
+/**
+ * The confirmation's transaction, with the **outbox insert** failing for a
+ * reason that is not a duplicate key.
+ *
+ * **Why this exists.** F3.6 above pins the *activation* write's failure: stubbing
+ * the `attendeeEventProfiles` update reds it. That leaves the transaction's
+ * **other** write — the in-transaction `emitDomainEvent` call, the announcement
+ * itself — unpinned, and measured on `origin/main` `3a9231bd` a `catch` around
+ * exactly that call is invisible to the whole file: wrapping the emit in
+ * `try { … } catch {}` answers `200 status: "ready"` with the activation
+ * committed (`status: "ready"`, `activeSelfieId` set, `matchCount: 3`, the
+ * §15.3 watermark set) and **no** `attendee.matches.new` row — the announcement
+ * silently lost — while the shipped cases stay `21 passed (21)` (ADR-0966
+ * §Evidence). ADR-0965's Reversal condition already forbids it ("the confirm's
+ * transaction fails for a reason that is not the outbox's duplicate-key
+ * collision → `500 internal_error` … and announces nothing"); this describe is
+ * that sentence's second half.
+ *
+ * The injection is the same driver-level shape as the F3.6 cases: a non-duplicate
+ * replica-set error (`code: 91`, no `TransientTransactionError` label, so
+ * `withTransaction` rethrows on the first attempt) rejected from
+ * `Collection.prototype.insertOne` only for `COLLECTIONS.domainEvents`, with
+ * every other collection forwarded to the real method resolved once at module
+ * load ({@link driverInsertOne}). The dedupe `countDocuments` is deliberately
+ * **not** stubbed, so the case cannot pass by making the dedupe read fail.
+ *
+ * The first case fails the outbox insert; the second fails the `selfies` row's
+ * `isActive` write (the transaction's other, earlier write) — the same
+ * transaction, the same expectations, so a swallow anywhere in the body reds one
+ * of them.
+ *
+ * What the client sees is the app-wide `500 internal_error` with no `details`,
+ * and nothing committed: the profile row keeps its pre-call `processing` /
+ * `null` / `0` / unset watermark, the selfie is still not the active one, and no
+ * outbox row exists. Non-vacuity is the recorded **attempt**: exactly one outbox
+ * insert, carrying this selfie's delivery identity
+ * (`attendee.matches.new:<eventId>:<profileId>:<selfieId>`, §10.3.2) and the
+ * transaction's session — a route that answered `500` before the transaction, or
+ * removed the emit, fails there.
+ *
+ * The `notifications` feed rows are **not** asserted here: the fan-out is
+ * deferred through `after()`, which throws outside a request scope, so in this
+ * harness the zero-row claim cannot red on its own (ADR-0965 §Consequences). The
+ * primary "announces nothing" observable is the `domainEvents` row count, and the
+ * recorded attempt is what makes even that non-vacuous.
+ */
+describe("when the confirmation's outbox write fails for a reason that is not a duplicate key", () => {
+  it("answers 500 internal_error and commits neither the activation nor the announcement", async () => {
+    const ready = await readyEvent("op132-f3-emitfail");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+    const submitted = await submitOne(ready.event.slug, ready, "f3-emitfail");
+    await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+
+    // The worker's result is on the row, so this confirmation WOULD publish and
+    // set `ready`: the pre-call reads are the state a rollback must preserve.
+    const before = await profileRow();
+    expect(before.status).toBe("processing");
+    expect(before.activeSelfieId).toBeNull();
+    expect(before.matchCount).toBe(0);
+    expect(await firstMatchNotifiedStamp()).toBeNull();
+    expect(await matchesNewRows()).toHaveLength(0);
+
+    // The transaction reaches its announcement and the driver refuses it for a
+    // reason that is NOT a duplicate key: `emitDomainEvent` dedupes `11000` and
+    // only `11000`, so this error must abort the whole transaction.
+    const failure = Object.assign(new Error("not primary"), { code: 91 });
+    const outboxAttempts: OutboxWrite[] = [];
+    const insertSpy = vi.spyOn(Collection.prototype, "insertOne").mockImplementation(function (
+      this: Collection,
+      document,
+      options
+    ) {
+      if (this.collectionName === COLLECTIONS.domainEvents) {
+        outboxAttempts.push({
+          dedupeKey: fieldOf(document, "dedupeKey"),
+          inSession: fieldOf(options, "session") !== undefined,
+        });
+        return Promise.reject(failure);
+      }
+      return driverInsertOne.call(this, document, options);
+    });
+
+    let response: Response;
+    try {
+      response = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+        cookie: ready.cookie,
+        ip: ready.ip,
+      });
+    } finally {
+      insertSpy.mockRestore();
+    }
+
+    // Non-vacuity: the confirmation really did ask the outbox to record THIS
+    // selfie's delivery, once, under its transaction. A route that answered
+    // `500` before the transaction — or one whose emit never ran — fails here.
+    expect(outboxAttempts).toEqual([
+      {
+        dedupeKey: activationDeliveryKey(
+          eventContext.eventId,
+          submitted.profileId,
+          submitted.selfieId
+        ),
+        inSession: true,
+      },
+    ]);
+
+    // §0.12: the failure is the app-wide `500`, and the envelope leaks nothing.
+    // A `200` here is a silent failure with a success envelope: `status: "ready"`
+    // for a selfie whose announcement was never recorded.
+    expect(
+      response.status,
+      "a confirm whose outbox write failed with a non-retry driver error answered " +
+        `${String(response.status)}; it must answer the app-wide 500`
+    ).toBe(500);
+    const error = await errorBody(response);
+    expect(error.code).toBe("internal_error");
+    expect(error.details).toBeUndefined();
+
+    // Nothing was activated and nothing was announced: the §15.3 row is exactly
+    // as the submit left it, the watermark never fired, the selfie is still not
+    // the active one and the outbox holds no row (§6.4, §7.6/§7.7, §16.4).
+    const after = await profileRow();
+    expect(after.status).toBe(before.status);
+    expect(after.activeSelfieId).toBeNull();
+    expect(after.matchCount).toBe(0);
+    expect(await firstMatchNotifiedStamp()).toBeNull();
+    expect(await selfieIsActive(submitted.selfieId)).toBe(false);
+    expect(await matchesNewRows()).toHaveLength(0);
+
+    // The `500` is the injected failure, not a broken fixture: the same request
+    // with a healthy driver answers the documented `200`, activates the row and
+    // publishes exactly once, so the client can retry (a `5xx` leaves no
+    // `Idempotency-Key` state behind).
+    const retried = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(keysOf(retried)).toEqual(CONFIRM_KEYS);
+    expect(retried.status).toBe("ready");
+    expect(retried.selfieId).toBe(submitted.selfieId);
+    const recovered = await profileRow();
+    expect(recovered.status).toBe("ready");
+    expect(recovered.activeSelfieId?.toHexString()).toBe(submitted.selfieId);
+    expect(recovered.matchCount).toBe(FIRST_RUN_MATCHES);
+    expect(await firstMatchNotifiedStamp()).not.toBeNull();
+    expect(await selfieIsActive(submitted.selfieId)).toBe(true);
+    expect(await matchesNewRows()).toHaveLength(1);
+  });
+
+  it("answers 500 internal_error when the isActive write fails the same way", async () => {
+    const ready = await readyEvent("op132-f3-isactive");
+    const eventContext = { tenantKey: ready.tenantKey, eventId: ready.event.id.toHexString() };
+    const submitted = await submitOne(ready.event.slug, ready, "f3-isactive");
+    await runWorker(submitted, eventContext, FIRST_RUN_MATCHES);
+
+    const before = await profileRow();
+    expect(before.status).toBe("processing");
+    expect(before.activeSelfieId).toBeNull();
+    expect(before.matchCount).toBe(0);
+    expect(await firstMatchNotifiedStamp()).toBeNull();
+    expect(await matchesNewRows()).toHaveLength(0);
+
+    // The transaction's earlier write: the `isActive` flip on the submitted
+    // selfie fails with the same non-duplicate driver error. A swallow here
+    // commits an activation whose selfie is not the active one — the same
+    // silent-failure class, one write earlier.
+    const failure = Object.assign(new Error("not primary"), { code: 91 });
+    const selfieWrites: SelfieWrite[] = [];
+    const writeSpy = vi.spyOn(Collection.prototype, "updateOne").mockImplementation(function (
+      this: Collection,
+      filter,
+      update,
+      options
+    ) {
+      if (this.collectionName === COLLECTIONS.selfies) {
+        selfieWrites.push({
+          selfieId: String(fieldOf(filter, "_id")),
+          askedIsActive: fieldOf(setOf(update), "isActive"),
+          inSession: fieldOf(options, "session") !== undefined,
+        });
+        return Promise.reject(failure);
+      }
+      return driverUpdateOne.call(this, filter, update, options);
+    });
+
+    let response: Response;
+    try {
+      response = await confirmSelfie(ready.event.slug, submitted.selfieId, {
+        cookie: ready.cookie,
+        ip: ready.ip,
+      });
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    // Non-vacuity: the transaction opened and reached THIS selfie's `isActive`
+    // write, under its session, asking for `true` (§16.4).
+    expect(selfieWrites).toEqual([
+      { selfieId: submitted.selfieId, askedIsActive: true, inSession: true },
+    ]);
+
+    expect(
+      response.status,
+      "a confirm whose isActive write failed with a non-retry driver error answered " +
+        `${String(response.status)}; it must answer the app-wide 500`
+    ).toBe(500);
+    const error = await errorBody(response);
+    expect(error.code).toBe("internal_error");
+    expect(error.details).toBeUndefined();
+
+    const after = await profileRow();
+    expect(after.status).toBe(before.status);
+    expect(after.activeSelfieId).toBeNull();
+    expect(after.matchCount).toBe(0);
+    expect(await firstMatchNotifiedStamp()).toBeNull();
+    expect(await selfieIsActive(submitted.selfieId)).toBe(false);
+    expect(await matchesNewRows()).toHaveLength(0);
+
+    const retried = await confirm(ready.event.slug, submitted.selfieId, ready);
+    expect(keysOf(retried)).toEqual(CONFIRM_KEYS);
+    expect(retried.status).toBe("ready");
+    expect(retried.selfieId).toBe(submitted.selfieId);
+    const recovered = await profileRow();
+    expect(recovered.status).toBe("ready");
+    expect(recovered.activeSelfieId?.toHexString()).toBe(submitted.selfieId);
+    expect(recovered.matchCount).toBe(FIRST_RUN_MATCHES);
+    expect(await firstMatchNotifiedStamp()).not.toBeNull();
+    expect(await selfieIsActive(submitted.selfieId)).toBe(true);
+    expect(await matchesNewRows()).toHaveLength(1);
+  });
+});
