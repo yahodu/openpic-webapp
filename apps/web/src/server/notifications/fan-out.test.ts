@@ -294,6 +294,41 @@ describe("resolveRecipients — actor exclusion (U2)", () => {
 });
 
 /**
+ * The billing-contact actor exemption is **audience-scoped, never `typeKey`-scoped**
+ * — the type-key-agnostic half of ADR-0978 §D3 (OP-101).
+ *
+ * `F1D` in `test/integration/billing-plan-upgraded-delivery.test.ts` pins the other
+ * half of the same rule, but it runs on one concrete key (`billing.plan.upgraded`),
+ * so a `typeKey`-keyed variant that enumerates a list of keys still reads green
+ * under it. This case runs on a **synthetic** key that exists in no catalogue and
+ * in no plausible spared list, so any re-scoping of the exemption onto `typeKey` —
+ * one key or an enumerated list — reds here and nowhere else.
+ *
+ * The non-`billing_contact` actor is still excluded by
+ * `resolveRecipients — actor exclusion (U2)` above; that half is not duplicated.
+ */
+describe("resolveRecipients — billing-contact actor exemption (OP-101, ADR-0978 §D3)", () => {
+  it("spares the actor the billing_contact audience resolved, whatever the type key is", async () => {
+    const repository = makeRepository({
+      getBillingContactUserId: vi.fn(promised("u_payer")),
+    });
+
+    const recipients = await resolveRecipients(
+      makeInput({
+        typeRow: makeNotificationType({
+          typeKey: "billing.plan.probed",
+          audiences: ["billing_contact"],
+        }),
+        actorUserId: "u_payer",
+        repository,
+      })
+    );
+
+    expect(recipients).toEqual(["u_payer"]);
+  });
+});
+
+/**
  * `attendee_subject` — an `attendee.*` row addresses its **subject** (OP-140 F1,
  * ADR-0947 D1–D5).
  *
