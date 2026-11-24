@@ -4,7 +4,7 @@
 - **Card:** OP-101 follow-up (process/ADR) — record the ADR-number guard's contract and scope boundary (`t_2ae626e9`, orchestrator; raised by the review of `t_8675b675`, OP-96 R-1, PR [#229](https://github.com/yahodu/openpic-webapp/pull/229))
 - **Relates to:** [ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) (the policy this guard is the mechanical backstop for), [ADR-0128](ADR-0128-op96-green-review-signoff.md) (the OP-96 integration renumber), [ADR-0133](ADR-0133-op96-f1-f4-round2-red.md) (a cross-lane allocation settled by card `t_cf0b1f77`), [ADR-0143](ADR-0143-op96-flush-overlap-single-send-green.md) / [ADR-0145](ADR-0145-op96-f1-unrecorded-flush-bound-green.md) (the collisions the policy ends)
 - **Schema:** n/a · **Contract:** n/a (test-only tooling; no application code)
-- **Implementation:** `apps/web/src/test/helpers/` — `adr-numbering.ts` (barrel; invariants i–ii), `adr-lane-ranges.ts` (iii), `adr-source-references.ts` (iv), `adr-consumers.ts` (v), `adr-record-links.ts` (vi), `adr-item-sections.ts` (vii), `adr-gate-conditions.ts` (viii), shared report shapes in `adr-guard-types.ts` · **Spec:** `apps/web/src/test/unit/` — `adr-numbering.test.ts`, `adr-lane-ranges.test.ts`, `adr-source-references.test.ts`, `adr-consumers.test.ts`, `adr-record-links.test.ts`, `adr-item-sections.test.ts`, `adr-gate-conditions.test.ts`
+- **Implementation:** `apps/web/src/test/helpers/` — `adr-numbering.ts` (barrel; invariants i–ii), `adr-lane-ranges.ts` (iii), `adr-source-references.ts` (iv, and §12's measured-count provenance clause), `adr-consumers.ts` (v), `adr-record-links.ts` (vi), `adr-item-sections.ts` (vii), `adr-gate-conditions.ts` (viii), shared report shapes in `adr-guard-types.ts` · **Spec:** `apps/web/src/test/unit/` — `adr-numbering.test.ts`, `adr-lane-ranges.test.ts`, `adr-source-references.test.ts`, `adr-consumers.test.ts`, `adr-record-links.test.ts`, `adr-item-sections.test.ts`, `adr-gate-conditions.test.ts`
 
 ## Context
 
@@ -590,6 +590,103 @@ G1–G6 under "seven conditions" turns it red with the actionable report
 
 This section mints no ADR number, adds no `docs/adr/README.md` row and does not
 move the `Next free` cell.
+
+### 12. The measured-count provenance clause (2026-11-24, finding F3 of the review of PR [#910](https://github.com/yahodu/openpic-webapp/pull/910))
+
+The review of PR [#910](https://github.com/yahodu/openpic-webapp/pull/910) found
+[ADR-0980](ADR-0980-op101-downgrade-scheduled-event-green.md) quoting `unit` as
+`199 files / 3378 passed` and "the nine `adr-*` guards" for a head that measured
+`200 / 3398` and ten guards. Every figure was true of an **earlier** head, the
+record described a later one, and the whole family stayed green: no invariant tied
+a record's `Measured:` figure to the commit it was measured at, so CI cannot see
+this drift. This clause is that tie. It is a **clause on an existing rule**, not a
+ninth row — see "Where it lives" for why that is the point of the card that
+demanded it (`t_df914f5d`).
+
+**The rule.** A record that quotes a suite count must name the head commit it was
+measured at.
+
+- **A suite-count quote** is a digit run, whitespace, `passed`, whitespace, `(`
+  — vitest's `Tests  15 passed (15)`, its `1 failed | 14 passed (15)` arm, and a
+  quote whose parenthesis wrapped onto the next line (the trunk does that twice,
+  at `1781 passed  (`). The parenthesis is part of the shape, so prose — "the 3
+  passed cases" — is not a quote. The pattern is `\d[\d,]*\s+passed\s+\(`, not
+  the follow-up card's `[0-9]+ passed \(`: the one-space form misses four records
+  (a double space, a line wrap), and a census that cannot see a count cannot hold
+  it to a head.
+- **A head commit reference** is a lowercase hexadecimal run of 7 to 40 characters
+  that carries at least one `a`–`f` letter. Each bound is load-bearing: the letter
+  requirement rejects a bare digit run — four trunk records match the looser
+  `\b[0-9a-f]{7,40}\b` on an epoch, a byte count, a magic number and a placeholder
+  — the floor rejects a six-character prefix, the ceiling rejects a 64-character
+  blob hash, and lowercase is what this repository writes. The **first** such token
+  in document order is the one reported, and the report carries it in `checked`,
+  so a record that names one reports which.
+- The rule is **record-level**, not §Evidence-scoped. At `03a5fbd5`, 148 of the
+  314 quoting records carry a `## Evidence` section at all and 37 cite their head
+  only outside it, so a §Evidence-only rule would red about 200 records: a
+  documentation programme, not a guard. The follow-up card's "§Evidence" is
+  therefore read as "the record", and the issue names the line of the record's
+  **first** quote, so a reader lands in the right paragraph.
+- A fenced code block and an inline code span **are** read, unlike invariant (vi):
+  a record's counts and its head live in fences and backticks. `docs/adr/README.md`
+  is out, because the ledger's notes quote other heads' counts on purpose.
+
+**Report.** One issue per record — `{ code: "missing-head-commit", file, line,
+quoted }`, `quoted` being the phrase without its parenthesis and with whitespace
+collapsed, so it is pasteable — plus a `checked` list of every evaluated record
+carrying `head` (`null` on the defect), sorted by record path. `ok ===
+(issues.length === 0)`. The `checked` list is what keeps silence non-vacuous: a
+narrowed sweep, or a head matcher that stops matching, loses entries.
+
+**The allowlist.** Eighteen records already quote counts and name no head at
+`03a5fbd5`; they are an explicit, shrink-only list of **bare four-digit record
+numbers** (`MEASURED_COMMIT_EXEMPTIONS`), and an exempt record is _skipped_, not
+checked-and-passed — it appears in neither `checked` nor `issues`.
+
+- _A number cut-off_ — "enforce above the highest number at writing" — was
+  rejected: it is vacuous until the next record is minted, while the list enforces
+  the rule over the other 297 records today.
+- _File names_ were rejected by a measured contract: naming the eighteen files
+  makes the helper their declared **consumer**, and three of them list their
+  consumers, so invariant (v) reported three `consumer-mismatch` issues the moment
+  the names were written. A record number identifies exactly one file (invariant
+  (i)) and cites nothing.
+- _The ratchet_: the spec pins the list equal to the tree's actual offender
+  numbers, so repairing a record reds until its number leaves the list. The list
+  can only shrink.
+
+**Measured at this branch's base `f0422e2e`.** 486 records, 315 quote a suite
+count, 297 name a head and are checked, 18 are exempt; at `03a5fbd5`, the head the
+follow-up card states, the same census read 485 / 314 / 296 / 18 (`#911` minted one
+more record). The real-tree case pins floors, not equalities —
+`checked.length >= 280`, `scannedRecords >= 480` — per §10's census rule.
+
+**Load-bearing, measured.** Replacing every head-shaped token in
+[ADR-0980](ADR-0980-op101-downgrade-scheduled-event-green.md)'s bytes on a
+throwaway probe reds exactly two cases of the clause and nothing else in the
+family — the trunk census case with
+`missing-head-commit docs/adr/ADR-0980-…:18 "2 passed"`, and the ratchet — while
+the other nine spec files stay at `320 passed (320)`. Restoring the bytes
+byte-identically (`git checkout`) reads `337 passed (337)` over the ten files.
+
+**Where it lives, and why no row of its own.** In
+`apps/web/src/test/helpers/adr-source-references.ts` — the family's reference
+rule, and the module that already owns the directory read and the file read — and
+in that module's **existing** spec. §10's layout rule makes a new invariant a new
+module, its spec and a table row; this clause deliberately takes none, because the
+family's **spec count** is itself quoted in live prose: [ADR-0980]'s §Evidence and
+its ledger cell both say "the ten `adr-*` guards", the ledger cell is byte-frozen
+by this card, and an eleventh `adr-*.test.ts` would falsify both and demand the
+count sweep that #908 (`45a0d43d`) and #912 (`03a5fbd5`) had just finished —
+exactly the drift class (viii) reports. The precedent is §10's own:
+`adr-inline-code-spans.ts` and `adr-ledger-shape.ts` also live outside this table
+and are named by role. This section is the clause's decision record, and the
+table's "eight mechanical invariants" stays true.
+
+**Where it runs.** The same `pnpm test:unit` step as the rest of the family, under
+the glob §10 states — never a count. This section mints no ADR number, adds no
+`docs/adr/README.md` row and does not move the `Next free` cell.
 
 ## Consequences
 
