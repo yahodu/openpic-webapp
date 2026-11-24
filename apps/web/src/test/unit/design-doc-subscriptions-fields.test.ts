@@ -94,22 +94,28 @@ import {
  * reader does. The comment branch cannot tell code from a value: a `/` followed
  * by `*` starts a skip that resumes at the nearest closing delimiter. What
  * costs keys is therefore not the position but the **span** — the reader never
- * re-examines what it stepped over, so a `:` or a top-level `,` inside that span
- * (outside strings) means a property sat there and its key is gone in silence.
- * Three shapes that an earlier cut reddened on are parser-safe and exempt: a
+ * re-examines what it stepped over, so a *property shape* inside that span (a
+ * key's `:` **and** a separator `,`, both at the literal's own bracket depth and
+ * outside strings) means a property sat there and its key is gone in silence.
+ * One token alone is not a shape: a comma or a colon inside a comment is prose,
+ * and a colon nested in `{}`/`[]`/`()` sits below the literal's own depth. Three
+ * shapes that an earlier cut reddened on are parser-safe and exempt: a
  * marker inside a quoted string value (`mandateStatus: "pending/*x"`, offset
  * 376 — the string is consumed at its opening quote), a complete block comment
  * where a property may start (skipped whole, key position intact), and a
  * complete block comment written after a key's colon and before its value (the
  * `pendingDueMinor` matrix row): its skip ends at its own closing delimiter,
- * before any *property* boundary, because its text carries no property shape —
- * no `:` and no top-level `,` — so the reader lands on the value and reads the
- * next property, and every census case stays green. Reddening on that last shape
+ * before any *property* boundary **when its own text carries no property
+ * shape**, so the reader lands on the value and reads the next property, and
+ * every census case stays green. Reddening on that last shape
  * was a false red whose message also claimed it swallowed the literal — a claim
  * the reader contradicts. The narrowed rule is pinned by a matrix row, one case
  * per posture, and that includes three prose shapes whose *text* holds a `,` or
  * a `:` (OP-140 follow-up): punctuation inside a comment is text, not
- * a property boundary, so those rows must stay exempt as well.
+ * a property boundary, so those rows must stay exempt as well. The rule is still
+ * a text heuristic, and its residual class is named where the classifier is
+ * defined: a genuine `/[/*]/` skip whose swallowed range carries no `:`+`,`
+ * pair passes it unseen.
  *
  * **What the real-tree case reports.** It reddens on every marker whose skip
  * crosses a property boundary inside an anchored mint literal (measured `0`
@@ -319,23 +325,49 @@ interface HarmfulBlockCommentMarker {
 
 /**
  * True when the text between a block-comment opener and its nearest closing
- * delimiter runs across a property boundary: it holds a `:` or a `,` at bracket
- * depth 0, outside strings.
+ * delimiter steps over a **property shape**: a key's `:` **and** a property
+ * separator `,`, both outside strings and both at the literal's own bracket
+ * depth.
  *
- * This is the measured boundary of the reader's comment branch. The reader
- * resumes at the nearest closing delimiter and never re-examines the text it
- * stepped over, so a boundary token inside the span means at least one property
- * sat there and its key is gone. A span that holds neither — a complete comment
- * written after a key's colon, before that key's value — costs no key.
+ * The boundary is a shape, not a token, because one token on its own is comment
+ * prose: a comma (`Cents, billed monthly`), a colon (`see the note: billed`) or
+ * a colon nested inside braces (`{a: 1}` sits at depth 2, not the literal's
+ * depth) names no property, and a complete comment written after a key's colon,
+ * before that key's value, costs no key. A `key: value,` pair inside the span
+ * is a property, so the skip stepped over one and its key is gone: the reader
+ * resumes at the nearest closing delimiter and never re-examines that text.
+ *
+ * **Residual heuristic, stated rather than hidden.** The reader's comment branch
+ * cannot tell a comment from a regex value, and this test reads text only. Two
+ * classes therefore pass it unseen. A genuine `/[/*]/`-style skip whose swallowed
+ * range carries no `:`+`,` pair at the literal's depth is not detectable from
+ * text — a silent skip this function cannot see. In the other direction, a
+ * complete value-position comment whose own prose happens to be shaped like a
+ * property (`key: value,`) is flagged although it loses nothing, which is the
+ * price of asking for a shape; no §14.3 field writes such prose.
  *
  * @param body - One anchored literal's text.
  * @param from - Index just past the opener.
  * @param to - Index of the nearest closing delimiter, or the body's length when
  *   the body never closes it.
+ * @param openerDepth - The bracket depth the reader stood at when it reached the
+ *   opener, so the scan can follow the span's own brackets.
+ * @param propertyDepth - The bracket depth of the literal's own property list
+ *   (1 for a body that starts at its `{`). Only tokens at that depth can belong
+ *   to a property of this literal, so a `:` or a `,` inside a nested
+ *   `{}`/`[]`/`()` never counts.
  * @returns Whether a property could have sat inside the skip.
  */
-function skipCrossesPropertyBoundary(body: string, from: number, to: number): boolean {
-  let depth = 0;
+function skipCrossesPropertyBoundary(
+  body: string,
+  from: number,
+  to: number,
+  openerDepth: number,
+  propertyDepth: number
+): boolean {
+  let depth = openerDepth;
+  let holdsKeyColon = false;
+  let holdsSeparator = false;
   let index = from;
 
   while (index < to) {
@@ -350,21 +382,20 @@ function skipCrossesPropertyBoundary(body: string, from: number, to: number): bo
       continue;
     }
 
-    if (char === ":") {
-      return true;
-    }
     if (char === "(" || char === "[" || char === "{") {
       depth += 1;
     } else if (char === ")" || char === "]" || char === "}") {
       depth = Math.max(0, depth - 1);
-    } else if (char === "," && depth === 0) {
-      return true;
+    } else if (depth === propertyDepth && char === ":") {
+      holdsKeyColon = true;
+    } else if (depth === propertyDepth && char === ",") {
+      holdsSeparator = true;
     }
 
     index += 1;
   }
 
-  return false;
+  return holdsKeyColon && holdsSeparator;
 }
 
 /**
@@ -380,15 +411,20 @@ function skipCrossesPropertyBoundary(body: string, from: number, to: number): bo
  *
  * Neither of those is the harmful class. What is harmful is a skip that runs
  * across a **property boundary**, because the reader resumes at the nearest
- * closing delimiter and never re-examines what it stepped over: a `:` or a
- * top-level `,` inside the skipped span (outside strings) means a property sat
- * there, and its key is lost in silence. So a complete comment written after a
- * key's colon and before its value — the `pendingDueMinor` row of the matrix —
- * is parser-safe and exempt: the reader lands on the value, then continues and
- * reads the next property. `pattern: /[/*]/` is the shape that does lose keys:
- * the `/` at a value position opens a skip whose nearest closing delimiter is a
- * *later* one, and every property in between vanishes. A marker the body never
- * closes loses the rest of the literal, so it is flagged wherever it sits.
+ * closing delimiter and never re-examines what it stepped over: a property has
+ * a shape — a key's `:` and a separator `,`, both at the literal's own depth and
+ * outside strings — so a span carrying that shape means a property sat there and
+ * its key is lost in silence. One token on its own is comment prose, not a
+ * boundary: a comma (`Cents, billed monthly`), a colon (`see the note: billed`)
+ * and a colon nested in braces (`{a: 1}`, depth 2) all lose no key, so a
+ * complete comment written after a key's colon and before its value — the
+ * `pendingDueMinor` row of the matrix — is parser-safe and exempt whatever its
+ * prose carries short of a property shape: the reader lands on the value, then
+ * continues and reads the next property. `pattern: /[/*]/` is the shape that
+ * does lose keys: the `/` at a value position opens a skip whose nearest closing
+ * delimiter is a *later* one, and every property in between vanishes. A marker
+ * the body never closes loses the rest of the literal, so it is flagged wherever
+ * it sits.
  *
  * The exempt position is the literal's own start, a `{`, or a `,` at the
  * literal's top level, with only whitespace and comments since.
@@ -400,6 +436,10 @@ function skipCrossesPropertyBoundary(body: string, from: number, to: number): bo
 function blockCommentMarkers(body: string): HarmfulBlockCommentMarker[] {
   const markers: HarmfulBlockCommentMarker[] = [];
   let depth = 0;
+  // The body opens at the literal's own `{`, so its property list sits one
+  // level down; tokens at that depth are the ones a property of this literal
+  // can own.
+  let propertyDepth = 0;
   let atPropertyStart = false;
   let index = 0;
 
@@ -437,7 +477,7 @@ function blockCommentMarkers(body: string): HarmfulBlockCommentMarker[] {
       if (!closes) {
         losesKeys = true;
       } else if (!atPropertyStart) {
-        losesKeys = skipCrossesPropertyBoundary(body, index + 2, commentEnd);
+        losesKeys = skipCrossesPropertyBoundary(body, index + 2, commentEnd, depth, propertyDepth);
       }
       if (losesKeys) {
         markers.push({ offset: index, position, unclosed: !closes });
@@ -449,6 +489,9 @@ function blockCommentMarkers(body: string): HarmfulBlockCommentMarker[] {
 
     if (char === "{") {
       depth += 1;
+      if (propertyDepth === 0) {
+        propertyDepth = depth;
+      }
       atPropertyStart = true;
     } else if (char === "}" || char === "]" || char === ")") {
       depth -= 1;
@@ -490,8 +533,8 @@ function markerMessage(
     `carries a \`/*\` at offset ${String(marker.offset)} in a ${marker.position}`;
   const why = marker.unclosed
     ? " and the body never closes it: the skip runs to the end of the literal, so every key after it is lost"
-    : ", and its nearest `*/` lies past a `:` or a top-level `,`: the reader's skip crosses a " +
-      "property boundary, so every property inside the skip is lost";
+    : ", and its nearest `*/` lies past a property shape — a `:` and a `,` at the literal's top level — so " +
+      "the reader's skip steps over a property and that property's key is lost";
 
   return `${where}${why} — move the comment above the write call on \`${anchor}\``;
 }
@@ -522,15 +565,15 @@ interface LiteralMarkerShape {
  *
  * **Punctuation inside a comment is text, not a boundary (OP-140 follow-up).**
  * A complete value-position comment is exempt because its skip ends before the
- * next *property* boundary, and that holds whatever prose the comment carries: a
- * comma (`Cents, billed monthly`), a colon (`see the note: billed`) and a colon
- * nested inside braces (`{a: 1}`) are all comment text, so no property was
- * swallowed and no key is lost. Each of the three is its own row. The rule still
+ * next *property* boundary, and that holds for prose that is not itself a
+ * property shape: a comma (`Cents, billed monthly`), a colon (`see the note:
+ * billed`) and a colon nested inside braces (`{a: 1}`, one bracket below the
+ * literal's depth) are each only part of one, so no property was swallowed and
+ * no key is lost. Each of the three is its own row. The rule still
  * discriminates: the second row below — a marker in a regex value position that
  * a later closing delimiter reaches — is the contrasting flagged case, because
  * its skip ends past a real property boundary (`note: 1` holds a top-level
- * comma, and a property sits between the opener and that closing delimiter), so
- * it stays flagged.
+ * comma and a top-level colon), so it stays flagged.
  */
 const LITERAL_MARKER_SHAPES: readonly LiteralMarkerShape[] = [
   {
@@ -975,11 +1018,11 @@ describe("design doc §14.3 `subscriptions` field list", () => {
     // opener and any comment the body never closes. Parser-safe markers — a
     // marker inside a quoted string value, a complete block comment where a
     // property may start, and a complete value-position block comment whose own
-    // text carries no property shape (no `:` and no top-level `,`) — are exempt:
-    // such a comment's skip ends at its own closing delimiter, before any
-    // *property* boundary, so the reader lands on the value and reads the next
-    // property. `blockCommentMarkers` classifies all of them, and its matrix
-    // pins that they never redden.
+    // text carries no property shape (no `:`+`,` pair at the literal's own
+    // depth) — are exempt: such a comment's skip ends at its own closing
+    // delimiter, before any *property* boundary, so the reader lands on the value
+    // and reads the next property. `blockCommentMarkers` classifies all of them,
+    // and its matrix pins that they never redden.
     it("carries no `/*` marker that swallows a property inside any anchored mint literal", () => {
       const routes = MINT_ROUTES.map((route) => ({
         route,
