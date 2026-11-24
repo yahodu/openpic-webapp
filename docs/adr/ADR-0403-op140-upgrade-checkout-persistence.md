@@ -225,3 +225,13 @@ anywhere, so the reserved number stands. The gated GREEN consumes `0404` and
 writes no ledger row, so the `OP-106 subscriptions lane` `Next free` cell advances
 to `0405` — past both numbers. The `unallocated (future lanes)` pool cell is
 **not** touched (`0420`+).
+
+## Round-1 review (RED delivery `t_0c9f26df`)
+
+- **Verdict:** approved; the RED PR #852 stays open and draft (ADR-0306 — a RED-by-design pin PR is never squash-merged).
+- **Reviewed head:** `1d78ce35` (branch `OP-140-task-precondition-billing-mandate`, base `origin/main` `4d987ddf`).
+- **Re-measured evidence:** branch-point RED `5 failed (5)` on the absent-export guard (throw sites after `mintedEnvelope`, so `I1`–`I3` answered `201` first); a seam-only near-fix `2 failed | 3 passed (5)` with `I1`/`I2` red for the named reason; the seam plus the two-line upgrade write `5 passed (5)`; an upgrade-arm TTL reddens `I1` alone; a newest-row seam reddens `I1`/`I2`/`I4`/`I5`; a checkout-arm TTL reddens `I3` alone (reviewer-added probe — `I3` is load-bearing). ADR guards `8 files / 280 passed`; `prettier --check` clean; `tsc -p apps/web` no diagnostics; the only CI reds are the five expected pins (`Test Files 1 failed | 358 passed (359)`).
+- **Number draw:** `0403` taken, `0404` gated to the GREEN, lane cell `0403 → 0405`; the sweep at review time found no `0403`/`0404` record other than this delivery's own — not on the `4d987ddf` trunk, in any other `.worktrees/*/docs/adr` tree, in `git rev-list --objects --all -- docs/adr`, on an open PR head or in a non-`done` card body. Once this record landed the sweep reads differently, as it must: `0403` is on the trunk, `0404` is still unused, and the only trees besides the trunk that carry `0403` are this lane's own two.
+- **Findings recorded, none owed a code change:** the seam is id-keyed and unscoped by design (a future tenant-facing caller must not reuse it as an authorisation-free read); `I3`'s trailing `not.toBe(UPGRADE_CHECKOUT_URL)` is redundant with its deep-equal; two shapes are deliberately unpinned (a non-24-hex id, a `checkout.expiresAt` stored as a string) because no mint path produces them.
+- **Reversal condition stands:** when every mint path persists `checkout` and this lane's seam can read it back, the OP-140 `subscription × complete_mandate` arm and its pin can be written (owner: OP-140 notifications lane).
+- **Base check (at `b6cb0ce9`, this branch's base):** the pin spec is one blob at the reviewed head, at the GREEN head and at the base (`09d0f16d`), so the GREEN carried the pins byte-identically, and `billing-stored-checkout.test.ts` answers `5 passed (5)` there.
