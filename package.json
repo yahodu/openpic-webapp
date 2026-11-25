@@ -2,6 +2,7 @@
   "name": "openpic-webapp",
   "version": "1.90.0",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "packageManager": "pnpm@11.18.0",
   "engines": {

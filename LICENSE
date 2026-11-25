@@ -1,0 +1,142 @@
+# OpenPic Proprietary License
+
+**Version 1.0 — 25 November 2026**
+
+Copyright © 2026 OpenPic. All rights reserved.
+
+This license governs the OpenPic software in this repository — its source code,
+configuration, scripts, tests, documentation and any other material it contains
+(the "Software"). Read it before you use the Software. If you do not accept it,
+do not use the Software.
+
+## 1. Definitions
+
+- **"Licensor"** means OpenPic, the copyright holder of the Software.
+- **"You"** means the person or organisation that accesses or uses the Software.
+- **"Contribution"** means any code, documentation, test or other material that
+  You intentionally submit to the Licensor for inclusion in the Software.
+- **"Commercial Purpose"** means any use that is intended to generate revenue,
+  directly or indirectly, or that is made in the course of a business.
+- **"Distribute"** means to publish, share, sublicense, sell, rent, lease, lend,
+  make available, or otherwise transfer the Software or a derivative of it to
+  any third party, whether for a fee or free of charge.
+
+## 2. No license granted
+
+The Software is proprietary. No right or license is granted to You except the
+limited permissions stated in section 3. All other rights are reserved by the
+Licensor.
+
+## 3. Limited permissions
+
+You may, without a separate written agreement:
+
+1. view, read and study the Software as it is published by the Licensor;
+2. clone the repository and run the test suite locally for the sole purpose of
+   evaluating the Software or preparing a Contribution, provided the copy is
+   not used for a Commercial Purpose and is not Distributed;
+3. quote short passages of the Software in a review, a bug report or an academic
+   discussion, with attribution to the Licensor.
+
+Any other use requires the Licensor's prior written permission.
+
+## 4. Prohibited uses
+
+Unless the Licensor grants You a separate written license, You must not:
+
+1. use, run, host or deploy the Software, or any part of it, in production or
+   as a service — whether You charge for it or give it away free of charge;
+2. Distribute the Software, in source or compiled form, whether for a fee or
+   free of charge;
+3. modify the Software or create derivative works from it, except Contributions
+   made under section 6;
+4. use the Software for any Commercial Purpose, including as part of a product
+   or service that You sell, or to replace a license that You would otherwise
+   have to buy;
+5. provide access to the Software, or to an instance of it, to any third party;
+6. remove, obscure or alter any copyright, license or attribution notice in the
+   Software;
+7. use the name "OpenPic", its logos or its trademarks, except to refer to the
+   Software factually.
+
+## 5. Ownership
+
+The Licensor owns the Software and all intellectual property rights in it. No
+right, title or interest is transferred to You. Rights in third-party components
+are described in section 7.
+
+## 6. Contributions
+
+Contributions are welcome from contributors approved by the Licensor. By
+submitting a Contribution, You agree that:
+
+1. **You keep your copyright** in the Contribution.
+2. **You grant the Licensor a perpetual, irrevocable, worldwide, royalty-free,
+   non-exclusive, transferable and sublicensable license** to use, reproduce,
+   modify, adapt, publish, Distribute and otherwise exploit the Contribution, and
+   to **license or relicense it under any terms**, including this license and any
+   later version of it or a different license. This grant is what allows the
+   Licensor to change the license of the Software in the future (section 11).
+3. **You have the right to grant it.** The Contribution is Your original work,
+   or You have the permissions needed to submit it, and it does not knowingly
+   infringe a third party's rights.
+4. **You grant a patent license** for any patent claim You own that is
+   necessarily infringed by Your Contribution, on the same perpetual,
+   irrevocable, worldwide and royalty-free terms.
+5. **No obligation.** The Licensor is not obliged to accept, use or keep a
+   Contribution, and may remove it at any time.
+6. **No warranty.** A Contribution is provided "as is", without warranty of any
+   kind, unless You state otherwise in writing.
+
+The Contribution terms in this section continue to apply after this license is
+replaced or terminated, and after You stop contributing.
+
+## 7. Third-party components
+
+The Software depends on third-party packages that keep their own licenses. Those
+licenses govern those packages, and nothing in this license restricts Your rights
+under them. The dependency set is pinned in `pnpm-lock.yaml`; the audit that this
+license does not conflict with those terms is recorded in
+[`docs/adr/ADR-0991-proprietary-license.md`](docs/adr/ADR-0991-proprietary-license.md).
+
+## 8. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. THE LICENSOR DOES NOT
+WARRANT THAT THE SOFTWARE IS ERROR-FREE OR FIT FOR ANY PARTICULAR USE.
+
+## 9. Limitation of liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE LICENSOR IS NOT LIABLE FOR ANY
+INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES, OR FOR ANY LOSS
+OF PROFITS, REVENUE, DATA OR GOODWILL, ARISING OUT OF OR RELATED TO THE SOFTWARE
+OR THIS LICENSE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. THE
+LICENSOR'S TOTAL LIABILITY UNDER THIS LICENSE WILL NOT EXCEED ONE HUNDRED (100)
+US DOLLARS.
+
+## 10. Termination
+
+Any permission granted by this license terminates automatically if You breach
+it. On termination You must stop using the Software and destroy every copy of it
+that You hold. Sections 2 and 4 to 12 survive termination.
+
+## 11. Changes to this license
+
+The Licensor may publish a new version of this license at any time, including a
+different license for future releases. A released version of the Software stays
+under the license that shipped with it; a new version applies to releases made
+after it is published. The Contribution grant in section 6 lets the Licensor
+apply a new license to Contributions that are already part of the Software.
+
+## 12. Governing law
+
+This license is governed by the laws of India, without regard to its
+conflict-of-law rules. The courts at the Licensor's registered office have
+exclusive jurisdiction.
+
+## 13. Contact
+
+Licensing requests, including permission for a Commercial Purpose:
+<https://openpic.in> or the repository owner through
+<https://github.com/yahodu/openpic-webapp>.
