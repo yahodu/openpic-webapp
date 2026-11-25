@@ -198,3 +198,97 @@ existing dedupe `describe` beside `B1`–`B4`. `B1`–`B4`'s assertions, the `C`
 every fixture helper in that file keep their bytes; the only other edit in the file is the
 head-of-file docblock line `B1–B4` → `B1–B5` with one sentence naming the concurrent shape. No
 other file cites this record, and no production file is in the diff.
+
+## Correction — 2026-11-25
+
+This section is appended; no earlier byte of this record changes, and **nothing in §Context,
+§Decision or §Consequences is withdrawn**. The answer stays `[200, 200]` with one event, `B5`
+stays exactly as it shipped, and the mechanism stays the shipped transaction design. The
+correction narrows two sentences in §Evidence and restates two clauses of §Decision that the
+measurements below do not support. It mints no number, adds no consumer and changes no code.
+
+**Where the probes were run.** On this record's own branch cut, `origin/main` `7ae790f7` — the
+trunk after the #922 squash `a92b468a` plus #921/#923; the spec and the two source files are
+byte-identical between the two. Each probe changed one production file, ran the **whole spec
+file with no filter**, and restored the file with `git checkout --`. `route.ts` returns to
+`sha256 4cc75efa…` and `transaction.ts` to `sha256 0e997e2e…`, and `git status --porcelain` is
+clean after every probe.
+
+### E1 — the "only case" sentence is a filtered-run artefact
+
+§Evidence says, of the mutation that deletes the in-transaction dedupe pre-read:
+
+> `B5` reds, and `B5` is the only case that does
+
+The count quoted under that sentence, `Tests 1 failed | 15 skipped (16)`, is a `-t "B5:"`-filtered
+run: the other fifteen cases were **skipped**, not passing, so the count cannot show that no
+other case reds. The same mutation applied to the whole file — `findDomainEventByDedupeKey` at
+`route.ts:182` and its guard at `:189` removed, so the emit runs unconditionally in the callback
+— measures:
+
+```
+× B1: answers 200 on a repeated identical request and leaves one row
+× B5: answers 200 to two concurrent identical requests and leaves one event and one delivery
+      Tests  2 failed | 14 passed (16)
+```
+
+Both cases red — `B1` at `:651:27` and `B5` at `:727:26`, each `expected 500 to be 200` — which
+is expected, because both share the `alreadyEmitted` pre-read. The deletion therefore describes
+what the pre-read prevents, but it does not show that `B5` adds coverage over `B1`.
+
+### E2 — the discriminating proof is the retry budget
+
+`DEFAULT_TRANSACTION_MAX_ATTEMPTS = 3` at `transaction.ts:22` changed to `1`, everything else
+untouched, whole file, no filter:
+
+```
+× B5: answers 200 to two concurrent identical requests and leaves one event and one delivery
+  TransactionRetryLimitError: transaction retry limit reached after 1 attempts
+  http.error  status 500   (route.ts:163 → transaction.ts:73 → :77)
+  ❯ apps/web/src/test/integration/billing-downgrade-scheduled-event.test.ts:728:27
+      Tests  1 failed | 15 passed (16)
+```
+
+`B5` is the only case that reds; `B1`–`B4`, `C1`–`C2` and `D`/`E` stay green. **That, not the
+pre-read deletion, is what shows `B5` covers the concurrent path**: the case depends on the
+driver re-running the whole callback, and no other case in the file needs a retry to stay green.
+
+The budget probe is an **interleaving-dependent** discriminator, and the record must say so: six
+further rounds of the same mutation measured three red (`1 failed | 15 passed (16)`) and three
+green (`16 passed (16)`). The loser answers `500` only in the rounds where the two callbacks
+actually conflict, and which request loses decides whether the red surfaces on `:727:26`
+(`first.status`) or on `:728:27` (`second.status`), which is why the quoted stack above and a
+re-run can differ in their first failing line. The shipped budget of `3` is what makes the case
+stable: ten of ten rounds in §Evidence and every whole-file run in this correction are green.
+
+### E3 — the mechanism is the whole-callback retry, not the read's position
+
+§D1.2 says the retried callback re-reads the dedupe key "after its own write". Moving the
+`findDomainEventByDedupeKey` call to **before** `subscriptions.updateOne` inside the same
+callback — a legal-looking refactor that keeps the read inside the transaction — measures
+`Tests 16 passed (16)`, twice. The read's position is therefore not what produces the answer;
+the driver's retry of the **whole callback** is. The requirement `B5` needs is the weaker one:
+the dedupe read happens inside the transaction callback, on the same `{ db, session }`, so a
+retried callback reads committed state. The read's position relative to the write is not
+measured by `B5`, and no later change should cite §D1.2 as a reason to keep the read after the
+write.
+
+### E4 — §D1.4 contradicts §Consequences about `C1`, and the measurement sides with §Consequences
+
+§D1.4 says retry-budget exhaustion "is still a `500`, and that path is already characterised by
+`C1`". Under E2's budget of `1`, `C1` stayed green in every round. `C1` pins a **refused
+`domain_events` insert** — a non-transient driver error that aborts the transaction — not a
+spent budget. §Consequences already states the correct bound ("`C1` covers the aborted
+transaction, not a spent budget"), and this section adopts it: the retry-exhaustion `500` stays
+deliberately unpinned as a direct case, and `B5` now pins the budget **indirectly**, because a
+budget below two attempts reds it whenever the conflict fires (E2). A direct pin of the spent
+budget would be a new case on a new card, not a reinterpretation of `C1`.
+
+### What this correction leaves standing
+
+§Context, §Decision and §Consequences stand. The measured answer, the determinism argument
+(§D1.3), the rejected "make the `500` deterministic" alternative (§D2), the append-only repair
+of ADR-0980 (§D3), the numbering, the header and the ledger row are unchanged. What is narrowed
+is §Evidence: the "only case" sentence and the filtered count quoted for it. What is restated
+here, without editing the clauses in place, is §D1.2's "after its own write" and §D1.4's `C1`
+attribution.
