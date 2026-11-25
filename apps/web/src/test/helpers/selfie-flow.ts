@@ -23,7 +23,7 @@ import { APP_ORIGIN, makeIdentity, type SignedInUser, type TestApp } from "./aut
 /**
  * Shared fixture flow for the OP-132 liveness + selfie suites.
  *
- * Every case in the three specs needs the same seven handles: a tenant with one
+ * Every case in these suites needs the same seven handles: a tenant with one
  * published event and an active access link, a real anonymous attendee session,
  * a granted consent, a liveness challenge, an uploaded object, a submitted
  * selfie and — for the confirmation cases — a worker that has already written
