@@ -334,6 +334,22 @@ async function seedSubscription(options: SeedSubscriptionOptions): Promise<Objec
   return _id;
 }
 
+/** Remove `currentPeriodEnd` from a seeded row: the "absent" shape of no period end. */
+async function unsetPeriodEnd(subscriptionId: ObjectId): Promise<void> {
+  const result = await app.db
+    .collection(COLLECTIONS.subscriptions)
+    .updateOne({ _id: subscriptionId }, { $unset: { currentPeriodEnd: "" } });
+  expect(result.modifiedCount).toBe(1);
+}
+
+/** Set `currentPeriodEnd` to an explicit `null`: the second shape of the same state. */
+async function nullPeriodEnd(subscriptionId: ObjectId): Promise<void> {
+  const result = await app.db
+    .collection(COLLECTIONS.subscriptions)
+    .updateOne({ _id: subscriptionId }, { $set: { currentPeriodEnd: null } });
+  expect(result.modifiedCount).toBe(1);
+}
+
 /** Insert one `plans` catalogue row (platform scope, schema §14.1). */
 async function seedPlan(entitlements: Plan["entitlements"]): Promise<void> {
   await app.db.collection(COLLECTIONS.plans).insertOne({ ...makePlan({ entitlements }) });
@@ -511,6 +527,24 @@ function recordChargeCalls(): { readonly calls: () => readonly ChargeCall[] } {
           cf_payment_id: VENDOR_PAYMENT_ID,
         })
       );
+    })
+  );
+  return { calls: () => calls };
+}
+
+/** A recorded vendor Manage Subscription call. */
+interface ManageCall {
+  readonly subscriptionId: string;
+  readonly body: unknown;
+}
+
+/** Answer the Manage Subscription call, recording every call. */
+function recordManageCalls(): { readonly calls: () => readonly ManageCall[] } {
+  const calls: ManageCall[] = [];
+  server.use(
+    http.post(CASHFREE_MANAGE_URL, async ({ request, params }) => {
+      calls.push({ subscriptionId: String(params.subscriptionId), body: await request.json() });
+      return HttpResponse.json(makeManageResponse(VENDOR_SUBSCRIPTION_ID));
     })
   );
   return { calls: () => calls };
@@ -711,6 +745,196 @@ describe("POST /api/v1/tenants/{tenantId}/billing/cancel", () => {
     const row = await app.db.collection(COLLECTIONS.subscriptions).findOne({ _id: subscriptionId });
     expect(row).toMatchObject({ status: "active", cancelledAt: null });
     expect(new Date(row?.cancelAt as Date).getTime()).toBe(PERIOD_END.getTime());
+  });
+
+  it("K1: refuses an at-period-end cancel on a live row with no currentPeriodEnd as 409 conflict no_period_end, without calling the provider", async () => {
+    // Decision pin (ADR-0987, extending ADR-0984 §D1 one route over). §3.3's
+    // cancel stops the subscription at `currentPeriodEnd`; the shipped
+    // `current.currentPeriodEnd ?? now` invents a clock instant for a row that
+    // carries no period to end, so the request is refused — before the provider
+    // is asked to release anything and before anything is written.
+    const { tenantPath, owner } = await ownerWorkspace("op110-cancel-no-period-end");
+    const subscriptionId = await seedSubscription({ tenantId: tenantPath, status: "active" });
+    // The shared seed always writes `currentPeriodEnd`; delete it so the row is
+    // an otherwise normal live row that simply carries no period end.
+    await unsetPeriodEnd(subscriptionId);
+    const provider = recordManageCalls();
+
+    const response = await cancelSubscription(
+      billingRequest({
+        tenantPath,
+        route: "cancel",
+        cookie: owner.cookie,
+        body: { atPeriodEnd: true, reason: "too expensive" },
+      })
+    );
+
+    // A row-integrity gap on the server is a named conflict, never an instant
+    // invented from the clock and never a client fault (there is no `422` here).
+    expect(response.status).toBe(409);
+    expect(await errorEnvelope(response)).toMatchObject({
+      code: "conflict",
+      details: { reason: "no_period_end" },
+    });
+
+    // Nothing is released at the provider: the guard sits above `providerRefOf`
+    // and above `cancelMandate`.
+    const calls = provider.calls();
+    expect(calls).toHaveLength(0);
+
+    // …and nothing is written: the seed's nulls and its `updatedAt` survive.
+    const row = await app.db.collection(COLLECTIONS.subscriptions).findOne({ _id: subscriptionId });
+    expect(row?.cancelAt ?? null).toBeNull();
+    expect(row?.cancelReason ?? null).toBeNull();
+    expect(row).toMatchObject({ status: "active", cancelledAt: null });
+    expect(new Date(row?.updatedAt as Date).toISOString()).toBe("2026-09-01T00:00:00.000Z");
+  });
+
+  it("K2: refuses the same at-period-end cancel when currentPeriodEnd is explicitly null", async () => {
+    // ADR-0984 §D1: absent and explicit `null` are one state, so the second
+    // shape answers the same refusal, calls nothing and writes nothing.
+    const { tenantPath, owner } = await ownerWorkspace("op110-cancel-null-period-end");
+    const subscriptionId = await seedSubscription({ tenantId: tenantPath, status: "active" });
+    // The same fixture as `K1`, with the field present and null instead of gone.
+    await nullPeriodEnd(subscriptionId);
+    const provider = recordManageCalls();
+
+    const response = await cancelSubscription(
+      billingRequest({
+        tenantPath,
+        route: "cancel",
+        cookie: owner.cookie,
+        body: { atPeriodEnd: true, reason: "too expensive" },
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(await errorEnvelope(response)).toMatchObject({
+      code: "conflict",
+      details: { reason: "no_period_end" },
+    });
+
+    const calls = provider.calls();
+    expect(calls).toHaveLength(0);
+
+    const row = await app.db.collection(COLLECTIONS.subscriptions).findOne({ _id: subscriptionId });
+    expect(row?.cancelAt ?? null).toBeNull();
+    expect(row?.cancelReason ?? null).toBeNull();
+    expect(row).toMatchObject({ status: "active", cancelledAt: null });
+    expect(new Date(row?.updatedAt as Date).toISOString()).toBe("2026-09-01T00:00:00.000Z");
+  });
+
+  it("K3: an immediate cancel on the same period-less row still answers 200 and calls the provider once", async () => {
+    // The refusal is scoped to the `atPeriodEnd` branch: `atPeriodEnd: false`
+    // never reads `currentPeriodEnd` and must keep stopping at `now`.
+    const { tenantPath, owner } = await ownerWorkspace("op110-cancel-immediate-no-period-end");
+    const subscriptionId = await seedSubscription({ tenantId: tenantPath, status: "active" });
+    await unsetPeriodEnd(subscriptionId);
+    const provider = recordManageCalls();
+
+    const before = Date.now();
+    const response = await cancelSubscription(
+      billingRequest({
+        tenantPath,
+        route: "cancel",
+        cookie: owner.cookie,
+        body: { atPeriodEnd: false },
+      })
+    );
+    const after = Date.now();
+
+    expect(response.status).toBe(200);
+    const payload = await body(response);
+    expect(payload).toMatchObject({ status: "active" });
+    const servedCancelAt = Date.parse(String(payload.cancelAt));
+    expect(servedCancelAt).toBeGreaterThanOrEqual(before);
+    expect(servedCancelAt).toBeLessThanOrEqual(after);
+    // §3.3's reassurance is the point of the response: nothing is deleted.
+    expect(String(payload.note)).toMatch(/not deleted/i);
+
+    const calls = provider.calls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      subscriptionId: VENDOR_SUBSCRIPTION_ID,
+      body: { subscription_id: VENDOR_SUBSCRIPTION_ID, action: "CANCEL" },
+    });
+
+    // The receipt's instant is the stored one; the status still waits on the webhook.
+    const row = await app.db.collection(COLLECTIONS.subscriptions).findOne({ _id: subscriptionId });
+    expect(new Date(row?.cancelAt as Date).getTime()).toBe(servedCancelAt);
+    expect(row).toMatchObject({ status: "active", cancelledAt: null });
+  });
+
+  it("K4: a period-less row with no mandate is refused as conflict no_period_end, not mandate_not_chargeable", async () => {
+    // Precedence (ADR-0987 §D3): a request that cannot be honoured is refused
+    // regardless of mandate state, so the guard sits above `providerRefOf`. One
+    // line lower and this row would answer the mandate refusal instead.
+    const { tenantPath, owner } = await ownerWorkspace("op110-cancel-no-period-end-no-mandate");
+    const subscriptionId = await seedSubscription({
+      tenantId: tenantPath,
+      status: "active",
+      refs: [],
+    });
+    await unsetPeriodEnd(subscriptionId);
+    const provider = recordManageCalls();
+
+    const response = await cancelSubscription(
+      billingRequest({
+        tenantPath,
+        route: "cancel",
+        cookie: owner.cookie,
+        body: { atPeriodEnd: true, reason: "too expensive" },
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(await errorEnvelope(response)).toMatchObject({
+      code: "conflict",
+      details: { reason: "no_period_end" },
+    });
+
+    const calls = provider.calls();
+    expect(calls).toHaveLength(0);
+
+    const row = await app.db.collection(COLLECTIONS.subscriptions).findOne({ _id: subscriptionId });
+    expect(row?.cancelAt ?? null).toBeNull();
+    expect(row?.cancelReason ?? null).toBeNull();
+    expect(row).toMatchObject({ status: "active", cancelledAt: null });
+    expect(new Date(row?.updatedAt as Date).toISOString()).toBe("2026-09-01T00:00:00.000Z");
+  });
+
+  it("K5: a row that does carry its period end but no mandate still answers 409 mandate_not_chargeable", async () => {
+    // The discriminating partner to `K4`: without it, `K4` could be satisfied by
+    // deleting the §3.3 mandate check instead of ordering the two refusals.
+    const { tenantPath, owner } = await ownerWorkspace("op110-cancel-period-end-no-mandate");
+    const subscriptionId = await seedSubscription({
+      tenantId: tenantPath,
+      status: "active",
+      currentPeriodEnd: PERIOD_END,
+      refs: [],
+    });
+    const provider = recordManageCalls();
+
+    const response = await cancelSubscription(
+      billingRequest({
+        tenantPath,
+        route: "cancel",
+        cookie: owner.cookie,
+        body: { atPeriodEnd: true, reason: "too expensive" },
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(await errorEnvelope(response)).toMatchObject({ code: "mandate_not_chargeable" });
+
+    const calls = provider.calls();
+    expect(calls).toHaveLength(0);
+
+    const row = await app.db.collection(COLLECTIONS.subscriptions).findOne({ _id: subscriptionId });
+    expect(row?.cancelAt ?? null).toBeNull();
+    expect(row?.cancelReason ?? null).toBeNull();
+    expect(row).toMatchObject({ status: "active", cancelledAt: null });
+    expect(new Date(row?.updatedAt as Date).toISOString()).toBe("2026-09-01T00:00:00.000Z");
   });
 });
 

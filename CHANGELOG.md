@@ -1,3 +1,9 @@
+## [1.90.0](https://github.com/yahodu/openpic-webapp/compare/v1.89.1...v1.90.0) (2026-11-25)
+
+### Features
+
+- **billing:** OP-101 refuse the at-period-end cancel on a period-less row ([#931](https://github.com/yahodu/openpic-webapp/issues/931)) ([fc8fab2](https://github.com/yahodu/openpic-webapp/commit/fc8fab297ac882b7dc4e64ce032613dadeb071c1))
+
 ## [1.89.1](https://github.com/yahodu/openpic-webapp/compare/v1.89.0...v1.89.1) (2026-11-25)
 
 ### Bug Fixes
