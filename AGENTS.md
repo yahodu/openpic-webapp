@@ -45,6 +45,25 @@ Orchestrator agents decompose work into Kanban cards. Rules:
 - Every assignee must be a real profile — the dispatcher silently drops
   unknown assignees.
 - After fan-out, call `kanban_complete` with the list of created card IDs.
+- **Before creating a card for a flake, or for a defect a review found**, check
+  whether that lane already exists: search the board for the failing spec file
+  or case name
+  (`SELECT id, status, assignee, substr(title,1,110) FROM tasks WHERE title LIKE '%<spec-or-case>%' OR title LIKE '%<file>%' AND status NOT IN ('done','archived')`
+  via a `node:sqlite` script on
+  `/root/.hermes/kanban/boards/openpic-kanban-board/kanban.db`) **and** the open
+  PRs (`gh pr list --state open --search "<spec file or case name>"`).
+- **A hit means comment, not create** — add the new evidence to the existing
+  card or PR instead of minting a second card.
+- **When two cards do exist**, the one that lands second closes its PR as
+  superseded and says so on both the PR and the other card — never a rebase that
+  forces a union of two repairs to the same function.
+
+Two cards for one `adr-source-references` flake, created five minutes apart,
+cost one wasted lane run and one green PR closed as superseded: replaying the
+second delivery, `git merge-tree --write-tree origin/main 12aaf622` exits 1 with
+`CONFLICT (content)` in exactly one path,
+`apps/web/src/test/unit/adr-source-references.test.ts`, so it could only land as
+a hand-written union of two repairs to the same function.
 
 ## 2. Development Workflow
 
