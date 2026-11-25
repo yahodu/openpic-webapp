@@ -94,11 +94,16 @@ branch only, on the very same period-less row.
 ## Pins — K1 to K5
 
 All five cases live in `apps/web/src/test/integration/billing-self-serve.test.ts`,
-appended after the shipped arm (which is byte-identical). Each asserts the exact
-`code` **and** `details.reason`, the provider call count from the recorded MSW
-handler, and the no-write row set (`cancelAt` null, `cancelReason` null,
+appended after the shipped arm (which is byte-identical). The four refusals
+assert the exact envelope — `K1`, `K2` and `K4` assert
+`{ code: "conflict", details: { reason: "no_period_end" } }`, and `K5` asserts
+`{ code: "mandate_not_chargeable", details: { recoveryAction: "recreate_mandate" } }`
+(that arm carries no `details.reason`); `K3` is the `200` control and asserts no
+envelope. Each refusal also asserts the provider call count from the recorded
+MSW handler and the no-write row set (`cancelAt` null, `cancelReason` null,
 `status: "active"`, `cancelledAt` null, and `updatedAt` still the seed's
-`2026-09-01T00:00:00.000Z`).
+`2026-09-01T00:00:00.000Z`). `K3` asserts one provider call and the written
+`cancelAt` instead.
 
 - **`K1`** — absent `currentPeriodEnd` (`$unset`), `atPeriodEnd: true` → `409`,
   envelope `{ code: "conflict", details: { reason: "no_period_end" } }`, zero
