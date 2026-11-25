@@ -168,3 +168,79 @@ recorded.
   tooling and a signature store the repository does not have, and the inbound grant
   in §6 achieves the same relicensing freedom for the contributors the owner admits
   by hand.
+
+## Review — round 1 (post-merge verification, PR #976)
+
+Round 1 of the review of PR #976 (card `t_a3351538`) ran after the squash landed,
+so it verifies what the trunk carries instead of what a branch proposed. Verdict:
+**approved with findings** — four documentation defects, each routed to its own
+card, and none of them a reason to unwind the delivery.
+
+### Merge state
+
+- `gh pr view 976` → `state=MERGED`, `mergedAt=2026-11-25T13:11:47Z`, `headRefOid=201674c3`, `mergeCommit=295426ce`, `baseRefName=main`.
+- `git merge-base --is-ancestor 295426ce origin/main` → exit `0`.
+- Reviewed head against the squash, scoped to this PR's paths
+  (`CONTRIBUTING.md`, `LICENSE`, `README.md`, this record, `docs/adr/README.md`,
+  `package.json`): `git diff --stat 201674c3 295426ce` → empty. The whole-tree
+  difference is one file, `AGENTS.md` (+7/−1), and it is `fa72b733` (PR #975) — a
+  trunk commit that landed between the branch cut and the squash, not a change of
+  this lane.
+
+### Gate evidence
+
+- CI on the head: 15 of 15 rollup entries `COMPLETED`/`SUCCESS` — the fourteen
+  gates that ran against `201674c3` (`ci`, `audit`, `audit-dev`, `secret-scan`,
+  `lint`, `unit_test`, `test_coverage`, `validate-branch-name`,
+  `validate-pr-title`, `env-changes`, three CodeQL jobs, `Assert CI evidence`)
+  plus the `notify-discord` close side-effect.
+- Local suite, re-run for this section rather than copied from the review comment:
+  at `201674c3` `201 files / 3479 passed | 3 skipped`; at `37ec9ec3`
+  `202 files / 3534 passed | 3 skipped`, the extra file and cases being the
+  licence inventory of card `t_3fffed3c`.
+- The ten `adr-*` guards: `10 files / 396 passed (396)` at `201674c3` and again at
+  `37ec9ec3`.
+- `pnpm format:check` → "All matched files use Prettier code style!".
+- The six `shieldcn.dev` badge URLs in `README.md` and the `ci.yml` workflow badge
+  all answer `200` with `image/svg+xml`.
+
+### The dependency-licence conclusion, re-verified
+
+`pnpm licenses list --json` was reproduced independently at `37ec9ec3`, whose lock
+file and `package.json` are byte-identical to the reviewed head's: 542 packages,
+210 of them production, 17 licence keys — MIT 421, Apache-2.0 63, the permissive
+group 51, MPL-2.0 2, CC-BY-4.0 1, LGPL-3.0-or-later 1, and three dev-only
+remainder packages. Zero GPL, AGPL, SSPL, BUSL, EUPL, OSL or CC-BY-NC packages in
+either the full or the production set, so D3's conclusion holds: no dependency
+forbids a proprietary licence. The permissive group counts 51 here, which is the
+number the corrected D3 row carries.
+
+### Findings beyond the pinned acceptance criteria
+
+Four defects that the delivery's acceptance criteria did not name. Each is cited
+by card id; the follow-up's own record documents what followed it.
+
+- **F1 — Medium.** The accepted Consequences section called the CI `audit` check
+  the mechanical licence guard. `pnpm audit` queries the advisory database and
+  never reads a package's licence field, so a GPL dependency would have landed
+  green. Card `t_3fffed3c` pins the inventory guard that answers that gap.
+- **F2 — Medium.** `README.md` advertised a Stripe payment adapter that does not
+  exist; selecting it fails closed with a `ConfigError`. Card `t_085913bc`.
+- **F3 — Low.** `README.md` denied the browser UI while `apps/web/src/app/layout.tsx`
+  and `apps/web/src/app/page.tsx` exist as App Router pages. Card `t_085913bc`.
+- **F4 — Low.** The D3 permissive row read 46 where the measured set is 51,
+  leaving the Packages column three short of the measured 542. Card `t_8229f552`.
+
+Nothing in the accepted decision is retracted. The licence position (D1), the
+contribution grant that makes it reversible (D2), the audit conclusion that no
+dependency forbids it (D3), the three-places statement (D4) and the documentation
+split (D5) stand as recorded; the four findings are wording and count defects
+around that decision, not a disagreement with it.
+
+### Post-review status
+
+All four findings are closed on the trunk at the time of writing: `t_3fffed3c`
+landed as PR #977 (`7c4ed37b`), `t_085913bc` as PR #978 (`03a9b0b5`), and
+`t_8229f552` as PR #979 (`37ec9ec3`). One further documentation follow-up, card
+`t_b56eeaea`, is open — it adds the licence inventory spec to this record's
+`Consumers:` line — and this section makes no claim about it.
