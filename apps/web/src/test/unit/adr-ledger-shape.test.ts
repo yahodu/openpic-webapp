@@ -1072,16 +1072,26 @@ describe("checkAdrLedgerRowShape — the ledger ascends, with gaps allowed", () 
 
   it("reads the real ledger as ascending, over every row it counts", () => {
     // Arrange — an independent count of the ledger's row-shaped lines, so an
-    // empty issue list cannot be a sweep that read nothing.
-    const rowLines = realLedger()
-      .text.split("\n")
+    // empty issue list cannot be a sweep that read nothing. The count starts
+    // **below** the header: a row-shaped example in the preamble is prose, so a
+    // document-wide count inflates the census and reddens this case on a healthy
+    // tree (measured with one example row above the real header: `expected 495
+    // to be 496`). The header is found here by its own cells, not by the helper.
+    const lines = realLedger().text.split("\n");
+    const headerIndex = lines.findIndex((line) =>
+      /^\|\s*ADR\s*\|\s*Title\s*\|\s*Status\s*\|\s*$/u.test(line)
+    );
+    const rowLines = lines
+      .slice(headerIndex + 1)
       .filter((line) => /^\s*\|\s*\[\d{4}\]\(ADR-[^)\s]*\.md\)/u.test(line));
 
     // Act
     const { shape } = checkRepositoryAdrLedgerShape(repoRoot);
 
-    // Assert — the census at this cut is 495 rows, `0001`–`0990`, 0 descents
-    // and 0 repeats; the equal count is the rule's own reading of the tree.
+    // Assert — the header is found, the census at this cut is 495 rows,
+    // `0001`–`0990`, 0 descents and 0 repeats; the equal count is the rule's own
+    // reading of the tree.
+    expect(headerIndex).toBeGreaterThanOrEqual(0);
     expect(shape.rows).toBe(rowLines.length);
     expect(shape.rows).toBeGreaterThanOrEqual(495);
     expect(shape.issues).toEqual([]);
@@ -1177,6 +1187,42 @@ describe("checkAdrLedgerRowShape — the ledger ascends, with gaps allowed", () 
       ok: false,
       columns: 3,
       rows: 0,
+      issues: [],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("counts a preamble row whose number is lower than the table's first row — the skip is positional, not an ordering rule", () => {
+    // Arrange — the `0997` case's shape with the one difference that matters:
+    // the preamble's number (`0000`) is **lower** than the table's first row
+    // (`0001`). A positional rule counts two rows here. A number-ordering
+    // heuristic — keep an above-header row while its number does not exceed the
+    // first row below the header, drop it otherwise — keeps this example and
+    // reads `rows: 3`, because every sibling preamble (`0999`, `0997`, `0996`)
+    // is higher than its table's first row and is dropped for that reason
+    // instead of for its position. This case is the shape that separates the two
+    // rules.
+    const ledger = syntheticLedger([
+      "A row-shaped line above the ledger is an example, not a row.",
+      "",
+      "| [0000](ADR-0000-example.md) | the example | Accepted |", // adr-fixture: synthetic row, no such record
+      "",
+      HEADER_LINE,
+      DELIMITER_LINE,
+      "| [0001](ADR-0001-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0002](ADR-0002-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the table's two rows and nothing else: the example is preamble
+    // prose, so its number takes no part in the count and no part in the order
+    // sequence.
+    const expected: AdrLedgerRowShapeResult = {
+      ok: true,
+      columns: 3,
+      rows: 2,
       issues: [],
     };
     expect(result).toEqual(expected);
