@@ -23,7 +23,10 @@
  * **The rules.**
  *
  * - **S1, row shape.** Locate the ledger header (`| ADR | Title | Status |`) and
- *   its column count. Every row shaped `| [NNNN](ADR-*.md) | …` must split on
+ *   its column count. `rows` means the ledger's **rendered rows** — the
+ *   row-shaped lines below the header. A row-shaped line at or above the header
+ *   is preamble prose: it is not counted in `rows` and takes no part in any rule
+ *   below. Every row shaped `| [NNNN](ADR-*.md) | …` must split on
  *   **unescaped** `|` into exactly `columns + 2` parts — the two boundary
  *   empties plus one part per header cell — and its status cell (part
  *   `columns`) must be non-empty after trimming. A ledger with a header but no
@@ -68,8 +71,8 @@
  *   cell count is wrong stays S1's report (`cell-count`) and is not repeated
  *   here. A blank line *after* the last ledger row is prose separating the table
  *   from its notes, not a detachment, and is not reported; the block's end is the
- *   **last row-shaped line in the document**, which at this cut is the table's
- *   own last row (`README.md:653`). Prose therefore leaves the block only when
+ *   **last row below the header**, which at this cut is the table's own last row
+ *   (`README.md:653`). Prose therefore leaves the block only when
  *   nothing below it is row-shaped: a row-shaped example line pulls the notes
  *   above it inside the block, and those notes are then measured (the frozen
  *   characterization case at the end of the S1c block shows exactly that, three
@@ -114,7 +117,9 @@
  *   `0986` directly after `0983` because `0984`/`0985` are then still reserved
  *   in flight*, and the four pool-mirror cells legitimately sit **ahead** of the
  *   last row (`0991` beside the `0990` row at this cut). A **repeated** number
- *   is an issue too: it is neither ascending nor a gap.
+ *   is an issue too: it is neither ascending nor a gap. The sequence is the
+ *   scoped row set — the row-shaped lines below the header — so a preamble
+ *   example can no longer produce an order report.
  *
  *   The report joins S1's own `issues` array and its `{ line, reason }` shape:
  *   `reason` is `` `${number} precedes ${previous.number} on line
@@ -149,6 +154,12 @@
  *   pre-repair malformed row still **counted** as a row (the defect was its
  *   shape, not its absence), and that reading is preserved by keying on the
  *   `[NNNN](…)` prefix rather than on a well-formed table split.
+ *
+ * **Why scoping is safe.** A real row moved above the header is not in the
+ * rendered table, so the record it names has no row and S3's `missingRows`
+ * reports it (the spec hard-pins `[]`); a header with nothing below it still
+ * fails S1's `rows > 0` clause. Scoping cannot turn that class into a false
+ * green.
  *
  * **Fenced blocks are scanned on purpose.** A row-shaped line inside a fenced
  * block is read as a ledger row: the census when this rule was pinned was 455
@@ -329,7 +340,7 @@ export interface AdrLedgerRowShapeResult {
   /** The header's column count (`3` for the ADR ledger). */
   columns: number;
 
-  /** Ledger rows the rule read, so "no issues" can never be a vacuous pass. */
+  /** Ledger rows the rule read — the row-shaped lines below the header. */
   rows: number;
 
   /** The rejected rows, the block-breaking lines and the order breaks, ascending by ledger line. */
@@ -488,7 +499,7 @@ function isLedgerHeader(line: string, columns: number): boolean {
 
 /**
  * The ledger's table: the header's column count and every `| [NNNN](ADR-….md) |`
- * row with the parts it really splits into.
+ * row below the header, with the parts it really splits into.
  *
  * @throws If the ledger carries no `| ADR | Title | Status |` header — a wrong
  * document must fail loudly instead of yielding zero rows and a green report.
@@ -503,6 +514,9 @@ function ledgerTableOf(text: string): LedgerTable {
 
   const rows: LedgerRow[] = [];
   for (const [index, line] of lines.entries()) {
+    if (index <= headerIndex) {
+      continue;
+    }
     const match = LEDGER_ROW_PATTERN.exec(line);
     if (match === null) {
       continue;
@@ -523,9 +537,9 @@ function ledgerTableOf(text: string): LedgerTable {
  * not ledger rows.
  *
  * The block opens below the header's delimiter row (the header's next line) and
- * closes at the **last** row-shaped line in the document. That end is the real
- * boundary, and it is not "the table's last row": prose carrying a row-shaped
- * line sits *inside* the block, so the notes above that line are measured too.
+ * closes at the **last row below the header**. That end is the real boundary,
+ * and it is not "the table's last row": a row-shaped example *below* the table
+ * sits *inside* the block, so the notes above that line are measured too.
  * The decided position is unchanged — a stray example row is a failure and is
  * moved out of the table, never tolerated by a narrower sweep. Every line in
  * between is either empty — `blank-line`, which ends the GFM table and detaches
