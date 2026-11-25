@@ -88,9 +88,19 @@
  *   **0** `<tr>`, **0** `<td>` and **1** `<p>` — the whole ledger as one
  *   paragraph, no status column at all. An empty or non-delimiter line is
  *   `delimiter-missing`; a delimiter row of the wrong cell count is
- *   `delimiter-cells`; both report on the delimiter's own line. A document with
- *   no header still throws (see {@link ledgerTableOf}), so nothing is reported
- *   there.
+ *   `delimiter-cells`; both report on the delimiter's own line.
+ *
+ *   **The row's leading indentation is measured too.** GFM starts a table only
+ *   when the delimiter row begins within three columns — a space is one column,
+ *   a tab the next four-column stop — so four or more columns (four spaces, a
+ *   leading tab, `" \t"`, `"  \t"`, `"   \t"`) is `delimiter-indented`, reported
+ *   on the delimiter's own line. The order is shape, then indentation, then cell
+ *   count: a line that is no delimiter row at all is `delimiter-missing`, and an
+ *   indented one is `delimiter-indented` even when its cell count is also wrong.
+ *   The boundary: this rule measures the **delimiter row only** — the header
+ *   line's and the body rows' indentation are not measured here (a separate
+ *   decision owns that class). A document with no header still throws (see
+ *   {@link ledgerTableOf}), so nothing is reported there.
  *
  * - **S1e, ledger order.** Taken in file order, the ledger's `NNNN` values must
  *   be **strictly increasing**: a row numbered lower than its predecessor sends
@@ -271,7 +281,13 @@ export type AdrLedgerDelimiterReason =
   /** The line under the header is empty, or is not a `|`-delimited line of dashes. */
   | "delimiter-missing"
   /** The line under the header is a delimiter row whose cell count differs from the header's. */
-  | "delimiter-cells";
+  | "delimiter-cells"
+  /**
+   * The line under the header is a delimiter row indented four or more columns (a tab reaches the
+   * next four-column stop), where GFM stops reading a table: the header renders as a paragraph, so
+   * no row's status renders.
+   */
+  | "delimiter-indented";
 
 /** The line under the ledger header (`headerLine + 1`) that cannot make it a table. */
 export interface AdrLedgerDelimiterIssue {
@@ -560,13 +576,36 @@ function delimiterCellsOf(line: string): string[] | null {
 }
 
 /**
+ * The width of a line's leading run of spaces and tabs, in columns: a space is
+ * one column, a tab the next four-column stop. Stops at the first other
+ * character.
+ */
+function leadingColumns(line: string): number {
+  let column = 0;
+
+  for (const char of line) {
+    if (char === " ") {
+      column += 1;
+    } else if (char === "\t") {
+      column += 4 - (column % 4);
+    } else {
+      break;
+    }
+  }
+
+  return column;
+}
+
+/**
  * S1d — the header's delimiter row: the line directly under the header must be
- * a delimiter row whose cell count equals the header's.
+ * a delimiter row whose cell count equals the header's and whose leading
+ * indentation is fewer than four columns.
  *
  * GFM reads `headerLine + 1` as the table's delimiter row; without a usable one
  * the header is not a table and every row below renders as a paragraph, so no
  * status column exists. A line that is empty or is not a delimiter row at all is
- * `delimiter-missing`; a delimiter row with the wrong cell count is
+ * `delimiter-missing`; a delimiter row indented four or more columns is
+ * `delimiter-indented`; a delimiter row with the wrong cell count is
  * `delimiter-cells`.
  *
  * @param lines - The ledger's lines, `[0]` being line 1.
@@ -580,9 +619,13 @@ function delimiterIssueOf(
   columns: number
 ): AdrLedgerDelimiterIssue | null {
   const line = headerLine + 1;
-  const cells = delimiterCellsOf(lines[line - 1] ?? "");
+  const rawLine = lines[line - 1] ?? "";
+  const cells = delimiterCellsOf(rawLine);
   if (cells === null) {
     return { line, reason: "delimiter-missing" };
+  }
+  if (leadingColumns(rawLine) >= 4) {
+    return { line, reason: "delimiter-indented" };
   }
   if (cells.length !== columns) {
     return { line, reason: "delimiter-cells" };
