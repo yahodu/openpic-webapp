@@ -94,12 +94,15 @@ so they are what gets pinned.
 
 ## Evidence
 
-**Counts, measured on this branch (cut from `origin/main` `0bc3709e`).**
+**Counts, measured on this branch** — cut from `origin/main` `0bc3709e`, then merged
+with the trunk's `169bff3d` (merge head `928caf36`); the pre-change figure was
+measured before the merge and the post-change figures again at the merge head.
 
 ```text
-focused  apps/web/src/test/integration/billing-plan-change.test.ts   ->  31 passed (31)   (pre-change file, stashed)
-focused  the same file with `F5c` + `F5d`                            ->  33 passed (33)
-sibling  billing-downgrade-scheduled-event.test.ts                   ->  16 passed (16)
+focused  apps/web/src/test/integration/billing-plan-change.test.ts   ->  31 passed (31)   (pre-change file, stashed, at the cut)
+focused  the same file with `F5c` + `F5d`                            ->  33 passed (33)   (at the merge head)
+sibling  billing-downgrade-scheduled-event.test.ts                   ->  16 passed (16)   (at the merge head)
+ten      adr-* guard specs                                           ->  10 files / 340 passed (340)
 ```
 
 **The two arms are discriminating, measured one at a time.** Production route
@@ -154,3 +157,11 @@ attendee identity lane`, `OP-136 jobs lane`, `unallocated (future lanes)`) read
 `0987`; the higher of `0987` and `0989 + 1` is `0990`, so **each advances to
 `0990`** and none is lowered. Hotspot: `docs/adr/README.md` (this record's ledger
 row) — merge as a union keeping the highest value in every cell.
+
+The trunk then moved underneath this PR: the `cancel` lane's GREEN landed as
+`fc8fab29` (records `0987` and `0988`, released as `1.90.0` at `169bff3d` while
+this branch was open), so `origin/main` now ends at `0988` and its four
+pool-mirror cells read `0989`. `0989` was still the next free number, so no
+renumber is needed — the merge head `928caf36` resolves the ledger as a union (all
+three rows kept, ascending) and the cells to the higher of `0989` and `0990`,
+which is **`0990`**. No cell is lowered and no range is re-cut.
