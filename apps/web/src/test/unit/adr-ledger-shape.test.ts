@@ -125,14 +125,15 @@
  * GFM starts a table only when the delimiter row's leading indentation is fewer
  * than four columns, counting a space as one column and a tab to the next
  * four-column stop. Because `tableCellsOf` trims, the shipped rule cannot see
- * indentation at all, so a four-space delimiter row, a tab-indented one and a
- * `" \t"`-indented one each read as a usable delimiter while GitHub's renderer
- * emits **0** `<tr>`, **0** `<td>` and **1** `<p>` — the header stays a
- * paragraph, no table and no status column. (The `<pre><code>` block appears
- * only when the *header* is the indented line; an indented delimiter renders as a
- * paragraph continuation.) Four cases pin the rejection — four spaces, one tab,
- * space-plus-tab and four-spaces-plus-a-narrow-row — and the last of them fixes
- * the decided precedence: shape (`delimiter-missing`), then indentation
+ * indentation at all, so a four-space delimiter row, a tab-indented one and the
+ * `" \t"`-, `"  \t"`- and `"   \t"`-indented ones each read as a usable
+ * delimiter while GitHub's renderer emits **0** `<tr>`, **0** `<td>` and **1**
+ * `<p>` — the header stays a paragraph, no table and no status column. (The
+ * `<pre><code>` block appears only when the *header* is the indented line; an
+ * indented delimiter renders as a paragraph continuation.) Six cases pin the
+ * rejection — four spaces, one tab, space-plus-tab, two-spaces-plus-tab,
+ * three-spaces-plus-tab and four-spaces-plus-a-narrow-row — and the last of them
+ * fixes the decided precedence: shape (`delimiter-missing`), then indentation
  * (`delimiter-indented`), then cell count (`delimiter-cells`). Two cases pin the
  * accept side — three spaces and a trailing tab after the closing pipe — so a
  * later rule cannot demand zero indentation or mistake trailing whitespace for
@@ -821,6 +822,72 @@ describe("checkAdrLedgerRowShape — the header's delimiter row", () => {
 
     // Assert — four columns by tab-stop arithmetic, so the same report as the
     // tab-only arm.
+    const expectedIssue: AdrLedgerDelimiterIssue = { line: 2, reason: "delimiter-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports delimiter-indented when the delimiter row starts with two spaces and a tab", () => {
+    // Arrange — the fourth rejected arm. Two spaces stop at column 2, so the tab
+    // advances to column 4 and the row is indented four columns while it carries
+    // only three leading characters. Re-measured on GitHub's own renderer
+    // (`gh api -X POST markdown -F text=@probe.md -f mode=gfm`) at this cut: a
+    // four-column indented delimiter under a flush header emits **0** `<tr>`,
+    // **0** `<td>` and **1** `<p>` — one paragraph of four `<br>`-joined lines,
+    // so no table and no status column render. This arm forbids two rules: one
+    // that special-cases only the shapes pinned before it (`/^ {4}/`, a leading
+    // `\t`, a leading `" \t"`), which accepts this line; and one that counts
+    // leading *characters* instead of columns, which reads three here and
+    // accepts it as well.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "  \t| --- | ----- | ------ |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the same report as the other rejecting arms: one indented
+    // delimiter on line 2, both rows still counted. Typed as
+    // `AdrLedgerDelimiterIssue` for the reason the neighbours state: the union
+    // also admits `AdrLedgerOrderIssue`, whose `reason` is a plain `string`.
+    const expectedIssue: AdrLedgerDelimiterIssue = { line: 2, reason: "delimiter-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports delimiter-indented when the delimiter row starts with three spaces and a tab", () => {
+    // Arrange — the fifth rejected arm. Three spaces stop at column 3, so the tab
+    // advances to column 4. Measured the same way at this cut: **0** `<tr>`,
+    // **0** `<td>` and **1** `<p>` — no table, no status column. This arm forbids
+    // the shape special-casing on its own: the line carries four leading
+    // characters but only three spaces, so a `/^ {4}/` test misses it and a
+    // leading-*space* count reads three, while the tab-stop arithmetic reads four
+    // columns.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "   \t| --- | ----- | ------ |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the same report as the other rejecting arms: one indented
+    // delimiter on line 2, both rows still counted.
     const expectedIssue: AdrLedgerDelimiterIssue = { line: 2, reason: "delimiter-indented" };
     const expected: AdrLedgerRowShapeResult = {
       ok: false,
