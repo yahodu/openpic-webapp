@@ -1,6 +1,7 @@
 /**
- * ADR guard, the ledger's **row shape**, its **block contiguity** and its
- * **status agreement** — the ledger-row-shape guard, recorded by `ADR-0319` and
+ * ADR guard, the ledger's **row shape**, its **header delimiter**, its **block
+ * contiguity** and its **status agreement** — the ledger-row-shape guard,
+ * recorded by `ADR-0319` and
  * outside the `0302` invariant table, and the first one that reads a record's
  * `Status:` line.
  *
@@ -67,9 +68,28 @@
  *   here. A blank line *after* the last ledger row is prose separating the table
  *   from its notes, not a detachment, and is not reported; the block's end is the
  *   **last row-shaped line in the document**, which at this cut is the table's
- *   own last row (`README.md:653`), so no prose region is inside the block. A
- *   ledger with a header and no rows reports nothing here — S1's `rows > 0`
- *   clause already fails it, and a contiguity rule has nothing to measure.
+ *   own last row (`README.md:653`). Prose therefore leaves the block only when
+ *   nothing below it is row-shaped: a row-shaped example line pulls the notes
+ *   above it inside the block, and those notes are then measured (the frozen
+ *   characterization case at the end of the S1c block shows exactly that, three
+ *   issues). A ledger with a header and no rows reports nothing here — S1's
+ *   `rows > 0` clause already fails it, and a contiguity rule has nothing to
+ *   measure.
+ *
+ * - **S1d, the header's delimiter row.** The line directly under the header
+ *   (`headerLine + 1`) must be a `|`-delimited row of dashes — one dash or more
+ *   per cell, `:` alignment allowed — whose cell count equals the header's. GFM
+ *   reads that line as the table's delimiter row, and S1c's sweep starts at
+ *   `headerLine + 2`, so the line sat outside every other rule: a copy of the
+ *   ledger with `README.md:159` deleted, or with that line replaced by
+ *   `| --- |`, still returned `{ ok: true, columns: 3, rows: 494, issues: [] }`
+ *   from S1 and kept all ten `adr-*` guards green, while the renderer emitted
+ *   **0** `<tr>`, **0** `<td>` and **1** `<p>` — the whole ledger as one
+ *   paragraph, no status column at all. An empty or non-delimiter line is
+ *   `delimiter-missing`; a delimiter row of the wrong cell count is
+ *   `delimiter-cells`; both report on the delimiter's own line. A document with
+ *   no header still throws (see {@link ledgerTableOf}), so nothing is reported
+ *   there.
  *
  * - **S2, status agreement.** For every ledger row whose link names a record
  *   present in `records`, the record's `**Status:**` value and the row's status
@@ -137,6 +157,13 @@ const LEDGER_HEADER_CELLS: readonly string[] = ["ADR", "Title", "Status"];
  * row with a missing status cell is still *a row* (that is S3's reading).
  */
 const LEDGER_ROW_PATTERN = /^\s*\|\s*\[(\d{4})\]\((ADR-[^)\s]*\.md)\)/u;
+
+/**
+ * One cell of a GFM delimiter row: one dash or more, with optional `:` alignment
+ * on either side. `| --- | ----- | ------ |` and `| :--- | ---: | :---: |` both
+ * make the header a table.
+ */
+const DELIMITER_CELL_PATTERN = /^:?-+:?$/u;
 
 /**
  * A record's status field: an optional bullet, an optional `**` around the
@@ -431,8 +458,11 @@ function ledgerTableOf(text: string): LedgerTable {
  * not ledger rows.
  *
  * The block opens below the header's delimiter row (the header's next line) and
- * closes at the **last** row-shaped line in the document, so the prose notes a
- * ledger carries under its table are never inside the block. Every line in
+ * closes at the **last** row-shaped line in the document. That end is the real
+ * boundary, and it is not "the table's last row": prose carrying a row-shaped
+ * line sits *inside* the block, so the notes above that line are measured too.
+ * The decided position is unchanged — a stray example row is a failure and is
+ * moved out of the table, never tolerated by a narrower sweep. Every line in
  * between is either empty — `blank-line`, which ends the GFM table and detaches
  * every row below it — or, when it is not a `| [NNNN](ADR-*.md) | …` row, a
  * `non-row` line that ends the table the same way. A row-shaped line is never
@@ -464,6 +494,52 @@ function contiguityIssuesOf(
   }
 
   return issues;
+}
+
+/**
+ * The cells of a GFM delimiter row (`| --- | :---: | ---: |`), or `null` when
+ * `line` is not one. The row must open and close with `|`, the same shape
+ * {@link isLedgerHeader} reads the header by.
+ */
+function delimiterCellsOf(line: string): string[] | null {
+  const cells = tableCellsOf(line);
+  if (cells === null || cells.length === 0) {
+    return null;
+  }
+
+  return cells.every((cell) => DELIMITER_CELL_PATTERN.test(cell)) ? cells : null;
+}
+
+/**
+ * S1d — the header's delimiter row: the line directly under the header must be
+ * a delimiter row whose cell count equals the header's.
+ *
+ * GFM reads `headerLine + 1` as the table's delimiter row; without a usable one
+ * the header is not a table and every row below renders as a paragraph, so no
+ * status column exists. A line that is empty or is not a delimiter row at all is
+ * `delimiter-missing`; a delimiter row with the wrong cell count is
+ * `delimiter-cells`.
+ *
+ * @param lines - The ledger's lines, `[0]` being line 1.
+ * @param headerLine - 1-based line of the `| ADR | Title | Status |` header.
+ * @param columns - The header's column count.
+ * @returns The issue on `headerLine + 1`, or `null` when the delimiter is usable.
+ */
+function delimiterIssueOf(
+  lines: readonly string[],
+  headerLine: number,
+  columns: number
+): AdrLedgerDelimiterIssue | null {
+  const line = headerLine + 1;
+  const cells = delimiterCellsOf(lines[line - 1] ?? "");
+  if (cells === null) {
+    return { line, reason: "delimiter-missing" };
+  }
+  if (cells.length !== columns) {
+    return { line, reason: "delimiter-cells" };
+  }
+
+  return null;
 }
 
 /**
@@ -546,9 +622,11 @@ function compareStatusIssues(left: AdrLedgerStatusIssue, right: AdrLedgerStatusI
  * Locates the `| ADR | Title | Status |` header, measures every
  * `| [NNNN](ADR-*.md) | …` row against its column count, and reports each row
  * that does not split into `columns + 2` parts or whose status cell is empty.
- * The same `issues` array carries S1c's `{ line, reason }` reports: a blank or
- * non-row line between the delimiter row and the last ledger row detaches every
- * row below it, so a row can be well formed and still render as a paragraph.
+ * The same `issues` array carries S1c's and S1d's `{ line, reason }` reports: a
+ * blank or non-row line between the delimiter row and the last ledger row
+ * detaches every row below it, and a header whose own delimiter row is missing
+ * or has the wrong cell count is not a table at all, so a row can be well formed
+ * and still render as a paragraph.
  *
  * `ok` is `rows > 0 && issues.length === 0`: a document whose header carries no
  * rows is a failure, never a pass.
@@ -564,11 +642,12 @@ function compareStatusIssues(left: AdrLedgerStatusIssue, right: AdrLedgerStatusI
  */
 export function checkAdrLedgerRowShape(ledger: AdrLedgerFileText): AdrLedgerRowShapeResult {
   const { columns, rows, headerLine } = ledgerTableOf(ledger.text);
-  const issues: AdrLedgerShapeIssue[] = contiguityIssuesOf(
-    ledger.text.split("\n"),
-    headerLine,
-    rows
-  );
+  const lines = ledger.text.split("\n");
+  const issues: AdrLedgerShapeIssue[] = contiguityIssuesOf(lines, headerLine, rows);
+  const delimiterIssue = delimiterIssueOf(lines, headerLine, columns);
+  if (delimiterIssue !== null) {
+    issues.push(delimiterIssue);
+  }
 
   for (const row of rows) {
     const defects: AdrLedgerRowDefect[] = [];
