@@ -121,6 +121,26 @@
  * closing pipe (`"| --- | ----- | ------ |   "`) are both accepted, because
  * `tableCellsOf` trims the line before it splits on `|`.
  *
+ * **The indentation boundary is four columns, and it is pinned on both sides.**
+ * GFM starts a table only when the delimiter row's leading indentation is fewer
+ * than four columns, counting a space as one column and a tab to the next
+ * four-column stop. Because `tableCellsOf` trims, the shipped rule cannot see
+ * indentation at all, so a four-space delimiter row, a tab-indented one and a
+ * `" \t"`-indented one each read as a usable delimiter while GitHub's renderer
+ * emits **0** `<tr>`, **0** `<td>` and **1** `<p>` — the header stays a
+ * paragraph, no table and no status column. (The `<pre><code>` block appears
+ * only when the *header* is the indented line; an indented delimiter renders as a
+ * paragraph continuation.) Four cases pin the rejection — four spaces, one tab,
+ * space-plus-tab and four-spaces-plus-a-narrow-row — and the last of them fixes
+ * the decided precedence: shape (`delimiter-missing`), then indentation
+ * (`delimiter-indented`), then cell count (`delimiter-cells`). Two cases pin the
+ * accept side — three spaces and a trailing tab after the closing pipe — so a
+ * later rule cannot demand zero indentation or mistake trailing whitespace for
+ * indentation. Note that `AdrLedgerShapeIssue` also admits `AdrLedgerOrderIssue`,
+ * whose `reason` is a plain `string`; the four rejection cases therefore type
+ * their expected issue as `AdrLedgerDelimiterIssue`, so the new reason really is
+ * a union member and not any string that happens to fit.
+ *
  * **The block-end boundary is frozen, not moved.** S1c's block closes at the
  * **last row-shaped line in the document**, so prose carrying a row-shaped
  * example is *inside* the block: `header + two rows + "" + "Notes: a new record
@@ -244,7 +264,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { makeTempRepoRoot, realAdrDir, repoRoot, tempDirs } from "../helpers/adr-guard-fixtures.js";
-import type { AdrLedgerRowShapeResult } from "../helpers/adr-ledger-shape.js";
+import type {
+  AdrLedgerDelimiterIssue,
+  AdrLedgerRowShapeResult,
+} from "../helpers/adr-ledger-shape.js";
 import {
   ADR_LEDGER_PATH,
   adrStatusWord,
@@ -712,6 +735,166 @@ describe("checkAdrLedgerRowShape — the header's delimiter row", () => {
     const result = checkAdrLedgerRowShape(ledger);
 
     // Assert — accepted: trailing spaces do not make the delimiter row invalid.
+    const expected: AdrLedgerRowShapeResult = { ok: true, columns: 3, rows: 2, issues: [] };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports delimiter-indented when the delimiter row is indented four spaces", () => {
+    // Arrange — the first rejected arm, measured against GitHub's own renderer
+    // (`gh api -X POST markdown -f mode=gfm`) at `aab6bcad`: a four-space-indented
+    // delimiter row under a flush header emits **0** `<tr>`, **0** `<td>` and
+    // **1** `<p>` — the header stays a *paragraph*, so no table exists and no
+    // status column renders. (The `<pre><code>` block appears only when the
+    // *header* is the indented line; this arm renders as a paragraph.) Forbids a
+    // four-space-blind rule: `tableCellsOf` trims the line, so leading
+    // indentation is invisible and the row reads as a usable delimiter.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "    | --- | ----- | ------ |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — one issue on the delimiter's own line (`headerLine + 1`), and
+    // both rows are still counted: the rows are well formed, the table is not.
+    // Typed, so the new reason is part of the contract and not only a string a
+    // loosened assertion would accept. The issue is typed as
+    // `AdrLedgerDelimiterIssue` because `AdrLedgerShapeIssue` also admits
+    // `AdrLedgerOrderIssue`, whose `reason` is a plain `string` — an inline
+    // literal in `issues` would therefore type-check even without the new union
+    // member, and the wire-shape pin would be lost.
+    const expectedIssue: AdrLedgerDelimiterIssue = { line: 2, reason: "delimiter-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports delimiter-indented when the delimiter row starts with one tab", () => {
+    // Arrange — the second rejected arm, measured the same way: one leading tab
+    // advances to column 4, so the render is **0** `<tr>`, **0** `<td>`, **1**
+    // `<p>` — no table, no status column. Forbids a tab-blind rule, i.e. one that
+    // counts spaces only and reads `\t` as zero columns.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "\t| --- | ----- | ------ |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the same report as the four-space arm: one indented delimiter on
+    // line 2, rows unchanged.
+    const expectedIssue: AdrLedgerDelimiterIssue = { line: 2, reason: "delimiter-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports delimiter-indented when the delimiter row starts with a space and a tab", () => {
+    // Arrange — the third rejected arm: one space puts the cursor at column 1, so
+    // the tab advances to column 4 and the row is indented four columns even
+    // though it does not *begin* with a tab. Measured render: **0** `<tr>`, **0**
+    // `<td>`, **1** `<p>`. This arm forbids a naive `startsWith("\t")` shortcut,
+    // which would accept it and take the ledger out of the table.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      " \t| --- | ----- | ------ |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — four columns by tab-stop arithmetic, so the same report as the
+    // tab-only arm.
+    const expectedIssue: AdrLedgerDelimiterIssue = { line: 2, reason: "delimiter-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports delimiter-indented rather than delimiter-cells when an indented delimiter row is also too narrow", () => {
+    // Arrange — the precedence pin: this line is indented four spaces **and**
+    // carries one cell under a three-cell header, so two rules could claim it.
+    // The decided order is shape, then indentation, then cell count, because
+    // `delimiter-cells` would point an operator at the dash count of a line that
+    // cannot start a table at all. Forbids a cells-first precedence.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "    | --- |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — `delimiter-indented`, not `delimiter-cells`: one issue, one reason.
+    const expectedIssue: AdrLedgerDelimiterIssue = { line: 2, reason: "delimiter-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("accepts a delimiter row indented three spaces (the last accepted column)", () => {
+    // Arrange — the accept side of the boundary, measured the same way: three
+    // leading spaces still render the table — **2** `<tr>`, **3** `<td>`. Pinned
+    // so a later rule cannot demand zero indentation, which would reject a
+    // GFM-legal table (as the two-space case above already forbids).
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "   | --- | ----- | ------ |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — accepted: three columns of indentation is under the boundary, so
+    // no issue and both rows are counted.
+    const expected: AdrLedgerRowShapeResult = { ok: true, columns: 3, rows: 2, issues: [] };
+    expect(result).toEqual(expected);
+  });
+
+  it("accepts a delimiter row with a trailing tab after its closing pipe", () => {
+    // Arrange — only **leading** whitespace is indentation; a tab after the
+    // closing pipe is invisible to the renderer, measured as **2** `<tr>`, **3**
+    // `<td>`. Forbids a rule that measures every whitespace character on the line
+    // (or an untrimmed cell-to-column count) and so rejects a valid delimiter.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "| --- | ----- | ------ |\t",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — accepted: a trailing tab does not make the delimiter row indented.
     const expected: AdrLedgerRowShapeResult = { ok: true, columns: 3, rows: 2, issues: [] };
     expect(result).toEqual(expected);
   });
