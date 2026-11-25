@@ -46,7 +46,7 @@
  * with no header throws rather than reporting zero rows.
  *
  * **S1c — the ledger block stays one table.** Between the header's delimiter
- * row and the last ledger row in the document, every non-empty line must itself
+ * row and the last row below the header, every non-empty line must itself
  * be a ledger row. A blank line ends a GFM table, so every row below it renders
  * as a **paragraph** — and the guard's own purpose, "every row renders a
  * status", is then not served at all. On the squash `fc8fab29` (PR #931) a blank
@@ -68,8 +68,8 @@
  * together and no second real-tree case is written. A row whose cell count is
  * wrong stays S1's `cell-count` report and is not repeated here; a blank line
  * *after* the last ledger row is the prose that separates the table from its
- * notes, not a detachment, so the block ends at the last row-shaped line in the
- * document (`README.md:653` at this cut).
+ * notes, not a detachment, so the block ends at the last row below the header
+ * (`README.md:653` at this cut).
  *
  * **The census at this cut** (`origin/main` `e7e92304`, which carries the README
  * repair `bc399470` plus #933 and #936): header `README.md:158`, delimiter
@@ -142,7 +142,7 @@
  * a union member and not any string that happens to fit.
  *
  * **The block-end boundary is frozen, not moved.** S1c's block closes at the
- * **last row-shaped line in the document**, so prose carrying a row-shaped
+ * **last row below the header**, so prose carrying a row-shaped
  * example is *inside* the block: `header + two rows + "" + "Notes: a new record
  * is added as" + "" + one row-shaped example line` reports exactly three issues
  * — `blank-line`, `non-row`, `blank-line` — measured at `0ccc18f4` and again on
@@ -526,8 +526,8 @@ describe("checkAdrLedgerRowShape — the ledger block stays one table", () => {
 
   it("reads a row-shaped example line under the notes as inside the block — the frozen block end", () => {
     // Arrange — the boundary F-R2 measured at `0ccc18f4`: the block closes at
-    // the **last row-shaped line in the document**, so the notes a ledger
-    // carries between its table and an example row are *inside* the block.
+    // the **last row below the header**, so the notes a ledger carries between
+    // its table and an example row are *inside* the block.
     // Characterization, not a demand: it freezes today's reading so a later
     // change to it must be deliberate, and it is green before and after the
     // delimiter rule.
