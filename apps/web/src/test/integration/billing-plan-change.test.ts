@@ -160,6 +160,8 @@ const MONTHLY_PERIOD_KEY = periodKey("monthly", new Date());
 /** An error envelope as served. */
 interface ErrorEnvelope {
   readonly code: string;
+  /** Every served envelope carries the catalogue's retryable flag (`F6` pins it). */
+  readonly retryable?: boolean;
   readonly details?: Record<string, unknown>;
 }
 
@@ -1327,6 +1329,68 @@ describe("POST /api/v1/tenants/{tenantId}/billing/downgrade", () => {
     expect(error.details?.fields).toBeUndefined();
 
     // The refusal writes nothing (§3.3): no schedule, no announcement.
+    const row = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ tenantId: tenantPath, cancelledAt: null });
+    expect(row?.scheduledChange ?? null).toBeNull();
+    expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
+
+    const events = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: tenantPath, eventKey: "billing.plan.downgrade_scheduled" })
+      .toArray();
+    expect(events).toHaveLength(0);
+  });
+
+  it("F6: a healthy live row with an unsold targetPlanKey is refused 422 validation_failed and writes nothing", async () => {
+    // Characterisation pin, the catalogue's own answer (ADR-0990 D1, the second
+    // rung of ADR-0989 D1's ladder). The shipped route already refuses this, so
+    // the case is GREEN on arrival and changes no production file. Its value is
+    // negative: every other `validation_failed` assertion in this file sits
+    // inside `F5e`, which always seeds a period-less row, so a refactor that
+    // stopped refusing an unsold plan (answering `200`, writing a
+    // `scheduledChange`, or a different code) left the whole suite green. This
+    // row is HEALTHY — `seedSubscription` keeps its default `currentPeriodEnd`
+    // and nothing is `$unset` — so the only rung that can answer the request is
+    // the catalogue. The envelope's prose `message` is the route's copy, not the
+    // contract, so only `details.fields[].path` / `.code` are pinned.
+    const owner = await app.signIn(makeIdentity("op109-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op109-unsold-target-plan",
+    });
+    const tenantPath = tenantId.toHexString();
+    await seedSubscription({
+      tenantId: tenantPath,
+      planKey: "starter",
+      priceKey: "starter-monthly-inr",
+      status: "active",
+    });
+
+    const response = await downgradePlan(
+      planChangeRequest({
+        tenantPath,
+        route: "downgrade",
+        cookie: owner.cookie,
+        body: downgradeBody({
+          targetPlanKey: "not-a-sold-plan",
+          acknowledgeConsequences: true,
+        }),
+      })
+    );
+
+    expect(response.status).toBe(422);
+    const error = await errorEnvelope(response);
+    expect(error).toMatchObject({ code: "validation_failed", retryable: false });
+    // Exactly one offending field, and it is the request field the caller can
+    // repair.
+    expect(error.details).toMatchObject({
+      fields: [expect.objectContaining({ path: "targetPlanKey", code: "not_found" })],
+    });
+
+    // The refusal writes nothing (§3.3): no schedule, no plan change, no
+    // announcement (ADR-0978 §D2).
     const row = await app.db
       .collection(COLLECTIONS.subscriptions)
       .findOne({ tenantId: tenantPath, cancelledAt: null });
