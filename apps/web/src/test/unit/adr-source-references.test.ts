@@ -1,9 +1,15 @@
+import { execFileSync } from "node:child_process";
 import { rmSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { makeTempRepoRoot, repoRoot, tempDirs } from "../helpers/adr-guard-fixtures.js";
+import {
+  makeTempRepoRoot,
+  repoRoot,
+  tempDirs,
+  writeFixtureFile,
+} from "../helpers/adr-guard-fixtures.js";
 import { adrDigitsOf } from "../helpers/adr-guard-types.js";
 import type { SourceFileText } from "../helpers/adr-guard-types.js";
 import {
@@ -24,7 +30,10 @@ import {
  * §12), which lives in the same module because it is a reference rule over the
  * records and because that module already owns the family's directory read and
  * file read: a record that quotes a suite count must name the head commit it was
- * measured at. The clause has no invariant row of its own on purpose — an
+ * measured at, and that head must resolve to a git `commit` object — the pure
+ * check takes an injected batch resolver, and the repository sweep supplies one
+ * `git cat-file --batch-check` pass, so a blob, a tree or an unknown token is not
+ * provenance. The clause has no invariant row of its own on purpose — an
  * eleventh spec file would falsify the "ten `adr-*` guards" sentence this very
  * defect class froze into live prose (a merged record's §Evidence and its ledger
  * cell).
@@ -718,7 +727,195 @@ describe("checkMeasuredCommitCitations — a record that quotes a count names it
       "docs/adr/ADR-0200-b.md",
     ]);
   });
+
+  it("reports the first head-shaped token that is a commit, not the first head-shaped token", () => {
+    // Arrange — the OP-132 liveness selfie record's shape: a random 32-hex nonce
+    // is quoted above the head the counts were measured at. Both tokens are
+    // head-shaped; only the second is an object in any repository.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0791-a.md", // adr-fixture: synthetic record name
+        text: [
+          "```",
+          '"nonce": "3f2c1d8899aa55bb66cc77dd88ee99ff",',
+          "```",
+          "",
+          "Tests  13 passed (13) at `3eb7c7d`.",
+        ].join("\n"),
+      },
+    ];
+    const seen: string[][] = [];
+
+    // Act — the resolver knows the head and not the nonce.
+    const report = checkMeasuredCommitCitations(records, (tokens) => {
+      seen.push([...tokens]);
+      return new Set(tokens.filter((token) => token === "3eb7c7d"));
+    });
+
+    // Assert — the nonce is skipped, so the record reports its real head.
+    expect(report).toEqual({
+      ok: true,
+      issues: [],
+      checked: [
+        {
+          file: "docs/adr/ADR-0791-a.md", // adr-fixture: synthetic record name
+          line: 5,
+          quoted: "13 passed",
+          head: "3eb7c7d",
+        },
+      ],
+      scannedRecords: 1,
+    });
+    // The resolver is a **batch** over the record's candidates, in document order:
+    // one call for the record, not one call per token, so the sweep costs one
+    // `git cat-file --batch-check` pass over the corpus.
+    expect(seen).toEqual([["3f2c1d8899aa55bb66cc77dd88ee99ff", "3eb7c7d"]]);
+  });
+
+  it("rejects a record whose only head-shaped tokens are not commit objects", () => {
+    // Arrange — a file digest and a tree, both head-shaped, neither a commit: the
+    // drift record's shape twice over in one record.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0302-h.md",
+        text: [
+          "Tests  15 passed (15)",
+          "",
+          "The route blob is `c6a0cd45` and the tree above it `83a1c8ce`.",
+        ].join("\n"),
+      },
+    ];
+
+    // Act — the resolver reports no commit for either token.
+    const report = checkMeasuredCommitCitations(records, () => new Set<string>());
+
+    // Assert — one issue for the record, naming its first quote, and no head.
+    expect(report).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "missing-head-commit",
+          file: "docs/adr/ADR-0302-h.md",
+          line: 1,
+          quoted: "15 passed",
+        },
+      ],
+      checked: [{ file: "docs/adr/ADR-0302-h.md", line: 1, quoted: "15 passed", head: null }],
+      scannedRecords: 1,
+    });
+  });
+
+  it("keeps the one-argument default shape-only, so the pure call is not the enforcing one", () => {
+    // Arrange — a token the clause rejects once a resolver answers: a file's
+    // digest. With no resolver there is no repository to ask.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0302-i.md",
+        text: ["Tests  15 passed (15)", "", "blob sha256 c6a0cd45… unchanged."].join("\n"),
+      },
+    ];
+
+    // Act — one argument only.
+    const report = checkMeasuredCommitCitations(records);
+
+    // Assert — the permissive default accepts every head-shaped token. The
+    // enforcing path is `checkRepositoryMeasuredCommitCitations`; a default that
+    // quietly grew a resolver would make every injected-resolver case above pass
+    // for the wrong reason.
+    expect(report).toEqual({
+      ok: true,
+      issues: [],
+      checked: [{ file: "docs/adr/ADR-0302-i.md", line: 1, quoted: "15 passed", head: "c6a0cd45" }],
+      scannedRecords: 1,
+    });
+  });
 });
+
+/**
+ * A throwaway repository root that is a **real git repository with one commit**,
+ * so the sweep's commit-object resolver has an object database to read: the
+ * returned `head` is the 8-character prefix of `HEAD`, which
+ * `git cat-file -t <head>` answers `commit` for.
+ *
+ * A bare temp directory is not enough any more. `git -C <root> cat-file` exits
+ * 128 outside a repository, so a root with no `.git` cannot tell a commit from a
+ * blob, a tree or a typo — and a resolver that answered "every token is a commit"
+ * when git could not run would be the shape-only rule again under a new name.
+ * The two cases below therefore build a repository, exactly as CI checks one out
+ * (`fetch-depth: 0`).
+ */
+function makeTempGitRoot(): { root: string; head: string } {
+  const root = makeTempRepoRoot({ "README.md": "fixture\n" });
+  const git = (...args: string[]): string =>
+    execFileSync("git", ["-C", root, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+
+  git("init", "--quiet", "--initial-branch=main");
+  git("add", "--all");
+  git(
+    "-c",
+    "user.name=adr-guard",
+    "-c",
+    "user.email=adr-guard@example.invalid",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "--quiet",
+    "-m",
+    "fixture"
+  );
+  return { root, head: git("rev-parse", "HEAD").trim().slice(0, 8) };
+}
+
+/**
+ * The git object type of each token, as `token -> type`, in **one**
+ * `git cat-file --batch-check` pass; `"missing"` when the object database cannot
+ * read a token, which is the answer git itself gives a bad revision.
+ *
+ * One process for the whole corpus is the shape the resolver uses, and the reason
+ * this helper exists: 305 separate `cat-file -t` spawns measure 2.8 s against the
+ * unit project's 5 000 ms case budget, which is a timeout flake on a contended
+ * runner rather than a stronger assertion.
+ */
+function gitObjectTypes(root: string, tokens: readonly string[]): Map<string, string> {
+  const types = new Map<string, string>();
+  if (tokens.length === 0) {
+    return types;
+  }
+
+  let output: string;
+  try {
+    output = execFileSync("git", ["-C", root, "cat-file", "--batch-check"], {
+      input: tokens.map((token) => `${token}\n`).join(""),
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch {
+    for (const token of tokens) {
+      types.set(token, "missing");
+    }
+    return types;
+  }
+
+  // `--batch-check` answers one line per input line, in input order: `<token>
+  // <type> <size>`, or `<token> missing` when the object database cannot read it.
+  const pending = tokens[Symbol.iterator]();
+  for (const line of output.split("\n")) {
+    if (line.length === 0) {
+      continue;
+    }
+    const token = pending.next();
+    if (token.done === true) {
+      break;
+    }
+    const [, type] = line.split(" ");
+    types.set(token.value, type ?? "missing");
+  }
+  return types;
+}
 
 describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => {
   afterEach(() => {
@@ -728,15 +925,26 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
   });
 
   it("reads every in-scope record and reports the one that names no head", () => {
-    // Arrange — the keep-set: a record with a head, a record with no count, a
-    // ledger that quotes counts for other heads, and a file outside docs/adr.
-    const root = makeTempRepoRoot({
-      "docs/adr/ADR-0001-quoted-with-head.md": "Tests  15 passed (15)\n\nAt `e91cfed7`.",
-      "docs/adr/ADR-0002-quoted-no-head.md": "Tests  15 passed (15)",
-      "docs/adr/ADR-0003-design.md": "## Decision\n\nNo measurement here.",
-      "docs/adr/README.md": "| [0002](ADR-0002-quoted-no-head.md) | Tests 320 passed (320) |",
-      "apps/web/notes.md": "Tests  99 passed (99)", // adr-fixture: outside docs/adr
-    });
+    // Arrange — the keep-set: a record naming a real commit object, a record with
+    // no count, a ledger that quotes counts for other heads, and a file outside
+    // docs/adr. The root is a git repository, so the head is a commit object the
+    // resolver can find; `docs/adr` is written after the commit on purpose, so the
+    // head exists even though the records are uncommitted.
+    const { root, head } = makeTempGitRoot();
+    writeFixtureFile(
+      join(root, "docs/adr/ADR-0001-quoted-with-head.md"),
+      `Tests  15 passed (15)\n\nAt \`${head}\`.`
+    );
+    writeFixtureFile(join(root, "docs/adr/ADR-0002-quoted-no-head.md"), "Tests  15 passed (15)");
+    writeFixtureFile(
+      join(root, "docs/adr/ADR-0003-design.md"),
+      "## Decision\n\nNo measurement here."
+    );
+    writeFixtureFile(
+      join(root, "docs/adr/README.md"),
+      "| [0002](ADR-0002-quoted-no-head.md) | Tests 320 passed (320) |"
+    );
+    writeFixtureFile(join(root, "apps/web/notes.md"), "Tests  99 passed (99)"); // adr-fixture: outside docs/adr
 
     // Act
     const report = checkRepositoryMeasuredCommitCitations(root, []);
@@ -757,7 +965,7 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
           file: "docs/adr/ADR-0001-quoted-with-head.md",
           line: 1,
           quoted: "15 passed",
-          head: "e91cfed7",
+          head,
         },
         {
           file: "docs/adr/ADR-0002-quoted-no-head.md",
@@ -771,10 +979,11 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
   });
 
   it("skips an allowlisted record instead of passing it", () => {
-    // Arrange — a record whose number is on the allowlist, in a throwaway tree.
-    const root = makeTempRepoRoot({
-      "docs/adr/ADR-0046-synthetic.md": "Tests  15 passed (15)", // adr-fixture: synthetic record name
-    });
+    // Arrange — a record whose number is on the allowlist, in a throwaway
+    // repository: the root is git-backed so the sweep's resolver runs against a
+    // real object database even though this record names no head at all.
+    const { root } = makeTempGitRoot();
+    writeFixtureFile(join(root, "docs/adr/ADR-0046-synthetic.md"), "Tests  15 passed (15)"); // adr-fixture: synthetic record name
 
     // Act
     const report = checkRepositoryMeasuredCommitCitations(root);
@@ -821,31 +1030,69 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
     // new offender reds here beside the rule's own case.
     expect(offenders).toEqual([...MEASURED_COMMIT_EXEMPTIONS]);
   });
+
+  it("reports only commit objects as heads at the trunk", () => {
+    // Act — the tree this spec runs in, with the default allowlist. Measured at
+    // `0ccc18f4`: 305 records checked, 494 scanned, and 1,456 distinct head-shaped
+    // tokens of which 1,109 are commits, 125 blobs, 56 trees and 166 resolve to
+    // nothing — the rule skips the 347 that are not commits.
+    const report = checkRepositoryMeasuredCommitCitations(repoRoot);
+
+    // Assert — a non-empty corpus first, so the property below cannot hold
+    // vacuously. The floor is the neighbouring case's, two below the census: this
+    // case adds object types, not a second census.
+    expect(report.checked.length).toBeGreaterThanOrEqual(296);
+
+    // One `git cat-file --batch-check` pass for the corpus, the shape the resolver
+    // uses, then the property per entry. `execFileSync` per head is the same
+    // answer for 50x the process count — see `gitObjectTypes`.
+    const types = gitObjectTypes(
+      repoRoot,
+      report.checked.flatMap((entry) => (entry.head === null ? [] : [entry.head]))
+    );
+    const notCommits = report.checked
+      .map((entry) => ({
+        file: entry.file,
+        head: entry.head,
+        type: entry.head === null ? "none" : (types.get(entry.head) ?? "missing"),
+      }))
+      .filter((entry) => entry.type !== "commit");
+
+    // A head that is a blob, a tree, or a token no object database knows is not
+    // provenance: it names no commit, so the clause must report the record instead.
+    expect(notCommits).toEqual([]);
+  });
 });
 
 /**
- * Characterization — what the head pattern proves, and what it does not.
+ * The clause's limit — what commit-object provenance proves, and what it does
+ * not (`ADR-0302` §12).
  *
- * `HEAD_COMMIT_PATTERN` accepts any lowercase 7–40-character hexadecimal token
- * that carries a letter, anywhere in the record, so the clause proves only that a
- * quoting record names a token **shaped** like a head commit. Three shapes are
- * pinned here so the limit is executable instead of prose only (`ADR-0302` §12):
+ * The reported head must be **the first head-shaped token in document order that
+ * resolves to a git `commit` object**. A token that resolves to a blob, a tree,
+ * nothing (`missing`) or ambiguously is skipped; a record with no such token
+ * reports `missing-head-commit`. Three cases are pinned here:
  *
- * - another record's head is reported as this record's `head` — the clause never
- *   compares the token with the commit the counts were measured at;
- * - a truncated blob digest — seven hexadecimal characters of a file's sha256,
- *   the shape the drift record cited for a file — is accepted as a head;
+ * - another record's head is still reported as this record's `head`: a commit
+ *   object that exists is all a static clause can check, and it never compares
+ *   the token with the head *this* record's counts were measured at. That is the
+ *   hole the rule leaves open on purpose — documented, never closed by a
+ *   pattern, because no static check can see which head a merge measured;
+ * - a truncated blob digest is **rejected**, because a blob is not a commit
+ *   object — the drift shape that named a file's digest as a head;
  * - a `0x`-prefixed hex literal is rejected, because its run is glued to the
- *   non-hex `x` and so has no word boundary.
+ *   non-hex `x` and so has no word boundary. That token never reaches the
+ *   resolver: it was never head-shaped.
  *
- * These rows are characterization, not a contract to widen. A stricter form — the
- * head inside `## Evidence`, or adjacent to the first quote — is a design change
- * for the orchestrator, and a pattern change that flips one of these rows must red
- * here first.
+ * These rows are characterization of what a head-shaped token can and cannot
+ * prove. The measurements behind the rule — every positional form reds 138–301
+ * of the 302 enforced records at `08c778bc`, an ancestor-of-`origin/main` form
+ * reds 113, commit-object provenance reds none and corrects one report — are
+ * recorded in the decision that chose it, not restated here.
  */
-describe("checkMeasuredCommitCitations — head-shaped is not the measured head", () => {
-  it("accepts another record's head as this record's head", () => {
-    // Arrange — the token is a real head, of a different record.
+describe("checkMeasuredCommitCitations — the reported head must be a commit object", () => {
+  it("still accepts another record's head, because a real commit object is out of reach of a static clause", () => {
+    // Arrange — the token is a real commit object, of a different record.
     const records: SourceFileText[] = [
       {
         path: "docs/adr/ADR-0302-c.md",
@@ -853,10 +1100,14 @@ describe("checkMeasuredCommitCitations — head-shaped is not the measured head"
       },
     ];
 
-    // Act
-    const report = checkMeasuredCommitCitations(records);
+    // Act — the resolver reports the token as a commit.
+    const report = checkMeasuredCommitCitations(
+      records,
+      (tokens) => new Set(tokens.filter((token) => token === "e91cfed7"))
+    );
 
-    // Assert — a foreign head satisfies the clause exactly like an own one.
+    // Assert — a foreign head satisfies the clause exactly like an own one: the
+    // object exists, and no static rule can tell whose counts it measured.
     expect(report).toEqual({
       ok: true,
       issues: [],
@@ -865,8 +1116,11 @@ describe("checkMeasuredCommitCitations — head-shaped is not the measured head"
     });
   });
 
-  it("accepts a truncated blob digest as a head commit", () => {
-    // Arrange — a file's sha256 prefix, not a commit.
+  it("rejects a truncated blob digest, because a blob is not a commit object", () => {
+    // Arrange — a file's digest, not a commit. The trunk carries the real
+    // instance of this shape: `51de695c` names a route blob at
+    // `docs/adr/ADR-0980-op101-downgrade-scheduled-event-green.md:143` (adr-fixture: verbatim trunk path, not a pointer),
+    // and `git cat-file -t 51de695c` answers `blob`.
     const records: SourceFileText[] = [
       {
         path: "docs/adr/ADR-0302-d.md",
@@ -874,14 +1128,22 @@ describe("checkMeasuredCommitCitations — head-shaped is not the measured head"
       },
     ];
 
-    // Act
-    const report = checkMeasuredCommitCitations(records);
+    // Act — the resolver reports no commit for the token.
+    const report = checkMeasuredCommitCitations(records, () => new Set<string>());
 
-    // Assert — seven hexadecimal characters carrying a letter are head-shaped.
+    // Assert — head-shaped is not enough: the object must be a commit, so the
+    // record reports its first quote and no head.
     expect(report).toEqual({
-      ok: true,
-      issues: [],
-      checked: [{ file: "docs/adr/ADR-0302-d.md", line: 1, quoted: "15 passed", head: "c6a0cd45" }],
+      ok: false,
+      issues: [
+        {
+          code: "missing-head-commit",
+          file: "docs/adr/ADR-0302-d.md",
+          line: 1,
+          quoted: "15 passed",
+        },
+      ],
+      checked: [{ file: "docs/adr/ADR-0302-d.md", line: 1, quoted: "15 passed", head: null }],
       scannedRecords: 1,
     });
   });

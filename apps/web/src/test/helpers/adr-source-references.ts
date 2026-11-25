@@ -20,11 +20,13 @@
  *
  * It also owns the family's **measured-count provenance clause** (`ADR-0302`
  * §12): a record that quotes a suite count must name the head commit it was
- * measured at. The clause lives here because it is a reference rule over the
- * records and because this module already owns the directory read and the file
- * read that the rule needs; it has no invariant row of its own on purpose.
+ * measured at, and that head must resolve to a git `commit` object. The clause
+ * lives here because it is a reference rule over the records and because this
+ * module already owns the directory read and the file read that the rule needs;
+ * it has no invariant row of its own on purpose.
  */
 
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, type Dirent } from "node:fs";
 import { basename, join, posix, relative, sep } from "node:path";
 
@@ -305,8 +307,12 @@ const SUITE_COUNT_QUOTE_PATTERN = /\d[\d,]*\s+passed\s+\(/;
  * rejects a 64-character blob hash, which is a file's digest, not a commit.
  * Lowercase only: this repository writes SHAs lowercase, and an uppercase token
  * is a typo to report rather than a head to accept.
+ *
+ * Shape is only the first filter: the clause's second half asks the object
+ * database, so a 7–40-character digest of a **blob or tree** is head-shaped and is
+ * still rejected, exactly like the 64-character one the ceiling drops here.
  */
-const HEAD_COMMIT_PATTERN = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/;
+const HEAD_COMMIT_PATTERN = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/g;
 
 /**
  * The records the rule cannot enforce today, as bare four-digit record numbers.
@@ -349,20 +355,52 @@ export const MEASURED_COMMIT_EXEMPTIONS: readonly string[] = [
 ];
 
 /**
+ * Answers, for a batch of head-shaped tokens, which of them are git **commit**
+ * objects. The pure clause takes one so it stays pure; the repository sweep
+ * supplies the git-backed one.
+ *
+ * Batch, not per-token: the sweep resolves the whole corpus in one call, so the
+ * answer arrives as a set of the tokens it accepted.
+ */
+export type CommitObjectResolver = (tokens: readonly string[]) => ReadonlySet<string>;
+
+/**
  * Check that every record which quotes a suite count also names the head commit
  * it was measured at — the measured-count provenance clause of the ADR guard
  * (`ADR-0302` §12). Pure: it never touches the filesystem.
  *
+ * The reported head is the record's **first head-shaped token in document order
+ * that `resolveCommitObjects` accepts as a commit**; a token that is a blob, a
+ * tree, or nothing is skipped, so a nonce or a file digest above the real head no
+ * longer becomes `checked.head`. A record that quotes counts and names no such
+ * token reports a `missing-head-commit` issue. The one-argument default accepts
+ * every head-shaped token — shape only, the behaviour before provenance — so the
+ * enforcing path is {@link checkRepositoryMeasuredCommitCitations}, which asks
+ * git; a default that quietly resolved would make the injected-resolver cases
+ * pass for the wrong reason.
+ *
+ * Two passes: the first collects each quoting record's first quote and its
+ * head-shaped tokens in document order, then the **distinct** tokens are resolved
+ * once; the second builds the report. One resolver call per corpus is what keeps
+ * the sweep at one `git cat-file --batch-check` process instead of one per
+ * record.
+ *
+ * The rule stays record-level, not positional. Measured over the 302 enforced
+ * records at `08c778bc`, every positional form reded: inside `## Evidence` 148;
+ * the first quote's paragraph 209; its line 286; within ±1/±2/±3/±5/±10 lines
+ * 259/242/211/178/129; the paragraph of a `measured` word 138; immediately after
+ * a `Counts at` anchor 301. An ancestor-of-`origin/main` requirement reds 113 of
+ * the 302, because a squash-merge never makes a lane branch an ancestor of `main`.
+ *
  * A record that quotes no suite count is out of scope and never appears in
- * `checked`, so a design record without a measurement cannot look checked. A
- * record that quotes counts and names a head reports that head; one that names
- * none reports a `missing-head-commit` issue. Only the record's **first** quote is
- * named in the report — a record has one measured head, so one defect — and only
- * the first head-shaped token is reported, in document order. Fenced code blocks
- * and inline code spans are read, unlike invariant (vi): a record's counts and its
- * head live in fences and backticks.
+ * `checked`, so a design record without a measurement cannot look checked. Only
+ * the record's **first** quote is named in the report — a record has one measured
+ * head, so one defect. Fenced code blocks and inline code spans are read, unlike
+ * invariant (vi): a record's counts and its head live in fences and backticks.
  *
  * @param records - The `docs/adr` records to scan, in any order.
+ * @param resolveCommitObjects - Batch commit-object resolver; defaults to
+ * accepting every head-shaped token (shape only).
  * @returns The report, sorted by record path.
  * @example
  * ```ts
@@ -374,10 +412,13 @@ export const MEASURED_COMMIT_EXEMPTIONS: readonly string[] = [
  * ```
  */
 export function checkMeasuredCommitCitations(
-  records: readonly SourceFileText[]
+  records: readonly SourceFileText[],
+  resolveCommitObjects: CommitObjectResolver = (tokens) => new Set(tokens)
 ): MeasuredCommitResult {
   const checked: MeasuredCommitCheck[] = [];
   const issues: MeasuredCommitIssue[] = [];
+  const quoting: { record: SourceFileText; quote: RegExpExecArray; tokens: string[] }[] = [];
+  const candidates = new Set<string>();
 
   for (const record of records) {
     const quote = SUITE_COUNT_QUOTE_PATTERN.exec(record.text);
@@ -385,14 +426,24 @@ export function checkMeasuredCommitCitations(
       continue;
     }
 
+    const tokens = [...record.text.matchAll(HEAD_COMMIT_PATTERN)].map((match) => match[0]);
+    quoting.push({ record, quote, tokens });
+    for (const token of tokens) {
+      candidates.add(token);
+    }
+  }
+
+  const commits = candidates.size === 0 ? new Set<string>() : resolveCommitObjects([...candidates]);
+
+  for (const { record, quote, tokens } of quoting) {
     const line = record.text.slice(0, quote.index).split("\n").length;
     const quoted = quote[0]
       .replace(/\s+\($/, "")
       .replace(/\s+/g, " ")
       .trim();
-    const head = HEAD_COMMIT_PATTERN.exec(record.text);
+    const head = tokens.find((token) => commits.has(token)) ?? null;
 
-    checked.push({ file: record.path, line, quoted, head: head === null ? null : head[0] });
+    checked.push({ file: record.path, line, quoted, head });
     if (head === null) {
       issues.push({ code: "missing-head-commit", file: record.path, line, quoted });
     }
@@ -402,6 +453,58 @@ export function checkMeasuredCommitCitations(
   issues.sort((left, right) => compareStrings(left.file, right.file));
 
   return { ok: issues.length === 0, issues, checked, scannedRecords: records.length };
+}
+
+/**
+ * The git-backed {@link CommitObjectResolver}: one
+ * `git cat-file --batch-check` pass over `tokens` in `<root>`'s object database.
+ * A token is accepted only when its answer line has three fields and the second
+ * is `commit`; `blob`, `tree`, `<token> missing` and `<token> ambiguous` are not.
+ *
+ * `--batch-check` answers one line per input **in input order**, so line *i* is
+ * paired with token *i* — the echoed name is the resolved object, not the token
+ * asked, which is why the pairing is positional. A non-zero exit (a wrong root is
+ * not a repository) and a line/token count mismatch both throw: this module's rule
+ * is that a wrong root fails loudly, never sweeps vacuously.
+ *
+ * It requires a **full clone**. The resolver cannot tell "absent because the clone
+ * is shallow" from "absent because the record cites a foreign hash", and the
+ * silent degradation is the tolerance `adr-ledger-links.ts` shows for its own git
+ * read. `ci`'s checkout therefore reads `fetch-depth: 0`, and the census case reds
+ * on a shallow clone — deliberately, because a provenance guard that passes on a
+ * one-commit clone proves nothing.
+ */
+function gitCommitObjectResolver(root: string): CommitObjectResolver {
+  return (tokens) => {
+    const commits = new Set<string>();
+    if (tokens.length === 0) {
+      return commits;
+    }
+
+    const output = execFileSync("git", ["-C", root, "cat-file", "--batch-check"], {
+      input: tokens.map((token) => `${token}\n`).join(""),
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+      maxBuffer: 64 * 1024 * 1024,
+    });
+
+    const lines = output.split("\n").filter((line) => line.length > 0);
+    if (lines.length !== tokens.length) {
+      throw new Error(
+        `git cat-file --batch-check answered ${String(lines.length)} lines for ` +
+          `${String(tokens.length)} tokens in ${root}`
+      );
+    }
+
+    for (const [index, token] of tokens.entries()) {
+      const fields = (lines.at(index) ?? "").split(" ");
+      if (fields.length === 3 && fields[1] === "commit") {
+        commits.add(token);
+      }
+    }
+
+    return commits;
+  };
 }
 
 /**
@@ -418,12 +521,19 @@ export function checkMeasuredCommitCitations(
  * `checked` nor `issues`, so repairing one cannot look like a pass, while
  * `scannedRecords` still counts it.
  *
+ * The resolver is git-backed ({@link gitCommitObjectResolver}), so the reported
+ * heads are commit objects in `root`'s object database. That needs a **full
+ * clone**: a shallow read answers `missing` for every head it did not fetch, and
+ * this clause cannot tell that from a foreign hash. `ci`'s checkout reads
+ * `fetch-depth: 0` for exactly this case.
+ *
  * @param root - Absolute path to the repository root.
  * @param exemptions - Bare four-digit record numbers the rule skips; defaults to
  * {@link MEASURED_COMMIT_EXEMPTIONS}. Pass `[]` to enumerate every offender.
  * @returns The same report shape as {@link checkMeasuredCommitCitations}.
- * @throws If `docs/adr` cannot be read — a wrong root must fail loudly instead of
- * sweeping nothing and reporting a vacuous pass.
+ * @throws If `docs/adr` cannot be read, or `root` is not a git repository — a
+ * wrong root must fail loudly instead of sweeping nothing and reporting a vacuous
+ * pass.
  */
 export function checkRepositoryMeasuredCommitCitations(
   root: string,
@@ -438,7 +548,7 @@ export function checkRepositoryMeasuredCommitCitations(
       text: readTextFile(join(root, "docs/adr", entry.name)),
     }));
 
-  const report = checkMeasuredCommitCitations(records);
+  const report = checkMeasuredCommitCitations(records, gitCommitObjectResolver(root));
   if (exemptions.length === 0) {
     return report;
   }

@@ -683,6 +683,35 @@ pattern correctly rejects, as characterization cases. A stricter form — the he
 inside `## Evidence`, or adjacent to the first quote — is a design change for the
 orchestrator, not part of this clause, and it reds those rows by design.
 
+**Provenance, decided 2026-11-25 (card `t_c1dfdb42`).** The reported head must
+be a **commit object**: the first head-shaped token in document order that
+`git cat-file --batch-check` reports as a `commit`. A token that resolves to a
+blob, a tree, or nothing (`missing`, `ambiguous`) is skipped, and a record with
+no commit-shaped token reports `missing-head-commit`. `checked.head` therefore
+always names a commit; a nonce, a blob digest or a tree hash is never reported
+as a head. The rule stays record-level: every positional form was rejected on
+measurement over the 302 enforced records at `08c778bc` — inside `## Evidence`
+148 red; the first quote's paragraph 209; its line 286; within ±1/±2/±3/±5/±10
+lines 259/242/211/178/129; the paragraph of a `measured` word 138; immediately
+after a `Counts at` anchor 301 — each a documentation programme, not a guard.
+An **ancestor of `origin/main`** requirement was rejected for the same reason:
+113 of the 305 enforced records cite their measured head on a lane branch, which
+a squash-merge never makes an ancestor of `main` (and 29 of the 305 cite it only
+on a head that no branch-and-tag fetch carries, because the lane branch was
+deleted after its squash; with the pull refs fetched, no record is a `missing`
+one and a `git gc` cannot manufacture one). Measured on the tree this record
+lands in, with its pull refs fetched — 494 records, 323 quoting, 305 enforced, 18
+exempt: **no record reds**, one report changes (ADR-0791's random 32-hex nonce
+`3f2c1d88…` gives way to its real head `3eb7c7d`), and 335 of the 1,240 distinct
+head-shaped tokens quoted across counting records are not commits (121 blob /
+56 tree / 158 missing) and are now skipped. The resolver needs a full clone plus
+the pull refs: `ci`'s checkout reads `fetch-depth: 0` and every job that runs the
+unit project also fetches `refs/pull/*/head`, because a shallow read cannot
+distinguish an absent object from a foreign hash, and a squash-merged lane's
+measured head is reachable only from its pull ref. What stays open is the class
+no static check can close — a **real** commit that is not the one the counts
+were measured at; a reviewer reads the reported head for that.
+
 **Load-bearing, measured.** Replacing every head-shaped token in
 [ADR-0980](ADR-0980-op101-downgrade-scheduled-event-green.md)'s bytes on a
 throwaway probe reds exactly two cases of the clause and nothing else in the
