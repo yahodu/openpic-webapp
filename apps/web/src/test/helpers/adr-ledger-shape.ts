@@ -207,8 +207,33 @@ export interface AdrLedgerContiguityIssue {
   reason: AdrLedgerContiguityReason;
 }
 
-/** One issue S1 reports: a rejected row, or a line that detaches the rows below it. */
-export type AdrLedgerShapeIssue = AdrLedgerRowShapeIssue | AdrLedgerContiguityIssue;
+/**
+ * Why the line directly under the ledger header cannot start the table. GFM
+ * reads that line as the header's delimiter row; without a usable one the
+ * header is **not a table**, so every `| [NNNN](ADR-*.md) | …` line below it
+ * renders as a paragraph and no status column exists to render.
+ */
+export type AdrLedgerDelimiterReason =
+  /** The line under the header is empty, or is not a `|`-delimited line of dashes. */
+  | "delimiter-missing"
+  /** The line under the header is a delimiter row whose cell count differs from the header's. */
+  | "delimiter-cells";
+
+/** The line under the ledger header (`headerLine + 1`) that cannot make it a table. */
+export interface AdrLedgerDelimiterIssue {
+  /** 1-based line in the ledger: the header's line plus one. */
+  line: number;
+
+  /** One of {@link AdrLedgerDelimiterReason}. */
+  reason: AdrLedgerDelimiterReason;
+}
+
+/**
+ * One issue S1 reports: a rejected row, a line that detaches the rows below it,
+ * or a header that no table can start from.
+ */
+export type AdrLedgerShapeIssue =
+  AdrLedgerRowShapeIssue | AdrLedgerContiguityIssue | AdrLedgerDelimiterIssue;
 
 /** The report shape returned by {@link checkAdrLedgerRowShape}. */
 export interface AdrLedgerRowShapeResult {

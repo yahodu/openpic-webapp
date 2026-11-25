@@ -83,6 +83,40 @@
  * the real-tree case being **the only red**, and the `fc8fab29` blob gives
  * `[{ line: 652, reason: "blank-line" }]`.
  *
+ * **The header's delimiter row is read too.** S1c's sweep starts at
+ * `headerLine + 2`, so the line directly under the header (`headerLine + 1`)
+ * sat outside **every** rule: no guard read the delimiter row. Measured on the
+ * trunk `cd878591`: a copy of `docs/adr/README.md` with `:159` deleted and a
+ * second copy whose `:159` reads `| --- |` both returned
+ * `{ ok: true, columns: 3, rows: 494, issues: [] }` from
+ * {@link checkAdrLedgerRowShape}, and the ten `adr-*` guards stayed
+ * `10 passed (10)` / `343 passed (343)`. GitHub's own renderer, over the
+ * five-line excerpt `:158`–`:162` (`gh api -X POST markdown -f mode=gfm`),
+ * emitted **4** `<tr>` and **9** `<td>` for the control and **0** `<tr>`,
+ * **0** `<td>` and **1** `<p>` for each mutation — the whole ledger as one
+ * paragraph: no table, no status column. Same "renders nothing" class as S1c,
+ * one line above its scope.
+ *
+ * The rule is **decided** on this card and reports into S1's own `issues`
+ * array, in the same `{ line, reason }` shape: `delimiter-missing` when
+ * `headerLine + 1` is empty or is not a `|`-delimited line of dashes at all,
+ * `delimiter-cells` when that line is a delimiter row whose cell count differs
+ * from the header's. The reported `line` is the delimiter line, `ok` stays
+ * `rows > 0 && issues.length === 0`, and the array stays sorted by line. No
+ * second real-tree census case is added: these reasons report into the same
+ * `shape.issues` array the real-tree case above already asserts empty, so that
+ * one case covers them as well.
+ *
+ * **The block-end boundary is frozen, not moved.** S1c's block closes at the
+ * **last row-shaped line in the document**, so prose carrying a row-shaped
+ * example is *inside* the block: `header + two rows + "" + "Notes: a new record
+ * is added as" + "" + one row-shaped example line` reports exactly three issues
+ * — `blank-line`, `non-row`, `blank-line` — measured at `0ccc18f4` and again on
+ * this cut. The characterization case at the end of the S1c block pins that
+ * reading so a later change to it must be deliberate. It demands no behaviour
+ * change, and the decided position stands: a stray example row fails loudly
+ * and is moved out of the table.
+ *
  * **S2 — the record and the cell agree on their first word.** Both sides are
  * normalised by {@link adrStatusWord} (strip `**`, strip a leading `-`/`*`,
  * cut at `(`/`:`/`—`/`,`/`;`/`·`, lowercase) and the cell's first word must
@@ -163,6 +197,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { makeTempRepoRoot, realAdrDir, repoRoot, tempDirs } from "../helpers/adr-guard-fixtures.js";
+import type { AdrLedgerRowShapeResult } from "../helpers/adr-ledger-shape.js";
 import {
   ADR_LEDGER_PATH,
   adrStatusWord,
@@ -174,7 +209,13 @@ import {
 import { readTextFile } from "../helpers/adr-source-references.js";
 
 /** The ledger header a synthetic fixture carries, exactly as the real one reads. */
-const HEADER_LINES = ["| ADR | Title | Status |", "| --- | ----- | ------ |"];
+const HEADER_LINE = "| ADR | Title | Status |";
+
+/** The header's delimiter row as the real ledger writes it (`README.md:159`). */
+const DELIMITER_LINE = "| --- | ----- | ------ |";
+
+/** The two lines a synthetic ledger starts with, header then delimiter. */
+const HEADER_LINES = [HEADER_LINE, DELIMITER_LINE];
 
 /** A synthetic ledger document built from its lines, kept out of `docs/adr/`. */
 function syntheticLedger(lines: string[]): { path: string; text: string } {
@@ -405,6 +446,123 @@ describe("checkAdrLedgerRowShape — the ledger block stays one table", () => {
     ]);
 
     // Act + Assert — no issue, and the rows are counted.
+    expect(checkAdrLedgerRowShape(ledger)).toEqual({
+      ok: true,
+      columns: 3,
+      rows: 2,
+      issues: [],
+    });
+  });
+
+  it("reads a row-shaped example line under the notes as inside the block — the frozen block end", () => {
+    // Arrange — the boundary F-R2 measured at `0ccc18f4`: the block closes at
+    // the **last row-shaped line in the document**, so the notes a ledger
+    // carries between its table and an example row are *inside* the block.
+    // Characterization, not a demand: it freezes today's reading so a later
+    // change to it must be deliberate, and it is green before and after the
+    // delimiter rule.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+      "",
+      "Notes: a new record is added as",
+      "",
+      "| [0302](ADR-0302-gamma.md) | an example row, outside the table | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — exactly the three lines between the second row and the example
+    // line: the blank line, the prose, the blank line. The example row is
+    // itself row-shaped, so it is never reported here whatever its cell count.
+    expect(result).toEqual({
+      ok: false,
+      columns: 3,
+      rows: 3,
+      issues: [
+        { line: 5, reason: "blank-line" },
+        { line: 6, reason: "non-row" },
+        { line: 7, reason: "blank-line" },
+      ],
+    });
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * S1 — the header's delimiter row: without it the header is not a table
+ * ------------------------------------------------------------------------- */
+
+describe("checkAdrLedgerRowShape — the header's delimiter row", () => {
+  it("reports delimiter-missing when the line under the header is empty", () => {
+    // Arrange — the shape measured on the trunk `cd878591`: `README.md:159`,
+    // the `| --- | ---- | ------ |` row, deleted. GitHub then renders the whole
+    // ledger as one `<p>` — 0 `<tr>`, 0 `<td>` — while the ten `adr-*` guards
+    // stay green, so no status column exists and no row is read as a table row.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — one issue, on the delimiter's own line (`headerLine + 1`), and
+    // both rows are still counted: the rows are well formed, the table is not.
+    // Typed, so the decided reason is part of the contract and not only a
+    // string a loosened assertion would accept.
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [{ line: 2, reason: "delimiter-missing" }],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports delimiter-cells when the line under the header is a one-cell delimiter row", () => {
+    // Arrange — the second measured shape: `README.md:159` replaced by
+    // `| --- |`, a delimiter row of one cell under a three-cell header. The
+    // render is the same as a missing row — 0 `<tr>`, the ledger as one `<p>`.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "| --- |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the same line, the distinct reason: the line *is* a delimiter
+    // row, so the defect is its cell count and not its presence.
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [{ line: 2, reason: "delimiter-cells" }],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports nothing when an empty line above the header precedes a correct delimiter", () => {
+    // Arrange — the negative control: a leading blank line above the header,
+    // then the header and its correct delimiter. A reader that measures the
+    // line above the header, or that reads the blank line as the delimiter,
+    // reds here while the two cases above stay green, so the pair is what
+    // makes the rule load-bearing.
+    const ledger = syntheticLedger([
+      "",
+      HEADER_LINE,
+      DELIMITER_LINE,
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act + Assert — no issue at all, and both rows are counted.
     expect(checkAdrLedgerRowShape(ledger)).toEqual({
       ok: true,
       columns: 3,
