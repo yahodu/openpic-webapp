@@ -768,21 +768,76 @@ describe("checkMeasuredCommitCitations — a record that quotes a count names it
       scannedRecords: 1,
     });
     // The resolver is a **batch** over the record's candidates, in document order:
-    // one call for the record, not one call per token, so the sweep costs one
-    // `git cat-file --batch-check` pass over the corpus.
+    // one call for the record, never one call per token. The sweep then hands it
+    // the distinct tokens of every quoting record in **one** call — pinned by the
+    // case below — so the census costs one `git cat-file --batch-check` process,
+    // not one per record and not one per token.
     expect(seen).toEqual([["3f2c1d8899aa55bb66cc77dd88ee99ff", "3eb7c7d"]]);
   });
 
+  it("resolves the distinct tokens of every quoting record in one call, not one per record", () => {
+    // Arrange — two quoting records, three head-shaped tokens between them: the
+    // first names a nonce above its head, the second names its head only. A
+    // per-record resolver calls twice, a per-token resolver three times, and only
+    // a corpus-wide batch calls once with all three.
+    const records: SourceFileText[] = [
+      {
+        path: "docs/adr/ADR-0791-b.md", // adr-fixture: synthetic record name
+        text: [
+          '"nonce": "3f2c1d8899aa55bb66cc77dd88ee99ff",',
+          "",
+          "Tests  13 passed (13) at `3eb7c7d`.",
+        ].join("\n"),
+      },
+      {
+        path: "docs/adr/ADR-0792-b.md", // adr-fixture: synthetic record name
+        text: "Tests  9 passed (9) at `a1b2c3d`.",
+      },
+    ];
+    const seen: string[][] = [];
+
+    // Act — the resolver accepts both heads and rejects the nonce, and records
+    // every batch it is handed.
+    const report = checkMeasuredCommitCitations(records, (tokens) => {
+      seen.push([...tokens]);
+      return new Set(tokens.filter((token) => token !== "3f2c1d8899aa55bb66cc77dd88ee99ff"));
+    });
+
+    // Assert — one call carrying the distinct candidates of both records, in
+    // document order. This is the corpus-wide batch the census relies on: one
+    // process for the whole sweep instead of one per record.
+    expect(seen).toEqual([["3f2c1d8899aa55bb66cc77dd88ee99ff", "3eb7c7d", "a1b2c3d"]]);
+    expect(report.checked).toEqual([
+      {
+        file: "docs/adr/ADR-0791-b.md", // adr-fixture: synthetic record name
+        line: 3,
+        quoted: "13 passed",
+        head: "3eb7c7d",
+      },
+      {
+        file: "docs/adr/ADR-0792-b.md", // adr-fixture: synthetic record name
+        line: 1,
+        quoted: "9 passed",
+        head: "a1b2c3d",
+      },
+    ]);
+    expect(report.ok).toBe(true);
+  });
+
   it("rejects a record whose only head-shaped tokens are not commit objects", () => {
-    // Arrange — a file digest and a tree, both head-shaped, neither a commit: the
-    // drift record's shape twice over in one record.
+    // Arrange — a file digest and a token that resolves to no object at all, both
+    // head-shaped, neither a commit: the drift record's shape twice over in one
+    // record. Measured at `15ea54be`: `83a1c8ce` is a **blob** (a 67 694-byte
+    // source file) and `c6a0cd45` is `missing` to `git cat-file --batch-check`.
+    // The stub resolver below answers for neither, so the case's report does not
+    // depend on either token's object type — only that neither is a commit.
     const records: SourceFileText[] = [
       {
         path: "docs/adr/ADR-0302-h.md",
         text: [
           "Tests  15 passed (15)",
           "",
-          "The route blob is `c6a0cd45` and the tree above it `83a1c8ce`.",
+          "The route digest is `c6a0cd45` and the `fan-out.ts` blob `83a1c8ce`.",
         ].join("\n"),
       },
     ];
@@ -1255,9 +1310,15 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
 
   it("reports only commit objects as heads at the trunk", () => {
     // Act — the tree this spec runs in, with the default allowlist. Measured at
-    // `0ccc18f4`: 305 records checked, 494 scanned, and 1,456 distinct head-shaped
-    // tokens of which 1,109 are commits, 125 blobs, 56 trees and 166 resolve to
-    // nothing — the rule skips the 347 that are not commits.
+    // `15ea54be`: 495 in-scope records, 324 of them quoting a count, and 306
+    // checked once the 18 default exemptions are dropped.
+    //
+    // The histogram below is over those **324 quoting records** — the population
+    // the rule resolves — and not over all 495 files: 1,296 distinct head-shaped
+    // tokens, of which 946 are commits, 132 blobs, 58 trees and 160 resolve to
+    // nothing, so the rule skips the 350 that are not commits. (The 495-file set
+    // holds 1,513 distinct tokens, but a record quoting no count has its tokens
+    // neither collected nor resolved, so that wider figure describes no path here.)
     const report = checkRepositoryMeasuredCommitCitations(repoRoot);
 
     // Assert — a non-empty corpus first, so the property below cannot hold
