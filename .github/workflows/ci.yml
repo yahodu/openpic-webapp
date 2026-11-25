@@ -21,7 +21,7 @@ jobs:
       # ref; a branch/tag fetch does not carry it, and the measured-count census
       # resolves every cited head (ADR-0302 §12).
       - name: Fetch pull-request heads
-        run: git fetch --no-tags origin '+refs/pull/*/head:refs/remotes/pull/*'
+        run: git fetch --no-tags origin '+refs/pull/*/head:refs/remotes/prheads/*'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
