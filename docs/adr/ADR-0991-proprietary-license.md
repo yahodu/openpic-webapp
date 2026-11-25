@@ -84,11 +84,11 @@ Measured with `pnpm licenses list --json` over the installed tree (542 packages,
 | ---------------------------------------------------------------------------------- | -------: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | MIT                                                                                |      421 | Permissive — no condition                                                                                                                                                                                                                                                                                                                                                                                       |
 | Apache-2.0                                                                         |       63 | Permissive — keep notices                                                                                                                                                                                                                                                                                                                                                                                       |
-| ISC / BSD-2 / BSD-3 / 0BSD / BlueOak-1.0.0 / CC0-1.0 / Zlib / dual                 |       46 | Permissive — no condition                                                                                                                                                                                                                                                                                                                                                                                       |
+| ISC / BSD-2 / BSD-3 / 0BSD / BlueOak-1.0.0 / CC0-1.0 / Zlib / dual                 |       51 | Permissive — no condition                                                                                                                                                                                                                                                                                                                                                                                       |
 | MPL-2.0 (`lightningcss`, `lightningcss-linux-x64-gnu`)                             |        2 | File-level copyleft: obligations attach only to modified MPL files; we modify none. It is Next.js's CSS compiler, a build-time tool                                                                                                                                                                                                                                                                             |
 | CC-BY-4.0 (`caniuse-lite`)                                                         |        1 | Data, attribution only; build-time data, not shipped to clients                                                                                                                                                                                                                                                                                                                                                 |
 | LGPL-3.0-or-later (`@img/sharp-libvips-linux-x64`)                                 |        1 | Weak copyleft: linking does not reach our code. Arrives transitively as `next@15.5.29 → sharp@0.35.5 → @img/sharp-linux-x64@0.35.5`, an unmodified native binary loaded at runtime, and the app is deployed as a service rather than distributed as a binary — so the relink/replacement obligation is not triggered. If the binary is ever shipped to a user, publish its license text and a way to replace it |
-| Dev-only remainder (`argparse` Python-2.0, `npm` Artistic-2.0, `spdx-*` CC-BY/CC0) |          | Build tooling, never part of the distributed artifact                                                                                                                                                                                                                                                                                                                                                           |
+| Dev-only remainder (`argparse` Python-2.0, `npm` Artistic-2.0, `spdx-*` CC-BY/CC0) |        3 | Build tooling, never part of the distributed artifact                                                                                                                                                                                                                                                                                                                                                           |
 
 **Zero** GPL, AGPL, SSPL, BUSL, EUPL, OSL or non-commercial (`CC-BY-NC`) packages
 in either the full or the production set. **Nothing forbids proprietary
@@ -123,11 +123,32 @@ not exist for half its contributors.
 - The license names **India** as the governing law and leaves the copyright holder
   line as `OpenPic`. Both are the owner's to confirm; a change is a text edit, not a
   renumbering, and does not touch any code.
-- The audit is a snapshot of `pnpm-lock.yaml` at this head. A new dependency can
-  change the answer, so the `audit` check in CI remains the mechanical guard: a
-  package with an incompatible license arrives as a red check, not a surprise.
+- D3 was a manual snapshot of `pnpm-lock.yaml` at this head. The `audit` check in
+  CI is a **vulnerability** gate — `pnpm audit --prod --audit-level=moderate` reads
+  the advisory database and never reads a package's `license` field — so it says
+  nothing about licences, and a GPL dependency would land green. The mechanical
+  licence guard is the inventory spec added by card `t_3fffed3c`
+  (`apps/web/src/test/unit/dependency-licenses.test.ts`), whose allow-list is D3's
+  position: a package outside it reddens CI.
 - Forking through GitHub stays possible (Context). Enforcement is legal, not
   technical.
+
+### Review correction (round 1, PR #976)
+
+Round 1 of the review of PR #976 (card `t_a3351538`, 2026-11-25) measured two
+statements in this record and found both false. §Consequences claimed the CI
+`audit` check was the mechanical licence guard; `pnpm audit` reports vulnerability
+advisories and never reads licence metadata, and no workflow reads a `license`
+field. The D3 table's permissive group read 46 packages where
+`pnpm licenses list --json` counts 51 (ISC 29, BSD-2-Clause 9, BSD-3-Clause 6,
+0BSD 1, BlueOak-1.0.0 2, CC0-1.0 1, `(MIT AND Zlib)` 1,
+`(BSD-2-Clause OR MIT OR Apache-2.0)` 1, `(MIT OR CC0-1.0)` 1), and the three
+dev-only remainder packages were left out of the Packages column, so the column
+summed to 537 instead of the measured 542. Both statements are corrected by card
+`t_8229f552`, and the licence inventory spec of card `t_3fffed3c` replaces the
+manual snapshot. Nothing in the accepted decision is retracted: D1, D2, D3's
+conclusion (no dependency forbids a proprietary licence), D4 and D5 stand as
+recorded.
 
 ## Alternatives
 
