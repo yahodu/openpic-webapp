@@ -1,7 +1,8 @@
 /**
- * ADR guard, the ledger's **row shape** and its **status agreement** — the
- * ledger-row-shape guard, recorded by `ADR-0319` and outside the `0302`
- * invariant table, and the first one that reads a record's `Status:` line.
+ * ADR guard, the ledger's **row shape**, its **block contiguity** and its
+ * **status agreement** — the ledger-row-shape guard, recorded by `ADR-0319` and
+ * outside the `0302` invariant table, and the first one that reads a record's
+ * `Status:` line.
  *
  * **Why it is a separate module.** The other guard modules
  * (`adr-numbering`, `adr-record-links`, `adr-ledger-links`, `adr-lane-ranges`,
@@ -17,7 +18,7 @@
  * document; a row that renders the wrong status is wrong even though the bytes
  * are valid markdown.
  *
- * **The two rules.**
+ * **The rules.**
  *
  * - **S1, row shape.** Locate the ledger header (`| ADR | Title | Status |`) and
  *   its column count. Every row shaped `| [NNNN](ADR-*.md) | …` must split on
@@ -40,6 +41,35 @@
  *   vocabulary admits exactly what S2 already admits), and the case that
  *   survives both rules needs an exact-cell match, which would red the real
  *   rows whose status legitimately reads `Accepted (GREEN landed: …)`.
+ *
+ * - **S1c, block contiguity.** Between the header's delimiter row and the last
+ *   ledger row in the document, every non-empty line must itself be a ledger
+ *   row. A blank line ends a GFM table, so every row below it renders as a
+ *   **paragraph**: on the squash `fc8fab29` a blank line between the `0987` and
+ *   the `0988` rows made GitHub emit **3** `<tr>` — header, `0986`, `0987` — and
+ *   the `0988` row as `<p>…| Accepted (GREEN) |</p>`:
+ *
+ *   ```
+ *   { sed -n '158,159p' docs/adr/README.md; sed -n '650,653p' docs/adr/README.md; } > probe.md
+ *   gh api -X POST markdown -F text=@probe.md -f mode=gfm
+ *   ```
+ *
+ *   S1 read all four rows as well formed and the ten `adr-*` guards stayed at
+ *   `340 passed` on that tree, so the guard's own purpose — "every row renders a
+ *   status" — was not served: a detached row renders no status at all. The
+ *   issue lands in **S1's own `issues` array** so one real-tree case covers row
+ *   shape and contiguity together, and its shape is `{ line, reason }`: `reason`
+ *   is `blank-line` for an empty line, `non-row` for a non-empty line that is not
+ *   a `| [NNNN](ADR-*.md) | …` row.
+ *
+ *   **The boundaries of the rule**, stated so it is not over-read. A row whose
+ *   cell count is wrong stays S1's report (`cell-count`) and is not repeated
+ *   here. A blank line *after* the last ledger row is prose separating the table
+ *   from its notes, not a detachment, and is not reported; the block's end is the
+ *   **last row-shaped line in the document**, which at this cut is the table's
+ *   own last row (`README.md:653`), so no prose region is inside the block. A
+ *   ledger with a header and no rows reports nothing here — S1's `rows > 0`
+ *   clause already fails it, and a contiguity rule has nothing to measure.
  *
  * - **S2, status agreement.** For every ledger row whose link names a record
  *   present in `records`, the record's `**Status:**` value and the row's status
@@ -161,9 +191,28 @@ export interface AdrLedgerRowShapeIssue {
   issues: AdrLedgerRowDefect[];
 }
 
+/** Why a line inside the ledger block is not a ledger row. */
+export type AdrLedgerContiguityReason =
+  /** An empty line: GFM ends the table there, so every row below it is detached. */
+  | "blank-line"
+  /** A non-empty line that is not a `| [NNNN](ADR-*.md) | … |` row. */
+  | "non-row";
+
+/** One line between the delimiter row and the last ledger row that breaks the table. */
+export interface AdrLedgerContiguityIssue {
+  /** 1-based line in the ledger, matching an editor's gutter. */
+  line: number;
+
+  /** One of {@link AdrLedgerContiguityReason}. */
+  reason: AdrLedgerContiguityReason;
+}
+
+/** One issue S1 reports: a rejected row, or a line that detaches the rows below it. */
+export type AdrLedgerShapeIssue = AdrLedgerRowShapeIssue | AdrLedgerContiguityIssue;
+
 /** The report shape returned by {@link checkAdrLedgerRowShape}. */
 export interface AdrLedgerRowShapeResult {
-  /** `true` exactly when rows were read and none was rejected. */
+  /** `true` exactly when rows were read and no issue was reported. */
   ok: boolean;
 
   /** The header's column count (`3` for the ADR ledger). */
@@ -172,8 +221,8 @@ export interface AdrLedgerRowShapeResult {
   /** Ledger rows the rule read, so "no issues" can never be a vacuous pass. */
   rows: number;
 
-  /** The rejected rows, ascending by ledger line. */
-  issues: AdrLedgerRowShapeIssue[];
+  /** The rejected rows and the block-breaking lines, ascending by ledger line. */
+  issues: AdrLedgerShapeIssue[];
 }
 
 /** One record as S2 reads it: the bare file name a row links and its markdown. */
@@ -256,8 +305,11 @@ interface LedgerRow {
   readonly cells: readonly string[];
 }
 
-/** One ledger table: the header's column count and every ADR row. */
+/** One ledger table: the header's line, its column count and every ADR row. */
 interface LedgerTable {
+  /** 1-based line of the `| ADR | Title | Status |` header. */
+  readonly headerLine: number;
+
   readonly columns: number;
   readonly rows: readonly LedgerRow[];
 }
@@ -346,7 +398,47 @@ function ledgerTableOf(text: string): LedgerTable {
     });
   }
 
-  return { columns, rows };
+  return { headerLine: headerIndex + 1, columns, rows };
+}
+
+/**
+ * S1c — the lines between the delimiter row and the last ledger row that are
+ * not ledger rows.
+ *
+ * The block opens below the header's delimiter row (the header's next line) and
+ * closes at the **last** row-shaped line in the document, so the prose notes a
+ * ledger carries under its table are never inside the block. Every line in
+ * between is either empty — `blank-line`, which ends the GFM table and detaches
+ * every row below it — or, when it is not a `| [NNNN](ADR-*.md) | …` row, a
+ * `non-row` line that ends the table the same way. A row-shaped line is never
+ * reported here, whatever its cell count: that is S1's `cell-count` report.
+ *
+ * A document with no ledger row has no block to measure and returns nothing;
+ * S1's `rows > 0` clause already fails it.
+ */
+function contiguityIssuesOf(
+  lines: readonly string[],
+  headerLine: number,
+  rows: readonly LedgerRow[]
+): AdrLedgerContiguityIssue[] {
+  const lastRow = rows[rows.length - 1];
+  if (lastRow === undefined) {
+    return [];
+  }
+
+  const issues: AdrLedgerContiguityIssue[] = [];
+  for (let line = headerLine + 2; line <= lastRow.line; line += 1) {
+    const text = lines[line - 1] ?? "";
+    if (text.trim() === "") {
+      issues.push({ line, reason: "blank-line" });
+      continue;
+    }
+    if (LEDGER_ROW_PATTERN.exec(text) === null) {
+      issues.push({ line, reason: "non-row" });
+    }
+  }
+
+  return issues;
 }
 
 /**
@@ -413,11 +505,8 @@ function recordStatusValueOf(recordText: string): string | null {
   return firstAnyForm;
 }
 
-/** Order S1 issues by ledger line. */
-function compareRowShapeIssues(
-  left: AdrLedgerRowShapeIssue,
-  right: AdrLedgerRowShapeIssue
-): number {
+/** Order S1's issues — rejected rows and block-breaking lines alike — by line. */
+function compareRowShapeIssues(left: AdrLedgerShapeIssue, right: AdrLedgerShapeIssue): number {
   return left.line - right.line;
 }
 
@@ -427,11 +516,14 @@ function compareStatusIssues(left: AdrLedgerStatusIssue, right: AdrLedgerStatusI
 }
 
 /**
- * S1 — every ledger row renders a status. Pure.
+ * S1 — every ledger row renders a status, and the ledger block stays one table.
  *
  * Locates the `| ADR | Title | Status |` header, measures every
  * `| [NNNN](ADR-*.md) | …` row against its column count, and reports each row
  * that does not split into `columns + 2` parts or whose status cell is empty.
+ * The same `issues` array carries S1c's `{ line, reason }` reports: a blank or
+ * non-row line between the delimiter row and the last ledger row detaches every
+ * row below it, so a row can be well formed and still render as a paragraph.
  *
  * `ok` is `rows > 0 && issues.length === 0`: a document whose header carries no
  * rows is a failure, never a pass.
@@ -446,8 +538,12 @@ function compareStatusIssues(left: AdrLedgerStatusIssue, right: AdrLedgerStatusI
  * ```
  */
 export function checkAdrLedgerRowShape(ledger: AdrLedgerFileText): AdrLedgerRowShapeResult {
-  const { columns, rows } = ledgerTableOf(ledger.text);
-  const issues: AdrLedgerRowShapeIssue[] = [];
+  const { columns, rows, headerLine } = ledgerTableOf(ledger.text);
+  const issues: AdrLedgerShapeIssue[] = contiguityIssuesOf(
+    ledger.text.split("\n"),
+    headerLine,
+    rows
+  );
 
   for (const row of rows) {
     const defects: AdrLedgerRowDefect[] = [];
