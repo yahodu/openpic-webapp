@@ -169,3 +169,42 @@ which is **`0990`**. No cell is lowered and no range is re-cut. The trunk then m
 once more (`d614bafc`, the `0985` ledger row's own correction, #934); the second
 merge head `62e68b72` keeps the trunk's corrected `0985` row verbatim and this
 record's `0989` row beside it, with the cells still at `0990`.
+
+## Round-1 review sign-off
+
+- **Verdict: APPROVED WITH FINDINGS** on the merged squash `0058bb136234febe812b6873fd1ec999c2a26f40` (PR [#933](https://github.com/yahodu/openpic-webapp/pull/933), head `90c7d2ae`), reviewed at round 1 with the artifact lens: a land proof, counts re-measured in a throwaway probe worktree and two precedence arms re-run against the production route, not a re-reading of this record's own tables.
+
+**Land proof.**
+
+- `0058bb13` is an ancestor of `origin/main`, and the squash touched exactly three paths — `M` `apps/web/src/test/integration/billing-plan-change.test.ts` `+121`, `A` this record `+171`, `M` `docs/adr/README.md` `+1` — with no production file.
+- This record is byte-identical at the squash and on the trunk (`adafd8a8`). The other two paths have advanced since, and the advance is not this delivery's: the spec is `+67/−0` (the `F5e` pin of `2345326c`) and `docs/adr/README.md` is `+7/−6` (the `ADR-0990` row and the four cells, from `2345326c`, `cd878591` and `88d8ff0b`).
+- 15/15 check-runs `success` on the head `90c7d2ae80b52ffc689ed68d2e46a00287b64b59` and none in any other state; the head tip is archived at `refs/prhead/933` and the branch `OP-101-task-downgrade-refusal-precedence-pins` is released (absent locally and on `origin`).
+
+**Counts re-measured by the reviewer** in a throwaway probe worktree at the trunk `e7e92304` (`node_modules` symlinked; `packages/contracts` and `apps/web/src/server` byte-identical to the base):
+
+- `billing-plan-change.test.ts` `33 passed (33)` and `billing-downgrade-scheduled-event.test.ts` `16 passed (16)` — `49 passed (49)` together, each file run on its own.
+- `prettier --check` clean on the spec, this record and `docs/adr/README.md`.
+- ADR ledger on that trunk: `494` records, an empty `uniq -d` sweep and exactly one `ADR-0989` path; the four pool-mirror cells read `0990`.
+
+**The two arms, reproduced independently** — the guard block moved by a script that refuses a non-unique anchor, the route `sha256 ba6f5945829bffe1a5177f3506099b201877c64d5e4c6fd6c4c9430691f16c31` restored and re-hashed after every arm:
+
+- guard after the plan load and the tier check → `1 failed | 32 passed (33)`: `F5d` `expected 422 to be 409`, `F5c` green.
+- guard after the acknowledgement prompt → `2 failed | 31 passed (33)`: `F5c` and `F5d` both `expected 422 to be 409`.
+- Both agree with §Evidence and §Consequences, and together they close the `31 passed (31)`-twice blindness §Context measures: the guard's position is now observable in the response a client sees, not only in the source.
+
+**F1 — Low, Test Author: the third ordering relation is unpinned.** §D1 orders five rungs. `F5c` pins period end before the acknowledgement prompt and `F5d` pins it before the tier check, but _period end before the catalogue load_ has no case: with the guard moved **after** `loadPlan` and before the tier check, the focused spec at that trunk still reads `33 passed (33)`, so a refactor that lets the catalogue's `422 validation_failed` answer first leaves every pin green.
+
+- A candidate `F5e` — a period-less row, `targetPlanKey: "not-a-sold-plan"`, `acknowledgeConsequences: true` — passes on the trunk and reds under that arm with `expected 422 to be 409`.
+- Routed to the TEST card `t_662cbd6d` (same lane worktree, a characterisation pin only — no production change).
+- **Nothing in this record is retracted:** §D1's order stands, §D2's two cases keep their meaning, and §Evidence's counts are the ones measured at this squash. The follow-up's own record documents what follows.
+
+**Info — no action.**
+
+- The squash's ledger hunk is `+1` while the first ADR commit `4b0dbdbf` read `5 4`: that commit rewrote the four pool-mirror cells `0987` → `0990` and added the `0989` row, but `bc399470` (#935) had already advanced those cells to `0990` on the trunk before the merge, so the merge kept main's cells and added only the row.
+- The `describe` seeds the same fixture in four cases at the squash (`F5`, `F5b`, `F5c`, `F5d`) — style only, no card.
+
+**Post-review status — measured at `origin/main` `96552213` and again on the trunk this section lands on, `b11177bb`** (the one commit between them touches only the `adr-source-references` test-support files; no `docs/` path moves). F1 is addressed: card `t_662cbd6d` landed `F5e` as the squash `2345326c` (PR #943), with its own record (`ADR-0990`) and the four cells advanced `0990` → `0991`.
+
+- At both bases the focused spec reads `34 passed (34)` and, with the sibling, `50 passed (50)` (`34` + `16`); the ledger holds `495` records with an empty `uniq -d` sweep, one `ADR-0989` path and cells at `0991`.
+- The F1 arm is now load-bearing at both: guard after `loadPlan`, before the tier check → `1 failed | 33 passed (34)`, `F5e` alone with `expected 422 to be 409`; the two round-1 arms move to `2 failed | 32 passed (34)` and `3 failed | 31 passed (34)` on the same trees.
+- Guards: `adr-numbering` `29 passed (29)` at both; the ten `adr-*` specs `10 files / 390 passed (390)` at `96552213` and `10 files / 392 passed (392)` at `b11177bb`, because the de-flake that landed between them adds two cases. `prettier --check` is clean on this record.
