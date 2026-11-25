@@ -699,12 +699,15 @@ An **ancestor of `origin/main`** requirement was rejected for the same reason:
 a squash-merge never makes an ancestor of `main` (and 29 of the 305 cite it only
 on a head that no branch-and-tag fetch carries, because the lane branch was
 deleted after its squash; with the pull refs fetched, no record is a `missing`
-one and a `git gc` cannot manufacture one). Measured on the tree this record
-lands in, with its pull refs fetched — 494 records, 323 quoting, 305 enforced, 18
-exempt: **no record reds**, one report changes (ADR-0791's random 32-hex nonce
-`3f2c1d88…` gives way to its real head `3eb7c7d`), and 335 of the 1,240 distinct
-head-shaped tokens quoted across counting records are not commits (121 blob /
-56 tree / 158 missing) and are now skipped. The resolver needs a full clone plus
+one and a `git gc` cannot manufacture one). Measured at `a0d8f5f5`, the cut this
+clause was written against, with its pull refs fetched — 494 records, 323 quoting,
+305 enforced, 18 exempt: **no record reds**, one report changes (ADR-0791's random
+32-hex nonce `3f2c1d88…` gives way to its real head `3eb7c7d`), and 334 of the
+1,239 distinct head-shaped tokens quoted across counting records are not commits
+(121 blob / 56 tree / 157 missing) and are now skipped. This paragraph adds the
+1,240th: quoting the nonce as an eight-character prefix puts a token the object
+database does not know into the population, which is why the figures name a cut
+rather than a trunk that moves under them. The resolver needs a full clone plus
 the pull refs: `ci`'s checkout reads `fetch-depth: 0` and every job that runs the
 unit project also fetches `refs/pull/*/head`, because a shallow read cannot
 distinguish an absent object from a foreign hash, and a squash-merged lane's
