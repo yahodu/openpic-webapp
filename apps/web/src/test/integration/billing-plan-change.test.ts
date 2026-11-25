@@ -1152,6 +1152,127 @@ describe("POST /api/v1/tenants/{tenantId}/billing/downgrade", () => {
     expect(events).toHaveLength(0);
   });
 
+  it("F5c: a period-less downgrade without acknowledgement is refused as 409 no_period_end, not 422 acknowledgement_required", async () => {
+    // Precedence pin (round-1 review of #925; ADR-0989). `no_period_end` is a
+    // **row-integrity** answer, so it must be decided before the §3.3
+    // acknowledgement exchange: a row with no period has no instant to schedule
+    // against, so a prompt asking the caller to acknowledge the consequences of
+    // a change that can never be stored is a dead end. `F5`/`F5b` pin the
+    // refusal but stay green if the guard moves *after* the ack prompt (an
+    // acknowledged request never reaches that prompt), so this case posts
+    // `acknowledgeConsequences: false`: only a route that decides the period
+    // check first answers `409` here — a reordered one answers `422
+    // acknowledgement_required` and reds this assertion.
+    const owner = await app.signIn(makeIdentity("op109-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op109-no-period-end-before-ack",
+    });
+    const tenantPath = tenantId.toHexString();
+    const liveId = await seedSubscription({
+      tenantId: tenantPath,
+      planKey: "starter",
+      priceKey: "starter-monthly-inr",
+      status: "active",
+    });
+    // Same fixture as `F5`: a normal live row whose period end was deleted.
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne({ _id: liveId }, { $unset: { currentPeriodEnd: "" } });
+
+    const response = await downgradePlan(
+      planChangeRequest({
+        tenantPath,
+        route: "downgrade",
+        cookie: owner.cookie,
+        body: downgradeBody({ acknowledgeConsequences: false }),
+      })
+    );
+
+    expect(response.status).toBe(409);
+    const error = await errorEnvelope(response);
+    expect(error).toMatchObject({
+      code: "conflict",
+      details: { reason: "no_period_end" },
+    });
+    // The acknowledgement prompt never ran, so its payload is absent: this is
+    // the refusal `I3` shields, not an unanswered prompt.
+    expect(error.details?.consequences).toBeUndefined();
+
+    // The refusal writes nothing (§3.3): no schedule, no announcement.
+    const row = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ tenantId: tenantPath, cancelledAt: null });
+    expect(row?.scheduledChange ?? null).toBeNull();
+    expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
+
+    const events = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: tenantPath, eventKey: "billing.plan.downgrade_scheduled" })
+      .toArray();
+    expect(events).toHaveLength(0);
+  });
+
+  it("F5d: a period-less downgrade to a higher tier is refused as 409 no_period_end, not 422 not_a_downgrade", async () => {
+    // Precedence pin, the other side (ADR-0989). A row-integrity gap is answered
+    // before the §3.3 tier ladder is consulted, so a request that is *both*
+    // period-less and not a downgrade reports the row's state, not the caller's
+    // direction. `F2` pins `not_a_downgrade` for a healthy row (which is why
+    // this case acknowledges and targets the higher tier that `F2` refuses);
+    // with the guard moved after the tier check this case answers `422
+    // not_a_downgrade` and reds.
+    const owner = await app.signIn(makeIdentity("op109-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op109-no-period-end-before-tier-check",
+    });
+    const tenantPath = tenantId.toHexString();
+    const liveId = await seedSubscription({
+      tenantId: tenantPath,
+      planKey: "starter",
+      priceKey: "starter-monthly-inr",
+      status: "active",
+    });
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne({ _id: liveId }, { $unset: { currentPeriodEnd: "" } });
+
+    const response = await downgradePlan(
+      planChangeRequest({
+        tenantPath,
+        route: "downgrade",
+        cookie: owner.cookie,
+        // `professional` is rank 2 against `starter`'s rank 1, so `F2` refuses
+        // this pair as `422 not_a_downgrade` on a healthy row.
+        body: downgradeBody({ targetPlanKey: "professional", acknowledgeConsequences: true }),
+      })
+    );
+
+    expect(response.status).toBe(409);
+    const error = await errorEnvelope(response);
+    expect(error).toMatchObject({
+      code: "conflict",
+      details: { reason: "no_period_end" },
+    });
+    // The tier ladder never ran, so neither rank is named in the refusal.
+    expect(error.details?.currentTierRank).toBeUndefined();
+    expect(error.details?.targetTierRank).toBeUndefined();
+
+    const row = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ tenantId: tenantPath, cancelledAt: null });
+    expect(row?.scheduledChange ?? null).toBeNull();
+    expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
+
+    const events = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: tenantPath, eventKey: "billing.plan.downgrade_scheduled" })
+      .toArray();
+    expect(events).toHaveLength(0);
+  });
+
   it.each([
     {
       label: "the tier the workspace is already on",
