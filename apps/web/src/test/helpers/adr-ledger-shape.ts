@@ -371,7 +371,13 @@ export interface AdrLedgerStatusResult {
   issues: AdrLedgerStatusIssue[];
 }
 
-/** One record that carries no ledger row. A warning, never a failure. */
+/**
+ * One record that carries no ledger row.
+ *
+ * A failure, not a warning: the spec asserts this list is empty, because every
+ * record carries its row (ADR-0319 §Decision 3 — no warning list, no
+ * allowlist).
+ */
 export interface AdrMissingLedgerRow {
   /** The record's four-digit number, from its file name. */
   number: string;
@@ -767,8 +773,9 @@ export function checkAdrLedgerRowShape(ledger: AdrLedgerFileText): AdrLedgerRowS
 /**
  * S2 — a record's `Status:` first word agrees with its ledger cell. Pure.
  *
- * Only rows that **exist** are in scope; a record with no row is S3's warning
- * list, not this report's failure. Per row: a missing record file is
+ * Only rows that **exist** are in scope; a record with no row is S3's missing
+ * row list, and a non-empty one is a failure, not a warning — the spec asserts
+ * that list is empty (ADR-0319 §Decision 3). Per row: a missing record file is
  * `missing-record`; a record with no `Status:` line is `missing-status-line`;
  * both readable but different first words are `status-mismatch` — unless the
  * cell's first word is `superseded`, the `0092` lifecycle exception.
