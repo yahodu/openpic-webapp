@@ -519,6 +519,79 @@ describe("checkAdrLedgerRowShape — a ledger row renders its status", () => {
     expect(result).toEqual(expected);
   });
 
+  it("reports row-indented when the last body row starts with two spaces and a tab", () => {
+    // Arrange — the fifth rejected arm, and the one a shape alternation misses.
+    // Two spaces stop at column 2, so the tab advances to column 4: the row is
+    // indented four columns while it carries only **three** leading characters.
+    // Measured on GitHub's own renderer (`gh api -X POST markdown -F
+    // text=@probe.md -f mode=gfm`): **2** `<tr>`, **3** `<td>` and **1**
+    // `<pre><code>` — the flush row still makes a table and this row renders as
+    // a code block: no cell, no status column. Forbids the overfit alternation
+    // `startsWith("    ") || startsWith("\t") || startsWith(" \t")`, which
+    // accepts this line, and any leading-**character** count, which reads three
+    // where the tab-stop arithmetic reads four columns. Same discriminator the
+    // delimiter row's own two-space arm pins (S1d).
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      "  \t| [0901](ADR-0901-b.md) | the second row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — four columns by tab-stop arithmetic, so the same report as the
+    // space-and-tab arm: the row stays **counted** (`rows: 2`) and one issue
+    // carries `row-indented` on its own line 4.
+    const expectedIssue: AdrLedgerRowShapeIssue = {
+      number: "0901",
+      line: 4,
+      cells: 5,
+      status: "accepted",
+      issues: ["row-indented"],
+    };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports row-indented when the last body row starts with three spaces and a tab", () => {
+    // Arrange — the sixth rejected arm. Three spaces stop at column 3, so the
+    // tab advances to column 4: four columns behind **four** leading characters.
+    // Measured the same way: **2** `<tr>`, **3** `<td>` and **1**
+    // `<pre><code>` — the row leaves the table and renders as code. Forbids a
+    // `/^ {4}/`-shaped rule (three spaces, so it misses) and the overfit
+    // alternation above (no arm matches), while `leadingColumns` reads 4.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      "   \t| [0901](ADR-0901-b.md) | the second row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the same object as the other four-column arms.
+    const expectedIssue: AdrLedgerRowShapeIssue = {
+      number: "0901",
+      line: 4,
+      cells: 5,
+      status: "accepted",
+      issues: ["row-indented"],
+    };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
   it("reports row-indented on a mid-block row and keeps the rows below it in the table", () => {
     // Arrange — the worst of the measured arms at `d68bc6fe`: a four-space row
     // **mid-block** with a flush row below it emits **2** `<tr>`, **3** `<td>`,
@@ -837,6 +910,63 @@ describe("checkAdrLedgerRowShape — the ledger block stays one table", () => {
     const result = checkAdrLedgerRowShape(ledger);
 
     // Assert — the same report as the four-space header arm.
+    const expectedIssue: AdrLedgerHeaderIssue = { line: 1, reason: "header-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 1,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports header-indented when the header line starts with two spaces and a tab", () => {
+    // Arrange — the header half of the same discriminator. Two spaces stop at
+    // column 2, so the tab advances to column 4: the header is indented four
+    // columns behind only **three** leading characters. Measured on GitHub's own
+    // renderer (`gh api -X POST markdown -F text=@probe.md -f mode=gfm`): **0**
+    // `<tr>`, **0** `<td>`, **1** `<pre><code>` and **1** `<p>` — no table at
+    // all, so no row's status renders. Forbids the overfit alternation
+    // `startsWith("    ") || startsWith("\t") || startsWith(" \t")`, which
+    // accepts this line, and any leading-**character** count.
+    const ledger = syntheticLedger([
+      `  \t${HEADER_LINE}`,
+      DELIMITER_LINE,
+      "| [0900](ADR-0900-a.md) | the only row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — one issue on line 1, the header's own line, and the row below is
+    // still counted: the row is well formed, the table is not. Typed as
+    // `AdrLedgerHeaderIssue` so the wire-shape half of the pin is kept.
+    const expectedIssue: AdrLedgerHeaderIssue = { line: 1, reason: "header-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 1,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports header-indented when the header line starts with three spaces and a tab", () => {
+    // Arrange — three spaces stop at column 3, so the tab advances to column 4:
+    // four columns behind **four** leading characters. Measured the same way:
+    // **0** `<tr>`, **0** `<td>`, **1** `<pre><code>` and **1** `<p>`. Forbids a
+    // `/^ {4}/`-shaped header rule (three spaces, so it misses) and the overfit
+    // alternation above (no arm matches), while `leadingColumns` reads 4.
+    const ledger = syntheticLedger([
+      `   \t${HEADER_LINE}`,
+      DELIMITER_LINE,
+      "| [0900](ADR-0900-a.md) | the only row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the same object as the other four-column header arms.
     const expectedIssue: AdrLedgerHeaderIssue = { line: 1, reason: "header-indented" };
     const expected: AdrLedgerRowShapeResult = {
       ok: false,
