@@ -94,9 +94,10 @@ so they are what gets pinned.
 
 ## Evidence
 
-**Counts, measured on this branch** — cut from `origin/main` `0bc3709e`, then merged
-with the trunk's `169bff3d` (merge head `928caf36`); the pre-change figure was
-measured before the merge and the post-change figures again at the merge head.
+**Counts, measured on this branch** — cut from `origin/main` `0bc3709e`, merged with
+the trunk twice (`169bff3d` → merge head `928caf36`, then `d614bafc` → merge head
+`62e68b72`); the pre-change figure was measured before the merges and the
+post-change figures again at both merge heads, identical.
 
 ```text
 focused  apps/web/src/test/integration/billing-plan-change.test.ts   ->  31 passed (31)   (pre-change file, stashed, at the cut)
@@ -164,4 +165,7 @@ this branch was open), so `origin/main` now ends at `0988` and its four
 pool-mirror cells read `0989`. `0989` was still the next free number, so no
 renumber is needed — the merge head `928caf36` resolves the ledger as a union (all
 three rows kept, ascending) and the cells to the higher of `0989` and `0990`,
-which is **`0990`**. No cell is lowered and no range is re-cut.
+which is **`0990`**. No cell is lowered and no range is re-cut. The trunk then moved
+once more (`d614bafc`, the `0985` ledger row's own correction, #934); the second
+merge head `62e68b72` keeps the trunk's corrected `0985` row verbatim and this
+record's `0989` row beside it, with the cells still at `0990`.
