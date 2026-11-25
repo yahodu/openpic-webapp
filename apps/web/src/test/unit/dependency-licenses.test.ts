@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
- * Dependency-licence guard — the **durability** half of `ADR-0991` §Decision **D3**. // adr-fixture: consumer row lands with t_8229f552
+ * Dependency-licence guard — the **durability** half of `ADR-0991` §Decision **D3**.
  *
  * **Why this exists.** D3 answered the owner's precondition ("make sure no
  * tool/package restricts a proprietary licence") by measuring the installed tree

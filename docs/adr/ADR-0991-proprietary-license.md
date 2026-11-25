@@ -17,7 +17,8 @@
   `unallocated (future lanes)` cursor and the two lane cells that mirror the
   cursor all read `0991` at this cut and advance to `0992` (ADR-0300 §11 item 18).
 - **Consumers:** [`LICENSE`](../../LICENSE), [`CONTRIBUTING.md`](../../CONTRIBUTING.md),
-  [`README.md`](../../README.md), and `package.json`'s `license` field.
+  [`README.md`](../../README.md), `package.json`'s `license` field, and
+  `apps/web/src/test/unit/dependency-licenses.test.ts` (the D3 licence-inventory pin).
 
 ## Context
 
