@@ -115,7 +115,11 @@
  * dropped `:` alternative) would otherwise reject valid GFM delimiter rows with
  * the whole suite still green — the silent-narrowing class this guard exists to
  * stop. The cases are proven load-bearing by mutating the pattern, not by a red
- * handoff: the landed rule already accepts these shapes.
+ * handoff: the landed rule already accepts these shapes. The **whitespace** half
+ * of the rule is pinned the same way: a delimiter row indented by two spaces
+ * (`"  | --- | ----- | ------ |"`) and one carrying trailing spaces after its
+ * closing pipe (`"| --- | ----- | ------ |   "`) are both accepted, because
+ * `tableCellsOf` trims the line before it splits on `|`.
  *
  * **The block-end boundary is frozen, not moved.** S1c's block closes at the
  * **last row-shaped line in the document**, so prose carrying a row-shaped
@@ -635,6 +639,46 @@ describe("checkAdrLedgerRowShape — the header's delimiter row", () => {
     const result = checkAdrLedgerRowShape(ledger);
 
     // Assert — accepted; three cells of unequal dash counts are still one delimiter row.
+    const expected: AdrLedgerRowShapeResult = { ok: true, columns: 3, rows: 2, issues: [] };
+    expect(result).toEqual(expected);
+  });
+
+  it("accepts an indented delimiter row (`  | --- | ----- | ------ |`, GFM's up-to-three-space indent)", () => {
+    // Arrange — a GFM table may be indented by up to three spaces, and
+    // `LEDGER_ROW_PATTERN` deliberately allows leading whitespace on rows, so the
+    // delimiter row may be indented too. Forbids a reader that drops the
+    // line-level `trim()`/`trimStart()` in `tableCellsOf`: it would reject this
+    // row and take a GFM-legal indented table out of the renderer.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "  | --- | ----- | ------ |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — accepted: the indented row is the table's delimiter, so no issue.
+    const expected: AdrLedgerRowShapeResult = { ok: true, columns: 3, rows: 2, issues: [] };
+    expect(result).toEqual(expected);
+  });
+
+  it("accepts a delimiter row with trailing spaces after its closing pipe", () => {
+    // Arrange — trailing spaces after the closing `|` are invisible to the
+    // renderer, so the row is still the table's delimiter. Forbids a reader that
+    // trims the start only (`trimStart()`), which would reject this row.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "| --- | ----- | ------ |   ",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — accepted: trailing spaces do not make the delimiter row invalid.
     const expected: AdrLedgerRowShapeResult = { ok: true, columns: 3, rows: 2, issues: [] };
     expect(result).toEqual(expected);
   });
