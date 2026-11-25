@@ -35,7 +35,7 @@ import {
  * suites (`apps/web/src/test/integration/attendee-*.test.ts`; contract §6.4–§6.6,
  * §5.6; schema §15.3, §16.1, §16.3, §17.5; ADR-0793).
  *
- * Every case in the three specs needs the same handles: a published event with
+ * Every case in these suites needs the same handles: a published event with
  * an active access link, a real attendee credential, a granted biometric
  * consent and the `attendeeEventProfiles` row that consent created, a library of
  * `event_images` with real `media_assets` rows, and `face_matches` rows the
