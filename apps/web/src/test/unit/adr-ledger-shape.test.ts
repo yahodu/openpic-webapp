@@ -45,6 +45,44 @@
  * header carries **no rows** is `ok: false`, not a vacuous green, and a document
  * with no header throws rather than reporting zero rows.
  *
+ * **S1c — the ledger block stays one table.** Between the header's delimiter
+ * row and the last ledger row in the document, every non-empty line must itself
+ * be a ledger row. A blank line ends a GFM table, so every row below it renders
+ * as a **paragraph** — and the guard's own purpose, "every row renders a
+ * status", is then not served at all. On the squash `fc8fab29` (PR #931) a blank
+ * line between the `0987` and the `0988` rows made GitHub render **3** `<tr>`
+ * (header, `0986`, `0987`) and the `0988` row as `<p>…| Accepted (GREEN) |</p>`,
+ * while S1 read all four rows as well formed and the ten `adr-*` guards stayed
+ * at `340 passed`. The render proof is the same GitHub renderer S1's cases cite:
+ *
+ * ```
+ * { sed -n '158,159p' docs/adr/README.md; sed -n '650,653p' docs/adr/README.md; } > probe.md
+ * gh api -X POST markdown -F text=@probe.md -f mode=gfm
+ * ```
+ *
+ * The rule reports into **S1's own `issues` array** — `{ line, reason }`, with
+ * `reason` `blank-line` for an empty line and `non-row` for a non-empty line
+ * that is not a `| [NNNN](ADR-*.md) | …` row — so the **one** real-tree case
+ * below (`expect(shape.issues).toEqual([])`, reading the whole tree through
+ * {@link checkRepositoryAdrLedgerShape}) covers row shape and contiguity
+ * together and no second real-tree case is written. A row whose cell count is
+ * wrong stays S1's `cell-count` report and is not repeated here; a blank line
+ * *after* the last ledger row is the prose that separates the table from its
+ * notes, not a detachment, so the block ends at the last row-shaped line in the
+ * document (`README.md:653` at this cut).
+ *
+ * **The census at this cut** (`origin/main` `e7e92304`, which carries the README
+ * repair `bc399470` plus #933 and #936): header `README.md:158`, delimiter
+ * `:159`, **494** ledger rows on `:160`–`:653`, and **0** blank or non-row lines
+ * between them, so the real-tree case is green — measured in this checkout. The
+ * rule is not vacuous and not tree-shaped: the synthetic cases below report a
+ * blank line and an interrupting prose line, and the negative control proves
+ * contiguous rows are silent. Replayed with the defect restored it is
+ * load-bearing — one blank line re-inserted above the `0988` row gives
+ * `[{ line: 653, reason: "blank-line" }]` and `1 failed | 342 passed (343)`,
+ * the real-tree case being **the only red**, and the `fc8fab29` blob gives
+ * `[{ line: 652, reason: "blank-line" }]`.
+ *
  * **S2 — the record and the cell agree on their first word.** Both sides are
  * normalised by {@link adrStatusWord} (strip `**`, strip a leading `-`/`*`,
  * cut at `(`/`:`/`—`/`,`/`;`/`·`, lowercase) and the cell's first word must
@@ -279,7 +317,9 @@ describe("checkAdrLedgerRowShape — the real ledger", () => {
     // Assert — the defect class is empty after the repair card, and the census
     // proves the rule read the ledger: 455 rows measured at `d507965f`. The
     // floor carries headroom for a record that is added later, never for a row
-    // that stops being read.
+    // that stops being read. S1c reports into this same array, so this is the
+    // case that reds on a detached row: one blank line re-inserted above the
+    // `0988` row makes it fail with `[{ line: 653, reason: "blank-line" }]`.
     expect(shape.issues).toEqual([]);
     expect(shape.ok).toBe(true);
     expect(shape.columns).toBe(3);
@@ -296,6 +336,81 @@ describe("checkAdrLedgerRowShape — the real ledger", () => {
     expect(() => checkRepositoryAdrLedgerShape(root)).toThrow(
       expect.objectContaining({ code: "ENOENT" })
     );
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * S1c — the ledger block stays one table: a blank line detaches the rows below
+ * ------------------------------------------------------------------------- */
+
+describe("checkAdrLedgerRowShape — the ledger block stays one table", () => {
+  it("reports the blank line that detaches a row, and still counts both rows", () => {
+    // Arrange — the shape of `fc8fab29` (PR #931): a blank line between two
+    // ledger rows. GFM ends a table at a blank line, so the second row renders
+    // as a paragraph while S1 alone reads both rows as well formed — the
+    // `gh api -X POST markdown -F text=@probe.md -f mode=gfm` probe in the
+    // module docblock returned 3 `<tr>` and emitted that row as `<p>…</p>`.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "",
+      "| [0301](ADR-0301-beta.md) | the detached row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — one issue, on the blank line's own line and with the documented
+    // reason. Both rows are still counted: this reports the blank line that
+    // detaches them, never the rows themselves.
+    expect(result).toEqual({
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [{ line: 4, reason: "blank-line" }],
+    });
+  });
+
+  it("reports a non-row line that interrupts the block", () => {
+    // Arrange — the same detachment from the other direction: prose left
+    // between two rows ends the table just as a blank line does, so the row
+    // below it is detached and renders as a paragraph too.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "A paragraph left between the ledger's rows.",
+      "| [0301](ADR-0301-beta.md) | the detached row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the interrupting line, and only it.
+    expect(result).toEqual({
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [{ line: 4, reason: "non-row" }],
+    });
+  });
+
+  it("reports nothing when the ledger rows are contiguous", () => {
+    // Arrange — the negative control: the same two rows with nothing between
+    // them. Without this case the rule above would be satisfied by a report
+    // that fires on every ledger, so the pair is what makes it load-bearing.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act + Assert — no issue, and the rows are counted.
+    expect(checkAdrLedgerRowShape(ledger)).toEqual({
+      ok: true,
+      columns: 3,
+      rows: 2,
+      issues: [],
+    });
   });
 });
 
