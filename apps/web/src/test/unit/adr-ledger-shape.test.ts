@@ -107,6 +107,16 @@
  * `shape.issues` array the real-tree case above already asserts empty, so that
  * one case covers them as well.
  *
+ * **Which delimiter shapes are *accepted* is pinned too.** The rule's cell
+ * pattern (`/^:?-+:?$/u`) admits one dash or more per cell with optional `:`
+ * alignment, so `| :--- | :---: | ---: |`, `| - | - | - |` and
+ * `| -- |   -----   | ------ |` are all delimiter rows. Each shape has its own
+ * case in the S1d block, because a later tightening (say `/^-{3,}$/u`, or a
+ * dropped `:` alternative) would otherwise reject valid GFM delimiter rows with
+ * the whole suite still green — the silent-narrowing class this guard exists to
+ * stop. The cases are proven load-bearing by mutating the pattern, not by a red
+ * handoff: the landed rule already accepts these shapes.
+ *
  * **The block-end boundary is frozen, not moved.** S1c's block closes at the
  * **last row-shaped line in the document**, so prose carrying a row-shaped
  * example is *inside* the block: `header + two rows + "" + "Notes: a new record
@@ -569,6 +579,64 @@ describe("checkAdrLedgerRowShape — the header's delimiter row", () => {
       rows: 2,
       issues: [],
     });
+  });
+
+  it("accepts an aligned delimiter row (`:` on either side of the dashes)", () => {
+    // Arrange — GFM alignment: `:---` left, `:---:` centre, `---:` right. Forbids
+    // tightening the cell pattern to a bare `/^-+$/u` (no `:` alternative), which
+    // would reject a valid delimiter row and take the whole ledger out of the table.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "| :--- | :---: | ---: |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the aligned row *is* a delimiter row, so the table exists and no
+    // issue is reported. Typed, so the whole result is the contract.
+    const expected: AdrLedgerRowShapeResult = { ok: true, columns: 3, rows: 2, issues: [] };
+    expect(result).toEqual(expected);
+  });
+
+  it("accepts a one-dash delimiter cell (`| - | - | - |`, GFM's one dash or more)", () => {
+    // Arrange — GFM admits a single dash per cell. Forbids tightening the cell
+    // pattern to `/^-{3,}$/u` (the shape the real ledger happens to use), which
+    // would reject a minimum-width but valid delimiter row.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "| - | - | - |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — accepted, so the row is read as a table's delimiter and no issue lands.
+    const expected: AdrLedgerRowShapeResult = { ok: true, columns: 3, rows: 2, issues: [] };
+    expect(result).toEqual(expected);
+  });
+
+  it("accepts mixed dash counts and padded cells (`| -- |   -----   | ------ |`)", () => {
+    // Arrange — dash count is free per cell and a cell may carry spaces around its
+    // dashes. Forbids a per-cell exact-width pattern (`/^-{3}$/u`) or one that
+    // forgets to trim before matching, either of which would reject this row.
+    const ledger = syntheticLedger([
+      HEADER_LINE,
+      "| -- |   -----   | ------ |",
+      "| [0300](ADR-0300-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0301](ADR-0301-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — accepted; three cells of unequal dash counts are still one delimiter row.
+    const expected: AdrLedgerRowShapeResult = { ok: true, columns: 3, rows: 2, issues: [] };
+    expect(result).toEqual(expected);
   });
 });
 
