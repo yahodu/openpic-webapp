@@ -408,7 +408,7 @@ describe("checkRepositoryAdrReferences — the repository sweep", () => {
     // Assert
     expect(result.issues).toEqual([]);
     expect(result.ok).toBe(true);
-    // Non-vacuity: the sweep must see the whole tree, not just the two spec files.
+    // Non-vacuity: the sweep must see the whole tree, not just this spec file's references.
     expect(result.checkedReferences).toBeGreaterThanOrEqual(1000);
   });
 
