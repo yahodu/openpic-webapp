@@ -43,9 +43,10 @@ serves the organiser dashboard, the attendee page and the admin console. It
 contains HTTP route handlers, the server-side domain layer, the shared Zod
 contracts, and the full test suite.
 
-It does **not** contain a browser UI — the routes under `apps/web/src/app` are
-API handlers only. Clients (web / mobile) consume the JSON API described in the
-[API contract](docs/API%20Contract.md).
+No product UI ships here: the product surface is the JSON API described in the
+[API contract](docs/API%20Contract.md), which clients (web / mobile) call.
+`apps/web/src/app` holds the API route handlers in `api/` plus the root
+`layout.tsx` and a placeholder landing page (`page.tsx`).
 
 ## How it works
 
@@ -78,7 +79,9 @@ URL. The full component map, sequence diagrams and state machines are in
   event-scoped collaborators, tenant isolation enforced in every query.
 - **Billing** — plans catalogue, entitlements and usage counters, subscribe /
   upgrade / downgrade / cancel, add-ons, invoices, transactions, dunning and
-  scheduled plan changes. Provider behind an adapter (Cashfree / Stripe).
+  scheduled plan changes. Cashfree is implemented behind the payment port;
+  Stripe is reserved, and selecting `PAYMENT_PROVIDER=stripe` fails closed at
+  boot because no adapter exists.
 - **Events** — CRUD, archive, upload windows, public access links and QR codes,
   branding assets.
 - **Uploads and media** — multipart presigned uploads and upload sessions, batch
@@ -96,14 +99,14 @@ URL. The full component map, sequence diagrams and state machines are in
 | Area      | Choice                                                                    |
 | --------- | ------------------------------------------------------------------------- |
 | Runtime   | Node.js ≥ 22.12, pnpm 11 workspace                                        |
-| Framework | Next.js 15 App Router route handlers — API only, no browser UI here       |
+| Framework | Next.js 15 App Router — API route handlers, root layout, placeholder page |
 | Language  | TypeScript 5, `strict`, no `any`                                          |
 | Data      | MongoDB (driver + Atlas), replica set required for transactions           |
 | Contracts | Zod schemas in `packages/contracts`, shared by handlers and clients       |
 | Auth      | Better Auth (session cookie, OTP, second factor)                          |
 | Storage   | S3-compatible object storage (Cloudflare R2) through presigned URLs       |
 | Messaging | Novu workflows behind a transport port                                    |
-| Payments  | Cashfree / Stripe behind a payment port                                   |
+| Payments  | Cashfree behind a payment port; Stripe reserved and fails closed          |
 | Logging   | `pino` behind a `Logger` port (stdout or Better Stack)                    |
 | Tests     | Vitest (unit + integration), Playwright (API journeys), MSW, in-memory DB |
 
@@ -128,8 +131,8 @@ URL. The full component map, sequence diagrams and state machines are in
 - A MongoDB replica set. Transactions are used on several paths, so a standalone
   `mongod` is not enough; a local `rs.initiate()` or an Atlas cluster both work.
 - Optional, only for the integration you are exercising: an S3-compatible bucket,
-  Redis (rate limiting), Cashfree/Stripe keys, Novu keys. Every provider defaults
-  to an in-memory double, so the app boots without them.
+  Redis (rate limiting), Cashfree keys, Novu keys. Every provider defaults to an
+  in-memory double, so the app boots without them.
 
 ### Install and run
 
