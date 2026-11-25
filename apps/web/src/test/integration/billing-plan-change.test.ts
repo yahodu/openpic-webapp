@@ -1029,16 +1029,23 @@ describe("POST /api/v1/tenants/{tenantId}/billing/downgrade", () => {
     expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
   });
 
-  it("F5: a live row with no currentPeriodEnd schedules the change at now, not at period end", async () => {
-    // Characterisation pin (round-1 review finding F5). §3.3 says a downgrade
-    // takes effect **at period end**, but a live row that carries no
-    // `currentPeriodEnd` (the §14.3 field is optional in the route's reader)
-    // makes `downgrade/route.ts:139` fall back to `effectiveAt = now` — so the
-    // change lands immediately and, for a self-serve downgrade, contradicts the
-    // period-end rule. This pin records the *shipped* behaviour rather than
-    // demanding a change; ADR-0462 files the fallback as an open product
-    // question (whether the route should instead refuse with no period to
-    // schedule against).
+  it("F5: a live row with no currentPeriodEnd is refused as 409 conflict no_period_end and writes nothing", async () => {
+    // Decision pin (round-1 review finding F5 / F2 of #911). §3.3 schedules a
+    // downgrade at `currentPeriodEnd` and never at a clock instant, so the
+    // shipped `effectiveAt = current.currentPeriodEnd ?? now` fallback is
+    // **retired** (ADR-0984), not characterised: it made ADR-0978 §D2's
+    // `dedupeKey` carry a per-request clock instant, and two identical requests
+    // therefore produced two events, two feed rows and two emails. A live row
+    // that carries no period end has no period to schedule against, so the
+    // request is refused — `409` with `details.reason: "no_period_end"` — before
+    // anything is written, and the admin `PATCH /admin/subscriptions/{id}`
+    // repair path (contract §A) is the way back to an acceptable row. Refusing
+    // is also what keeps the §D2 key stable: every *accepted* schedule's instant
+    // is the stored period end, so two identical requests compute one key and
+    // the shipped `alreadyEmitted` pre-read collapses them.
+    // ADR-0462 filed the fallback as an open product question; ADR-0984 is the
+    // settled answer. The accepted direction stays pinned by `I4` (`200` with
+    // `effectiveAt === PERIOD_END`), so this refusal is not "refuse everything".
     const owner = await app.signIn(makeIdentity("op109-owner"));
     const tenantId = await seedWorkspace({
       userId: owner.userId,
@@ -1058,7 +1065,6 @@ describe("POST /api/v1/tenants/{tenantId}/billing/downgrade", () => {
       .collection(COLLECTIONS.subscriptions)
       .updateOne({ _id: liveId }, { $unset: { currentPeriodEnd: "" } });
 
-    const before = Date.now();
     const response = await downgradePlan(
       planChangeRequest({
         tenantPath,
@@ -1067,26 +1073,83 @@ describe("POST /api/v1/tenants/{tenantId}/billing/downgrade", () => {
         body: downgradeBody(),
       })
     );
-    const after = Date.now();
 
-    expect(response.status).toBe(200);
-    const payload = await body(response);
-    const scheduled = payload.scheduledChange as { toPlanKey: string; effectiveAt: string };
-    const effectiveAt = new Date(scheduled.effectiveAt).getTime();
-
-    // `now` is between the two reads around the request, and it is emphatically
-    // not the seeded period end (which is ~20 days away).
-    expect(scheduled.toPlanKey).toBe("free");
-    expect(effectiveAt).toBeGreaterThanOrEqual(before);
-    expect(effectiveAt).toBeLessThanOrEqual(after);
-    expect(effectiveAt).not.toBe(PERIOD_END.getTime());
+    // A row-integrity gap on the server is answered as a named conflict, never
+    // as a schedule invented from the clock and never as a client fault.
+    expect(response.status).toBe(409);
+    expect(await errorEnvelope(response)).toMatchObject({
+      code: "conflict",
+      details: { reason: "no_period_end" },
+    });
 
     const row = await app.db
       .collection(COLLECTIONS.subscriptions)
       .findOne({ tenantId: tenantPath, cancelledAt: null });
-    expect(row?.scheduledChange).toMatchObject({ toPlanKey: "free", reason: "self_downgrade" });
-    expect(new Date(row?.scheduledChange.effectiveAt as Date).getTime()).toBe(effectiveAt);
+    // The refusal writes nothing: the seed's `scheduledChange: null` survives
+    // and the live plan is untouched until a period end exists again.
+    expect(row?.scheduledChange ?? null).toBeNull();
     expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
+
+    // …and announces nothing: no `billing.plan.downgrade_scheduled` row (§3.3);
+    const events = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: tenantPath, eventKey: "billing.plan.downgrade_scheduled" })
+      .toArray();
+    expect(events).toHaveLength(0);
+  });
+
+  it("F5b: a live row whose currentPeriodEnd is explicitly null is refused the same 409 conflict no_period_end", async () => {
+    // The second shape of the same state (ADR-0984 reason 5). Schema §14.3
+    // declares `currentPeriodEnd` a `date`, but the route's reader declared it
+    // `.optional()`, so an explicit `null` escaped the guard and surfaced as a
+    // `500 internal_error` (`Invalid input: expected date, received null`) —
+    // blaming the caller for a server row state. One refusal covers both
+    // shapes: the same `409`, the same `details.reason`, and still no write.
+    // `I4` stays the accepted-direction control.
+    const owner = await app.signIn(makeIdentity("op109-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op109-downgrade-null-period-end",
+    });
+    const tenantPath = tenantId.toHexString();
+    const liveId = await seedSubscription({
+      tenantId: tenantPath,
+      planKey: "starter",
+      priceKey: "starter-monthly-inr",
+      status: "active",
+    });
+    // The same fixture as `F5`, with the field present and null instead of gone.
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne({ _id: liveId }, { $set: { currentPeriodEnd: null } });
+
+    const response = await downgradePlan(
+      planChangeRequest({
+        tenantPath,
+        route: "downgrade",
+        cookie: owner.cookie,
+        body: downgradeBody(),
+      })
+    );
+
+    expect(response.status).toBe(409);
+    expect(await errorEnvelope(response)).toMatchObject({
+      code: "conflict",
+      details: { reason: "no_period_end" },
+    });
+
+    const row = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ tenantId: tenantPath, cancelledAt: null });
+    expect(row?.scheduledChange ?? null).toBeNull();
+    expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
+
+    const events = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: tenantPath, eventKey: "billing.plan.downgrade_scheduled" })
+      .toArray();
+    expect(events).toHaveLength(0);
   });
 
   it.each([
