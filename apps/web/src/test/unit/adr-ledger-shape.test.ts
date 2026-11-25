@@ -747,6 +747,36 @@ describe("checkAdrLedgerRowShape — the ledger ascends, with gaps allowed", () 
     expect(result).toEqual(expected);
   });
 
+  it("reports both descents when two rows fall behind their predecessor", () => {
+    // Arrange — the `e7e92304` tree in miniature: two descents in one ledger
+    // (`0973`→`0972` and `0972`→`0970`), not one. This case exists to redden a
+    // first-descent-only implementation: the single-descent case above and the
+    // repeat case below stay green when the rule stops at the first finding.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0971](ADR-0971-beta.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0973](ADR-0973-gamma.md) | the row that landed early | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0972](ADR-0972-gamma-late.md) | the late row behind `0973` | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0970](ADR-0970-alpha.md) | the row that slipped in last | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — one issue per descent, each on its own row's line, each naming
+    // the predecessor it fell behind.
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 4,
+      issues: [
+        { line: 5, reason: "0972 precedes 0973 on line 4" },
+        { line: 6, reason: "0970 precedes 0972 on line 5" },
+      ],
+    };
+    expect(result).toEqual(expected);
+  });
+
   it("reports a repeated number as an issue too", () => {
     // Arrange — the same `NNNN` twice. Equal is neither ascending nor a gap,
     // so it is a defect of the same class: two rows claim one number.
