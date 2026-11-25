@@ -52,7 +52,7 @@ const DOWNGRADE_SCHEDULED_EVENT = "billing.plan.downgrade_scheduled";
 const liveSubscriptionSchema = z.object({
   _id: z.instanceof(ObjectId),
   activePlanKey: z.string().default("free"),
-  currentPeriodEnd: z.date().optional(),
+  currentPeriodEnd: z.date().nullable().optional(),
 });
 
 /** A stored `usageCounters` row (§14.2). */
@@ -122,6 +122,15 @@ export const POST = defineRoute({
     }
     const current = liveSubscriptionSchema.parse(stored);
 
+    // §3.3 schedules at the stored period end; a row that carries none has no
+    // period to schedule against, so it must not be handed a clock instant. Both
+    // shapes are the same state: the field unset and the field explicitly null
+    // (ADR-0984, card t_cb891a2c).
+    const periodEnd = current.currentPeriodEnd ?? null;
+    if (periodEnd === null) {
+      throw appError("conflict", { details: { reason: "no_period_end" } });
+    }
+
     const targetPlan = await loadPlan(db, targetPlanKey);
     if (!targetPlan?.active) {
       throw appError("validation_failed", {
@@ -157,7 +166,7 @@ export const POST = defineRoute({
       throw appError("acknowledgement_required", { details: { consequences } });
     }
 
-    const effectiveAt = current.currentPeriodEnd ?? now;
+    const effectiveAt = periodEnd;
     const subscriptionId = current._id.toHexString();
     const dedupeKey = `${DOWNGRADE_SCHEDULED_EVENT}:${subscriptionId}:${targetPlan.key}:${effectiveAt.toISOString()}`;
     await withTransaction(async (session) => {
