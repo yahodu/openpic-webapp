@@ -1273,6 +1273,73 @@ describe("POST /api/v1/tenants/{tenantId}/billing/downgrade", () => {
     expect(events).toHaveLength(0);
   });
 
+  it("F5e: a period-less row is refused 409 no_period_end before the catalogue answers 422 validation_failed", async () => {
+    // Precedence pin, the catalogue rung (ADR-0990). ADR-0989 D1 orders the
+    // refusals period end -> catalogue -> tier -> acknowledgement; `F5c`/`F5d`
+    // pin the last two rungs only, so the catalogue relation stayed blind: with
+    // the guard moved below `loadPlan(db, targetPlanKey)` this request is
+    // answered `422 validation_failed` (and the focused spec still read
+    // `33 passed (33)` before this case existed). An unsold `targetPlanKey` is
+    // a caller fault, so that `422` blames the caller for a row state they
+    // cannot see, while the row state is the server's own gap (ADR-0984 §D1
+    // reason 2: schema §14.3 declares the field a `date`, and the admin
+    // subscription `PATCH` is the repair path). This case posts an acknowledged,
+    // genuinely lower target that the catalogue does not sell: only a route
+    // that decides the period end first answers `409` here.
+    const owner = await app.signIn(makeIdentity("op109-owner"));
+    const tenantId = await seedWorkspace({
+      userId: owner.userId,
+      role: "owner",
+      slug: "op109-no-period-end-before-catalogue",
+    });
+    const tenantPath = tenantId.toHexString();
+    const liveId = await seedSubscription({
+      tenantId: tenantPath,
+      planKey: "starter",
+      priceKey: "starter-monthly-inr",
+      status: "active",
+    });
+    // The same fixture as `F5`: a normal live row whose period end was deleted.
+    await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .updateOne({ _id: liveId }, { $unset: { currentPeriodEnd: "" } });
+
+    const response = await downgradePlan(
+      planChangeRequest({
+        tenantPath,
+        route: "downgrade",
+        cookie: owner.cookie,
+        body: downgradeBody({
+          targetPlanKey: "not-a-sold-plan",
+          acknowledgeConsequences: true,
+        }),
+      })
+    );
+
+    expect(response.status).toBe(409);
+    const error = await errorEnvelope(response);
+    expect(error).toMatchObject({
+      code: "conflict",
+      details: { reason: "no_period_end" },
+    });
+    // The catalogue never ran, so its `details.fields` payload is absent: the
+    // `422 validation_failed` refusal cannot masquerade as the row's own.
+    expect(error.details?.fields).toBeUndefined();
+
+    // The refusal writes nothing (§3.3): no schedule, no announcement.
+    const row = await app.db
+      .collection(COLLECTIONS.subscriptions)
+      .findOne({ tenantId: tenantPath, cancelledAt: null });
+    expect(row?.scheduledChange ?? null).toBeNull();
+    expect(row).toMatchObject({ status: "active", activePlanKey: "starter" });
+
+    const events = await app.db
+      .collection(COLLECTIONS.domainEvents)
+      .find({ tenantId: tenantPath, eventKey: "billing.plan.downgrade_scheduled" })
+      .toArray();
+    expect(events).toHaveLength(0);
+  });
+
   it.each([
     {
       label: "the tier the workspace is already on",
