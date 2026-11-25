@@ -925,7 +925,10 @@ describe("POST /api/v1/tenants/{tenantId}/billing/cancel", () => {
     );
 
     expect(response.status).toBe(409);
-    expect(await errorEnvelope(response)).toMatchObject({ code: "mandate_not_chargeable" });
+    expect(await errorEnvelope(response)).toMatchObject({
+      code: "mandate_not_chargeable",
+      details: { recoveryAction: "recreate_mandate" },
+    });
 
     const calls = provider.calls();
     expect(calls).toHaveLength(0);
