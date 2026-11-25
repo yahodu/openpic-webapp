@@ -61,6 +61,7 @@
 - [ ] The ADR number is the `Consumes` value reserved in the card body — never derived from `docs/adr/README.md` — and no same-lane ADR-minting sibling card is in flight.
 - [ ] The ADR record carries its own `docs/adr/README.md` ledger row **in the same PR** — a record with no row or a row with no record is a DoD failure (**ADR-0319**).
 - [ ] The merge gate printed PASS on the exact head SHA and its output is in the PR (`docs/CONVENTIONS.md` §9.1).
+- [ ] The merged PR's head is archived to `refs/prhead/<n>` and its local branch released in the merge step, with the assertions printed (`docs/CONVENTIONS.md` §9.2, **ADR-0967**).
 
 ## Screenshots (if any)
 
