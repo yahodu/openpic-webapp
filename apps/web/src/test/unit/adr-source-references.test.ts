@@ -1228,11 +1228,13 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
 
     // Assert — floors two below that census, never an equality: a mint raises the
     // pair and a retirement lowers it, so re-measure both with
-    // `checkRepositoryMeasuredCommitCitations(repoRoot, [])` (298 checked / 487
-    // scanned at `c28cc394`) before the next edit. Two records of slack is the
-    // point: the previous `>= 280` / `>= 480` pair left a `.slice(0, -17)`
-    // narrowing of the enforced corpus and the four-record quote-pattern
-    // narrowing green, and the `checked` list is what keeps silence non-vacuous.
+    // `checkRepositoryMeasuredCommitCitations(repoRoot)` (298 checked / 487
+    // scanned at `c28cc394`, the **default** allowlist) before the next edit;
+    // `[]` keeps the 18 exempt records, so it reports 18 more checked for the same
+    // scan (324 / 495 at `54cf6e51`). Two records of slack is the point: the
+    // previous `>= 280` / `>= 480` pair left a `.slice(0, -17)` narrowing of the
+    // enforced corpus and the four-record quote-pattern narrowing green, and the
+    // `checked` list is what keeps silence non-vacuous.
     expect(report.issues).toEqual([]);
     expect(report.ok).toBe(true);
     expect(report.checked.length).toBeGreaterThanOrEqual(296);
@@ -1281,6 +1283,108 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
     // A head that is a blob, a tree, or a token no object database knows is not
     // provenance: it names no commit, so the clause must report the record instead.
     expect(notCommits).toEqual([]);
+  });
+
+  it("rejects a record whose only head-shaped token is a blob object", () => {
+    // Arrange — a real object in the fixture's own database, of the wrong type:
+    // the digest of the very file the fixture committed. Row 7 cannot see this
+    // arm, because no trunk record's *first* head-shaped token is a blob, so a
+    // resolver that accepted one would still report only commits at the trunk.
+    const { root } = makeTempGitRoot();
+    const blob = gitIn(root, "hash-object", "README.md").trim();
+    // Three preconditions, or the case would prove nothing: the token is a full
+    // object name, it is head-shaped, and the object database calls it a blob.
+    expect(blob).toMatch(/^[0-9a-f]{40}$/);
+    expect(headIsHeadShaped(blob)).toBe(true);
+    expect(gitIn(root, "cat-file", "-t", blob).trim()).toBe("blob");
+    writeFixtureFile(
+      join(root, "docs/adr/ADR-0001-quoted-blob-digest.md"),
+      `Tests  15 passed (15)\n\nAt \`${blob}\`.`
+    );
+
+    // Act
+    const report = checkRepositoryMeasuredCommitCitations(root, []);
+
+    // Assert — head-shaped is not enough: a blob names no commit, so the record
+    // reports its first quote and no head.
+    expect(report).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "missing-head-commit",
+          file: "docs/adr/ADR-0001-quoted-blob-digest.md",
+          line: 1,
+          quoted: "15 passed",
+        },
+      ],
+      checked: [
+        {
+          file: "docs/adr/ADR-0001-quoted-blob-digest.md",
+          line: 1,
+          quoted: "15 passed",
+          head: null,
+        },
+      ],
+      scannedRecords: 1,
+    });
+  });
+
+  it("rejects a record whose only head-shaped token is a tree object", () => {
+    // Arrange — the other wrong object type, read out of the same fixture commit.
+    // A tree is what a directory digest looks like; it is as head-shaped as a
+    // commit and names no measurement head.
+    const { root } = makeTempGitRoot();
+    const tree = gitIn(root, "rev-parse", "HEAD^{tree}").trim();
+    expect(tree).toMatch(/^[0-9a-f]{40}$/);
+    expect(headIsHeadShaped(tree)).toBe(true);
+    expect(gitIn(root, "cat-file", "-t", tree).trim()).toBe("tree");
+    writeFixtureFile(
+      join(root, "docs/adr/ADR-0001-quoted-tree-digest.md"),
+      `Tests  15 passed (15)\n\nAt \`${tree}\`.`
+    );
+
+    // Act
+    const report = checkRepositoryMeasuredCommitCitations(root, []);
+
+    // Assert — a tree is not provenance either.
+    expect(report).toEqual({
+      ok: false,
+      issues: [
+        {
+          code: "missing-head-commit",
+          file: "docs/adr/ADR-0001-quoted-tree-digest.md",
+          line: 1,
+          quoted: "15 passed",
+        },
+      ],
+      checked: [
+        {
+          file: "docs/adr/ADR-0001-quoted-tree-digest.md",
+          line: 1,
+          quoted: "15 passed",
+          head: null,
+        },
+      ],
+      scannedRecords: 1,
+    });
+  });
+
+  it("throws instead of sweeping when the root is not a git repository", () => {
+    // Arrange — a `docs/adr` tree outside every repository, carrying a record
+    // whose only head-shaped token exists nowhere. The token is load-bearing: with
+    // no candidate the pure path never spawns git, so a tokenless record would
+    // prove nothing about the resolver. `3eb7c7d` is head-shaped (a real trunk
+    // head, not a fabricated token), and no object database here can answer for it.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0001-quoted-no-repository.md": "Tests  15 passed (15) at `3eb7c7d`.",
+    });
+    // The fixture is only a "no repository" case if no parent directory is one.
+    expect(() => gitIn(root, "rev-parse", "--git-dir")).toThrow();
+
+    // Act + Assert — a wrong root must fail loudly, never sweep vacuously: the
+    // resolver's `git cat-file --batch-check` exits non-zero, and the sweep
+    // propagates that instead of reading the failure as "every token is a commit".
+    expect(() => checkRepositoryMeasuredCommitCitations(root, [])).toThrow();
   });
 });
 
