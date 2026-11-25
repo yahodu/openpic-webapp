@@ -129,6 +129,13 @@ no cell is lowered and no range is re-cut). The three reserved numbers are left 
 they land, the ledger's union merge keeps the highest value in every cell. Its row is written here, after
 row `0982`, because rows `0983`–`0985` do not exist yet.
 
+**Postscript, after the sweep.** `0983` landed while this PR was in flight — PR
+[#922](https://github.com/yahodu/openpic-webapp/pull/922), squash `a92b468a`, whose
+[ADR-0983](ADR-0983-op101-downgrade-concurrent-repeat-pin.md) row sits above this one in the ledger and
+advances the same four cells to `0984`. The branch merged that `origin/main` in, the ledger union keeps
+the **higher** `0987` in every cell, and both rows stand, ascending (`0983`, then `0986`). `0984` and
+`0985` are still reserved in flight and still untouched here.
+
 ## Alternatives
 
 - **Extend ADR-0982's case instead of appending one.** Rejected: the existing case's key
