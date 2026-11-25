@@ -832,6 +832,25 @@ describe("checkMeasuredCommitCitations — a record that quotes a count names it
 });
 
 /**
+ * The commit date `makeTempGitRoot` pins, 2025-11-24T14:40:00Z in git's raw
+ * `"<epoch> <offset>"` form — and the reason the date is pinned at all.
+ *
+ * The fixture used to inherit the wall clock, so every run drew a new commit hash
+ * and with it a new 8-character `head`. Roughly one draw in 43 is all digits
+ * (`(10/16)**8`), and the measured-count rule's head pattern requires an `a`–`f`
+ * letter **by design**, so such a run handed the sweep a record that quotes a
+ * count and names no head: the docs/adr sweep case below reded with
+ * `checked[0].head === null` plus a spurious `missing-head-commit` for the record
+ * the fixture had just written. A pinned date makes the hash — and therefore
+ * `head` — the same on every run, and this instant was chosen because it mints
+ * `944b7690…`, a prefix the rule reads as a head (its neighbour second mints
+ * `98805044`, which it does not). Re-pin only with that shape re-measured: the
+ * fixture's own spec (`makeTempGitRoot — the docs/adr sweep's git fixture`) reds
+ * on a head the rule cannot read and on a head that follows the clock.
+ */
+const FIXTURE_COMMIT_DATE = "1764000000 +0000";
+
+/**
  * A throwaway repository root that is a **real git repository with one commit**,
  * so the sweep's commit-object resolver has an object database to read: the
  * returned `head` is the 8-character prefix of `HEAD`, which
@@ -842,7 +861,8 @@ describe("checkMeasuredCommitCitations — a record that quotes a count names it
  * blob, a tree or a typo — and a resolver that answered "every token is a commit"
  * when git could not run would be the shape-only rule again under a new name.
  * The two cases below therefore build a repository, exactly as CI checks one out
- * (`fetch-depth: 0`).
+ * (`fetch-depth: 0`). Its commit date is pinned — {@link FIXTURE_COMMIT_DATE} — so
+ * the `head` it returns is the same on every run.
  */
 function makeTempGitRoot(): { root: string; head: string } {
   const root = makeTempRepoRoot({ "README.md": "fixture\n" });
@@ -850,6 +870,14 @@ function makeTempGitRoot(): { root: string; head: string } {
     execFileSync("git", ["-C", root, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      // The date is set here, not inherited: a fixture whose `head` depends on the
+      // wall clock (or on whatever `GIT_AUTHOR_DATE` the environment carries)
+      // mints a token the rule may not read. See {@link FIXTURE_COMMIT_DATE}.
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: FIXTURE_COMMIT_DATE,
+        GIT_COMMITTER_DATE: FIXTURE_COMMIT_DATE,
+      },
     });
 
   git("init", "--quiet", "--initial-branch=main");
@@ -868,6 +896,100 @@ function makeTempGitRoot(): { root: string; head: string } {
   );
   return { root, head: git("rev-parse", "HEAD").trim().slice(0, 8) };
 }
+
+/**
+ * The git fixture's own contract — and the flake this file shipped until it was
+ * pinned.
+ *
+ * `makeTempGitRoot` dated its commit from the **wall clock**, so the commit hash,
+ * and with it the 8-character `head`, changed from run to run. One fixture in
+ * about 43 mints a prefix with no `a`–`f` letter (`(10/16)**8`), and the
+ * measured-count rule's head pattern requires one *by design*: a bare digit run is
+ * an epoch, a byte count, a magic number or a placeholder in four trunk records,
+ * not a commit. On such a run the sweep case saw a record that quotes a count and
+ * names no head, and failed with `checked[0].head === null` plus a
+ * `missing-head-commit` issue for the very record the fixture had just written —
+ * while `git cat-file` was never asked at all, because a token the rule cannot read
+ * is never a resolver candidate. The failure looked load-dependent because runs
+ * share a commit hash while they share a wall-clock second: a bad second repeats,
+ * and a contended (slower) run draws a fresh one.
+ *
+ * The two cases below pin the two halves of the fix, and neither reads git's
+ * internals: the head the fixture returns is read back by the rule as a head
+ * commit, and the head does not move when the environment pins another commit
+ * date — the fixture is hermetic, not hash-lucky.
+ */
+describe("makeTempGitRoot — the docs/adr sweep's git fixture", () => {
+  /** The dates this process started with, so each case leaves the environment as it found it. */
+  const ordinaryDates = {
+    author: process.env.GIT_AUTHOR_DATE,
+    committer: process.env.GIT_COMMITTER_DATE,
+  };
+
+  function pinCommitDate(date: string): void {
+    process.env.GIT_AUTHOR_DATE = date;
+    process.env.GIT_COMMITTER_DATE = date;
+  }
+
+  afterEach(() => {
+    if (ordinaryDates.author === undefined) {
+      delete process.env.GIT_AUTHOR_DATE;
+    } else {
+      process.env.GIT_AUTHOR_DATE = ordinaryDates.author;
+    }
+    if (ordinaryDates.committer === undefined) {
+      delete process.env.GIT_COMMITTER_DATE;
+    } else {
+      process.env.GIT_COMMITTER_DATE = ordinaryDates.committer;
+    }
+    for (const dir of tempDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // At 2025-11-24T14:40:34Z this fixture's commit is `98805044a52d…`: an
+  // 8-character prefix with no `a`–`f` letter, which the head pattern does not
+  // read. The neighbouring second mints `944b7690`, which it does.
+  it("hands the sweep a head the measured-count rule reads as a head commit, whatever commit date the environment pins", () => {
+    // Arrange — the rule's own shape filter must never see the fixture's head as
+    // a digit run, so the record must come back checked, not missing.
+    pinCommitDate("1764000034 +0000");
+    const { root, head } = makeTempGitRoot();
+    writeFixtureFile(
+      join(root, "docs/adr/ADR-0001-quoted-with-head.md"),
+      `Tests  15 passed (15)\n\nAt \`${head}\`.`
+    );
+
+    // Act
+    const report = checkRepositoryMeasuredCommitCitations(root, []);
+
+    // Assert — the head the fixture built is the head the report reads back.
+    expect(report).toEqual({
+      ok: true,
+      issues: [],
+      checked: [
+        {
+          file: "docs/adr/ADR-0001-quoted-with-head.md",
+          line: 1,
+          quoted: "15 passed",
+          head,
+        },
+      ],
+      scannedRecords: 1,
+    });
+  });
+
+  it("returns the same head whatever commit date the environment pins", () => {
+    // Arrange — two fixture repositories built under two different commit dates.
+    pinCommitDate("1764000034 +0000");
+    const first = makeTempGitRoot();
+    pinCommitDate("1764000000 +0000");
+    const second = makeTempGitRoot();
+
+    // Assert — a hermetic fixture, not a hash that follows the clock.
+    expect(second.head).toBe(first.head);
+  });
+});
 
 /**
  * The git object type of each token, as `token -> type`, in **one**
