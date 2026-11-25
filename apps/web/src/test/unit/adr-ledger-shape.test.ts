@@ -1121,6 +1121,66 @@ describe("checkAdrLedgerRowShape — the ledger ascends, with gaps allowed", () 
     };
     expect(result).toEqual(expected);
   });
+
+  it("counts a different preamble number the same way — the skip is positional, not a number filter", () => {
+    // Arrange — the delivered case above in every respect except the preamble's
+    // number (`0997` here, `0999` there). Both carry the same shape, so a helper
+    // that skips exactly the literal `0999` passes that case and fails this one:
+    // the rule is "a row-shaped line at or above the header", never "a line
+    // naming 0999".
+    const ledger = syntheticLedger([
+      "A row-shaped line above the ledger is an example, not a row.",
+      "",
+      "| [0997](ADR-0997-example.md) | the example | Accepted |", // adr-fixture: synthetic row, no such record
+      "",
+      HEADER_LINE,
+      DELIMITER_LINE,
+      "| [0001](ADR-0001-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0002](ADR-0002-beta.md) | the second row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the delivered case's own reading: two table rows, no descent.
+    const expected: AdrLedgerRowShapeResult = {
+      ok: true,
+      columns: 3,
+      rows: 2,
+      issues: [],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("fails a header with no rows below it — a preamble row is not a table row", () => {
+    // Arrange — the ledger's worst instance of the defect: a header whose table
+    // is **empty**, plus one prose example row above it. A document-wide row set
+    // counts the example as the table's only row (`rows: 1`) and reports
+    // `ok: true` — a vacuous green on a zero-row table. This case exists to
+    // close exactly that pass.
+    const ledger = syntheticLedger([
+      "A row-shaped line above the ledger is an example, not a row.",
+      "",
+      "| [0996](ADR-0996-example.md) | the example | Accepted |", // adr-fixture: synthetic row, no such record
+      "",
+      HEADER_LINE,
+      DELIMITER_LINE,
+      "",
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — no row in the table, so S1's `rows > 0` clause fails it; the
+    // empty issue list says the failure is the row count, not a malformed row.
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 0,
+      issues: [],
+    };
+    expect(result).toEqual(expected);
+  });
 });
 
 /* ------------------------------------------------------------------------- *
@@ -1550,6 +1610,35 @@ describe("findAdrRecordsWithoutLedgerRow — a rowless record is a failure", () 
     // missing.
     expect(shape.rows).toBe(1);
     expect(missingRows).toEqual([{ number: "0999", file: "ADR-0999-example.md" }]); // adr-fixture: synthetic record name
+  });
+
+  it("still reports a record whose example sits above the header under a different preamble number", () => {
+    // Arrange — the delivered false green above with one change: the preamble
+    // names `0998`, not `0999`. A helper that skips exactly the literal `0999`
+    // reads this example as the record's row (`shape.rows === 2`,
+    // `missingRows === []`) and reproduces the failure S3 exists to catch.
+    // Scoped to the table, `0998` is rowless and is reported.
+    const root = makeTempRepoRoot({
+      "docs/adr/ADR-0998-example.md": "- **Status:** Accepted\n", // adr-fixture: fixture record name
+      "docs/adr/README.md": [
+        "A row-shaped line above the ledger is an example, not a row.",
+        "",
+        "| [0998](ADR-0998-example.md) | the example | Accepted |", // adr-fixture: synthetic row, no such record
+        "",
+        HEADER_LINE,
+        DELIMITER_LINE,
+        "| [0001](ADR-0001-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+        "",
+      ].join("\n"),
+    });
+
+    // Act
+    const { shape, missingRows } = checkRepositoryAdrLedgerShape(root);
+
+    // Assert — one table row, and the example's record is the one reported
+    // missing.
+    expect(shape.rows).toBe(1);
+    expect(missingRows).toEqual([{ number: "0998", file: "ADR-0998-example.md" }]); // adr-fixture: synthetic record name
   });
 
   it("reports no record of the real tree as rowless", () => {
