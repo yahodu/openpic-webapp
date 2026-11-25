@@ -116,6 +116,19 @@ Before `git commit` or `git push`, run the verification pipeline:
 - The merger runs the merge gate on the exact head SHA before `gh pr merge`
   (`docs/CONVENTIONS.md` §9.1, ADR-0318); `--admin` never passes a failed gate.
 - Only merge when all CI checks pass and review is approved.
+- The merge step archives the merged head under `refs/prhead/<n>` and releases the
+  lane's local branch in the same run (**ADR-0967**). The repository deletes the
+  _remote_ head on merge (`delete_branch_on_merge: true`), so the local branch is
+  the only survivor — and a later `git push --all` resurrects a branch whose PR is
+  already merged. Gates, assertions and the RED-by-design exception:
+  `docs/CONVENTIONS.md` §9.2.
+
+  ```
+  N=<pr>; HEAD_SHA=$(git ls-remote origin "refs/pull/$N/head" | cut -f1)
+  git update-ref "refs/prhead/$N" "$HEAD_SHA"               # 1. archive first, only if absent
+  git -C <holder-wt> switch --detach                        # 2. release the worktree holding it
+  git update-ref -d "refs/heads/<head-branch>" "$HEAD_SHA"  # 3. compare-and-delete the local head
+  ```
 
 ## 3. Agent Roles
 
