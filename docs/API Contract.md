@@ -1179,6 +1179,8 @@ Auth `user:complete` + role `owner`
 
 `200` → `{ "status": "active", "cancelAt": "2026-10-01T...", "note": "Your events and photos are not deleted when the subscription ends." }`
 
+`atPeriodEnd: true` against a live subscription whose `currentPeriodEnd` is absent or `null` answers `409 conflict` with `details.reason: "no_period_end"` and writes nothing; `atPeriodEnd: false` cancels immediately, with `cancelAt` the request instant.
+
 Confirmed by webhook; `status` becomes `cancelled` only then. Emits `billing.subscription.cancelled` (in-app + email + mobile — provider-initiated cancellations happen without user intent).
 
 ## 3.4 Transactions & invoices
