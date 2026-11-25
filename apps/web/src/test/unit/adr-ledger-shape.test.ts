@@ -267,6 +267,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { makeTempRepoRoot, realAdrDir, repoRoot, tempDirs } from "../helpers/adr-guard-fixtures.js";
 import type {
   AdrLedgerDelimiterIssue,
+  AdrLedgerHeaderIssue,
+  AdrLedgerRowShapeIssue,
   AdrLedgerRowShapeResult,
 } from "../helpers/adr-ledger-shape.js";
 import {
@@ -408,6 +410,227 @@ describe("checkAdrLedgerRowShape — a ledger row renders its status", () => {
 
     // Act + Assert
     expect(() => checkAdrLedgerRowShape(ledger)).toThrow(/no ledger table header/u);
+  });
+
+  it("reports row-indented when the last body row is indented four spaces", () => {
+    // Arrange — measured on GitHub's own renderer (`gh api -X POST markdown
+    // -F text=@probe.md -f mode=gfm`) at `d68bc6fe`: a four-space-indented body
+    // row as the **last** row emits **2** `<tr>`, **3** `<td>` and **1**
+    // `<pre><code>` — the header and the flush row still make a table, and this
+    // row renders as a code block: no cell, no status column. Forbids reading
+    // the rows by `LEDGER_ROW_PATTERN` alone: its `^\s*\|` accepts any
+    // indentation, so the row reads as a well-formed row today. Also forbids the
+    // rejected alternative — narrowing the pattern to `^ {0,3}\|` — which drops
+    // the row from `rows` altogether and makes S3 call its record rowless.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      "    | [0901](ADR-0901-b.md) | the second row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the row is still **counted** (`rows: 2`) and still inside the
+    // block; it is one issue carrying `row-indented` on its own line 4, not a
+    // `non-row` and not a missing row. Typed as `AdrLedgerRowShapeIssue`
+    // because `AdrLedgerShapeIssue` also admits `AdrLedgerOrderIssue`, whose
+    // `reason` is a plain `string`: an inline literal would type-check even
+    // without the new union member and the wire-shape half of the pin would be
+    // lost.
+    const expectedIssue: AdrLedgerRowShapeIssue = {
+      number: "0901",
+      line: 4,
+      cells: 5,
+      status: "accepted",
+      issues: ["row-indented"],
+    };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports row-indented when the last body row starts with one tab", () => {
+    // Arrange — measured the same way at `d68bc6fe`: one leading tab reaches
+    // column 4, so the row renders as `<pre><code>` and the report is **2**
+    // `<tr>`, **3** `<td>`, **1** `<pre><code>`. Forbids a spaces-only rule that
+    // reads `\t` as zero columns.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      "\t| [0901](ADR-0901-b.md) | the second row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the same report as the four-space arm.
+    const expectedIssue: AdrLedgerRowShapeIssue = {
+      number: "0901",
+      line: 4,
+      cells: 5,
+      status: "accepted",
+      issues: ["row-indented"],
+    };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports row-indented when the last body row starts with a space and a tab", () => {
+    // Arrange — measured the same way at `d68bc6fe`: one space stops at column
+    // 1, so the tab advances to column 4 and the row is indented four columns
+    // while it carries only two leading characters. Render: **2** `<tr>`, **3**
+    // `<td>`, **1** `<pre><code>`. This arm forbids a `startsWith("\t")`
+    // shortcut, which would accept it and take the row out of the table.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      " \t| [0901](ADR-0901-b.md) | the second row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — four columns by tab-stop arithmetic, so the same report.
+    const expectedIssue: AdrLedgerRowShapeIssue = {
+      number: "0901",
+      line: 4,
+      cells: 5,
+      status: "accepted",
+      issues: ["row-indented"],
+    };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports row-indented on a mid-block row and keeps the rows below it in the table", () => {
+    // Arrange — the worst of the measured arms at `d68bc6fe`: a four-space row
+    // **mid-block** with a flush row below it emits **2** `<tr>`, **3** `<td>`,
+    // **1** `<pre><code>` and **1** `<p>` — the indented row is code **and
+    // every row below it leaves the table**, so the loss is not limited to the
+    // indented line. Forbids the second rejected alternative, narrowing
+    // `LEDGER_ROW_PATTERN` to `^ {0,3}\|`: the row then leaves S1c's block and
+    // is reported as `{ line: 4, reason: "non-row" }`, a wrong diagnosis that
+    // also skips S1's cell and status checks and S1e's sequence.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      "    | [0901](ADR-0901-b.md) | the second row | accepted |", // adr-fixture: synthetic row, no such record
+      "| [0902](ADR-0902-c.md) | the third row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — all three rows counted, and exactly one issue: the indented row's
+    // own defect, on its own line.
+    const expectedIssue: AdrLedgerRowShapeIssue = {
+      number: "0901",
+      line: 4,
+      cells: 5,
+      status: "accepted",
+      issues: ["row-indented"],
+    };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 3,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+
+    // The row stays inside the block: nothing is reported as `non-row`, which is
+    // what a narrowed row pattern would answer instead.
+    expect(result.issues).toHaveLength(1);
+    expect(result.issues).not.toContainEqual({ line: 4, reason: "non-row" });
+  });
+
+  it("reports row-indented before cell-count when an indented row is also too narrow", () => {
+    // Arrange — the defect-order arm. A four-space row that is **also** one cell
+    // short: measured at `d68bc6fe`, the rejected fix (narrowing
+    // `LEDGER_ROW_PATTERN` to `^ {0,3}\|`) answers `{ ok: true, rows: 1,
+    // issues: [] }` for exactly this shape while GitHub renders **2** `<tr>`,
+    // **3** `<td>` and **1** `<pre><code>` — an indented, malformed row reading
+    // as a green rule. The decided shape reports both defects on the row and
+    // pushes indentation first, so the order is `["row-indented",
+    // "cell-count"]`: the render defect outranks the split defect.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      "    | [0901](ADR-0901-b.md) | B |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — `cells: 4` and `status: ""` are the row's own short shape; both
+    // defects are reported, in the decided order.
+    const expectedIssue: AdrLedgerRowShapeIssue = {
+      number: "0901",
+      line: 4,
+      cells: 4,
+      status: "",
+      issues: ["row-indented", "cell-count"],
+    };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("accepts a last body row indented three spaces", () => {
+    // Arrange — the accept side of the row boundary, measured at `d68bc6fe`: a
+    // body row at 1, 2 or 3 spaces still renders as a table (**3** `<tr>`,
+    // **6** `<td>`), so three columns is the last accepted indentation and must
+    // not be reported. Forbids an over-tight rule, e.g. one that demands a
+    // flush row.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      "   | [0901](ADR-0901-b.md) | the second row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert
+    expect(result).toEqual({ ok: true, columns: 3, rows: 2, issues: [] });
+  });
+
+  it("accepts a body row with a trailing tab after its closing pipe", () => {
+    // Arrange — measured at `d68bc6fe`: rows carrying a trailing tab and rows
+    // carrying four trailing spaces both emit **3** `<tr>` and **6** `<td>`, so
+    // trailing whitespace is harmless. Forbids reading the line's *last*
+    // whitespace run, or trimming-first arithmetic that mistakes trailing
+    // whitespace for indentation.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      "| [0901](ADR-0901-b.md) | the second row | accepted |\t", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert
+    expect(result).toEqual({ ok: true, columns: 3, rows: 2, issues: [] });
   });
 });
 
@@ -558,6 +781,87 @@ describe("checkAdrLedgerRowShape — the ledger block stays one table", () => {
         { line: 7, reason: "blank-line" },
       ],
     });
+  });
+
+  it("reports header-indented when the header line is indented four spaces", () => {
+    // Arrange — measured on GitHub's own renderer (`gh api -X POST markdown
+    // -F text=@probe.md -f mode=gfm`) at `d68bc6fe`: a `| ADR | Title | Status |`
+    // header indented four spaces emits **0** `<tr>`, **0** `<td>`, **1**
+    // `<pre><code>` and **1** `<p>` — no table at all, so no row's status
+    // renders and the whole table is a code block plus a paragraph. The shipped
+    // read finds the header anyway: `isLedgerHeader` reads through
+    // `tableCellsOf`, which trims the line, so indentation is invisible to it.
+    // This case also forbids the throw shape — `ledgerTableOf` refusing an
+    // indented header would fail here instead of reporting `header-indented` on
+    // the header's own line, and the rule must report, not refuse.
+    const ledger = syntheticLedger([
+      `    ${HEADER_LINE}`,
+      DELIMITER_LINE,
+      "| [0900](ADR-0900-a.md) | the only row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — one issue on line 1, the header's own line, and the row below is
+    // still counted: the row is well formed, the table is not. Typed as
+    // `AdrLedgerHeaderIssue` because `AdrLedgerShapeIssue` also admits
+    // `AdrLedgerOrderIssue`, whose `reason` is a plain `string`; an inline
+    // literal would type-check even without the new interface and the
+    // wire-shape half of the pin would be lost.
+    const expectedIssue: AdrLedgerHeaderIssue = { line: 1, reason: "header-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 1,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports header-indented when the header line starts with one tab", () => {
+    // Arrange — measured the same way at `d68bc6fe`: one leading tab reaches
+    // column 4, so the header is indented four columns and renders as
+    // `<pre><code>` plus a paragraph — **0** `<tr>`, **0** `<td>`, no table.
+    // Forbids a spaces-only header rule, which would read `\t` as zero columns
+    // and accept the line.
+    const ledger = syntheticLedger([
+      `\t${HEADER_LINE}`,
+      DELIMITER_LINE,
+      "| [0900](ADR-0900-a.md) | the only row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — the same report as the four-space header arm.
+    const expectedIssue: AdrLedgerHeaderIssue = { line: 1, reason: "header-indented" };
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 1,
+      issues: [expectedIssue],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("accepts a header line indented three spaces", () => {
+    // Arrange — the accept side of the header boundary, measured at
+    // `d68bc6fe`: a header at one, two or three spaces still renders a table
+    // (**2** `<tr>`, **3** `<td>`), so three columns is the last accepted
+    // indentation. Forbids an over-tight header rule that demands a flush
+    // header and would red a legitimate ledger.
+    const ledger = syntheticLedger([
+      `   ${HEADER_LINE}`,
+      DELIMITER_LINE,
+      "| [0900](ADR-0900-a.md) | the only row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert
+    expect(result).toEqual({ ok: true, columns: 3, rows: 1, issues: [] });
   });
 });
 
@@ -1561,5 +1865,32 @@ describe("findAdrRecordsWithoutLedgerRow — a rowless record is a failure", () 
     // empty and nothing is owed: a record without its row fails here.
     expect(shape.rows).toBeGreaterThanOrEqual(455);
     expect(missingRows).toEqual([]);
+  });
+
+  it("counts an indented row as present, so its record is not reported rowless", () => {
+    // Arrange — the S3 non-regression for the indentation boundary: a body row
+    // indented four spaces renders as `<pre><code>` (measured at `d68bc6fe`:
+    // **2** `<tr>`, **3** `<td>`, **1** `<pre><code>`), so S1 must report it —
+    // but the row still *exists*, and its record must not be called rowless.
+    // This is the pin that forbids the rejected fix, narrowing
+    // `LEDGER_ROW_PATTERN` to `^ {0,3}\|`: the indented row then leaves `rows`
+    // (and S1e's sequence, and S1's cell and status checks), S3 reports `0901`
+    // as rowless, and a four-space row that is also narrow reads as a green
+    // rule — a wrong diagnosis instead of `row-indented`.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0900](ADR-0900-a.md) | the first row | accepted |", // adr-fixture: synthetic row, no such record
+      "    | [0901](ADR-0901-b.md) | the second row | accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+    const records = [
+      { fileName: "ADR-0900-a.md", text: "- **Status:** accepted\n" }, // adr-fixture: fixture record name
+      { fileName: "ADR-0901-b.md", text: "- **Status:** accepted\n" }, // adr-fixture: fixture record name
+    ];
+
+    // Act
+    const missing = findAdrRecordsWithoutLedgerRow(ledger, records);
+
+    // Assert — both records carry a row, the indented one included.
+    expect(missing).toEqual([]);
   });
 });
