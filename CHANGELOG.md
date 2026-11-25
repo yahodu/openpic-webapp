@@ -1,3 +1,9 @@
+## [1.89.1](https://github.com/yahodu/openpic-webapp/compare/v1.89.0...v1.89.1) (2026-11-25)
+
+### Bug Fixes
+
+- **billing:** OP-101 refuse a downgrade with no period end as 409 no_period_end ([#925](https://github.com/yahodu/openpic-webapp/issues/925)) ([468f154](https://github.com/yahodu/openpic-webapp/commit/468f1542128148f446be9bffc2142125af21c744))
+
 ## [1.89.0](https://github.com/yahodu/openpic-webapp/compare/v1.88.0...v1.89.0) (2026-11-24)
 
 ### Features

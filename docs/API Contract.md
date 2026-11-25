@@ -1125,7 +1125,7 @@ Auth `user:complete` + role `owner` · **Idempotency recommended**
 
 `{ "targetPlanKey": "starter", "acknowledgeConsequences": true }`
 
-Self-serve downgrades take effect **at period end**, unlike upgrades. Writes `subscriptions.scheduledChange = { toPlanKey, effectiveAt: currentPeriodEnd, reason: "self_downgrade" }`.
+Self-serve downgrades take effect **at period end**, unlike upgrades. Writes `subscriptions.scheduledChange = { toPlanKey, effectiveAt: currentPeriodEnd, reason: "self_downgrade" }`. A live subscription whose `currentPeriodEnd` is absent or `null` answers `409 conflict` with `details.reason: "no_period_end"` and writes nothing.
 
 `acknowledgeConsequences` must be `true` → else `422 acknowledgement_required`, with `details.consequences` computed from current usage vs. target limits:
 
