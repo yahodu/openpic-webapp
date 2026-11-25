@@ -107,14 +107,15 @@
  *
  * - **S1e, ledger order.** Taken in file order, the ledger's `NNNN` values must
  *   be **strictly increasing**: a row numbered lower than its predecessor sends
- *   a reader who scans the ledger by number backwards. Two such rows shipped
- *   green — `0973` before `0971`/`0972` (PR #885, repaired by #941) and `0989`
- *   before `0986` (PR #933, repaired by #937) — with all ten `adr-*` guards at
- *   `340 passed (340)` on both trees, because no rule compared consecutive
- *   numbers. **Gaps are allowed**: a number is skipped while it is in flight,
- *   so the ledger is not a contiguous census. The precedent is ADR-0986's
- *   round-1 review sign-off, which reads `0982`, `0983`, `0986` *ascending with
- *   `0986` directly after `0983` because `0984`/`0985` are then still reserved
+ *   a reader who scans the ledger by number backwards. Two descents shipped
+ *   green — `0973` landed at PR #885 in the right place, and PR #894 inserted
+ *   `0971`/`0972` above it (repaired by #941); `0989` before `0986` (PR #933,
+ *   repaired by #937) — with all ten `adr-*` guards at `340 passed (340)` on
+ *   both trees, because no rule compared consecutive numbers. **Gaps are
+ *   allowed**: a number is skipped while it is in flight, so the ledger is not
+ *   a contiguous census. The precedent is ADR-0986's round-1 review sign-off,
+ *   which reads `0982`, `0983`, `0986` *ascending with `0986` directly after
+ *   `0983` because `0984`/`0985` are then still reserved
  *   in flight*, and the four pool-mirror cells legitimately sit **ahead** of the
  *   last row (`0991` beside the `0990` row at this cut). A **repeated** number
  *   is an issue too: it is neither ascending nor a gap. The sequence is the
