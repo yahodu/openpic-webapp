@@ -77,6 +77,19 @@ export const POST = defineRoute({
     }
     const current = liveSubscriptionSchema.parse(stored);
 
+    // §3.3 (ADR-0987): a request to stop at period end needs a period end to stop
+    // at. The refusal is decided before the mandate is released, so a refused
+    // request is a no-op at the provider as well as on the row — ADR-0984's answer
+    // one route over; the two billing routes must not disagree.
+    let cancelAt = now;
+    if (ctx.body.atPeriodEnd) {
+      const periodEnd = current.currentPeriodEnd ?? null;
+      if (periodEnd === null) {
+        throw appError("conflict", { details: { reason: "no_period_end" } });
+      }
+      cancelAt = periodEnd;
+    }
+
     const mandate = providerRefOf(current.externalRefs, "subscription");
     if (mandate === null) {
       throw appError("mandate_not_chargeable", {
@@ -98,7 +111,6 @@ export const POST = defineRoute({
 
     // §3.3: the status becomes `cancelled` only when the provider confirms it by
     // webhook. This route records when the subscription ends and nothing else.
-    const cancelAt = ctx.body.atPeriodEnd ? (current.currentPeriodEnd ?? now) : now;
     await subscriptions.updateOne(
       { _id: current._id },
       { $set: { cancelAt, cancelReason: ctx.body.reason ?? null, updatedAt: now } }
