@@ -456,6 +456,27 @@ export function checkMeasuredCommitCitations(
 }
 
 /**
+ * The environment every git read in this module runs with: the parent's, **minus
+ * every inherited `GIT_*` variable**.
+ *
+ * `git -C <root>` is authoritative only while the child carries no `GIT_DIR`,
+ * `GIT_OBJECT_DIRECTORY`, `GIT_INDEX_FILE`, `GIT_WORK_TREE` or
+ * `GIT_ALTERNATE_OBJECT_DIRECTORIES`: any of them redirects the read away from
+ * `<root>`'s own object database, and a redirected read is indistinguishable from
+ * a foreign hash — it answers `missing` for a commit that exists, which is the
+ * exact report a record citing somebody else's hash earns. Stripping the prefix
+ * makes this resolver's answer a function of `<root>` alone.
+ *
+ * It cannot turn `missing` into `commit`: the only thing removed is a
+ * redirection, so a token no object database holds still answers `missing`.
+ */
+function gitReadEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))
+  ) as unknown as NodeJS.ProcessEnv;
+}
+
+/**
  * The git-backed {@link CommitObjectResolver}: one
  * `git cat-file --batch-check` pass over `tokens` in `<root>`'s object database.
  * A token is accepted only when its answer line has three fields and the second
@@ -485,6 +506,7 @@ function gitCommitObjectResolver(root: string): CommitObjectResolver {
       input: tokens.map((token) => `${token}\n`).join(""),
       encoding: "utf8",
       stdio: ["pipe", "pipe", "ignore"],
+      env: gitReadEnv(),
       maxBuffer: 64 * 1024 * 1024,
     });
 

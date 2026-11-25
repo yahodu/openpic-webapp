@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   makeTempRepoRoot,
@@ -832,6 +833,125 @@ describe("checkMeasuredCommitCitations — a record that quotes a count names it
 });
 
 /**
+ * The fixture commit's own timeline, in seconds since the epoch
+ * (2023-11-14T22:13:29Z), pinned into {@link fixtureGitEnv}.
+ *
+ * `git commit` otherwise stamps the committer date with the wall clock, which
+ * makes the fixture's commit hash — and the 8 characters a record quotes — a
+ * different value on every run. That was this file's flake: the clause's
+ * head-shape gate (`HEAD_COMMIT_PATTERN`, at least one `a`–`f` letter in a 7–40
+ * character hexadecimal run) rejects a letter-free run on purpose — four trunk
+ * records match a looser `\b[0-9a-f]{7,40}\b` on an epoch, a byte count, a magic
+ * number and a placeholder — so a letter-free prefix is not a head-shaped token
+ * at all: the record it was pasted into yields no token, and the sweep reports
+ * `head: null` / `missing-head-commit` on a tree that is correct. Measured on a
+ * 200-distinct-hash sample: **5 letter-free heads (2.5%)** against
+ * `(10/16)^8 = 2.33%` predicted. CI reded that way twice on 2026-11-25
+ * (`84170438`, no letter — `unit` run `45576932454` on PR #961 head `8f5ad417`
+ * and run `45575920259` on `main` `50d98aba`). A pinned date makes the hash a
+ * constant, so the case is deterministic instead of 1-in-43.
+ *
+ * The value is also chosen so the **raw** commit answers a letter-free head
+ * (`96654021`): with the fixture's repair below, every build therefore takes the
+ * amend-until-shaped path, instead of a path only one case would ever reach.
+ */
+const FIXTURE_COMMIT_EPOCH = 1_700_000_069;
+
+/**
+ * The environment every fixture git command runs with: the parent's, **minus
+ * every inherited `GIT_*` variable**, plus the pinned author and committer dates.
+ *
+ * `git -C <root>` is authoritative only while the child carries no `GIT_DIR`,
+ * `GIT_OBJECT_DIRECTORY`, `GIT_INDEX_FILE` or `GIT_WORK_TREE`: any of those
+ * redirects the very commands that are supposed to write and read `<root>`'s own
+ * object database, and a redirected read is indistinguishable from a foreign
+ * hash — it answers `missing` for a commit that exists, which is the same report
+ * a record citing a hash from elsewhere earns. Stripping the whole prefix makes
+ * the fixture hermetic; the pinned dates make the resulting hash a constant.
+ */
+function fixtureGitEnv(): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))
+  ) as unknown as NodeJS.ProcessEnv;
+  const stamp = `@${String(FIXTURE_COMMIT_EPOCH)} +0000`;
+  return { ...inherited, GIT_AUTHOR_DATE: stamp, GIT_COMMITTER_DATE: stamp };
+}
+
+/** `git -C <root> …` on the fixture's own environment, as text. */
+function gitIn(root: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", root, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: fixtureGitEnv(),
+  });
+}
+
+/**
+ * Whether the rule's **own** head-shape gate accepts `token`, asked through the
+ * public check rather than a copy of the pattern: a record quoting the token is
+ * scanned with the shape-only default resolver, and the token is head-shaped
+ * exactly when the report names it as that record's `head`.
+ *
+ * A copy of `/\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/` here would let the fixture
+ * and the rule drift apart — the fixture would keep minting tokens the rule had
+ * stopped accepting, or the reverse.
+ */
+function headIsHeadShaped(token: string): boolean {
+  const report = checkMeasuredCommitCitations([
+    { path: "docs/adr/ADR-0302-shape-probe.md", text: `Tests  15 passed (15)\n\nAt \`${token}\`.` },
+  ]);
+  return report.checked.at(0)?.head === token;
+}
+
+/**
+ * How many times {@link makeTempGitRoot} may amend its own commit before it gives
+ * up. Each attempt re-draws the hash from a different message, so the tail is
+ * `(10/16)^(8 × 32)`: the bound exists to fail loudly, never to fail in practice.
+ */
+const FIXTURE_HEAD_ATTEMPTS = 32;
+
+/**
+ * Attempts, and the pause between them, {@link makeTempGitRoot} spends waiting
+ * for its own commit object to answer a read.
+ *
+ * 50 × 20 ms is a ceiling on a slow filesystem's writeback, never a tolerance on
+ * an assertion: when the object is still invisible the factory **throws**, so a
+ * missing commit cannot reach the sweep as a `missing-head-commit` report about a
+ * tree that is correct.
+ */
+const FIXTURE_VISIBILITY_ATTEMPTS = 50;
+const FIXTURE_VISIBILITY_DELAY_MS = 20;
+
+/**
+ * Block until `<root>`'s own object database answers for `head` — the read the
+ * resolver performs microseconds later — and throw when it does not.
+ *
+ * This is the opening card's first hypothesis, kept as a guard rather than as the
+ * diagnosis: the observed CI failure was a **letter-free** head (a token the rule
+ * never accepts), not an invisible one, and no case can induce a visibility lag
+ * deterministically. The guard costs one `cat-file` when the object is already
+ * there, and it converts the pathological case into an error that names the root
+ * and the head instead of a report that reads exactly like a record citing a
+ * foreign hash.
+ */
+function waitForCommitObject(root: string, head: string): void {
+  for (let attempt = 1; attempt <= FIXTURE_VISIBILITY_ATTEMPTS; attempt += 1) {
+    try {
+      gitIn(root, "cat-file", "-e", `${head}^{commit}`);
+      return;
+    } catch {
+      // A synchronous pause: this factory runs inside a test body, and a timer the
+      // suite could fake would not pace a subprocess anyway.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, FIXTURE_VISIBILITY_DELAY_MS);
+    }
+  }
+  throw new Error(
+    `makeTempGitRoot's own commit ${head} was still invisible to git cat-file after ` +
+      `${String(FIXTURE_VISIBILITY_ATTEMPTS)} attempts in ${root}`
+  );
+}
+
+/**
  * A throwaway repository root that is a **real git repository with one commit**,
  * so the sweep's commit-object resolver has an object database to read: the
  * returned `head` is the 8-character prefix of `HEAD`, which
@@ -841,32 +961,72 @@ describe("checkMeasuredCommitCitations — a record that quotes a count names it
  * 128 outside a repository, so a root with no `.git` cannot tell a commit from a
  * blob, a tree or a typo — and a resolver that answered "every token is a commit"
  * when git could not run would be the shape-only rule again under a new name.
- * The two cases below therefore build a repository, exactly as CI checks one out
+ * The cases below therefore build a repository, exactly as CI checks one out
  * (`fetch-depth: 0`).
+ *
+ * Two properties are built in, and both are here because the factory used to hand
+ * the sweep a token it could not read:
+ *
+ * - **the commit's timeline is pinned** ({@link FIXTURE_COMMIT_EPOCH}), so the
+ *   hash — and the token pasted into the record — is a constant instead of a
+ *   fresh draw from the wall clock;
+ * - **the token is head-shaped** even when the raw hash is not: the commit is
+ *   amended with a different message until the 8-character prefix carries an
+ *   `a`–`f` letter, which is the clause's own shape requirement. Amending
+ *   replaces the commit, so the repository stays at exactly one commit and the
+ *   abbreviated token can never become ambiguous.
+ *
+ * **Why the factory and not the rule.** The alternative repair — relax
+ * `HEAD_COMMIT_PATTERN` to accept a letter-free digit run — would put four trunk
+ * records back into the corpus on an epoch (`1792924295000`), a byte count
+ * (`53687091200`), a magic number and a placeholder (`0123456789`), none of which
+ * pins a commit: the false heads the letter requirement exists to reject. The
+ * rule is right; a fixture that pasted a random hexadecimal value into a record
+ * and then required the rule to see it was the defective half.
  */
 function makeTempGitRoot(): { root: string; head: string } {
   const root = makeTempRepoRoot({ "README.md": "fixture\n" });
-  const git = (...args: string[]): string =>
-    execFileSync("git", ["-C", root, ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+  const commit = (...flags: readonly string[]): void => {
+    gitIn(
+      root,
+      "-c",
+      "user.name=adr-guard",
+      "-c",
+      "user.email=adr-guard@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--quiet",
+      ...flags
+    );
+  };
+  // `--short=8` is a floor, not a fixed width: git lengthens the abbreviation if
+  // it is ambiguous, so a future second commit in the same repository still
+  // yields a token that names exactly one object.
+  const head = (): string => gitIn(root, "rev-parse", "--short=8", "HEAD").trim();
 
-  git("init", "--quiet", "--initial-branch=main");
-  git("add", "--all");
-  git(
-    "-c",
-    "user.name=adr-guard",
-    "-c",
-    "user.email=adr-guard@example.invalid",
-    "-c",
-    "commit.gpgsign=false",
-    "commit",
-    "--quiet",
-    "-m",
-    "fixture"
-  );
-  return { root, head: git("rev-parse", "HEAD").trim().slice(0, 8) };
+  gitIn(root, "init", "--quiet", "--initial-branch=main");
+  gitIn(root, "add", "--all");
+  commit("-m", "fixture");
+
+  let abbreviated = head();
+  for (
+    let attempt = 1;
+    attempt <= FIXTURE_HEAD_ATTEMPTS && !headIsHeadShaped(abbreviated);
+    attempt += 1
+  ) {
+    commit("--amend", "-m", `fixture-${String(attempt)}`);
+    abbreviated = head();
+  }
+  if (!headIsHeadShaped(abbreviated)) {
+    throw new Error(
+      `makeTempGitRoot could not reach a head-shaped commit in ` +
+        `${String(FIXTURE_HEAD_ATTEMPTS)} attempts (last head ${abbreviated} in ${root})`
+    );
+  }
+
+  waitForCommitObject(root, abbreviated);
+  return { root, head: abbreviated };
 }
 
 /**
@@ -919,6 +1079,7 @@ function gitObjectTypes(root: string, tokens: readonly string[]): Map<string, st
 
 describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -975,6 +1136,65 @@ describe("checkRepositoryMeasuredCommitCitations — the docs/adr sweep", () => 
         },
       ],
       scannedRecords: 3,
+    });
+  });
+
+  it("pins its own commit, so the head it hands the sweep cannot vary with the wall clock", () => {
+    // Arrange — the fixture's head is pasted into a record as that record's
+    // provenance, so the fixture owns one property the sweep itself cannot check:
+    // that the 8 characters it names are the same on every run. A `git commit`
+    // that stamps the wall clock makes them a fresh random draw, and about one
+    // draw in 43 carries no `a`–`f` letter — which the clause's head-shape gate
+    // rejects, so the record yields no token and reports `head: null` on a tree
+    // that is correct. Pinning the commit's dates makes the draw a constant.
+    const { root, head } = makeTempGitRoot();
+
+    // Act
+    const authored = Number(gitIn(root, "show", "-s", "--format=%at", "HEAD").trim());
+    const committed = Number(gitIn(root, "show", "-s", "--format=%ct", "HEAD").trim());
+    const commits = gitIn(root, "rev-list", "--count", "HEAD").trim();
+
+    // Assert — the commit carries the fixture's own timeline, so the hash (and
+    // the token) is fixed; the repository still holds exactly one commit, because
+    // the fixture's repair amends its commit instead of adding a second one; and
+    // the token the fixture hands out is the shape the rule accepts, naming a
+    // commit object.
+    expect(authored).toBe(FIXTURE_COMMIT_EPOCH);
+    expect(committed).toBe(FIXTURE_COMMIT_EPOCH);
+    expect(commits).toBe("1");
+    expect(headIsHeadShaped(head)).toBe(true);
+    expect(gitIn(root, "cat-file", "-t", head).trim()).toBe("commit");
+  });
+
+  it("ignores an inherited GIT_* variable, so a stray GIT_DIR cannot redirect the fixture or the resolver", () => {
+    // Arrange — a runner that exported GIT_DIR, GIT_OBJECT_DIRECTORY or
+    // GIT_INDEX_FILE points every `git -C <root>` somewhere else: the fixture
+    // would commit into the wrong object database and the sweep's resolver would
+    // read the wrong one, answering `missing` for a commit that exists — the same
+    // report a record citing a foreign hash earns, on a record naming its own.
+    const stray = join(tmpdir(), "adr-source-refs-not-a-repository");
+    vi.stubEnv("GIT_DIR", join(stray, "git-dir"));
+    vi.stubEnv("GIT_OBJECT_DIRECTORY", join(stray, "objects"));
+    vi.stubEnv("GIT_INDEX_FILE", join(stray, "index"));
+
+    const { root, head } = makeTempGitRoot();
+    writeFixtureFile(
+      join(root, "docs/adr/ADR-0001-quoted-with-head.md"),
+      `Tests  15 passed (15)\n\nAt \`${head}\`.`
+    );
+
+    // Act
+    const report = checkRepositoryMeasuredCommitCitations(root, []);
+
+    // Assert — the record is read, and its head is the commit the fixture made in
+    // `<root>`: no inherited variable may redirect either child process.
+    expect(report).toEqual({
+      ok: true,
+      issues: [],
+      checked: [
+        { file: "docs/adr/ADR-0001-quoted-with-head.md", line: 1, quoted: "15 passed", head },
+      ],
+      scannedRecords: 1,
     });
   });
 
