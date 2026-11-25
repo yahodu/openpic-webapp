@@ -232,8 +232,9 @@ other case reds. The same mutation applied to the whole file — `findDomainEven
       Tests  2 failed | 14 passed (16)
 ```
 
-Both cases red — `B1` at `:651:27` and `B5` at `:727:26`, each `expected 500 to be 200` — which
-is expected, because both share the `alreadyEmitted` pre-read. The deletion therefore describes
+Both cases red with `expected 500 to be 200` — `B1` at `:651:27`, and `B5` at `:727:26` or
+`:728:27`, whichever assertion belongs to the losing request (E2 explains the split) — which is
+expected, because both share the `alreadyEmitted` pre-read. The deletion therefore describes
 what the pre-read prevents, but it does not show that `B5` adds coverage over `B1`.
 
 ### E2 — the discriminating proof is the retry budget
@@ -259,7 +260,8 @@ green (`16 passed (16)`). The loser answers `500` only in the rounds where the t
 actually conflict, and which request loses decides whether the red surfaces on `:727:26`
 (`first.status`) or on `:728:27` (`second.status`), which is why the quoted stack above and a
 re-run can differ in their first failing line. The shipped budget of `3` is what makes the case
-stable: ten of ten rounds in §Evidence and every whole-file run in this correction are green.
+stable: all ten rounds in §Evidence and every unmutated whole-file run in this correction are
+green.
 
 ### E3 — the mechanism is the whole-callback retry, not the read's position
 
