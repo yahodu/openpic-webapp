@@ -110,8 +110,9 @@
  *   a reader who scans the ledger by number backwards. Two descents shipped
  *   green — `0973` landed at PR #885 in the right place, and PR #894 inserted
  *   `0971`/`0972` above it (repaired by #941); `0989` before `0986` (PR #933,
- *   repaired by #937) — with all ten `adr-*` guards at `340 passed (340)` on
- *   both trees, because no rule compared consecutive numbers. **Gaps are
+ *   repaired by #937) — with the `adr-*` guards at `280 passed (280)` on the
+ *   `#894` tree (eight guard files then) and `340 passed (340)` on the `#933`
+ *   tree (ten), because no rule compared consecutive numbers. **Gaps are
  *   allowed**: a number is skipped while it is in flight, so the ledger is not
  *   a contiguous census. The precedent is ADR-0986's round-1 review sign-off,
  *   which reads `0982`, `0983`, `0986` *ascending with `0986` directly after
