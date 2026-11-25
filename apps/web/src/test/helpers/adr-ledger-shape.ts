@@ -29,7 +29,10 @@
  *   below. Every row shaped `| [NNNN](ADR-*.md) | …` must split on
  *   **unescaped** `|` into exactly `columns + 2` parts — the two boundary
  *   empties plus one part per header cell — and its status cell (part
- *   `columns`) must be non-empty after trimming. A ledger with a header but no
+ *   `columns`) must be non-empty after trimming. A row whose leading
+ *   indentation is four or more columns (a space is one column, a tab the next
+ *   four-column stop) is `row-indented`, reported first when the row is also
+ *   malformed. A ledger with a header but no
  *   rows is **not** a pass: `ok` is `rows > 0 && issues.length === 0`, so an
  *   empty or mis-rooted tree cannot report a vacuous green.
  *
@@ -69,7 +72,9 @@
  *
  *   **The boundaries of the rule**, stated so it is not over-read. A row whose
  *   cell count is wrong stays S1's report (`cell-count`) and is not repeated
- *   here. A blank line *after* the last ledger row is prose separating the table
+ *   here. A row-shaped line indented four or more columns is S1's
+ *   `row-indented`, never `non-row` — the sweep must not be narrowed to find
+ *   it. A blank line *after* the last ledger row is prose separating the table
  *   from its notes, not a detachment, and is not reported; the block's end is the
  *   **last row below the header**, which at this cut is the table's own last row
  *   (`README.md:653`). Prose therefore leaves the block only when
@@ -100,10 +105,12 @@
  *   on the delimiter's own line. The order is shape, then indentation, then cell
  *   count: a line that is no delimiter row at all is `delimiter-missing`, and an
  *   indented one is `delimiter-indented` even when its cell count is also wrong.
- *   The boundary: this rule measures the **delimiter row only** — the header
- *   line's and the body rows' indentation are not measured here (a separate
- *   decision owns that class). A document with no header still throws (see
- *   {@link ledgerTableOf}), so nothing is reported there.
+ *   **All three lines obey the one four-column boundary.** The header line and
+ *   the body rows are measured by the same rule as the delimiter row:
+ *   `delimiter-indented` reports the delimiter row, `header-indented` reports
+ *   the `| ADR | Title | Status |` header on its own line, and `row-indented`
+ *   reports a body row through S1's row issue. A document with no header still
+ *   throws (see {@link ledgerTableOf}), so nothing is reported there.
  *
  * - **S1e, ledger order.** Taken in file order, the ledger's `NNNN` values must
  *   be **strictly increasing**: a row numbered lower than its predecessor sends
@@ -246,7 +253,13 @@ export type AdrLedgerRowDefect =
   /** The row did not split into `columns + 2` unescaped-`|` parts. */
   | "cell-count"
   /** The row split correctly but its status cell is empty. */
-  | "empty-status";
+  | "empty-status"
+  /**
+   * The row's leading indentation is four or more columns (a tab reaches the next four-column
+   * stop), where GFM stops reading the table: the row renders as code and every row below it
+   * leaves the table.
+   */
+  | "row-indented";
 
 /** One ledger row that S1 rejects. */
 export interface AdrLedgerRowShapeIssue {
@@ -309,6 +322,15 @@ export interface AdrLedgerDelimiterIssue {
   reason: AdrLedgerDelimiterReason;
 }
 
+/** The ledger header, indented four or more columns, so GFM never reads it as a table. */
+export interface AdrLedgerHeaderIssue {
+  /** 1-based line of the `| ADR | Title | Status |` header. */
+  line: number;
+
+  /** The header starts four or more columns in: GFM renders it as code, not a table. */
+  reason: "header-indented";
+}
+
 /**
  * One ledger row whose `[NNNN]` label breaks the ledger's ascending order: a
  * number lower than its predecessor's, or the same number as its predecessor's.
@@ -327,10 +349,14 @@ export interface AdrLedgerOrderIssue {
 
 /**
  * One issue S1 reports: a rejected row, a line that detaches the rows below it,
- * or a header that no table can start from.
+ * an indented header, or a header that no table can start from.
  */
 export type AdrLedgerShapeIssue =
-  AdrLedgerRowShapeIssue | AdrLedgerContiguityIssue | AdrLedgerDelimiterIssue | AdrLedgerOrderIssue;
+  | AdrLedgerRowShapeIssue
+  | AdrLedgerContiguityIssue
+  | AdrLedgerDelimiterIssue
+  | AdrLedgerHeaderIssue
+  | AdrLedgerOrderIssue;
 
 /** The report shape returned by {@link checkAdrLedgerRowShape}. */
 export interface AdrLedgerRowShapeResult {
@@ -799,11 +825,17 @@ export function checkAdrLedgerRowShape(ledger: AdrLedgerFileText): AdrLedgerRowS
     issues.push(delimiterIssue);
   }
   issues.push(...orderIssuesOf(rows));
+  if (leadingColumns(lines[headerLine - 1] ?? "") >= 4) {
+    issues.push({ line: headerLine, reason: "header-indented" });
+  }
 
   for (const row of rows) {
     const defects: AdrLedgerRowDefect[] = [];
     const status = statusCellOf(row, columns);
 
+    if (leadingColumns(lines[row.line - 1] ?? "") >= 4) {
+      defects.push("row-indented");
+    }
     if (row.cells.length !== columns + 2) {
       defects.push("cell-count");
     }
