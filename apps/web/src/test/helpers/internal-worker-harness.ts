@@ -11,7 +11,7 @@
  * case still reads exactly as it read before (ADR-0830 §2).
  *
  * **The lifecycle hooks run at import time and therefore register per spec
- * file**, so each of the four specs gets its own `app`, its own database prefix
+ * file**, so each spec file gets its own `app`, its own database prefix
  * and its own teardown — the isolation the single file used to give for free.
  *
  * `driverFindOne` / `driverUpdateOne` are captured **once, at module
