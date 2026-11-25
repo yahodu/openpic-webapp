@@ -74,6 +74,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The measured-count census resolves every cited head with `git cat-file`;
+      # a squash-merged lane's head survives only on its pull ref (ADR-0302 §12).
+      - name: Fetch pull-request heads
+        run: git fetch --no-tags origin '+refs/pull/*/head:refs/remotes/pull/*'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -162,6 +169,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Same reason as `test_coverage`: the measured-count census needs every
+      # cited head, including the ones a squash-merged lane left on its pull ref.
+      - name: Fetch pull-request heads
+        run: git fetch --no-tags origin '+refs/pull/*/head:refs/remotes/pull/*'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

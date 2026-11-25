@@ -17,6 +17,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # A squash-merged lane's measured head is reachable only from its pull
+      # ref; a branch/tag fetch does not carry it, and the measured-count census
+      # resolves every cited head (ADR-0302 §12).
+      - name: Fetch pull-request heads
+        run: git fetch --no-tags origin '+refs/pull/*/head:refs/remotes/pull/*'
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
