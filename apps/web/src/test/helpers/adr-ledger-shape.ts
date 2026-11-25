@@ -32,9 +32,9 @@
  *   `columns`) must be non-empty after trimming. A row whose leading
  *   indentation is four or more columns (a space is one column, a tab the next
  *   four-column stop) is `row-indented`, reported first when the row is also
- *   malformed. A ledger with a header but no
- *   rows is **not** a pass: `ok` is `rows > 0 && issues.length === 0`, so an
- *   empty or mis-rooted tree cannot report a vacuous green.
+ *   malformed. A ledger with a header but no rows is **not** a pass: `ok` is
+ *   `rows > 0 && issues.length === 0`, so an empty or mis-rooted tree cannot
+ *   report a vacuous green.
  *
  *   **S1 is shape-only**, and that boundary is deliberate. One variant of its
  *   own defect class stays invisible: a row with one unescaped title pipe
@@ -796,11 +796,13 @@ function compareStatusIssues(left: AdrLedgerStatusIssue, right: AdrLedgerStatusI
  *
  * Locates the `| ADR | Title | Status |` header, measures every
  * `| [NNNN](ADR-*.md) | …` row against its column count, and reports each row
- * that does not split into `columns + 2` parts or whose status cell is empty.
- * The same `issues` array carries S1c's and S1d's `{ line, reason }` reports: a
+ * that does not split into `columns + 2` parts, whose status cell is empty, or
+ * whose leading indentation reaches four columns (`row-indented`). The same
+ * `issues` array carries S1c's and S1d's `{ line, reason }` reports: a
  * blank or non-row line between the delimiter row and the last ledger row
- * detaches every row below it, and a header whose own delimiter row is missing
- * or has the wrong cell count is not a table at all, so a row can be well formed
+ * detaches every row below it, and a header whose own delimiter row is missing,
+ * indented or of the wrong cell count is not a table at all — an indented header
+ * line (`header-indented`) starts none either — so a row can be well formed
  * and still render as a paragraph. S1e's `{ line, reason }` reports join it too:
  * a row numbered lower than its predecessor's, or the same number as it, breaks
  * the ledger's ascending order — gaps excepted.
