@@ -117,6 +117,39 @@
  * change, and the decided position stands: a stray example row fails loudly
  * and is moved out of the table.
  *
+ * **S1e — the ledger ascends, with gaps allowed.** Taken in file order, the
+ * ledger's `NNNN` values must be **strictly increasing**: a row whose number is
+ * lower than its predecessor's makes a reader who scans the ledger by number
+ * jump backwards. Two such rows shipped green — `0973` before `0971`/`0972`
+ * (PR #885, repaired by #941) and `0989` before `0986` (PR #933, repaired by
+ * #937) — and all ten `adr-*` guards answered `340 passed (340)` on both trees,
+ * so nothing compared consecutive numbers. **Gaps are allowed**: a number is
+ * skipped while it is in flight, so the ledger is not a contiguous census. The
+ * precedent is ADR-0986's round-1 review sign-off, which reads `0982`, `0983`,
+ * `0986` *ascending with `0986` directly after `0983` because `0984`/`0985` are
+ * then still reserved in flight*, and the four pool-mirror cells legitimately
+ * sit **ahead** of the last row (`0991` beside the `0990` row at this cut). A
+ * **repeated** number is reported too: it is neither ascending nor a gap.
+ *
+ * The issue lands in S1's own `issues` array as `{ line, reason }` — the
+ * offending row's own line, and a reason naming both lines — so the **one**
+ * real-tree case above covers it as well: `{ line: 636, reason: "0971 precedes
+ * 0973 on line 635" }` for a descent, `{ line: 4, reason: "0970 repeats on
+ * line 3" }` for a repeat. The rule is derived from the parsed row sequence,
+ * never from a row's position or the table's line numbers, so inserting a row
+ * cannot shift it.
+ *
+ * **The census at this cut** (`origin/main` `2345326c`): header `README.md:158`,
+ * delimiter `:159`, **495** ledger rows on `:160`–`:654`, numbering `0001`–`0990`
+ * with **0** descents and **0** repeated numbers — measured over the whole
+ * ledger in this checkout. Replayed on the defective tree `e7e92304`
+ * (`git show e7e92304:docs/adr/README.md`, **494** rows) the rule reports
+ * exactly **two** issues: `{ line: 636, reason: "0971 precedes 0973 on line
+ * 635" }` and `{ line: 651, reason: "0986 precedes 0989 on line 650" }`. That
+ * replay is not a committed case — `HEAD^` does not exist in the `ci` job's
+ * `fetch-depth: 1` checkout — so the synthetic cases below are the in-suite
+ * proof that the rule is not vacuous.
+ *
  * **S2 — the record and the cell agree on their first word.** Both sides are
  * normalised by {@link adrStatusWord} (strip `**`, strip a leading `-`/`*`,
  * cut at `(`/`:`/`—`/`,`/`;`/`·`, lowercase) and the cell's first word must
@@ -569,6 +602,98 @@ describe("checkAdrLedgerRowShape — the header's delimiter row", () => {
       rows: 2,
       issues: [],
     });
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * S1e — the ledger ascends: a lower number after a higher one is a defect
+ * ------------------------------------------------------------------------- */
+
+describe("checkAdrLedgerRowShape — the ledger ascends, with gaps allowed", () => {
+  it("reports the descent when a row's number is lower than its predecessor's", () => {
+    // Arrange — the `0973`/`0971` shape in miniature: `0970`, then `0973`,
+    // then the late `0971`. A guard that parses the rows but never compares
+    // consecutive numbers (the state before this rule) reports nothing here.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0970](ADR-0970-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0973](ADR-0973-gamma.md) | the row that landed early | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0971](ADR-0971-beta.md) | the row that slipped in late | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — exactly one issue, on the descending row's own line, with a
+    // reason that names both lines so the message explains itself.
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 3,
+      issues: [{ line: 5, reason: "0971 precedes 0973 on line 4" }],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports a repeated number as an issue too", () => {
+    // Arrange — the same `NNNN` twice. Equal is neither ascending nor a gap,
+    // so it is a defect of the same class: two rows claim one number.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0970](ADR-0970-alpha.md) | the row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0970](ADR-0970-alpha-again.md) | the same number again | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act
+    const result = checkAdrLedgerRowShape(ledger);
+
+    // Assert — one issue, on the repeat's line, naming the line it repeats.
+    const expected: AdrLedgerRowShapeResult = {
+      ok: false,
+      columns: 3,
+      rows: 2,
+      issues: [{ line: 4, reason: "0970 repeats on line 3" }],
+    };
+    expect(result).toEqual(expected);
+  });
+
+  it("reports nothing when a number is skipped — a gap is not a defect", () => {
+    // Arrange — the negative control: `0970`, `0973`, `0974`. `0971`/`0972`
+    // are in flight, so the sequence is ascending with a gap. Without this
+    // case the rule above would be satisfied by a contiguity check that fires
+    // on every real ledger, whose pool cells sit ahead of the last row.
+    const ledger = syntheticLedger([
+      ...HEADER_LINES,
+      "| [0970](ADR-0970-alpha.md) | the first row | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0973](ADR-0973-gamma.md) | a skipped number is fine | Accepted |", // adr-fixture: synthetic row, no such record
+      "| [0974](ADR-0974-delta.md) | the next row | Accepted |", // adr-fixture: synthetic row, no such record
+    ]);
+
+    // Act + Assert — no issue at all, and all three rows are counted.
+    expect(checkAdrLedgerRowShape(ledger)).toEqual({
+      ok: true,
+      columns: 3,
+      rows: 3,
+      issues: [],
+    });
+  });
+
+  it("reads the real ledger as ascending, over every row it counts", () => {
+    // Arrange — an independent count of the ledger's row-shaped lines, so an
+    // empty issue list cannot be a sweep that read nothing.
+    const rowLines = realLedger()
+      .text.split("\n")
+      .filter((line) => /^\s*\|\s*\[\d{4}\]\(ADR-[^)\s]*\.md\)/u.test(line));
+
+    // Act
+    const { shape } = checkRepositoryAdrLedgerShape(repoRoot);
+
+    // Assert — the census at this cut is 495 rows, `0001`–`0990`, 0 descents
+    // and 0 repeats; the equal count is the rule's own reading of the tree.
+    expect(shape.rows).toBe(rowLines.length);
+    expect(shape.rows).toBeGreaterThanOrEqual(495);
+    expect(shape.issues).toEqual([]);
+    expect(shape.ok).toBe(true);
   });
 });
 

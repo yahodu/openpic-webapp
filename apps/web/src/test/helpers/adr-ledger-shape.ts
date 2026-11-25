@@ -1,6 +1,7 @@
 /**
  * ADR guard, the ledger's **row shape**, its **header delimiter**, its **block
- * contiguity** and its **status agreement** — the ledger-row-shape guard,
+ * contiguity**, its **numeric order** and its **status agreement** — the
+ * ledger-row-shape guard,
  * recorded by `ADR-0319` and
  * outside the `0302` invariant table, and the first one that reads a record's
  * `Status:` line.
@@ -90,6 +91,32 @@
  *   `delimiter-cells`; both report on the delimiter's own line. A document with
  *   no header still throws (see {@link ledgerTableOf}), so nothing is reported
  *   there.
+ *
+ * - **S1e, ledger order.** Taken in file order, the ledger's `NNNN` values must
+ *   be **strictly increasing**: a row numbered lower than its predecessor sends
+ *   a reader who scans the ledger by number backwards. Two such rows shipped
+ *   green — `0973` before `0971`/`0972` (PR #885, repaired by #941) and `0989`
+ *   before `0986` (PR #933, repaired by #937) — with all ten `adr-*` guards at
+ *   `340 passed (340)` on both trees, because no rule compared consecutive
+ *   numbers. **Gaps are allowed**: a number is skipped while it is in flight,
+ *   so the ledger is not a contiguous census. The precedent is ADR-0986's
+ *   round-1 review sign-off, which reads `0982`, `0983`, `0986` *ascending with
+ *   `0986` directly after `0983` because `0984`/`0985` are then still reserved
+ *   in flight*, and the four pool-mirror cells legitimately sit **ahead** of the
+ *   last row (`0991` beside the `0990` row at this cut). A **repeated** number
+ *   is an issue too: it is neither ascending nor a gap.
+ *
+ *   The report joins S1's own `issues` array and its `{ line, reason }` shape:
+ *   `reason` is `` `${number} precedes ${previous.number} on line
+ *   ${previous.line}` `` for a descent and `` `${number} repeats on line
+ *   ${previous.line}` `` for a repeat, on the offending row's own line. The
+ *   sequence is derived from the parsed rows, so a row insertion cannot shift
+ *   the rule, and the one real-tree case (`issues` empty over 495 rows,
+ *   `0001`–`0990`, **0** descents and **0** repeats at `2345326c`) covers it
+ *   with the rest of S1. Measured on the defective tree `e7e92304` — `494`
+ *   rows, the two descents above — the rule reports exactly two issues,
+ *   `{ line: 636, reason: "0971 precedes 0973 on line 635" }` and
+ *   `{ line: 651, reason: "0986 precedes 0989 on line 650" }`.
  *
  * - **S2, status agreement.** For every ledger row whose link names a record
  *   present in `records`, the record's `**Status:**` value and the row's status
@@ -256,11 +283,27 @@ export interface AdrLedgerDelimiterIssue {
 }
 
 /**
+ * One ledger row whose `[NNNN]` label breaks the ledger's ascending order: a
+ * number lower than its predecessor's, or the same number as its predecessor's.
+ * Gaps are **not** reported — a skipped number is one that is in flight.
+ */
+export interface AdrLedgerOrderIssue {
+  /** 1-based line in the ledger of the offending row, matching an editor's gutter. */
+  line: number;
+
+  /**
+   * Why the row breaks the order, naming both numbers and the predecessor's
+   * line: `0971 precedes 0973 on line 635`, `0970 repeats on line 4`.
+   */
+  reason: string;
+}
+
+/**
  * One issue S1 reports: a rejected row, a line that detaches the rows below it,
  * or a header that no table can start from.
  */
 export type AdrLedgerShapeIssue =
-  AdrLedgerRowShapeIssue | AdrLedgerContiguityIssue | AdrLedgerDelimiterIssue;
+  AdrLedgerRowShapeIssue | AdrLedgerContiguityIssue | AdrLedgerDelimiterIssue | AdrLedgerOrderIssue;
 
 /** The report shape returned by {@link checkAdrLedgerRowShape}. */
 export interface AdrLedgerRowShapeResult {
@@ -273,7 +316,7 @@ export interface AdrLedgerRowShapeResult {
   /** Ledger rows the rule read, so "no issues" can never be a vacuous pass. */
   rows: number;
 
-  /** The rejected rows and the block-breaking lines, ascending by ledger line. */
+  /** The rejected rows, the block-breaking lines and the order breaks, ascending by ledger line. */
   issues: AdrLedgerShapeIssue[];
 }
 
@@ -543,6 +586,48 @@ function delimiterIssueOf(
 }
 
 /**
+ * S1e — the ledger ascends: every row's `NNNN` must be strictly greater than its
+ * predecessor's, and a **gap** is allowed.
+ *
+ * The sequence comes from the rows {@link ledgerTableOf} already parsed, in file
+ * order, so the rule cannot be shifted by a row insertion, a row's position or
+ * the table's line numbers. Gaps are legitimate — a number is skipped while it
+ * is in flight — so `0983` followed by `0986` is clean, and the four pool-mirror
+ * cells legitimately sit ahead of the last row. A repeated number is neither an
+ * ascent nor a gap, so it is reported the same way, with the predecessor's line.
+ *
+ * @param rows - The ledger's rows, in file order.
+ * @returns One issue per descending or repeated row, ascending by line.
+ */
+function orderIssuesOf(rows: readonly LedgerRow[]): AdrLedgerOrderIssue[] {
+  const issues: AdrLedgerOrderIssue[] = [];
+  let previous: LedgerRow | undefined;
+
+  for (const row of rows) {
+    if (previous !== undefined) {
+      const value = Number.parseInt(row.number, 10);
+      const previousValue = Number.parseInt(previous.number, 10);
+
+      if (value === previousValue) {
+        issues.push({
+          line: row.line,
+          reason: `${row.number} repeats on line ${String(previous.line)}`,
+        });
+      } else if (value < previousValue) {
+        issues.push({
+          line: row.line,
+          reason: `${row.number} precedes ${previous.number} on line ${String(previous.line)}`,
+        });
+      }
+    }
+
+    previous = row;
+  }
+
+  return issues;
+}
+
+/**
  * The status cell of a row **only when the row is well formed**: a row with the
  * wrong number of parts has no status cell a renderer would show, which is the
  * whole defect.
@@ -626,7 +711,9 @@ function compareStatusIssues(left: AdrLedgerStatusIssue, right: AdrLedgerStatusI
  * blank or non-row line between the delimiter row and the last ledger row
  * detaches every row below it, and a header whose own delimiter row is missing
  * or has the wrong cell count is not a table at all, so a row can be well formed
- * and still render as a paragraph.
+ * and still render as a paragraph. S1e's `{ line, reason }` reports join it too:
+ * a row numbered lower than its predecessor's, or the same number as it, breaks
+ * the ledger's ascending order — gaps excepted.
  *
  * `ok` is `rows > 0 && issues.length === 0`: a document whose header carries no
  * rows is a failure, never a pass.
@@ -648,6 +735,7 @@ export function checkAdrLedgerRowShape(ledger: AdrLedgerFileText): AdrLedgerRowS
   if (delimiterIssue !== null) {
     issues.push(delimiterIssue);
   }
+  issues.push(...orderIssuesOf(rows));
 
   for (const row of rows) {
     const defects: AdrLedgerRowDefect[] = [];
