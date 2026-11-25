@@ -696,15 +696,19 @@ lines 259/242/211/178/129; the paragraph of a `measured` word 138; immediately
 after a `Counts at` anchor 301 — each a documentation programme, not a guard.
 An **ancestor of `origin/main`** requirement was rejected for the same reason:
 113 of the 305 enforced records cite their measured head on a lane branch, which
-a squash-merge never makes an ancestor of `main` (all 305 still cite at least one
-ref-reachable commit, so a `git gc` cannot turn a record into a `missing` one).
-Measured on the tree this record lands in — 494 records, 323 quoting, 305
-enforced, 18 exempt: **no record reds**, one report changes (ADR-0791's random
-32-hex nonce `3f2c1d88…` gives way to its real head `3eb7c7d`), and 335 of the
-1,240 distinct head-shaped tokens quoted across counting records are not commits
-(121 blob / 56 tree / 158 missing) and are now skipped. The resolver needs a full
-clone: `ci`'s checkout now reads `fetch-depth: 0`, because a shallow read cannot
-distinguish an absent object from a foreign hash. What stays open is the class
+a squash-merge never makes an ancestor of `main` (and 29 of the 305 cite it only
+on a head that no branch-and-tag fetch carries, because the lane branch was
+deleted after its squash; with the pull refs fetched, no record is a `missing`
+one and a `git gc` cannot manufacture one). Measured on the tree this record
+lands in, with its pull refs fetched — 494 records, 323 quoting, 305 enforced, 18
+exempt: **no record reds**, one report changes (ADR-0791's random 32-hex nonce
+`3f2c1d88…` gives way to its real head `3eb7c7d`), and 335 of the 1,240 distinct
+head-shaped tokens quoted across counting records are not commits (121 blob /
+56 tree / 158 missing) and are now skipped. The resolver needs a full clone plus
+the pull refs: `ci`'s checkout reads `fetch-depth: 0` and every job that runs the
+unit project also fetches `refs/pull/*/head`, because a shallow read cannot
+distinguish an absent object from a foreign hash, and a squash-merged lane's
+measured head is reachable only from its pull ref. What stays open is the class
 no static check can close — a **real** commit that is not the one the counts
 were measured at; a reviewer reads the reported head for that.
 
