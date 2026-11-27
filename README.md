@@ -8,13 +8,13 @@ Organisers upload an event's photos; attendees open one link, take a selfie, and
 get only their own pictures — at full resolution, watermarked previews, and
 downloads under the event's rules.
 
-[![License: Proprietary](https://shieldcn.dev/badge/license/Proprietary-red.svg)](LICENSE)
-[![CI](https://github.com/yahodu/openpic-webapp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yahodu/openpic-webapp/actions/workflows/ci.yml)
-[![Next.js 15](https://shieldcn.dev/badge/Next.js-15-black.svg)](https://nextjs.org)
-[![TypeScript 5](https://shieldcn.dev/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org)
-[![Node.js 22](https://shieldcn.dev/badge/Node.js-22-339933.svg)](https://nodejs.org)
-[![pnpm 11](https://shieldcn.dev/badge/pnpm-11-f69220.svg)](https://pnpm.io)
-[![MongoDB](https://shieldcn.dev/badge/MongoDB-47A248.svg)](https://www.mongodb.com)
+[![License: Proprietary](https://img.shields.io/badge/license-Proprietary-red.svg)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/yahodu/openpic-webapp/ci.yml?branch=main&label=CI)](https://github.com/yahodu/openpic-webapp/actions/workflows/ci.yml)
+[![Next.js 15](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org)
+[![TypeScript 5](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org)
+[![Node.js 22](https://img.shields.io/badge/Node.js-22-339933.svg)](https://nodejs.org)
+[![pnpm 11](https://img.shields.io/badge/pnpm-11-f69220.svg)](https://pnpm.io)
+[![MongoDB](https://img.shields.io/badge/MongoDB-47A248.svg)](https://www.mongodb.com)
 
 </div>
 
@@ -28,6 +28,7 @@ downloads under the event's rules.
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
+- [Configuration](#configuration)
 - [Scripts](#scripts)
 - [Testing](#testing)
 - [API at a glance](#api-at-a-glance)
@@ -127,48 +128,91 @@ URL. The full component map, sequence diagrams and state machines are in
 
 ### Prerequisites
 
-- Node.js ≥ 22.12 (`.nvmrc` pins the version) and pnpm 11 (`corepack enable`).
-- A MongoDB replica set. Transactions are used on several paths, so a standalone
-  `mongod` is not enough; a local `rs.initiate()` or an Atlas cluster both work.
-- Optional, only for the integration you are exercising: an S3-compatible bucket,
-  Redis (rate limiting), Cashfree keys, Novu keys. Every provider defaults to an
-  in-memory double, so the app boots without them.
+- Node.js ≥ 22.12 — `.nvmrc` pins the version (`nvm use`).
+- pnpm 11 through Corepack: `corepack enable`.
+- Docker, for the local MongoDB. Any MongoDB 7 replica set works instead.
 
-### Install and run
+Transactions are used on several paths, so a standalone `mongod` is not enough:
+the database must be a **replica set**. The recipes below start a single-node one.
+
+### 1. Install
 
 ```bash
 pnpm install --frozen-lockfile
-cp .env.example .env          # then fill in the values you need
-pnpm dev                      # http://localhost:3000
 ```
 
-`pnpm dev` picks up `.env` itself. The one-off admin scripts read `process.env`
-only, so export it first:
+### 2. Start MongoDB
+
+```bash
+docker run -d --name openpic-mongo -p 27017:27017 \
+  mongo:7 --replSet rs0 --bind_ip_all
+docker exec openpic-mongo mongosh --quiet \
+  --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+```
+
+The member advertises `127.0.0.1:27017`, so the default `MONGODB_URI` in
+`.env.example` reaches the set from the host. A plain `rs.initiate()` advertises
+the container's own hostname instead, which the driver cannot resolve. Confirm
+the member is primary:
+
+```bash
+docker exec openpic-mongo mongosh --quiet --eval 'db.hello().isWritablePrimary'   # true
+```
+
+### 3. Configure
+
+```bash
+cp .env.example .env
+```
+
+Every value in the copy works locally: providers default to in-memory doubles
+and the secrets are development placeholders. Change a value only for a provider
+you want to exercise for real.
+
+### 4. Create the indexes
+
+Once per database. The scripts read `process.env` only, so export the file first:
 
 ```bash
 set -a; . ./.env; set +a
 pnpm db:ensure-indexes
 ```
 
-Check it is up:
+### 5. Run
 
 ```bash
-curl -s localhost:3000/api/v1/health
+pnpm dev
+curl -s localhost:3000/api/v1/health   # {"status":"ok"}
 ```
 
-`.env.example` documents every variable, with the production-only requirements
-stated next to them. Never commit a real secret — the repo runs a secret scan on
-every pull request.
+### Run the checks
 
-### Configuration rules
+```bash
+pnpm typecheck && pnpm lint && pnpm format:check
+pnpm test:unit                  # no external service needed
+pnpm test:int                   # downloads the in-memory MongoDB on the first run
+pnpm build && pnpm test:e2e     # e2e drives the built server
+```
 
-- All configuration comes from the environment; validation happens once, in
-  `apps/web/src/server/config/env.ts`, and a bad value fails fast with the
-  variable name (never its value) in the error.
+## Configuration
+
+All configuration comes from the environment; `.env.example` lists every
+variable with a value that works locally, and
+[`docs/Configuration.md`](docs/Configuration.md) documents each one — default,
+when it is required, and how provider selection fails closed.
+
+- Required to boot: `APP_ENV`, `APP_BASE_URL`, `ALLOWED_ORIGINS`, `MONGODB_URI`
+  and the five signing secrets. The example file already sets all of them.
+- `staging` and `production` add: secrets of at least 32 characters,
+  `TRUSTED_CLIENT_IP_HEADER`, and a real (non-`memory`) backend for all five
+  providers.
+- The test suites need no `.env`: the integration suite starts its own MongoDB
+  replica set and builds its own environment, and the e2e launchers do the same.
 - Runtime tunables (limits, windows, feature switches) are **not** environment
   variables — they are read from the `platformSettings` document.
-- Staging and production refuse to start on short secrets or a missing trusted
-  client-IP header.
+- Validation happens once, in `apps/web/src/server/config/env.ts`, and a bad
+  value refuses to start with the variable name (never its value) in the error.
+- Never commit a real secret — the repo runs a secret scan on every pull request.
 
 ## Scripts
 
@@ -221,17 +265,18 @@ whole of the included code and 90% for `server/domain` and `server/services`.
 
 ## Documentation
 
-| Document                                                                           | Read it for                                                    |
-| ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| [API Contract](docs/API%20Contract.md)                                             | Endpoints, envelopes, error codes, entitlements, cron, workers |
-| [Architecture diagrams](docs/Diagrams.md)                                          | Planes, components, sequences, state machines                  |
-| [Notification and Database Design](docs/Notification%20and%20Database%20Design.md) | Collections, indexes, notification routing matrix              |
-| [Subscription flow](docs/Subscription%20flow.md)                                   | Billing lifecycle from checkout to dunning                     |
-| [Upload flow](docs/Upload%20flow.md)                                               | Presigned multipart upload to derivative publication           |
-| [Engineering conventions](docs/CONVENTIONS.md)                                     | The authoritative standard: TDD, contracts, logging, DoD       |
-| [Architecture Decision Records](docs/adr/README.md)                                | Why each expensive-to-reverse decision was made                |
-| [Contributing](CONTRIBUTING.md)                                                    | Workflow, review gates, contribution terms                     |
-| [Agent operating rules](AGENTS.md)                                                 | How autonomous agents pick up, land and review work            |
+| Document                                                                           | Read it for                                                         |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [API Contract](docs/API%20Contract.md)                                             | Endpoints, envelopes, error codes, entitlements, cron, workers      |
+| [Architecture diagrams](docs/Diagrams.md)                                          | Planes, components, sequences, state machines                       |
+| [Notification and Database Design](docs/Notification%20and%20Database%20Design.md) | Collections, indexes, notification routing matrix                   |
+| [Subscription flow](docs/Subscription%20flow.md)                                   | Billing lifecycle from checkout to dunning                          |
+| [Upload flow](docs/Upload%20flow.md)                                               | Presigned multipart upload to derivative publication                |
+| [Configuration](docs/Configuration.md)                                             | Every environment variable: default, when required, provider wiring |
+| [Engineering conventions](docs/CONVENTIONS.md)                                     | The authoritative standard: TDD, contracts, logging, DoD            |
+| [Architecture Decision Records](docs/adr/README.md)                                | Why each expensive-to-reverse decision was made                     |
+| [Contributing](CONTRIBUTING.md)                                                    | Workflow, review gates, contribution terms                          |
+| [Agent operating rules](AGENTS.md)                                                 | How autonomous agents pick up, land and review work                 |
 
 ## Contributing
 
