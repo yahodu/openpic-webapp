@@ -203,9 +203,9 @@ when it is required, and how provider selection fails closed.
 
 - Required to boot: `APP_ENV`, `APP_BASE_URL`, `ALLOWED_ORIGINS`, `MONGODB_URI`
   and the five signing secrets. The example file already sets all of them.
-- `staging` and `production` add: secrets of at least 32 characters,
-  `TRUSTED_CLIENT_IP_HEADER`, and a real (non-`memory`) backend for all five
-  providers.
+- `staging` and `production` both require secrets of at least 32 characters.
+- `production` additionally requires `TRUSTED_CLIENT_IP_HEADER` and a real
+  (non-`memory`) backend for all five providers.
 - The test suites need no `.env`: the integration suite starts its own MongoDB
   replica set and builds its own environment, and the e2e launchers do the same.
 - Runtime tunables (limits, windows, feature switches) are **not** environment
