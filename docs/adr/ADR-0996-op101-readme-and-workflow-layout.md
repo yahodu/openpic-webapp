@@ -72,8 +72,24 @@ exist belongs in a spec, not in dead YAML.
 
 ## Evidence
 
-Counts are recorded at the head this record lands on; the ledger row quotes the
-same numbers.
+Counts measured at `b97b3bd5`, the implementation commit, with the tree clean and
+nothing else in flight.
+
+```text
+focused  readme-badges + workflow-shell-safety + ci-evidence-guard
+         + ci-audit-dev-nongating + dependency-licenses   ->  133 passed (133) / 5 files
+full     vitest run --project unit                         ->  3602 passed | 3 skipped (3605) / 203 files
+typecheck / lint / prettier --check                        ->  exit 0 / 0 errors, 193 warnings / clean
+badge lines, origin/main versus this head                  ->  7 and 7, sha256 bb5e89d6…a06c8
+```
+
+The badge block is proven unchanged rather than asserted: the seven
+`img.shields.io` lines hash identically on `origin/main` and on this head
+(`bb5e89d631a176ef…652a06c8`), and `readme-badges.test.ts` stays `4 passed (4)`.
+`workflow-shell-safety.test.ts` and `ci-evidence-guard.test.ts` stay green with
+the new `concurrency` keys, because the expressions sit in the workflow-level
+`concurrency` field and no `run:` body gained an interpolation. No spec, factory,
+fixture or production source file is touched.
 
 ## Consequences
 
