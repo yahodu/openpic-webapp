@@ -134,7 +134,8 @@ Neither suite reads `.env`, so a fresh clone can run both with no configuration.
 
 ## Production checklist
 
-- `APP_ENV=production` (or `staging`) and a real backend for all five providers.
+- `APP_ENV=production` and a real backend for all five providers. (`staging`
+  keeps `memory` providers; only its secrets are strict.)
 - `TRUSTED_CLIENT_IP_HEADER` named after the header your edge actually
   overwrites.
 - All five required secrets at 32+ characters, generated per environment.
