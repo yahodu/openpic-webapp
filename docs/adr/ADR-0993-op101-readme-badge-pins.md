@@ -44,9 +44,11 @@ assertion vacuous, and a spec that silently pins nothing is worse than none.
 This is the same real-tree, path-from-the-spec style as
 `apps/web/src/server/config/env-example.test.ts`.
 
-**D2 — every badge in the block is served from `img.shields.io`.** The case
-filters the extracted URLs by `new URL(url).host` and asserts the foreign list is
-empty, so the failure names the offending URLs rather than a boolean. The count
+**D2 — every badge in the block is served from `img.shields.io`.** The case maps
+the extracted URLs to their distinct hosts (`new URL(url).host`) and asserts the
+set is exactly `["img.shields.io"]`, so the failure names the offending host
+(`expected [ 'shieldcn.dev', 'img.shields.io' ] to deeply equal …`) rather than a
+boolean, and an empty strip fails as well instead of passing vacuously. The count
 is deliberately **not** pinned: eight badges on one host are fine, one badge on a
 second host is the defect.
 
@@ -101,16 +103,19 @@ after, `git status --short` naming the spec only):
 - **A — one `shieldcn.dev` URL restored** (the license badge, i.e. the exact
   pre-`3dbd684b` host): `Tests 2 failed | 2 passed (4)` —
   `serves every badge image from img.shields.io`
-  (`expected [ Array(1) ] to deeply equal []`) and
-  `carries no leftover shieldcn.dev badge host`
+  (`expected [ 'shieldcn.dev', 'img.shields.io' ] to deeply equal [ 'img.shields.io' ]`)
+  and `carries no leftover shieldcn.dev badge host`
   (`expected '<div align="center">…' not to contain 'shieldcn.dev'`). D2 and D4
   bite; D3 stays green because the CI badge is untouched.
 - **B — the live CI URL swapped for `https://img.shields.io/badge/CI-passing-brightgreen`**
   (same host, so D2 is blind by design; this is the "simplify the badge" fix):
   `Tests 1 failed | 3 passed (4)` —
-  `keeps the CI badge on the live GitHub Actions workflow status endpoint`
-  (`expected 0 to be greater than 0`). D2, D4 and the non-vacuity anchor stay
-  green, which is what makes D3 load-bearing rather than a restatement of D2.
+  `keeps the CI badge on the live GitHub Actions workflow status endpoint`, whose
+  message lists every badge URL the block declares (`README badge URLs:
+https://img.shields.io/badge/license-Proprietary-red.svg,
+https://img.shields.io/badge/CI-passing-brightgreen, …`). D2, D4 and the
+  non-vacuity anchor stay green, which is what makes D3 load-bearing rather than
+  a restatement of D2.
 
 After each restore the focused file reads `4 passed (4)` again.
 

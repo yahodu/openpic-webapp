@@ -9,11 +9,12 @@ import { describe, expect, it } from "vitest";
  * asking GitHub for the live workflow status.
  *
  * PR #985 moved all seven badges onto `img.shields.io` — one geometry, one
- * rendering path — after the `CI | passing` badge had been "simplified" into a
- * static `badge/CI-passing-green` that could not go red. Nothing pinned either
- * property, so both regressions could return quietly: a new badge from another
- * host, or a CI badge that states a status instead of measuring one (finding F3
- * of the review of PR #985).
+ * rendering path — from six `shieldcn.dev` badges plus a
+ * `github.com/…/badge.svg` CI badge that rendered at a different height and
+ * could only report the default branch. Nothing pinned the result, so both
+ * regressions could return quietly: a new badge from another host, or a CI badge
+ * rewritten as a static `badge/CI-passing-brightgreen` that states a status
+ * instead of measuring one (finding F3 of the review of PR #985).
  *
  * This is a characterization pin over the real `README.md`, not a fixture, so it
  * is green on the current trunk and reds only when the strip drifts. It reads
@@ -71,7 +72,8 @@ function headerBlockOf(readme: string): string {
  * Extract the target URL of every markdown image in a fragment.
  *
  * Only the `![alt](url)` form counts; an HTML `<img>` would be invisible here,
- * which is why the header block is asserted non-empty before this runs.
+ * which is why the extraction above throws on an empty header block instead of
+ * returning no hosts at all.
  *
  * @param markdown - Markdown fragment to scan.
  * @returns The image target URLs, in document order.
@@ -95,9 +97,9 @@ describe("README badge strip", () => {
   });
 
   it("serves every badge image from img.shields.io", () => {
-    const foreignBadges = BADGE_URLS.filter((url) => new URL(url).host !== BADGE_HOST);
+    const hosts = [...new Set(BADGE_URLS.map((url) => new URL(url).host))];
 
-    expect(foreignBadges).toEqual([]);
+    expect(hosts).toEqual([BADGE_HOST]);
   });
 
   it("keeps the CI badge on the live GitHub Actions workflow status endpoint", () => {
@@ -107,7 +109,7 @@ describe("README badge strip", () => {
       return host === BADGE_HOST && pathname === CI_WORKFLOW_STATUS_PATH;
     });
 
-    expect(liveStatusBadges.length).toBeGreaterThan(0);
+    expect(liveStatusBadges, `README badge URLs: ${BADGE_URLS.join(", ")}`).not.toHaveLength(0);
   });
 
   it("carries no leftover shieldcn.dev badge host", () => {
