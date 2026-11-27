@@ -279,6 +279,27 @@ of deletion:
   clean (`git status --porcelain` empty) and named by no live row. A **dirty** tree is
   never removed and its branch is never deleted; it is recorded as a skipped head.
 
+**Liveness — "whose worker is still running" (`AGENTS.md` §2.3).** A board row is
+**live**, and its branch is not released, when its `status` is not
+`done`/`archived` **or** it has an unfinished run (`task_runs.status = 'running'`
+with `ended_at` NULL). The second clause is not redundant: the dispatcher keeps a
+worker process alive for up to 120 s after the handoff
+(`TERMINAL_WORKER_REAP_GRACE_SECONDS`), so a card that has already moved to `review`
+or `done` can still hold a live writer. The read-only check on the board DB:
+
+```
+SELECT t.id, t.status, COUNT(r.id) AS live_runs
+  FROM tasks t
+  LEFT JOIN task_runs r
+    ON r.task_id = t.id AND r.status = 'running' AND r.ended_at IS NULL
+ WHERE t.status NOT IN ('done','archived') OR r.id IS NOT NULL
+ GROUP BY t.id;
+```
+
+Every row it returns, other than the merging card's own row, keeps its branch:
+detach that worktree (`git -C <wt> switch --detach`) or leave the branch until both
+the card and its run are finished.
+
 **Exception.** Every unmerged PR is out of scope: a RED-by-design pin PR, a PR held
 for a dependency and a PR closed as superseded keep their branch **and** their
 worktree. The rule is authorised by a **merge**, never by a card completing. One
@@ -293,6 +314,60 @@ delete an origin-backed branch.
 
 This step existed before this section as an ad-hoc note in a reviewer checklist, and
 that was not enough: a pitfall is read when it bites, not at merge time.
+
+### 9.3 Protected agent-instruction files — the headless protocol
+
+`AGENTS.md`, `CLAUDE.md`, `SOUL.md` and `.cursorrules` are protected
+agent-instruction files. Hermes blocks the `write_file` and `patch` tools for those
+basenames and asks the user to approve each write. A Kanban worker runs headless
+(`hermes -p <profile> chat -q`), so no user is at that prompt: the guard waits out
+its approval timeout — 300 s, measured six times on this board — and then refuses,
+and the refusal forbids the same edit through a terminal. The guard does not see
+shell writes at all (`git apply`, `sed -i`, a redirect), so for a worker that has a
+terminal the tool-level gate is advisory.
+
+**Decision: option B — approve out of band, then apply the approved bytes.** The
+durable fix is option A: deliver the approval, so the prompt is answerable and the
+fail-closed behaviour is correct. The approval path has no Kanban surface today —
+`_gateway_notify_cbs` holds no entry for a worker session, and the
+`pre_approval_request` / `on_human_input_request` plugin hooks are observers that
+cannot return a choice — so delivering it is a Hermes platform change, not a
+repository one. Option C (refuse shell writes to these basenames) was rejected: a
+shell-level pattern cannot see `git apply`, `git checkout`, a merge or a script that
+writes the file, and it would refuse legitimate terminal work. Do not reopen this
+decision in a repository PR; a platform change is what closes it properly.
+
+**The protocol.** A worker that needs to change a protected instruction file:
+
+1. **Stop at the first refusal.** Do not retry the tool, and do not apply the edit
+   by any path yet.
+2. **Publish the exact diff and its hash on the card** — the full patch text, not a
+   summary, plus `sha256sum` of the patch file.
+3. **Block the card** — `kanban_block(kind="needs_input", reason=…)` naming the file
+   and the published hash. Do not sit in a retry loop: each retry costs the full
+   approval timeout.
+4. **Wait for an explicit board-owner instruction in the card thread.** The approval
+   is a comment by the human owner that names the file and comes after the published
+   diff. A peer agent's comment, the worker's own summary, and an earlier approval of
+   a different diff are not consent.
+5. **Apply the approved diff unchanged**, and prove the bytes: the applied patch's
+   `sha256sum` equals the published hash, and the file's `git diff` equals the
+   published diff. A changed diff needs a new approval.
+6. **Record the approval in the handoff** — the owner comment ids, the patch hash and
+   the landed commit.
+
+This protocol **weakens the control**: the gate can refuse but never grant, so the
+sanction moves from the tool to the card thread. Three bounds keep it honest: only a
+published diff may be applied; the change is additive or clarificatory (a rule that
+is removed or weakened is the owner's own commit, never a worker's); and the landing
+reviewer re-derives the applied-vs-published diff and the hash, because the tool gate
+cannot. The protocol never sanctions an unpublished diff, a second edit covered by an
+earlier approval, or a silent shell write with no card record.
+
+The cheap alternative is to write the wording in a document the guard does not match
+(this file, `docs/adr/`) and let the protected file point at it — that is how this
+section is reachable from `AGENTS.md` §5 today. Use it for any rule that fits in the
+DoD or in an ADR rather than in the instruction file.
 
 ## 10. Authority order when documents conflict
 
