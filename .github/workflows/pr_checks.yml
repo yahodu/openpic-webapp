@@ -7,6 +7,12 @@ on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
 
+# Same head, same verdict: a new push on the PR supersedes the run in flight
+# (ADR-0996).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate-branch-name:
     runs-on: ubuntu-latest
@@ -96,23 +102,6 @@ jobs:
 
       - name: Coverage thresholds
         run: pnpm test:coverage
-
-  # pr-size:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v3
-  #       with:
-  #         fetch-depth: 0
-  #     - name: Check PR size
-  #       run: |
-  #         LINES=$(git diff origin/${{ github.base_ref }}...HEAD \
-  #           --stat | tail -1 | grep -oP '\d+ insertion' | grep -oP '\d+')
-  #         LINES=${LINES:-0}
-  #         if [[ "$LINES" -gt 500 ]]; then
-  #           echo "❌ PR is too large ($LINES lines added). Keep PRs under 500 lines for reviewability."
-  #           exit 1
-  #         fi
-  #         echo "✅ PR size is acceptable ($LINES lines)"
 
   env-changes:
     runs-on: ubuntu-latest

@@ -45,7 +45,7 @@ licensing of the project coherent.
 
 ## 3. Local setup
 
-Follow [README → Getting started](README.md#getting-started): it starts the
+Follow [README → Getting started](README.md#-getting-started): it starts the
 MongoDB replica set the transactions need, copies `.env.example` to `.env`,
 creates the indexes and boots the API. Every environment variable is documented
 in [docs/Configuration.md](docs/Configuration.md).
