@@ -63,7 +63,7 @@ No product UI ships here: the product surface is the JSON API described in the
 `apps/web/src/app` holds the API route handlers in `api/` plus the root
 `layout.tsx` and a placeholder landing page (`page.tsx`).
 
-## 🏗️ How it works
+## 🏗 How it works
 
 Three planes keep image bytes out of the JSON API, in both directions.
 
@@ -125,7 +125,7 @@ URL. The full component map, sequence diagrams and state machines are in
 | Logging   | `pino` behind a `Logger` port (stdout or Better Stack)                    |
 | Tests     | Vitest (unit + integration), Playwright (API journeys), MSW, in-memory DB |
 
-## 🗂️ Repository layout
+## 🗃 Repository layout
 
 | Path                   | Contents                                                            |
 | ---------------------- | ------------------------------------------------------------------- |
@@ -210,7 +210,7 @@ pnpm test:int                   # downloads the in-memory MongoDB on the first r
 pnpm build && pnpm test:e2e     # e2e drives the built server
 ```
 
-## ⚙️ Configuration
+## ⚙ Configuration
 
 All configuration comes from the environment; `.env.example` lists every
 variable with a value that works locally, and
