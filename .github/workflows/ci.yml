@@ -8,6 +8,13 @@ on:
   push:
     branches: [main]
 
+# A run measures one head. A second push to the same ref makes the first run's
+# verdict stale, so cancel it — except on `main`, where every commit's run is
+# the record of that commit (ADR-0996).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ci:
     runs-on: ubuntu-latest

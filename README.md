@@ -1,3 +1,12 @@
+```text
+  ██████╗ ██████╗ ███████╗███╗   ██╗██████╗ ██╗ ██████╗
+ ██╔═══██╗██╔══██╗██╔════╝████╗  ██║██╔══██╗██║██╔════╝
+ ██║   ██║██████╔╝█████╗  ██╔██╗ ██║██████╔╝██║██║
+ ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██╔═══╝ ██║██║
+ ╚██████╔╝██║     ███████╗██║ ╚████║██║     ██║╚██████╗
+  ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝     ╚═╝ ╚═════╝
+```
+
 <div align="center">
 
 # OpenPic
@@ -18,26 +27,31 @@ downloads under the event's rules.
 
 </div>
 
+> **One link per guest, only their own photos — a request is authorised and
+> signs a URL, so image bytes never pass through the JSON control plane, in
+> either direction.**
+
 ---
 
-## Table of contents
+## 🧭 Table of contents
 
-- [What this repository is](#what-this-repository-is)
-- [How it works](#how-it-works)
-- [Features](#features)
-- [Tech stack](#tech-stack)
-- [Repository layout](#repository-layout)
-- [Getting started](#getting-started)
-- [Configuration](#configuration)
-- [Scripts](#scripts)
-- [Testing](#testing)
-- [API at a glance](#api-at-a-glance)
-- [Documentation](#documentation)
-- [Contributing](#contributing)
-- [Security](#security)
-- [License](#license)
+- [What this repository is](#-what-this-repository-is)
+- [How it works](#-how-it-works)
+- [Features](#-features)
+- [Tech stack](#-tech-stack)
+- [Repository layout](#-repository-layout)
+- [Getting started](#-getting-started)
+- [Configuration](#-configuration)
+- [Scripts](#-scripts)
+- [Testing](#-testing)
+- [CI/CD and workflows](#-cicd-and-workflows)
+- [API at a glance](#-api-at-a-glance)
+- [Documentation](#-documentation)
+- [Contributing](#-contributing)
+- [Security](#-security)
+- [License](#-license)
 
-## What this repository is
+## 📦 What this repository is
 
 This repository is the **backend** of OpenPic: a Next.js (App Router) API that
 serves the organiser dashboard, the attendee page and the admin console. It
@@ -49,7 +63,7 @@ No product UI ships here: the product surface is the JSON API described in the
 `apps/web/src/app` holds the API route handlers in `api/` plus the root
 `layout.tsx` and a placeholder landing page (`page.tsx`).
 
-## How it works
+## 🏗️ How it works
 
 Three planes keep image bytes out of the JSON API, in both directions.
 
@@ -72,7 +86,7 @@ A request therefore never proxies an image: the handler authorises, then signs a
 URL. The full component map, sequence diagrams and state machines are in
 [`docs/Diagrams.md`](docs/Diagrams.md).
 
-## Features
+## ✨ Features
 
 - **Identity** — email/phone OTP sign-in, optional second factor, session and
   device management, account deletion.
@@ -95,7 +109,7 @@ URL. The full component map, sequence diagrams and state machines are in
   retention sweeps, audit logs, health/readiness probes, HMAC-guarded cron
   endpoints, rate limiting, idempotency, ETag and cursor pagination.
 
-## Tech stack
+## 🧰 Tech stack
 
 | Area      | Choice                                                                    |
 | --------- | ------------------------------------------------------------------------- |
@@ -111,7 +125,7 @@ URL. The full component map, sequence diagrams and state machines are in
 | Logging   | `pino` behind a `Logger` port (stdout or Better Stack)                    |
 | Tests     | Vitest (unit + integration), Playwright (API journeys), MSW, in-memory DB |
 
-## Repository layout
+## 🗂️ Repository layout
 
 | Path                   | Contents                                                            |
 | ---------------------- | ------------------------------------------------------------------- |
@@ -124,7 +138,7 @@ URL. The full component map, sequence diagrams and state machines are in
 | `scripts`              | One-off admin processes: indexes, Novu sync, git hooks              |
 | `eslint-rules`         | Local rules (no direct collection access, no direct vendor imports) |
 
-## Getting started
+## 🚀 Getting started
 
 ### Prerequisites
 
@@ -132,8 +146,10 @@ URL. The full component map, sequence diagrams and state machines are in
 - pnpm 11 through Corepack: `corepack enable`.
 - Docker, for the local MongoDB. Any MongoDB 7 replica set works instead.
 
-Transactions are used on several paths, so a standalone `mongod` is not enough:
-the database must be a **replica set**. The recipes below start a single-node one.
+> [!IMPORTANT]
+> Transactions are used on several paths, so a standalone `mongod` is not
+> enough: the database must be a **replica set**. The recipes below start a
+> single-node one.
 
 ### 1. Install
 
@@ -194,7 +210,7 @@ pnpm test:int                   # downloads the in-memory MongoDB on the first r
 pnpm build && pnpm test:e2e     # e2e drives the built server
 ```
 
-## Configuration
+## ⚙️ Configuration
 
 All configuration comes from the environment; `.env.example` lists every
 variable with a value that works locally, and
@@ -214,7 +230,7 @@ when it is required, and how provider selection fails closed.
   value refuses to start with the variable name (never its value) in the error.
 - Never commit a real secret — the repo runs a secret scan on every pull request.
 
-## Scripts
+## 📜 Scripts
 
 | Command                      | What it does                                                 |
 | ---------------------------- | ------------------------------------------------------------ |
@@ -233,7 +249,7 @@ when it is required, and how provider selection fails closed.
 | `pnpm novu:upsert-workflows` | Push the notification workflow set to Novu                   |
 | `pnpm novu:assert-no-drift`  | Fail when Novu's workflows differ from the repository's copy |
 
-## Testing
+## 🧪 Testing
 
 The suite is the specification, and it is layered:
 
@@ -250,7 +266,34 @@ Fixtures are built only through `buildX(overrides)` factories that parse their o
 output, so a fixture cannot drift from its schema. Coverage gates are 80% for the
 whole of the included code and 90% for `server/domain` and `server/services`.
 
-## API at a glance
+## 🔄 CI/CD and workflows
+
+Nine workflows live in [`.github/workflows`](.github/workflows). Two gate a pull
+request; the rest guard, report or notify:
+
+| Workflow                           | File                                | What it does                                                                                                  |
+| ---------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `CI`                               | `ci.yml`                            | Typecheck, lint, unit, integration, coverage, build, e2e, shipped-tree audit (`--prod`), gitleaks secret scan |
+| `PR Checks`                        | `pr_checks.yml`                     | Branch name, PR title, lint and format check, coverage, env-var docs, unit suite                              |
+| `CI Evidence Guard`                | `ci_evidence_guard.yml`             | Fails a pushed head whose PR conflicts with `main`, or that has no `CI` / `PR Checks` run                     |
+| `Create Draft PR on New Branch`    | `new_branch_flow.yml`               | Opens a draft PR when a branch is created                                                                     |
+| `Version Bump`                     | `version_bump.yml`                  | semantic-release on `main`: version, changelog, tag                                                           |
+| `Vercel Production Deploy Monitor` | `production_deployment_monitor.yml` | Alerts when a production deployment fails                                                                     |
+
+The `audit` job is blocking and audits the shipped tree only; the dev/test
+toolchain is reported by the non-blocking `audit-dev` job, so an advisory with no
+upstream fix cannot redden a lane for code that is never deployed. A superseded
+pull-request run is cancelled by the `concurrency` block, so a push during a run
+measures only the newest head.
+
+> [!IMPORTANT]
+> `CI` and `PR Checks` trigger on `pull_request`, and GitHub creates **no**
+> `pull_request` run while a PR has a merge conflict — the head would then show
+> a green rollup although the suite never ran. `CI Evidence Guard` closes that
+> hole: it triggers on `push`, which is not conflict-suppressed, and fails the
+> head instead of trusting the rollup.
+
+## 🔌 API at a glance
 
 - **Base path** `/api/v1`; the auth surface is `/api/auth/*` (library-owned).
 - **Tenancy in the path** — `/api/v1/tenants/{tenantId}/…`, where `current` is
@@ -263,7 +306,7 @@ whole of the included code and 90% for `server/domain` and `server/services`.
   in the [API contract](docs/API%20Contract.md) — read Part 0 before adding a
   route.
 
-## Documentation
+## 📚 Documentation
 
 | Document                                                                           | Read it for                                                         |
 | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -278,7 +321,7 @@ whole of the included code and 90% for `server/domain` and `server/services`.
 | [Contributing](CONTRIBUTING.md)                                                    | Workflow, review gates, contribution terms                          |
 | [Agent operating rules](AGENTS.md)                                                 | How autonomous agents pick up, land and review work                 |
 
-## Contributing
+## 🤝 Contributing
 
 Contributions come from contributors the owner has added to the repository.
 Before you start, read [CONTRIBUTING.md](CONTRIBUTING.md): it covers the branch
@@ -288,14 +331,14 @@ relicense the project later.
 
 Agents work to the same rules; [AGENTS.md](AGENTS.md) is their entry point.
 
-## Security
+## 🔒 Security
 
 Please do not open a public issue for a vulnerability. Report it privately through
 [GitHub security advisories](https://github.com/yahodu/openpic-webapp/security/advisories/new)
 with the affected route, a reproduction and the impact you believe it has. The
 maintainers triage reports privately.
 
-## License
+## 📄 License
 
 **Proprietary — all rights reserved.** You may read the code and evaluate it, but
 you may not use, run, host, modify or distribute it, for free or for money,
