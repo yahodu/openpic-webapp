@@ -122,6 +122,9 @@ Before `git commit` or `git push`, run the verification pipeline:
 - The merger runs the merge gate on the exact head SHA before `gh pr merge`
   (`docs/CONVENTIONS.md` §9.1, ADR-0318); `--admin` never passes a failed gate.
 - Only merge when all CI checks pass and review is approved.
+- A branch sweep must not delete the branch of a card whose worker is still
+  running (**ADR-0967**): detach that worktree
+  (`git -C <wt> switch --detach`) or leave the branch until the card completes.
 - The merge step archives the merged head under `refs/prhead/<n>` and releases the
   lane's local branch in the same run (**ADR-0967**). The repository deletes the
   _remote_ head on merge (`delete_branch_on_merge: true`), so the local branch is
