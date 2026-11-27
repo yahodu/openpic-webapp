@@ -269,7 +269,10 @@ whole of the included code and 90% for `server/domain` and `server/services`.
 ## 🔄 CI/CD and workflows
 
 Nine workflows live in [`.github/workflows`](.github/workflows). Two gate a pull
-request; the rest guard, report or notify:
+request; three more guard or report it; the last three post Discord status
+(`pr_closure_notifier.yml`, `pr_related_notification_scheduler.yml`,
+`production_deployment_failed_notification_scheduler.yml`) and cannot gate a
+merge:
 
 | Workflow                           | File                                | What it does                                                                                                  |
 | ---------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
