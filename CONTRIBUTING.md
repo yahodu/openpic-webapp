@@ -45,13 +45,10 @@ licensing of the project coherent.
 
 ## 3. Local setup
 
-```bash
-corepack enable
-pnpm install --frozen-lockfile
-cp .env.example .env          # fill in what you need; providers default to doubles
-pnpm db:ensure-indexes        # MongoDB replica set required
-pnpm dev
-```
+Follow [README → Getting started](README.md#getting-started): it starts the
+MongoDB replica set the transactions need, copies `.env.example` to `.env`,
+creates the indexes and boots the API. Every environment variable is documented
+in [docs/Configuration.md](docs/Configuration.md).
 
 Run the checks you will be judged on before you push:
 
