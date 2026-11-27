@@ -3,7 +3,11 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { documentedNamesOf, tableRowsOf } from "../../test/helpers/configuration-documentation";
+import {
+  documentedNamesOf,
+  tableRowsOf,
+  variableCellNamesOf,
+} from "../../test/helpers/configuration-documentation";
 
 /**
  * Section 7 of OP-70: `.env.example` is the operator-facing documentation of
@@ -21,11 +25,15 @@ import { documentedNamesOf, tableRowsOf } from "../../test/helpers/configuration
  * PR #987): direction 1 reads the doc's **table rows** — a prose mention is not
  * documentation of an operator setting — and the token pattern accepts
  * one-character names, so a short documented name cannot hide from direction 2.
- * The two parsers those scopes share live in
+ * Direction 1 is further scoped to the row's **own variable cell** (finding F1 of
+ * the review of PR #989): a first cell that is exactly one backticked token, so a
+ * key cross-referenced in another variable's cell does not satisfy it.
+ * The parsers those scopes share live in
  * `apps/web/src/test/helpers/configuration-documentation.ts`.
  *
  * Records: ADR-0992 (`docs/adr/ADR-0992-op101-config-template-doc-pins.md`),
- * ADR-0995 (`docs/adr/ADR-0995-op101-config-row-scope-and-short-name-pins.md`).
+ * ADR-0995 (`docs/adr/ADR-0995-op101-config-row-scope-and-short-name-pins.md`),
+ * ADR-0997 (`docs/adr/ADR-0997-op101-config-row-owner-pins.md`).
  */
 const PROCESS_MANAGED_NAMES: readonly string[] = [
   "MONGO_TEST_URI",
@@ -112,7 +120,7 @@ const SCHEMA_KEYS = schemaKeysOf(ENV_SOURCE);
 const TEMPLATE_KEYS = templateKeysOf(TEMPLATE);
 const CONFIGURATION_TABLE_ROWS = tableRowsOf(CONFIGURATION_DOCUMENTATION);
 const DOCUMENTED_NAMES = documentedNamesOf(CONFIGURATION_DOCUMENTATION);
-const ROW_DOCUMENTED_NAMES = documentedNamesOf(CONFIGURATION_TABLE_ROWS.join("\n"));
+const OWNED_VARIABLE_NAMES = variableCellNamesOf(CONFIGURATION_TABLE_ROWS);
 
 describe(".env.example against the configuration schema", () => {
   it.each(SCHEMA_KEYS)("documents the %s key that rawSchema declares", (key) => {
@@ -133,8 +141,8 @@ describe("docs/Configuration.md against .env.example", () => {
     expect(undocumented).toEqual([]);
   });
 
-  it.each(TEMPLATE_KEYS)("documents the %s key in a Configuration.md table row", (key) => {
-    expect(ROW_DOCUMENTED_NAMES).toContain(key);
+  it.each(TEMPLATE_KEYS)("owns the %s variable cell of a Configuration.md table row", (key) => {
+    expect(OWNED_VARIABLE_NAMES).toContain(key);
   });
 
   it("documents no name outside .env.example except the four process-managed names and CI", () => {
@@ -178,5 +186,59 @@ describe("the configuration documentation parsers", () => {
     expect(() =>
       documentedNamesOf("| Variable | Notes |\n| --- | --- |\n| plain | no code span |\n")
     ).toThrow(/no backticked UPPER_SNAKE variable/);
+  });
+
+  it("reads a name out of a row's own first cell and skips the header and delimiter rows", () => {
+    const rows = tableRowsOf(
+      ["| Variable | Notes |", "| --- | :---: |", "| `A_B` | probe |"].join("\n")
+    );
+
+    expect(variableCellNamesOf(rows)).toEqual(["A_B"]);
+  });
+
+  it("throws when a body row's first cell is prose instead of a backticked variable", () => {
+    const rows = tableRowsOf(
+      ["| Variable | Notes |", "| --- | --- |", "| plain prose | no variable cell |"].join("\n")
+    );
+
+    expect(() => variableCellNamesOf(rows)).toThrow(/does not open with a single backticked/);
+  });
+
+  it("throws when a body row's first cell names two variables", () => {
+    const rows = tableRowsOf(
+      ["| Variable | Notes |", "| --- | --- |", "| `A_B` / `C_D` | two |"].join("\n")
+    );
+
+    expect(() => variableCellNamesOf(rows)).toThrow(/does not open with a single backticked/);
+  });
+
+  it("does not count a name that only appears inside another row's cell", () => {
+    const rows = tableRowsOf(
+      [
+        "| Variable | Notes |",
+        "| --- | --- |",
+        "| `MONGODB_URI` | The pool size is set by `MONGODB_MAX_POOL_SIZE`. |",
+      ].join("\n")
+    );
+
+    expect(variableCellNamesOf(rows)).not.toContain("MONGODB_MAX_POOL_SIZE");
+  });
+
+  it("reads a first-cell name the template does not declare, so the key pin is what rejects it", () => {
+    const rows = tableRowsOf(
+      ["| Variable | Notes |", "| --- | --- |", "| `NOT_IN_TEMPLATE` | unknown |"].join("\n")
+    );
+
+    expect(variableCellNamesOf(rows)).toEqual(["NOT_IN_TEMPLATE"]);
+  });
+
+  it("throws when a row-shaped document owns no variable cell", () => {
+    expect(() => variableCellNamesOf(tableRowsOf("| Variable | Notes |\n| --- | --- |\n"))).toThrow(
+      /no markdown table row declares a backticked UPPER_SNAKE variable/
+    );
+  });
+
+  it("throws when given no table row at all", () => {
+    expect(() => variableCellNamesOf([])).toThrow(/no markdown table row/);
   });
 });
