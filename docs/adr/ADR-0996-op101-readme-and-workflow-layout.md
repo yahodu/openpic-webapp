@@ -1,7 +1,7 @@
 # ADR-0996 — OP-101: the README follows the public-repo layout, and a superseded CI run is cancelled
 
 - **Status:** Accepted · **Date:** 2026-11-27
-- **Card:** none — direct owner instruction on the repository, not a board card · **Branch:** `OP-101-task-readme-workflow-standards` · **Worktree:** `/root/openpic/openpic-webapp/.worktrees/op101-readme-workflow`
+- **Card:** none — direct owner instruction on the repository, not a board card · **Branch:** `OP-101-task-readme-workflow-standards` · **Worktree:** `.worktrees/op101-readme-workflow`
 - **Lane:** OP-101 follow-up (README and workflow housekeeping) · **Consumes:** `0996` — a **pool draw**, because the OP-101 lane holds no reserved row and the `0300`–`0319` block is exhausted ([ADR-0300](ADR-0300-adr-number-range-allocation-policy.md) §11 item 18); the four pool-mirror cells read `0996` at this cut and each advances to `0997`
 - **Spec sources:** `README.md`, `CONTRIBUTING.md`, `.github/workflows/ci.yml` and `.github/workflows/pr_checks.yml` at `origin/main` `6c7fc642` (2026-11-27)
 - **Consumers:** none — documentation and workflow configuration; no spec imports it
